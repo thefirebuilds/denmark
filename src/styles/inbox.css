@@ -1,0 +1,531 @@
+/* --------------------------------------------------------------
+   /src/styles/inbox.css
+   Expense processing / Teller reconciliation styling
+-------------------------------------------------------------- */
+
+.inbox-buckets-panel,
+.inbox-list-panel,
+.inbox-detail-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.inbox-detail-panel {
+  position: sticky;
+  top: 78px;
+  align-self: start;
+  height: calc(100vh - 92px);
+  overflow: hidden;
+}
+
+.inbox-bucket-list,
+.inbox-transaction-list,
+.inbox-detail-body {
+  min-height: 0;
+}
+
+.inbox-bucket-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.inbox-bucket-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #233252;
+  background: #101826;
+  color: #d8e1f0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.inbox-bucket-btn.is-active {
+  border-color: #6aa2ff;
+  background: #14233b;
+}
+
+.inbox-bucket-btn strong {
+  font-size: 0.95rem;
+}
+
+.inbox-transaction-list {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.inbox-transaction-row {
+  border: 1px solid #233252;
+  background: #101826;
+  color: #d8e1f0;
+  border-radius: 16px;
+  padding: 14px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inbox-transaction-row.is-selected {
+  border-color: #6aa2ff;
+  background: #14233b;
+}
+
+.inbox-transaction-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inbox-transaction-date {
+  font-size: 0.82rem;
+  color: #9fb0c9;
+}
+
+.inbox-transaction-amount {
+  font-size: 1rem;
+}
+
+.inbox-transaction-description {
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.inbox-transaction-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  font-size: 0.8rem;
+  color: #9fb0c9;
+}
+
+.inbox-transaction-row.has-likely-match {
+  box-shadow: inset 0 0 0 1px rgba(255, 214, 102, 0.12);
+}
+
+.inbox-transaction-row.has-likely-match--high {
+  border-color: #4f7b3a;
+}
+
+.inbox-transaction-row.has-likely-match--medium {
+  border-color: #8e6d20;
+}
+
+.inbox-transaction-row.has-likely-match--low {
+  border-color: #8a3f3f;
+}
+
+.inbox-transaction-row.has-likely-match--high:not(.is-selected) {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(145, 201, 120, 0.09) 0%,
+      rgba(16, 24, 38, 0) 18%
+    ),
+    #101826;
+}
+
+.inbox-transaction-row.has-likely-match--medium:not(.is-selected) {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255, 214, 102, 0.12) 0%,
+      rgba(16, 24, 38, 0) 18%
+    ),
+    #101826;
+}
+
+.inbox-transaction-row.has-likely-match--low:not(.is-selected) {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(229, 95, 95, 0.12) 0%,
+      rgba(16, 24, 38, 0) 18%
+    ),
+    #101826;
+}
+
+.inbox-transaction-row.has-likely-match--high .inbox-transaction-description {
+  color: #edf7e8;
+}
+
+.inbox-transaction-row.has-likely-match--medium .inbox-transaction-description {
+  color: #fff4d6;
+}
+
+.inbox-transaction-row.has-likely-match--low .inbox-transaction-description {
+  color: #ffe1e1;
+}
+
+.inbox-pill {
+  border: 1px solid #335388;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #162744;
+  color: #c9dcff;
+}
+
+.inbox-pill-match {
+  font-weight: 700;
+}
+
+.inbox-pill-match--high {
+  border-color: #4b6d39;
+  background: rgba(145, 201, 120, 0.12);
+  color: #cfe8bf;
+}
+
+.inbox-pill-match--medium {
+  border-color: #8e6d20;
+  background: rgba(255, 214, 102, 0.12);
+  color: #ffe7a3;
+}
+
+.inbox-pill-match--low {
+  border-color: #8a3f3f;
+  background: rgba(229, 95, 95, 0.12);
+  color: #ffc2c2;
+}
+
+.inbox-detail-body {
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+}
+
+.inbox-detail-card,
+.inbox-suggestion-card {
+  border: 1px solid #233252;
+  background: #101826;
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.inbox-suggestion-card--high {
+  border-color: #4f7b3a;
+}
+
+.inbox-suggestion-card--medium {
+  border-color: #8e6d20;
+}
+
+.inbox-suggestion-card--low {
+  border-color: #8a3f3f;
+}
+
+.inbox-detail-amount {
+  font-size: 1.35rem;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.inbox-detail-description {
+  font-size: 1rem;
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+
+.inbox-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.inbox-detail-grid span {
+  display: block;
+  font-size: 0.78rem;
+  color: #9fb0c9;
+  margin-bottom: 4px;
+}
+
+.inbox-detail-grid strong {
+  display: block;
+  font-size: 0.92rem;
+  color: #e8eef8;
+}
+
+.inbox-section-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #cfd9ea;
+  margin-bottom: 8px;
+}
+
+.inbox-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inbox-suggestion-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.inbox-suggestion-top span {
+  font-size: 0.8rem;
+  color: #9fb0c9;
+}
+
+.inbox-suggestion-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.inbox-suggestion-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inbox-action-btn {
+  border: 1px solid #335388;
+  background: #162744;
+  color: #d8e1f0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.inbox-action-btn:hover:not(:disabled) {
+  background: #1c3258;
+}
+
+.inbox-action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.inbox-action-btn.ignore {
+  border-color: #6b3a3a;
+  background: #2a1515;
+  color: #f0d6d6;
+}
+
+.inbox-action-btn.ignore:hover:not(:disabled) {
+  background: #3a1d1d;
+}
+
+.inbox-action-btn.ignore-similar {
+  border-color: #6a5a2f;
+  background: #2b2412;
+  color: #f1e4b8;
+}
+
+.inbox-action-btn.ignore-similar:hover:not(:disabled) {
+  background: #3a3118;
+}
+
+.inbox-state {
+  border: 1px dashed #2a395d;
+  background: #101826;
+  border-radius: 16px;
+  padding: 16px;
+  color: #9fb0c9;
+}
+
+.inbox-state-error {
+  color: #ffb3b3;
+}
+
+.inbox-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.inbox-list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px 14px;
+  border-top: 1px solid #1d2a42;
+}
+
+.inbox-pagination-status {
+  font-size: 0.82rem;
+  color: #9fb0c9;
+  text-align: center;
+  flex: 1;
+}
+
+/* --------------------------------------------------------------
+   Expense draft modal
+-------------------------------------------------------------- */
+
+.inbox-draft-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 10, 18, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+
+.inbox-draft-modal {
+  width: min(680px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: #111827;
+  border: 1px solid #243041;
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.inbox-draft-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.inbox-draft-field {
+  display: grid;
+  gap: 6px;
+}
+
+.inbox-draft-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9fb0c7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inbox-draft-field input,
+.inbox-draft-field select,
+.inbox-draft-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px solid #2b3a4d;
+  background: #0d1520;
+  color: #e7edf7;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.inbox-draft-field textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.inbox-draft-field input:focus,
+.inbox-draft-field select:focus,
+.inbox-draft-field textarea:focus {
+  outline: none;
+  border-color: #6aa0ff;
+  box-shadow: 0 0 0 2px rgba(106, 160, 255, 0.18);
+}
+
+.inbox-draft-suggestions {
+  display: grid;
+  gap: 8px;
+}
+
+.inbox-inline-error {
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: rgba(127, 29, 29, 0.2);
+  color: #fecaca;
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 0.9rem;
+}
+
+.inbox-draft-suggestion-summary {
+  font-size: 0.9rem;
+  color: #b8c4d8;
+}
+
+.inbox-draft-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inbox-draft-chip {
+  border: 1px solid #35507a;
+  background: #132033;
+  color: #dbe7f8;
+  border-radius: 999px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.inbox-draft-chip:hover:not(:disabled) {
+  background: #19304d;
+}
+
+.inbox-draft-chip.is-active {
+  background: #1d3557;
+  border-color: #6aa0ff;
+}
+
+.inbox-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+@media (max-width: 900px) {
+  .inbox-detail-panel {
+    position: relative;
+    top: 0;
+    height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .inbox-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inbox-list-pagination,
+  .inbox-detail-actions,
+  .inbox-draft-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inbox-pagination-status {
+    flex: none;
+  }
+
+  .inbox-draft-overlay {
+    padding: 12px;
+  }
+
+  .inbox-draft-modal {
+    width: 100%;
+    max-height: 94vh;
+    padding: 14px;
+  }
+}

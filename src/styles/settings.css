@@ -1,0 +1,181 @@
+.settings-section-panel {
+  grid-area: trips;
+}
+
+.settings-main-panel {
+  grid-area: messages;
+}
+
+.settings-help-panel {
+  grid-area: details;
+}
+
+.settings-section-list,
+.settings-form,
+.settings-vehicle-list,
+.settings-help-copy,
+.settings-empty-state {
+  padding: 14px;
+}
+
+.settings-section-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-section-row {
+  border: 1px solid #2a395d;
+  background: #10182c;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.settings-section-row span,
+.settings-help-copy,
+.settings-empty-state {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.settings-section-row.is-active {
+  border-color: #60a5fa;
+  background: #14233d;
+}
+
+.settings-form {
+  display: grid;
+  gap: 16px;
+  overflow: auto;
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-field,
+.settings-check-row {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-field-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-field span,
+.settings-group-title {
+  color: #9fb0c7;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-field input,
+.settings-field select {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #2b3a4d;
+  background: #0d1520;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.settings-check-row {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  color: #dbe7f8;
+}
+
+.settings-group {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-bucket-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-bucket-row,
+.settings-vehicle-row {
+  border: 1px solid #2a395d;
+  background: #10182c;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settings-bucket-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-bucket-actions button,
+.settings-action-btn {
+  border-radius: 8px;
+  border: 1px solid #35507a;
+  background: #132033;
+  color: #dbe7f8;
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.settings-bucket-actions button:disabled,
+.settings-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.settings-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-message {
+  color: #b8c4d8;
+  font-size: 0.9rem;
+}
+
+.settings-vehicle-list {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 8px;
+}
+
+.settings-vehicle-row {
+  align-items: flex-start;
+}
+
+.settings-vehicle-row span {
+  color: var(--muted);
+  text-align: right;
+}
+
+.rail-btn {
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+@media (max-width: 1100px) {
+  .settings-form-grid {
+    grid-template-columns: 1fr;
+  }
+}

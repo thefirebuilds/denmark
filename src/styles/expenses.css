@@ -1,0 +1,769 @@
+/* --------------------------------------------------------------
+   /src/styles/expenses.css
+   Expense view styling aligned to the main app visual system.
+-------------------------------------------------------------- */
+
+/* --------------------------------------------------------------
+   Panel layout
+-------------------------------------------------------------- */
+
+.expenses-vehicle-panel,
+.expenses-panel,
+.expenses-summary-panel {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.expenses-vehicle-panel {
+  grid-area: trips;
+}
+
+.expenses-panel {
+  grid-area: messages;
+}
+
+.expenses-summary-panel {
+  grid-area: details;
+  position: relative;
+}
+
+/* --------------------------------------------------------------
+   Shared empty / error states
+-------------------------------------------------------------- */
+
+.expenses-empty-state,
+.expenses-error-state {
+  margin: 14px;
+  border-radius: 16px;
+  padding: 16px;
+  font-size: 0.9rem;
+}
+
+.expenses-empty-state {
+  border: 1px dashed #2a395d;
+  background: #10182c;
+  color: var(--muted);
+}
+
+.expenses-empty-state.compact {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+}
+
+.expenses-error-state {
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  background: rgba(127, 29, 29, 0.18);
+  color: #fee2e2;
+}
+
+/* --------------------------------------------------------------
+   Header actions
+-------------------------------------------------------------- */
+
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.expenses-add-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  background: rgba(96, 165, 250, 0.12);
+  color: #dcebff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.08) inset;
+}
+
+.expenses-add-btn::before {
+  content: "+";
+  font-weight: 900;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.expenses-add-btn:hover {
+  transform: translateY(-1px);
+  color: #ffffff;
+  background: rgba(96, 165, 250, 0.18);
+  border-color: rgba(96, 165, 250, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(96, 165, 250, 0.12) inset,
+    0 0 16px rgba(96, 165, 250, 0.12);
+}
+
+.expenses-add-btn:active {
+  transform: translateY(0);
+}
+
+/* --------------------------------------------------------------
+   Center panel filters / subbar
+-------------------------------------------------------------- */
+
+.expenses-subbar {
+  align-items: center;
+}
+
+.expenses-filter-input {
+  appearance: none;
+  outline: none;
+  min-height: 36px;
+  color: var(--text);
+}
+
+.expenses-filter-input::placeholder {
+  color: var(--muted);
+}
+
+.expenses-filter-input[type="date"] {
+  min-width: 148px;
+}
+
+.expenses-search {
+  min-width: 220px;
+}
+
+/* --------------------------------------------------------------
+   Center panel body / cards / pagination
+-------------------------------------------------------------- */
+
+.expenses-body {
+  gap: 14px;
+}
+
+.expenses-card-list {
+  padding: 0;
+  gap: 12px;
+}
+
+.expenses-card {
+  gap: 12px;
+}
+
+.expenses-pagination-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.expenses-page-status {
+  text-align: center;
+}
+
+/* --------------------------------------------------------------
+   Right summary panel - exact match for ExpensesSummaryPanel.jsx
+-------------------------------------------------------------- */
+
+.expenses-summary-panel .detail-body {
+  min-height: 0;
+}
+
+.expenses-summary-compact-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow: auto;
+  min-height: 0;
+}
+
+/* grouped box shell */
+
+.expenses-summary-box {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid #22304d;
+  border-radius: 14px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #121b31 0%, #0f1729 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 20px rgba(0, 0, 0, 0.14);
+}
+
+.expenses-summary-box-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(42, 57, 93, 0.85);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.045),
+    rgba(255, 255, 255, 0.015)
+  );
+  color: #cfe0ff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* --------------------------------------------------------------
+   Top stat grid
+-------------------------------------------------------------- */
+
+.expenses-summary-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.expenses-summary-stat {
+  min-width: 0;
+  padding: 8px 10px;
+  border-right: 1px solid rgba(42, 57, 93, 0.45);
+  border-top: 1px solid rgba(42, 57, 93, 0.45);
+}
+
+.expenses-summary-stat:nth-child(1),
+.expenses-summary-stat:nth-child(2) {
+  border-top: 0;
+}
+
+.expenses-summary-stat:nth-child(2n) {
+  border-right: 0;
+}
+
+.expenses-summary-stat-label {
+  margin-bottom: 4px;
+  color: #8fa6ca;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.05;
+}
+
+.expenses-summary-stat-value {
+  color: #eef4ff;
+  font-size: 0.97rem;
+  font-weight: 800;
+  line-height: 1.05;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expenses-summary-stat-sub {
+  margin-top: 3px;
+  color: #7489ae;
+  font-size: 0.68rem;
+  line-height: 1.05;
+}
+
+/* --------------------------------------------------------------
+   Dense row boxes
+-------------------------------------------------------------- */
+
+.expenses-summary-rows {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.expenses-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-top: 1px solid rgba(42, 57, 93, 0.45);
+}
+
+.expenses-summary-row:first-child {
+  border-top: 0;
+}
+
+.expenses-summary-row-name {
+  min-width: 0;
+  color: #e8f0ff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expenses-summary-row-count {
+  color: #8fa6ca;
+  font-size: 0.7rem;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.expenses-summary-row-amount {
+  min-width: 74px;
+  color: #dbeafe;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.05;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* subtle hover just so rows feel intentional */
+
+.expenses-summary-row:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* --------------------------------------------------------------
+   Expense drawer
+-------------------------------------------------------------- */
+
+.expense-drawer-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.expense-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: rgba(5, 10, 20, 0.52);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.expense-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(560px, 100vw);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at top right, rgba(96, 165, 250, 0.08), transparent 26%),
+    linear-gradient(180deg, #121a30 0%, #0d1527 100%);
+  border-left: 1px solid #22304d;
+  box-shadow:
+    -16px 0 36px rgba(0, 0, 0, 0.34),
+    inset 1px 0 0 rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  pointer-events: auto;
+}
+
+.expense-drawer-header {
+  flex: 0 0 auto;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.035),
+    rgba(255, 255, 255, 0.01)
+  );
+}
+
+.expense-drawer-header-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.expense-drawer-header-copy h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.01em;
+}
+
+.expense-drawer-header-copy span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.expense-drawer-close {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  appearance: none;
+  border-radius: 12px;
+  border: 1px solid #2a395d;
+  background: #10182c;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1rem;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.expense-drawer-close:hover {
+  background: #13203a;
+  border-color: #3a527d;
+  transform: translateY(-1px);
+}
+
+.expense-drawer-close:active {
+  transform: translateY(0);
+}
+
+.expense-drawer-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+}
+
+.expense-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.expense-drawer-actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--border);
+  background: rgba(10, 16, 30, 0.92);
+}
+
+.expense-drawer-actions button {
+  appearance: none;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+.expense-drawer-actions button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.expense-drawer-actions button:active {
+  transform: translateY(0);
+}
+
+.expense-drawer-actions .secondary-btn {
+  border: 1px solid #2a395d;
+  background: linear-gradient(180deg, #121c31 0%, #0f1729 100%);
+  color: #dbeafe;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.expense-drawer-actions .secondary-btn:hover {
+  transform: translateY(-1px);
+  border-color: #3a527d;
+  background: linear-gradient(180deg, #15223c 0%, #111c31 100%);
+  color: #ffffff;
+}
+
+.expense-drawer-actions .primary-btn {
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.22) 0%, rgba(59, 130, 246, 0.14) 100%);
+  color: #eef6ff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 1px rgba(96, 165, 250, 0.08);
+}
+
+.expense-drawer-actions .primary-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(96, 165, 250, 0.62);
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.3) 0%, rgba(59, 130, 246, 0.2) 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 18px rgba(96, 165, 250, 0.16);
+}
+
+/* --------------------------------------------------------------
+   Responsive
+-------------------------------------------------------------- */
+
+@media (max-width: 980px) {
+  .expenses-search {
+    min-width: 0;
+  }
+
+  .expense-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .expenses-pagination-inline {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .expenses-summary-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .expenses-summary-stat {
+    border-right: 0;
+  }
+
+  .expenses-summary-stat:nth-child(2) {
+    border-top: 1px solid rgba(42, 57, 93, 0.45);
+  }
+
+  .expenses-summary-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .expenses-summary-row-count {
+    grid-column: 1 / -1;
+  }
+    .expense-drawer {
+    width: 100vw;
+  }
+}
+
+/* --------------------------------------------------------------
+   Expense form inside drawer
+-------------------------------------------------------------- */
+
+.expense-form {
+  display: grid;
+  gap: 14px;
+}
+
+.expense-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.expense-form label span {
+  color: #8fa6ca;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.expense-form input,
+.expense-form select,
+.expense-form textarea {
+  width: 100%;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid #2a395d;
+  background: linear-gradient(180deg, #10182c 0%, #0d1526 100%);
+  color: #eef4ff;
+  border-radius: 14px;
+  padding: 11px 12px;
+  font: inherit;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.expense-form textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+
+.expense-form input::placeholder,
+.expense-form textarea::placeholder {
+  color: #7084a8;
+}
+
+.expense-form input:hover,
+.expense-form select:hover,
+.expense-form textarea:hover {
+  border-color: #3a527d;
+  background: linear-gradient(180deg, #12203a 0%, #0f1930 100%);
+}
+
+.expense-form input:focus,
+.expense-form select:focus,
+.expense-form textarea:focus {
+  border-color: rgba(96, 165, 250, 0.72);
+  background: linear-gradient(180deg, #13203a 0%, #101b31 100%);
+  box-shadow:
+    0 0 0 3px rgba(96, 165, 250, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.expense-form select {
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #9db7df 50%),
+    linear-gradient(135deg, #9db7df 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 2px),
+    calc(100% - 12px) calc(50% - 2px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+
+.expense-form select option {
+  background: #10182c;
+  color: #eef4ff;
+}
+
+.expense-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* Make numeric entry boxes (price, tax) visually congruent */
+.expense-form-grid label {
+  display: flex;
+  flex-direction: column;
+}
+
+.expense-form-grid input[type="number"],
+.expense-form-grid input[type="text"],
+.expense-form-grid select {
+  height: 44px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.expense-checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.expense-checkbox-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #60a5fa;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.expense-checkbox-row span {
+  color: #e8f0ff !important;
+  font-size: 0.9rem !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  font-weight: 700 !important;
+}
+
+.expense-form-help {
+  margin-top: 6px;
+  color: #7084a8;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+/* --------------------------------------------------------------
+   Summary range toggle
+-------------------------------------------------------------- */
+
+.expenses-summary-range-bar {
+  padding: 10px 10px 0;
+}
+
+.expenses-summary-range-toggle {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.expenses-summary-range-btn {
+  appearance: none;
+  min-height: 34px;
+  border-radius: 999px;
+  border: 1px solid #2a395d;
+  background: linear-gradient(180deg, #121c31 0%, #0f1729 100%);
+  color: #9fb2d1;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.expenses-summary-range-btn:hover {
+  transform: translateY(-1px);
+  border-color: #3a527d;
+  color: #eef4ff;
+  background: linear-gradient(180deg, #15223c 0%, #111c31 100%);
+}
+
+.expenses-summary-range-btn.is-active {
+  border-color: rgba(96, 165, 250, 0.48);
+  background: linear-gradient(
+    180deg,
+    rgba(96, 165, 250, 0.2) 0%,
+    rgba(59, 130, 246, 0.12) 100%
+  );
+  color: #eef6ff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(96, 165, 250, 0.08);
+}
+
+.expenses-summary-range-btn:active {
+  transform: translateY(0);
+}

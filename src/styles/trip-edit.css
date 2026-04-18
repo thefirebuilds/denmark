@@ -1,0 +1,289 @@
+.trip-edit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(3, 8, 20, 0.42);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.trip-edit-drawer {
+  width: min(460px, 100vw);
+  height: 100vh;
+  overflow: hidden;
+  background: rgba(17, 24, 45, 0.98);
+  border-left: 1px solid var(--border);
+  box-shadow: -20px 0 40px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  animation: tripEditDrawerIn 180ms ease-out;
+}
+
+@keyframes tripEditDrawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.trip-edit-header {
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.trip-edit-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.trip-edit-subtitle {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.trip-edit-form {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px 18px 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.trip-edit-form label {
+  display: grid;
+  gap: 7px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #d7e3fb;
+}
+
+.trip-edit-form input,
+.trip-edit-form select,
+.trip-edit-form textarea {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #2a395d;
+  background: #10182c;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  outline: none;
+}
+
+.trip-edit-form input:focus,
+.trip-edit-form select:focus,
+.trip-edit-form textarea:focus {
+  border-color: rgba(96, 165, 250, 0.6);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.12);
+}
+
+.trip-edit-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(17, 24, 45, 0),
+    rgba(17, 24, 45, 0.94) 28%,
+    rgba(17, 24, 45, 0.98)
+  );
+}
+
+.modal-close-button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-close-button:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.form-error {
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: rgba(127, 29, 29, 0.24);
+  color: #fecaca;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.trip-workflow-panel {
+  margin: 16px 18px 0;
+  padding: 14px;
+  border: 1px solid #2a395d;
+  border-radius: 14px;
+  background: rgba(10, 16, 30, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.trip-workflow-panel h4 {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e8f0ff;
+}
+
+.trip-workflow-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.trip-workflow-item {
+  min-width: 160px;
+  flex: 1 1 160px;
+}
+
+.trip-workflow-item-wide {
+  min-width: 100%;
+  flex: 1 1 100%;
+}
+
+.trip-workflow-label {
+  margin-bottom: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8ea3c7;
+}
+
+.trip-workflow-value {
+  color: #e6eefc;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.trip-stage-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+
+.trip-workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.trip-workflow-actions .detail-action-button,
+.trip-workflow-override-row .detail-action-button {
+  flex: 0 0 auto;
+}
+
+.trip-workflow-override {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(143, 167, 206, 0.16);
+}
+
+.trip-workflow-override-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.trip-workflow-panel select {
+  min-width: 220px;
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid #2a395d;
+  background: #10182c;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  outline: none;
+}
+
+.trip-workflow-panel select:focus {
+  border-color: rgba(96, 165, 250, 0.6);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.12);
+}
+
+.trip-workflow-help {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #8ea3c7;
+}
+
+/* Stage chips tuned for dark UI */
+.stage-booked {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.28);
+  color: #7dd3fc;
+}
+
+.stage-confirmed {
+  background: rgba(74, 222, 128, 0.14);
+  border-color: rgba(74, 222, 128, 0.28);
+  color: #86efac;
+}
+
+.stage-ready_for_handoff {
+  background: rgba(167, 139, 250, 0.16);
+  border-color: rgba(167, 139, 250, 0.28);
+  color: #c4b5fd;
+}
+
+.stage-in_progress {
+  background: rgba(250, 204, 21, 0.14);
+  border-color: rgba(250, 204, 21, 0.26);
+  color: #fde68a;
+}
+
+.stage-turnaround {
+  background: rgba(251, 191, 36, 0.14);
+  border-color: rgba(251, 191, 36, 0.26);
+  color: #fcd34d;
+}
+
+.stage-awaiting_expenses {
+  background: rgba(244, 114, 182, 0.14);
+  border-color: rgba(244, 114, 182, 0.26);
+  color: #f9a8d4;
+}
+
+.stage-complete {
+  background: rgba(148, 163, 184, 0.14);
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #cbd5e1;
+}
+
+.stage-canceled {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.26);
+  color: #fca5a5;
+}
