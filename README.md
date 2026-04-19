@@ -137,6 +137,120 @@ The system is designed around a practical separation of concerns:
 
 ---
 
+## First Install / Repave Path
+
+This repo includes a schema-only PostgreSQL bootstrap file for rebuilding the app from an empty machine or after total local data loss.
+
+### 1. Create the database schema
+
+The bootstrap file lives at:
+
+```text
+server/db/schema.sql
+```
+
+It creates the default `denmark` database if it does not exist, connects to it, drops/recreates the public app schema, and inserts safe default UI settings. It does **not** include private data, vehicle history, bank data, tokens, guest data, or marketplace rows.
+
+Run it from the repo root with a PostgreSQL admin user:
+
+```bash
+psql -U postgres -d postgres -f server/db/schema.sql
+```
+
+If your local database should use a name other than `denmark`, edit the `\set dbname denmark` line at the top of `server/db/schema.sql`, then make the same change in `.env`.
+
+This file is intentionally useful for repaving, so treat it as destructive when pointed at an existing database.
+
+### 2. Create `.env`
+
+Copy the checked-in example:
+
+```bash
+cp .env.example .env
+```
+
+Then replace the placeholder values. A safe example looks like this:
+
+```dotenv
+PGHOST=localhost
+PGPORT=5432
+PGDATABASE=denmark
+PGUSER=postgres
+PGPASSWORD=replace-with-local-postgres-password
+DATABASE_URL=postgres://postgres:replace-with-local-postgres-password@localhost:5432/denmark
+
+VITE_API_BASE_URL=http://localhost:5000
+
+IMAP_HOST=imap.example.com
+IMAP_PORT=993
+IMAP_USER=alerts@example.com
+IMAP_PASS=replace-with-imap-app-password
+IMAP_TARGET_MAILBOXES=INBOX
+IMAP_LOOKBACK_HOURS=72
+IMAP_INGEST_LIMIT=100
+
+BOUNCIE_CLIENT_ID=replace-with-bouncie-client-id
+BOUNCIE_CLIENT_SECRET=replace-with-bouncie-client-secret
+BOUNCIE_AUTH_CODE=replace-with-one-time-auth-code
+BOUNCIE_REDIRECT_URI=http://localhost:5000/api/bouncie/callback
+
+DIMO_CLIENT_ID=replace-with-dimo-client-id
+DIMO_DOMAIN=replace-with-dimo-domain
+DIMO_PRIVATE_KEY=replace-with-dimo-private-key
+DIMO_FLEET_JSON=[]
+
+TELLER_CERT_BASE64=replace-with-base64-client-cert
+TELLER_KEY_BASE64=replace-with-base64-client-key
+
+EZTAG_USERNAME=replace-with-eztag-username
+EZTAG_PASSWORD=replace-with-eztag-password
+EZTAG_USER_AGENT=Mozilla/5.0 Denmark2.0 local dev
+
+PUBLIC_AVAILABILITY_INGEST_URL=https://example.com/api/availability
+PUBLIC_AVAILABILITY_BEARER_TOKEN=replace-with-public-availability-token
+PUBLIC_AVAILABILITY_HMAC_SECRET=replace-with-public-availability-hmac-secret
+```
+
+Never commit a real `.env`; it contains credentials and provider tokens.
+
+### 3. Install dependencies
+
+Install frontend dependencies from the repo root:
+
+```bash
+npm install
+```
+
+Install backend dependencies:
+
+```bash
+cd server
+npm install
+```
+
+### 4. Start the app
+
+Start the backend:
+
+```bash
+cd server
+npm start
+```
+
+Start the frontend from the repo root:
+
+```bash
+npm run dev
+```
+
+The frontend defaults to `http://localhost:5173`, and the backend defaults to `http://localhost:5000`.
+
+### 5. Restoring real data later
+
+The Settings screen includes a database backup/restore workflow for JSON snapshots created by this app. The SQL schema is the blank foundation; the backup/restore flow is for bringing back actual operational data when you have a saved snapshot.
+
+---
+
 ## Integrations
 
 ### Platform / operations

@@ -20,6 +20,12 @@ function formatNumber(value) {
   });
 }
 
+function formatRpm(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "N/A";
+  return `${Math.round(num).toLocaleString("en-US")} RPM`;
+}
+
 function isTripInProgress(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
   const status = String(trip?.status || "").toLowerCase();
@@ -214,6 +220,13 @@ export default function TripSummaryMetricsPanel({
                   <div className="trip-summary-stat-label">Rev / Mile</div>
                   <div className="trip-summary-stat-value">
                     {money(selectedRevenuePerMile)}
+                  </div>
+                </div>
+
+                <div className="trip-summary-stat">
+                  <div className="trip-summary-stat-label">Max RPM</div>
+                  <div className="trip-summary-stat-value">
+                    {formatRpm(selectedTrip.max_engine_rpm)}
                   </div>
                 </div>
               </div>

@@ -15,6 +15,7 @@ const {
 
 let snapshotColumnCache = null;
 let vehicleColumnCache = null;
+let tripColumnCache = null;
 
 function cleanString(value) {
   if (value == null) return null;
@@ -52,6 +53,22 @@ async function getVehicleColumns(client = pool) {
 
   vehicleColumnCache = new Set(result.rows.map((row) => row.column_name));
   return vehicleColumnCache;
+}
+
+async function getTripColumns(client = pool) {
+  if (tripColumnCache) return tripColumnCache;
+
+  const result = await client.query(
+    `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'trips'
+    `
+  );
+
+  tripColumnCache = new Set(result.rows.map((row) => row.column_name));
+  return tripColumnCache;
 }
 
 function unique(values) {
@@ -458,6 +475,53 @@ async function insertVehicleTelemetrySnapshot(snapshot, client = pool) {
   return client.query(sql, values);
 }
 
+async function updateActiveTripMaxEngineRpm(snapshot, client = pool) {
+  const columns = await getTripColumns(client);
+  if (!columns.has("max_engine_rpm")) {
+    return { rowCount: 0 };
+  }
+
+  const rpm = toNumber(snapshot.engine_rpm);
+  const vin = cleanString(snapshot.vin);
+  if (!vin || rpm == null || rpm < 0) {
+    return { rowCount: 0 };
+  }
+
+  const eventTimestamp =
+    cleanString(snapshot.vehicle_last_updated) ||
+    cleanString(snapshot.ignition_last_updated) ||
+    cleanString(snapshot.speed_last_updated) ||
+    cleanString(snapshot.location_last_updated) ||
+    new Date().toISOString();
+
+  return client.query(
+    `
+      UPDATE trips t
+      SET
+        max_engine_rpm = GREATEST(COALESCE(t.max_engine_rpm, 0), $2::numeric),
+        updated_at = NOW()
+      FROM vehicles v
+      WHERE v.vin = $1
+        AND t.trip_start <= $3::timestamptz
+        AND t.trip_end >= $3::timestamptz
+        AND COALESCE(t.workflow_stage, '') <> 'canceled'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND (
+          (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id IS NOT NULL
+            AND CAST(t.turo_vehicle_id AS text) = CAST(v.turo_vehicle_id AS text)
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(t.vehicle_name) = LOWER(v.nickname)
+          )
+        )
+    `,
+    [vin, rpm, eventTimestamp]
+  );
+}
+
 function buildRawSignalRows({ snapshotId, capturedAt, tokenId, vin, raw }) {
   const latest = raw?.data?.signalsLatest || {};
 
@@ -563,6 +627,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
         normalized.speed_last_updated,
     });
     const snapshotResult = await insertVehicleTelemetrySnapshot(normalized, client);
+    const tripRpmResult = await updateActiveTripMaxEngineRpm(normalized, client);
     const maintenanceRules = normalized.vin
       ? await ensureDefaultMaintenanceRulesForVehicle(client, normalized.vin)
       : [];
@@ -584,6 +649,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
       capturedAt: snapshot.captured_at,
       vehicleRows: vehicleResult.rowCount,
       autoStartedTrip: autoStartResult?.id || null,
+      tripRpmRows: tripRpmResult.rowCount,
       maintenanceRuleRows: maintenanceRules.length,
       odometerRows: odometerResult.rowCount,
       rawSignalRows: rawResult.rowCount,

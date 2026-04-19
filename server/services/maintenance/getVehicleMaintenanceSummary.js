@@ -256,35 +256,49 @@ function buildPriorityCounts(tasks) {
 
 async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
   const client = maybeVin ? clientOrVin : pool;
-  const vin = maybeVin || clientOrVin;
+  const selector = String(maybeVin || clientOrVin || "").trim();
+  const normalizedSelector = selector.toLowerCase();
 
   const vehicleResult = await client.query(
     `
       SELECT
-        vin,
-        nickname,
-        year,
-        make,
-        model,
-        turo_vehicle_id,
-        bouncie_vehicle_id,
-        rockauto_url,
-        current_odometer_miles,
-        is_active
-      FROM vehicles
-      WHERE vin = $1
+        v.vin,
+        v.nickname,
+        v.year,
+        v.make,
+        v.model,
+        v.turo_vehicle_id,
+        v.bouncie_vehicle_id,
+        v.rockauto_url,
+        v.current_odometer_miles,
+        latest_maintenance_odometer.odometer_miles AS latest_maintenance_odometer_miles,
+        v.is_active
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT me.odometer_miles
+        FROM maintenance_events me
+        WHERE me.vehicle_vin = v.vin
+          AND me.odometer_miles IS NOT NULL
+        ORDER BY me.performed_at DESC, me.id DESC
+        LIMIT 1
+      ) latest_maintenance_odometer ON TRUE
+      WHERE lower(trim(v.vin)) = $1
+         OR lower(trim(v.nickname)) = $1
+         OR lower(trim(COALESCE(v.license_plate, ''))) = $1
       LIMIT 1
     `,
-    [vin]
+    [normalizedSelector]
   );
 
   const vehicle = vehicleResult.rows[0];
 
   if (!vehicle) {
-    const err = new Error(`Vehicle not found for VIN ${vin}`);
+    const err = new Error(`Vehicle not found for selector ${selector}`);
     err.statusCode = 404;
     throw err;
   }
+
+  const vin = vehicle.vin;
 
   await ensureDefaultMaintenanceRulesForVehicle(client, vehicle.vin);
 
@@ -429,7 +443,14 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
     ),
   ]);
 
-  const currentOdometerMiles = toIntOrNull(vehicle.current_odometer_miles);
+  const vehicleOdometerMiles = toIntOrNull(vehicle.current_odometer_miles);
+  const maintenanceOdometerMiles = toIntOrNull(
+    vehicle.latest_maintenance_odometer_miles
+  );
+  const currentOdometerMiles =
+    vehicleOdometerMiles != null && maintenanceOdometerMiles != null
+      ? Math.max(vehicleOdometerMiles, maintenanceOdometerMiles)
+      : vehicleOdometerMiles ?? maintenanceOdometerMiles;
 
   const ruleStatuses = rulesResult.rows.map((rule) =>
     getRuleStatus({

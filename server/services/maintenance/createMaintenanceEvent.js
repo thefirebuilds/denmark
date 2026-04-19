@@ -5,9 +5,9 @@
 
 const pool = require("../../db");
 
-async function resolveRule({ ruleId, ruleCode }) {
+async function resolveRule(client, { ruleId, ruleCode }) {
   if (ruleId) {
-    const byId = await pool.query(
+    const byId = await client.query(
       `
       SELECT id, rule_code, title
       FROM maintenance_rules
@@ -32,7 +32,7 @@ async function resolveRule({ ruleId, ruleCode }) {
     throw err;
   }
 
-  const result = await pool.query(
+  const result = await client.query(
     `
     SELECT id, rule_code, title
     FROM maintenance_rules
@@ -51,10 +51,10 @@ async function resolveRule({ ruleId, ruleCode }) {
   return result.rows[0];
 }
 
-async function ensureVehicleExists(vin) {
-  const result = await pool.query(
+async function ensureVehicleExists(client, vin) {
+  const result = await client.query(
     `
-    SELECT vin
+    SELECT id, vin, current_odometer_miles
     FROM vehicles
     WHERE vin = $1
     LIMIT 1
@@ -67,6 +67,8 @@ async function ensureVehicleExists(vin) {
     err.statusCode = 404;
     throw err;
   }
+
+  return result.rows[0];
 }
 
 function normalizePerformedAt(value) {
@@ -108,7 +110,12 @@ function normalizeResult(value) {
 }
 
 function normalizeOdometerMiles(value) {
-  if (value === undefined || value === null || value === "") return null;
+  if (value === undefined || value === null || value === "") {
+    const err = new Error("Odometer is required for maintenance entries");
+    err.statusCode = 400;
+    throw err;
+  }
+
   const num = Number(value);
   if (!Number.isFinite(num) || num < 0) {
     const err = new Error("Invalid odometerMiles value");
@@ -126,6 +133,36 @@ function normalizeData(value) {
     throw err;
   }
   return value;
+}
+
+async function recordVehicleOdometer(client, vehicle, odometerMiles, recordedAt) {
+  await client.query(
+    `
+      UPDATE vehicles
+      SET
+        current_odometer_miles = CASE
+          WHEN current_odometer_miles IS NULL THEN $2
+          WHEN $2 >= current_odometer_miles THEN $2
+          ELSE current_odometer_miles
+        END,
+        updated_at = NOW()
+      WHERE vin = $1
+    `,
+    [vehicle.vin, odometerMiles]
+  );
+
+  await client.query(
+    `
+      INSERT INTO vehicle_odometer_history (
+        vehicle_id,
+        odometer_miles,
+        recorded_at,
+        source
+      )
+      VALUES ($1, $2, $3::timestamp, 'maintenance_event')
+    `,
+    [vehicle.id, odometerMiles, recordedAt]
+  );
 }
 
 async function createMaintenanceEvent({
@@ -146,103 +183,123 @@ async function createMaintenanceEvent({
     throw err;
   }
 
-  await ensureVehicleExists(vin);
+  const client = await pool.connect();
 
-  const rule = await resolveRule({ ruleId, ruleCode });
-  const performedTimestamp = normalizePerformedAt(performedAt);
-  const odo = normalizeOdometerMiles(odometerMiles);
-  const normalizedResult = normalizeResult(result);
-  const normalizedData = normalizeData(data);
+  try {
+    await client.query("BEGIN");
 
-  const finalSource =
-    source == null || String(source).trim() === "" ? "manual" : String(source).trim();
+    const vehicle = await ensureVehicleExists(client, vin);
+    const rule = await resolveRule(client, { ruleId, ruleCode });
+    const performedTimestamp = normalizePerformedAt(performedAt);
+    const odo = normalizeOdometerMiles(odometerMiles);
+    const normalizedResult = normalizeResult(result);
+    const normalizedData = normalizeData(data);
 
-  const finalPerformedBy =
-    performedBy == null || String(performedBy).trim() === "" ? null : String(performedBy).trim();
+    const finalSource =
+      source == null || String(source).trim() === "" ? "manual" : String(source).trim();
 
-  const insert = await pool.query(
-    `
-    INSERT INTO maintenance_events (
-      vehicle_vin,
-      rule_id,
-      title,
-      event_type,
-      performed_at,
-      odometer_miles,
-      result,
-      notes,
-      data,
-      performed_by,
-      source,
-      created_at,
-      updated_at
-    )
-    VALUES (
-      $1,
-      $2,
-      $3,
-      $4,
-      $5,
-      $6,
-      $7,
-      $8,
-      $9,
-      $10,
-      $11,
-      NOW(),
-      NOW()
-    )
-    RETURNING
-      id,
-      vehicle_vin,
-      rule_id,
-      title,
-      event_type,
-      performed_at,
-      odometer_miles,
-      result,
-      notes,
-      data,
-      performed_by,
-      source,
-      created_at,
-      updated_at
-    `,
-    [
-      vin,
-      rule.id,
-      rule.title,
-      rule.rule_code,
-      performedTimestamp,
-      odo,
-      normalizedResult,
-      notes ?? null,
-      normalizedData,
-      finalPerformedBy,
-      finalSource,
-    ]
-  );
+    const finalPerformedBy =
+      performedBy == null || String(performedBy).trim() === ""
+        ? null
+        : String(performedBy).trim();
 
-  const taskCloseResult = await pool.query(
-    `
-    UPDATE maintenance_tasks
-    SET
-      status = 'completed',
-      updated_at = NOW()
-    WHERE vehicle_vin = $1
-      AND status IN ('open', 'scheduled', 'in_progress', 'deferred')
-      AND (
-        rule_id = $2
-        OR trigger_context->>'ruleCode' = $3
+    const insert = await client.query(
+      `
+      INSERT INTO maintenance_events (
+        vehicle_vin,
+        rule_id,
+        title,
+        event_type,
+        performed_at,
+        odometer_miles,
+        result,
+        notes,
+        data,
+        performed_by,
+        source,
+        created_at,
+        updated_at
       )
-    `,
-    [vin, rule.id, rule.rule_code]
-  );
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10,
+        $11,
+        NOW(),
+        NOW()
+      )
+      RETURNING
+        id,
+        vehicle_vin,
+        rule_id,
+        title,
+        event_type,
+        performed_at,
+        odometer_miles,
+        result,
+        notes,
+        data,
+        performed_by,
+        source,
+        created_at,
+        updated_at
+      `,
+      [
+        vin,
+        rule.id,
+        rule.title,
+        rule.rule_code,
+        performedTimestamp,
+        odo,
+        normalizedResult,
+        notes ?? null,
+        normalizedData,
+        finalPerformedBy,
+        finalSource,
+      ]
+    );
 
-  return {
-    ...insert.rows[0],
-    closed_task_count: taskCloseResult.rowCount,
-  };
+    await recordVehicleOdometer(client, vehicle, odo, performedTimestamp);
+
+    const taskCloseResult = await client.query(
+      `
+      UPDATE maintenance_tasks
+      SET
+        status = 'resolved',
+        updated_at = NOW()
+      WHERE vehicle_vin = $1
+        AND status IN ('open', 'scheduled', 'in_progress', 'deferred')
+        AND (
+          rule_id = $2
+          OR trigger_context->>'ruleCode' = $3
+        )
+      `,
+      [vin, rule.id, rule.rule_code]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      ...insert.rows[0],
+      closed_task_count: taskCloseResult.rowCount,
+      vehicle_current_odometer_miles: Math.max(
+        Number(vehicle.current_odometer_miles || 0),
+        odo
+      ),
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = {

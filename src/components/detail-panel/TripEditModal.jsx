@@ -21,6 +21,28 @@ const STAGE_ORDER = [
   "canceled",
 ];
 
+const TOLL_REVIEW_STATUS_OPTIONS = [
+  { value: "none", label: "No tolls" },
+  { value: "pending", label: "Pending review" },
+  { value: "reviewed", label: "Reviewed" },
+  { value: "billed", label: "Billed" },
+  { value: "waived", label: "Waived" },
+];
+
+function normalizeTollReviewStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (normalized === "submitted" || normalized === "resolved") {
+    return "billed";
+  }
+
+  if (TOLL_REVIEW_STATUS_OPTIONS.some((option) => option.value === normalized)) {
+    return normalized;
+  }
+
+  return "none";
+}
+
 function resolveVehicleSelection(trip, vehiclesList) {
   const tripVehicleId = String(trip?.turo_vehicle_id ?? "").trim();
   const tripNames = [trip?.vehicle_name, trip?.vehicle_nickname]
@@ -137,6 +159,12 @@ function getDefaultNextStage(trip) {
   return allowed[0] || "";
 }
 
+function tripHasEnded(trip) {
+  if (!trip?.trip_end) return false;
+  const endMs = new Date(trip.trip_end).getTime();
+  return Number.isFinite(endMs) && endMs <= Date.now();
+}
+
 export default function TripEditModal({
   trip,
   isOpen,
@@ -242,7 +270,7 @@ export default function TripEditModal({
       has_tolls: Boolean(trip.has_tolls),
       toll_count: trip.toll_count ?? "",
       toll_total: trip.toll_total ?? "",
-      toll_review_status: trip.toll_review_status || "pending",
+      toll_review_status: normalizeTollReviewStatus(trip.toll_review_status),
       fuel_reimbursement_total: trip.fuel_reimbursement_total ?? "",
       closed_out: Boolean(trip.closed_out),
       closed_out_at: toLocalInputValue(trip.closed_out_at),
@@ -299,10 +327,68 @@ export default function TripEditModal({
         return {
           ...prev,
           has_tolls: true,
+          toll_count:
+            prev.toll_count === "" || prev.toll_count == null || Number(prev.toll_count) < 1
+              ? "1"
+              : prev.toll_count,
           toll_review_status:
             prev.toll_review_status && prev.toll_review_status !== "none"
               ? prev.toll_review_status
               : "pending",
+        };
+      }
+
+      if (name === "toll_total") {
+        const numericTotal = Number(value);
+        const hasTollTotal = Number.isFinite(numericTotal) && numericTotal > 0;
+        return {
+          ...prev,
+          toll_total: value,
+          has_tolls: hasTollTotal ? true : prev.has_tolls,
+          toll_count:
+            hasTollTotal &&
+            (prev.toll_count === "" ||
+              prev.toll_count == null ||
+              Number(prev.toll_count) < 1)
+              ? "1"
+              : prev.toll_count,
+          toll_review_status:
+            hasTollTotal &&
+            (!prev.toll_review_status || prev.toll_review_status === "none")
+              ? "pending"
+              : prev.toll_review_status,
+        };
+      }
+
+      if (name === "toll_count") {
+        const numericCount = Number(value);
+        const hasTollCount = Number.isFinite(numericCount) && numericCount > 0;
+        return {
+          ...prev,
+          toll_count: value,
+          has_tolls: hasTollCount ? true : prev.has_tolls,
+          toll_review_status:
+            hasTollCount &&
+            (!prev.toll_review_status || prev.toll_review_status === "none")
+              ? "pending"
+              : prev.toll_review_status,
+        };
+      }
+
+      if (name === "toll_review_status") {
+        const normalizedStatus = normalizeTollReviewStatus(value);
+        const hasTollStatus = normalizedStatus !== "none";
+        return {
+          ...prev,
+          toll_review_status: normalizedStatus,
+          has_tolls: hasTollStatus ? true : prev.has_tolls,
+          toll_count:
+            hasTollStatus &&
+            (prev.toll_count === "" ||
+              prev.toll_count == null ||
+              Number(prev.toll_count) < 1)
+              ? "1"
+              : prev.toll_count,
         };
       }
 
@@ -419,6 +505,13 @@ export default function TripEditModal({
   }
 
   if (!isOpen || !trip) return null;
+
+  const tollTotal = Number(form.toll_total || 0);
+  const tollCount = Number(form.toll_count || 0);
+  const hasTollExposure = Boolean(form.has_tolls) || tollTotal > 0 || tollCount > 0;
+  const closeoutStages = new Set(["turnaround", "awaiting_expenses", "complete"]);
+  const showTollFields =
+    hasTollExposure || closeoutStages.has(trip.workflow_stage) || tripHasEnded(trip);
 
   return (
     <div className="trip-edit-overlay" onClick={onClose}>
@@ -631,9 +724,7 @@ export default function TripEditModal({
             />
           </label>
 
-          {trip?.workflow_stage === "awaiting_expenses" ||
-          trip?.workflow_stage === "turnaround" ||
-          form.has_tolls ? (
+          {showTollFields ? (
             <>
               <label className="trip-edit-checkbox">
                 <span>Has Tolls</span>
@@ -676,18 +767,19 @@ export default function TripEditModal({
                   onChange={handleChange}
                   disabled={!form.has_tolls}
                 >
-                  <option value="pending">Pending review</option>
-                  <option value="reviewed">Reviewed</option>
-                  <option value="submitted">Submitted</option>
-                  <option value="resolved">Resolved</option>
-                  <option value="none">No tolls</option>
+                  {TOLL_REVIEW_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </label>
             </>
           ) : null}
 
           {trip?.workflow_stage === "awaiting_expenses" ||
-          trip?.workflow_stage === "turnaround" ? (
+          trip?.workflow_stage === "turnaround" ||
+          trip?.workflow_stage === "complete" ? (
             <label>
               Fuel Reimbursement
               <input

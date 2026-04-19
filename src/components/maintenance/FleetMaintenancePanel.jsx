@@ -7,6 +7,7 @@ import { toPng } from "html-to-image";
 import GuestSafetySnapshotCard from "./GuestSafetySnapshotCard";
 import InspectionItemDrawer from "./InspectionItemDrawer";
 import PreflightCard from "./PreflightCard";
+import { openPrintDialogForElement } from "../../utils/printUtils";
 import {
   getFleetLicensePlate,
   getFleetLicenseState,
@@ -21,6 +22,7 @@ import {
   formatMiles,
   getVinLast6,
   getNextServiceDue,
+  buildPreflightDueItems,
   buildInspectionHistoryMap,
   buildQueueItemsFromSummary,
   mapRuleStatusToInspectionItem,
@@ -121,30 +123,6 @@ function getRuleCountdownClass(item, currentOdometerMiles) {
     : "fleet-maintenance-card-ticker";
 }
 
-function normalizeDueTitle(rawTitle, rawType) {
-  const type = String(rawType || "").trim().toLowerCase();
-  const title = String(rawTitle || "").trim().toLowerCase();
-
-  if (type === "post_trip_oil_level_check" || title.includes("oil level")) {
-    return "Check oil level";
-  }
-
-  if (
-    type === "post_trip_condition_review" ||
-    title.includes("condition review") ||
-    title.includes("post trip condition")
-  ) {
-    return "Post-trip condition review";
-  }
-
-  if (title.includes("clean")) return "Clean vehicle";
-  if (title.includes("tire pressure")) return "Set tire pressures";
-  if (title.includes("registration")) return "Verify registration";
-  if (title.includes("leak")) return "Leak check";
-
-  return String(rawTitle || rawType || "Open maintenance item").trim();
-}
-
 function buildPreflightData(trips, summary) {
   if (!summary) {
     return {
@@ -174,72 +152,7 @@ function buildPreflightData(trips, summary) {
 
   if (!cutoff) cutoff = now;
 
-  const dueRules = (summary.ruleStatuses || []).filter((rule) => {
-    if (!rule.nextDueDate) return false;
-    const nextDue = new Date(rule.nextDueDate);
-    return !Number.isNaN(nextDue.getTime()) && nextDue <= cutoff;
-  });
-
-  const dueTasks = (summary.tasks || []).filter(
-    (task) =>
-      String(task?.status || "").toLowerCase() === "open" &&
-      !isTaskSatisfiedByRule(task, summary)
-  );
-
-  const merged = [
-    ...dueRules.map((rule) => ({
-      id: `rule-${rule.ruleCode || rule.ruleId || rule.title}`,
-      title: normalizeDueTitle(rule.title || rule.ruleCode, rule.ruleCode),
-      source: "rule",
-      blocks:
-        Boolean(rule.blocksRentalWhenOverdue) ||
-        Boolean(rule.blocksGuestExportWhenOverdue),
-      priority:
-        rule.blocksRentalWhenOverdue || rule.blocksGuestExportWhenOverdue ? 2 : 1,
-    })),
-    ...dueTasks.map((task) => ({
-      id: `task-${task.id}`,
-      title: normalizeDueTitle(task.title, task.task_type),
-      source: "task",
-      blocks: Boolean(task.blocks_rental) || Boolean(task.blocks_guest_export),
-      priority:
-        task.priority === "urgent"
-          ? 4
-          : task.priority === "high"
-          ? 3
-          : task.priority === "medium"
-          ? 2
-          : 1,
-    })),
-  ];
-
-  const dedupedMap = new Map();
-
-  for (const item of merged) {
-    const key = item.title.trim().toLowerCase().replace(/\s+/g, " ");
-    const existing = dedupedMap.get(key);
-
-    if (!existing) {
-      dedupedMap.set(key, item);
-      continue;
-    }
-
-    const existingScore =
-      (existing.blocks ? 100 : 0) + (existing.priority || 0);
-    const itemScore = (item.blocks ? 100 : 0) + (item.priority || 0);
-
-    if (itemScore > existingScore) {
-      dedupedMap.set(key, item);
-    }
-  }
-
-  const dueItems = Array.from(dedupedMap.values())
-    .sort((a, b) => {
-      const aScore = (a.blocks ? 100 : 0) + (a.priority || 0);
-      const bScore = (b.blocks ? 100 : 0) + (b.priority || 0);
-      return bScore - aScore || a.title.localeCompare(b.title);
-    })
-    .map(({ id, title }) => ({ id, title }));
+  const dueItems = buildPreflightDueItems(summary, { cutoff });
 
   const windowLabel = cutoff.toLocaleDateString("en-US", {
     month: "short",
@@ -249,6 +162,142 @@ function buildPreflightData(trips, summary) {
   return {
     windowLabel: `Before ${windowLabel}`,
     dueItems,
+  };
+}
+
+function normalizeTelematicsSourceLabel(source) {
+  const value = String(source || "").trim().toLowerCase();
+  if (value === "bouncie") return "Bouncie";
+  if (value === "dimo") return "DIMO";
+  return value ? value.toUpperCase() : "";
+}
+
+function formatTelematicsLastCall(value) {
+  if (!value) return "No call-in recorded";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown call-in";
+
+  const minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+  if (minutes < 60) return `${minutes || 1} min ago`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hr ago`;
+
+  const days = Math.round(hours / 24);
+  return `${days} days ago`;
+}
+
+function buildTelematicsStatus(fleetVehicle = null) {
+  const sources = Array.isArray(fleetVehicle?.telemetry_source)
+    ? fleetVehicle.telemetry_source
+    : [];
+  const sourceLabel = sources
+    .map(normalizeTelematicsSourceLabel)
+    .filter(Boolean)
+    .join(" + ");
+  const lastCallRaw =
+    fleetVehicle?.telemetry?.last_comm ||
+    fleetVehicle?.telemetry?.timestamps?.location_last_updated ||
+    fleetVehicle?.telemetry?.timestamps?.ignition_last_updated ||
+    null;
+  const lastCallDate = lastCallRaw ? new Date(lastCallRaw) : null;
+  const ageHours =
+    lastCallDate && !Number.isNaN(lastCallDate.getTime())
+      ? (Date.now() - lastCallDate.getTime()) / (1000 * 60 * 60)
+      : null;
+  const tone =
+    ageHours == null
+      ? "unknown"
+      : ageHours <= 24
+      ? "pass"
+      : ageHours <= 72
+      ? "attention"
+      : "fail";
+
+  return {
+    sourceLabel: sourceLabel || "No telematics source",
+    lastCallLabel: formatTelematicsLastCall(lastCallRaw),
+    tone,
+  };
+}
+
+function formatEngineTemp(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `${Math.round(num)} F`;
+}
+
+function buildEngineTemperatureStatus(fleetVehicle = null) {
+  const engine = fleetVehicle?.telemetry?.engine || {};
+  const latestTemp = Number(engine.coolant_temp);
+  const range = engine.coolant_temp_range || {};
+  const minTemp = Number(range.min_f);
+  const maxTemp = Number(range.max_f);
+  const sampleCount = Number(range.sample_count || 0);
+  const latestText = Number.isFinite(latestTemp)
+    ? formatEngineTemp(latestTemp)
+    : "No reading";
+  const rangeText =
+    Number.isFinite(minTemp) && Number.isFinite(maxTemp)
+      ? `${formatEngineTemp(minTemp)} - ${formatEngineTemp(maxTemp)}`
+      : "Range unavailable";
+  const overtemp = Boolean(
+    engine.overtemp ||
+      range.last_overtemp_at ||
+      (Number.isFinite(latestTemp) && latestTemp >= 240) ||
+      (Number.isFinite(maxTemp) && maxTemp >= 240)
+  );
+  const warm = !overtemp && Number.isFinite(maxTemp) && maxTemp >= 225;
+  const tone = overtemp
+    ? "fail"
+    : warm
+    ? "attention"
+    : Number.isFinite(latestTemp) || sampleCount > 0
+    ? "pass"
+    : "unknown";
+  const detail = overtemp
+    ? `Overtemp alert${range.last_overtemp_at ? ` at ${formatTelematicsLastCall(range.last_overtemp_at)}` : ""}`
+    : sampleCount > 0
+    ? `14-day range: ${rangeText}`
+    : "No DIMO engine temp history";
+
+  return {
+    latestText,
+    rangeText,
+    detail,
+    tone,
+  };
+}
+
+function formatEngineRpm(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `${Math.round(num).toLocaleString("en-US")} RPM`;
+}
+
+function buildEngineRpmStatus(fleetVehicle = null) {
+  const engine = fleetVehicle?.telemetry?.engine || {};
+  const latestRpm = Number(engine.rpm);
+  const range = engine.rpm_range || {};
+  const maxRpm = Number(range.max_rpm);
+  const sampleCount = Number(range.sample_count || 0);
+  const latestText = Number.isFinite(latestRpm)
+    ? formatEngineRpm(latestRpm)
+    : "No reading";
+  const maxText = Number.isFinite(maxRpm)
+    ? formatEngineRpm(maxRpm)
+    : "Max unavailable";
+  const detail =
+    sampleCount > 0
+      ? `14-day observed max: ${maxText}`
+      : "No DIMO tachometer history";
+
+  return {
+    latestText,
+    maxText,
+    detail,
+    tone: Number.isFinite(latestRpm) || sampleCount > 0 ? "pass" : "unknown",
   };
 }
 
@@ -358,6 +407,9 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
     rentable: !summary.blocksRental,
     overall_status: overallStatus,
     export_ready: !summary.blocksGuestExport,
+    telematics: buildTelematicsStatus(fleetVehicle),
+    engine_temperature: buildEngineTemperatureStatus(fleetVehicle),
+    engine_rpm: buildEngineRpmStatus(fleetVehicle),
     body_condition: notes.length ? "documented" : "good",
     body_notes: notes.length
       ? notes
@@ -825,6 +877,9 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
         rentable: true,
         overall_status: "attention",
         export_ready: false,
+        telematics: buildTelematicsStatus(selectedFleetVehicle),
+        engine_temperature: buildEngineTemperatureStatus(selectedFleetVehicle),
+        engine_rpm: buildEngineRpmStatus(selectedFleetVehicle),
         body_condition: "unknown",
         body_notes: ["Loading live maintenance summary…"],
         inspection_items: [],
@@ -853,6 +908,9 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       rentable: false,
       overall_status: "attention",
       export_ready: false,
+      telematics: buildTelematicsStatus(null),
+      engine_temperature: buildEngineTemperatureStatus(null),
+      engine_rpm: buildEngineRpmStatus(null),
       body_condition: "unknown",
       body_notes: fleetLoadError
         ? [fleetLoadError]
@@ -1356,6 +1414,29 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
     }
   }
 
+  function handlePrintElement(element, title) {
+    try {
+      openPrintDialogForElement(element, title);
+    } catch (err) {
+      console.error("Print dialog failed:", err);
+      window.alert(err.message || "Could not open print dialog.");
+    }
+  }
+
+  function handlePrintInspectionReport() {
+    handlePrintElement(
+      cardRef.current,
+      `${vehicle.nickname || "Vehicle"} inspection report`
+    );
+  }
+
+  function handlePrintPreflight() {
+    handlePrintElement(
+      preflightRef.current,
+      `${vehicle.nickname || "Vehicle"} prep card`
+    );
+  }
+
   return (
     <section className="panel messages-panel fleet-maintenance-panel">
       <div className="panel-header">
@@ -1670,6 +1751,56 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                   </span>
                   <span className="fleet-maintenance-meta-value">
                     {vehicle.body_condition}
+                  </span>
+                </div>
+
+                <div
+                  className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
+                    vehicle.telematics?.tone || "unknown"
+                  }`}
+                >
+                  <span className="fleet-maintenance-meta-label">
+                    Telematics
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    {vehicle.telematics?.sourceLabel || "No telematics source"}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    Last call-in:{" "}
+                    {vehicle.telematics?.lastCallLabel || "No call-in recorded"}
+                  </span>
+                </div>
+
+                <div
+                  className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
+                    vehicle.engine_temperature?.tone || "unknown"
+                  }`}
+                >
+                  <span className="fleet-maintenance-meta-label">
+                    Engine temp
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    {vehicle.engine_temperature?.latestText || "No reading"}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    {vehicle.engine_temperature?.detail ||
+                      "No DIMO engine temp history"}
+                  </span>
+                </div>
+
+                <div
+                  className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
+                    vehicle.engine_rpm?.tone || "unknown"
+                  }`}
+                >
+                  <span className="fleet-maintenance-meta-label">
+                    Tachometer
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    {vehicle.engine_rpm?.latestText || "No reading"}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    {vehicle.engine_rpm?.detail || "No DIMO tachometer history"}
                   </span>
                 </div>
               </div>
@@ -2081,10 +2212,28 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                   <button
                     type="button"
                     className="message-action"
+                    onClick={handlePrintInspectionReport}
+                    disabled={exporting}
+                  >
+                    Print inspection report
+                  </button>
+
+                  <button
+                    type="button"
+                    className="message-action"
                     onClick={handleExportPreflight}
                     disabled={exporting}
                   >
                     Export prep card
+                  </button>
+
+                  <button
+                    type="button"
+                    className="message-action"
+                    onClick={handlePrintPreflight}
+                    disabled={exporting}
+                  >
+                    Print prep card
                   </button>
                 </div>
               ) : null}

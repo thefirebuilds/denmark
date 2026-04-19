@@ -48,14 +48,20 @@ function formatTollReviewStatus(value) {
   if (!normalized || normalized === "none") return "No tolls";
   if (normalized === "pending") return "Pending review";
   if (normalized === "reviewed") return "Reviewed";
-  if (normalized === "submitted") return "Submitted";
-  if (normalized === "resolved") return "Resolved";
+  if (normalized === "billed") return "Billed";
+  if (normalized === "waived") return "Waived";
 
   return normalized
     .split("_")
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function formatRpm(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "N/A";
+  return `${Math.round(num).toLocaleString("en-US")} RPM`;
 }
 
 export default function SelectedTripPanel({
@@ -92,25 +98,26 @@ export default function SelectedTripPanel({
   const vehicleLabel = getTripVehicleLabel(selectedTrip, selectedVehicleInfo);
   const nextStage = getNextWorkflowStage(selectedTrip);
 
-  const unbilledTolls = Number(selectedTrip?.toll_total ?? 0);
+  const tollTotal = Number(selectedTrip?.toll_total ?? 0);
   const tollCount = Number(selectedTrip?.toll_count ?? 0);
+  const tollStatus = String(selectedTrip?.toll_review_status || "none").toLowerCase();
   const fuelReimbursement = Number(selectedTrip?.fuel_reimbursement_total ?? 0);
-
-  const tollVisibleStages = new Set([
-    "in_progress",
-    "awaiting_expenses",
-    "turnaround",
-    "completed",
-  ]);
-
-  const showTollFields = tollVisibleStages.has(selectedTrip?.workflow_stage);
+  const tripEndMs = selectedTrip?.trip_end
+    ? new Date(selectedTrip.trip_end).getTime()
+    : NaN;
+  const tripHasEnded = Number.isFinite(tripEndMs) && tripEndMs <= Date.now();
+  const closeoutStages = new Set(["turnaround", "awaiting_expenses", "complete"]);
+  const isCloseoutStage = closeoutStages.has(selectedTrip?.workflow_stage);
   const hasTollExposure =
-    Boolean(selectedTrip?.has_tolls) || tollCount > 0 || unbilledTolls > 0;
+    Boolean(selectedTrip?.has_tolls) || tollCount > 0 || tollTotal > 0;
+  const hasOpenTolls =
+    tollTotal > 0 && !["billed", "waived", "none"].includes(tollStatus);
+  const showTollFields = hasTollExposure || isCloseoutStage || tripHasEnded;
 
   const showFuelFields =
     selectedTrip?.workflow_stage === "awaiting_expenses" ||
     selectedTrip?.workflow_stage === "turnaround" ||
-    selectedTrip?.workflow_stage === "completed";
+    selectedTrip?.workflow_stage === "complete";
 
   const tripTitle = `${vehicleLabel} • Trip #${
     selectedTrip.reservation_id || selectedTrip.id
@@ -328,7 +335,9 @@ function renderLocationLink(vehicle) {
               <>
                 <div className="detail-row">
                   <span>Tolls</span>
-                  <strong>{hasTollExposure ? formatMoney(unbilledTolls) : "—"}</strong>
+                  <strong>
+                    {hasTollExposure ? formatMoney(tollTotal) : "No tolls recorded"}
+                  </strong>
                 </div>
 
                 <div className="detail-row">
@@ -340,6 +349,11 @@ function renderLocationLink(vehicle) {
                         )}`
                       : "No tolls"}
                   </strong>
+                </div>
+
+                <div className="detail-row">
+                  <span>Open tolls</span>
+                  <strong>{hasOpenTolls ? "Yes - needs billing/review" : "No"}</strong>
                 </div>
               </>
             ) : null}
@@ -513,6 +527,11 @@ function renderLocationLink(vehicle) {
                   ? `${Math.round(mileageStats.remaining).toLocaleString("en-US")} mi`
                   : "—"}
               </strong>
+            </div>
+
+            <div className="detail-row">
+              <span>Max observed RPM</span>
+              <strong>{formatRpm(selectedTrip.max_engine_rpm)}</strong>
             </div>
 
             <div className="detail-row">

@@ -299,8 +299,8 @@ function normalizeTollReviewStatus(value, hasTolls) {
   if (
     normalized === "pending" ||
     normalized === "reviewed" ||
-    normalized === "submitted" ||
-    normalized === "resolved"
+    normalized === "billed" ||
+    normalized === "waived"
   ) {
     return normalized;
   }
@@ -328,6 +328,7 @@ const TRIP_SELECT = `
     t.toll_total,
     t.toll_review_status,
     t.fuel_reimbursement_total,
+    t.max_engine_rpm,
     ti.updated_at,
     ti.message_count,
     ti.unread_messages,
@@ -481,6 +482,140 @@ router.get("/vehicle/:vehicleId", async (req, res) => {
   } catch (err) {
     console.error("GET /api/trips/vehicle/:vehicleId failed:", err.message || err);
     res.status(500).json({ error: "Failed to load vehicle trips" });
+  }
+});
+
+router.get("/automation-notices", async (req, res) => {
+  try {
+    const query = `
+      WITH notice_settings AS (
+        SELECT COALESCE(
+          (
+            SELECT value->'acknowledgedHistoryIds'
+            FROM app_settings
+            WHERE key = 'ui.automation_stage_notices'
+            LIMIT 1
+          ),
+          '[]'::jsonb
+        ) AS acknowledged_history_ids
+      )
+      SELECT
+        h.id AS history_id,
+        h.previous_stage,
+        h.next_stage,
+        h.changed_at,
+        h.changed_by,
+        h.reason,
+        trip_data.*
+      FROM trip_stage_history h
+      CROSS JOIN notice_settings ns
+      JOIN LATERAL (
+        ${TRIP_SELECT}
+        WHERE ti.id = h.trip_id
+        LIMIT 1
+      ) trip_data ON true
+      WHERE h.next_stage = 'in_progress'
+        AND COALESCE(h.changed_by, '') LIKE 'system:%'
+        AND h.changed_at >= NOW() - INTERVAL '14 days'
+        AND NOT (ns.acknowledged_history_ids ? h.id::text)
+      ORDER BY h.changed_at DESC, h.id DESC
+      LIMIT 5
+    `;
+
+    const { rows } = await pool.query(query);
+
+    const notices = rows.map((row) => {
+      const trip = enrichTrip(row);
+      const vehicleName = trip.vehicle_nickname || trip.vehicle_name || "vehicle";
+      const guestName = trip.guest_name || "guest";
+
+      return {
+        id: `automation:${row.history_id}`,
+        history_id: row.history_id,
+        previous_stage: row.previous_stage,
+        next_stage: row.next_stage,
+        changed_at: row.changed_at,
+        changed_by: row.changed_by,
+        reason: row.reason,
+        subject: `${vehicleName} auto-started for ${guestName}`,
+        trip_id: trip.id,
+        reservation_id: trip.reservation_id,
+        vehicle_name: trip.vehicle_name,
+        vehicle_nickname: trip.vehicle_nickname,
+        guest_name: trip.guest_name,
+        trip_start: trip.trip_start,
+        trip_end: trip.trip_end,
+        trip,
+      };
+    });
+
+    res.json(notices);
+  } catch (err) {
+    console.error("GET /api/trips/automation-notices failed:", err);
+    res.status(500).json({ error: "Failed to load automation notices" });
+  }
+});
+
+router.patch("/automation-notices/:historyId/ack", async (req, res) => {
+  const historyId = Number(req.params.historyId);
+
+  if (!Number.isInteger(historyId) || historyId <= 0) {
+    return res.status(400).json({ error: "Invalid automation notice id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const { rows } = await client.query(
+      `
+        SELECT value
+        FROM app_settings
+        WHERE key = 'ui.automation_stage_notices'
+        FOR UPDATE
+      `
+    );
+
+    const currentValue =
+      rows[0]?.value && typeof rows[0].value === "object" ? rows[0].value : {};
+    const existingIds = Array.isArray(currentValue.acknowledgedHistoryIds)
+      ? currentValue.acknowledgedHistoryIds.map((value) => String(value))
+      : [];
+    const nextIds = [String(historyId), ...existingIds]
+      .filter((value, index, all) => all.indexOf(value) === index)
+      .slice(0, 200);
+    const nextValue = {
+      ...currentValue,
+      acknowledgedHistoryIds: nextIds,
+    };
+
+    const result = await client.query(
+      `
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES ('ui.automation_stage_notices', $1::jsonb, NOW())
+        ON CONFLICT (key)
+        DO UPDATE SET
+          value = EXCLUDED.value,
+          updated_at = NOW()
+        RETURNING key, value, updated_at
+      `,
+      [JSON.stringify(nextValue)]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      history_id: historyId,
+      setting: result.rows[0],
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("PATCH /api/trips/automation-notices/:historyId/ack failed:", err);
+    res.status(500).json({ error: "Failed to acknowledge automation notice" });
+  } finally {
+    client.release();
   }
 });
 

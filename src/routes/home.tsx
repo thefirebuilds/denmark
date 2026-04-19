@@ -87,6 +87,30 @@ function delay(ms: number) {
   });
 }
 
+function isBackendUnavailableError(err: unknown) {
+  if (err instanceof TypeError) return true;
+
+  const message = err instanceof Error ? err.message : String(err || "");
+  return (
+    /failed to fetch/i.test(message) ||
+    /networkerror/i.test(message) ||
+    /request failed:\s*5\d\d/i.test(message) ||
+    /http\s*5\d\d/i.test(message) ||
+    /\b5\d\d\b/.test(message)
+  );
+}
+
+function getFetchUrl(input: RequestInfo | URL) {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function isApiFetch(input: RequestInfo | URL) {
+  const url = getFetchUrl(input);
+  return url.startsWith(API_BASE) || url.startsWith("/api/");
+}
+
 export default function Home() {
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [trips, setTrips] = useState([]);
@@ -114,6 +138,70 @@ export default function Home() {
   const lastChimeAtRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  function returnToStartup(label = "Waiting for backend") {
+    setStartup((current) => {
+      if (!current.ready && current.label === label && !current.error) {
+        return current;
+      }
+
+      return {
+        ready: false,
+        label,
+        error: "",
+      };
+    });
+    setMessageStatsLoading(true);
+    setMessageStatsRefreshing(false);
+    setSelectedTrip(null);
+    setMessageMode("live");
+  }
+
+  useEffect(() => {
+    const originalFetch = window.fetch.bind(window);
+
+    window.fetch = async (input, init) => {
+      const apiRequest = isApiFetch(input);
+
+      try {
+        const response = await originalFetch(input, init);
+
+        if (apiRequest && response.status >= 500) {
+          window.dispatchEvent(new CustomEvent("denmark:backend-unavailable"));
+        }
+
+        return response;
+      } catch (err) {
+        if (apiRequest) {
+          window.dispatchEvent(new CustomEvent("denmark:backend-unavailable"));
+        }
+
+        throw err;
+      }
+    };
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleBackendUnavailable() {
+      returnToStartup("Waiting for backend");
+    }
+
+    window.addEventListener(
+      "denmark:backend-unavailable",
+      handleBackendUnavailable
+    );
+
+    return () => {
+      window.removeEventListener(
+        "denmark:backend-unavailable",
+        handleBackendUnavailable
+      );
+    };
+  }, []);
+
   useEffect(() => {
     audioRef.current = new Audio("boop.mp3");
     audioRef.current.preload = "auto";
@@ -129,134 +217,150 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
 
+    if (startup.ready) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
     async function loadStartup() {
-      try {
-        setStartup({
-          ready: false,
-          label: "Waiting for startup jobs",
-          error: "",
-        });
-
-        for (;;) {
-          const statusRes = await fetch(`${API_BASE}/api/startup/status`, {
-            headers: { Accept: "application/json" },
-          });
-
-          if (!statusRes.ok) {
-            throw new Error(`Startup status request failed: ${statusRes.status}`);
-          }
-
-          const statusData = await statusRes.json();
-          if (statusData?.completed) break;
-
-          const running = Array.isArray(statusData?.running)
-            ? statusData.running
-            : [];
-          const pending = Array.isArray(statusData?.pending)
-            ? statusData.pending
-            : [];
-          const activeJobs = running.length ? running : pending;
-
-          if (cancelled) return;
+      for (;;) {
+        try {
           setStartup({
             ready: false,
-            label: activeJobs.length
-              ? `Running ${activeJobs.join(", ")}`
-              : "Waiting for startup jobs",
+            label: "Waiting for startup jobs",
             error: "",
           });
 
-          await delay(900);
-          if (cancelled) return;
-        }
+          for (;;) {
+            const statusRes = await fetch(`${API_BASE}/api/startup/status`, {
+              headers: { Accept: "application/json" },
+            });
 
-        setStartup({
-          ready: false,
-          label: "Loading dispatch settings",
-          error: "",
-        });
+            if (!statusRes.ok) {
+              throw new Error(
+                `Startup status request failed: ${statusRes.status}`
+              );
+            }
 
-        const settingsRes = await fetch(`${API_BASE}/api/settings/ui.dispatch`);
-        if (!settingsRes.ok) {
-          throw new Error(`Settings request failed: ${settingsRes.status}`);
-        }
+            const statusData = await statusRes.json();
+            if (statusData?.completed) break;
 
-        const settingsData = await settingsRes.json();
-        const mergedSettings = mergeDispatchSettings(settingsData?.value);
+            const running = Array.isArray(statusData?.running)
+              ? statusData.running
+              : [];
+            const pending = Array.isArray(statusData?.pending)
+              ? statusData.pending
+              : [];
+            const activeJobs = running.length ? running : pending;
 
-        if (cancelled) return;
-        setDispatchSettings(mergedSettings);
-        setStartup({
-          ready: false,
-          label: "Loading trips, vehicles, and tasks",
-          error: "",
-        });
+            if (cancelled) return;
+            setStartup({
+              ready: false,
+              label: activeJobs.length
+                ? `Running ${activeJobs.join(", ")}`
+                : "Waiting for startup jobs",
+              error: "",
+            });
 
-        const [statsRes, tripsRes, vehiclesRes, messagesRes] = await Promise.all([
-          fetch(`${API_BASE}/api/messages/stats`, {
-            headers: { Accept: "application/json" },
-          }),
-          fetch(`${API_BASE}/api/trips?scope=all`, {
-            headers: { Accept: "application/json" },
-          }),
-          fetch(`${API_BASE}/api/vehicles/live-status`, {
-            headers: { Accept: "application/json" },
-          }),
-          fetch(`${API_BASE}/api/messages`, {
-            headers: { Accept: "application/json" },
-          }),
-        ]);
+            await delay(900);
+            if (cancelled) return;
+          }
 
-        const failures = [
-          ["message stats", statsRes],
-          ["trips", tripsRes],
-          ["vehicle telemetry", vehiclesRes],
-          ["dispatch tasks", messagesRes],
-        ].filter(([, res]) => !res.ok);
-
-        if (failures.length > 0) {
-          const [name, res] = failures[0];
-          throw new Error(`${name} request failed: ${res.status}`);
-        }
-
-        const [statsData, tripsData, vehiclesData, messagesData] =
-          await Promise.all([
-            statsRes.json(),
-            tripsRes.json(),
-            vehiclesRes.json(),
-            messagesRes.json(),
-          ]);
-
-        if (cancelled) return;
-
-        const nextUnread = Number(statsData?.unread ?? 0);
-        previousUnreadRef.current = nextUnread;
-        setMessageStats({
-          unread: nextUnread,
-          lastReceived: statsData?.lastReceived ?? null,
-        });
-        setMessageStatsLoading(false);
-        setTrips(Array.isArray(tripsData) ? tripsData : []);
-        setStartupVehicles(Array.isArray(vehiclesData) ? vehiclesData : []);
-        setStartupMessages(
-          Array.isArray(messagesData) ? messagesData.slice(0, 5) : []
-        );
-        setStartup({
-          ready: true,
-          label: "Ready",
-          error: "",
-        });
-      } catch (err) {
-        console.error("Startup load failed:", err);
-
-        if (!cancelled) {
           setStartup({
             ready: false,
-            label: "Startup paused",
-          error:
-            err instanceof Error ? err.message : "Failed to load startup data",
+            label: "Loading dispatch settings",
+            error: "",
+          });
+
+          const settingsRes = await fetch(`${API_BASE}/api/settings/ui.dispatch`);
+          if (!settingsRes.ok) {
+            throw new Error(`Settings request failed: ${settingsRes.status}`);
+          }
+
+          const settingsData = await settingsRes.json();
+          const mergedSettings = mergeDispatchSettings(settingsData?.value);
+
+          if (cancelled) return;
+          setDispatchSettings(mergedSettings);
+          setStartup({
+            ready: false,
+            label: "Loading trips, vehicles, and tasks",
+            error: "",
+          });
+
+          const [statsRes, tripsRes, vehiclesRes, messagesRes] =
+            await Promise.all([
+              fetch(`${API_BASE}/api/messages/stats`, {
+                headers: { Accept: "application/json" },
+              }),
+              fetch(`${API_BASE}/api/trips?scope=all`, {
+                headers: { Accept: "application/json" },
+              }),
+              fetch(`${API_BASE}/api/vehicles/live-status`, {
+                headers: { Accept: "application/json" },
+              }),
+              fetch(`${API_BASE}/api/messages`, {
+                headers: { Accept: "application/json" },
+              }),
+            ]);
+
+          const failures = [
+            ["message stats", statsRes],
+            ["trips", tripsRes],
+            ["vehicle telemetry", vehiclesRes],
+            ["dispatch tasks", messagesRes],
+          ].filter(([, res]) => !res.ok);
+
+          if (failures.length > 0) {
+            const [name, res] = failures[0];
+            throw new Error(`${name} request failed: ${res.status}`);
+          }
+
+          const [statsData, tripsData, vehiclesData, messagesData] =
+            await Promise.all([
+              statsRes.json(),
+              tripsRes.json(),
+              vehiclesRes.json(),
+              messagesRes.json(),
+            ]);
+
+          if (cancelled) return;
+
+          const nextUnread = Number(statsData?.unread ?? 0);
+          previousUnreadRef.current = nextUnread;
+          setMessageStats({
+            unread: nextUnread,
+            lastReceived: statsData?.lastReceived ?? null,
           });
           setMessageStatsLoading(false);
+          setTrips(Array.isArray(tripsData) ? tripsData : []);
+          setStartupVehicles(Array.isArray(vehiclesData) ? vehiclesData : []);
+          setStartupMessages(
+            Array.isArray(messagesData) ? messagesData.slice(0, 5) : []
+          );
+          setStartup({
+            ready: true,
+            label: "Ready",
+            error: "",
+          });
+          return;
+        } catch (err) {
+          console.warn("Startup load failed, retrying:", err);
+
+          if (cancelled) return;
+
+          setStartup({
+            ready: false,
+            label: isBackendUnavailableError(err)
+              ? "Waiting for backend"
+              : "Waiting for startup data",
+            error: "",
+          });
+          setMessageStatsLoading(true);
+
+          await delay(1500);
+          if (cancelled) return;
         }
       }
     }
@@ -266,7 +370,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [startup.ready]);
 
   function playMailChime() {
     const audio = audioRef.current;
@@ -343,6 +447,11 @@ export default function Home() {
       console.error("Message stats load failed:", err);
 
       if (!cancelled) {
+        if (isBackendUnavailableError(err)) {
+          returnToStartup("Waiting for backend");
+          return;
+        }
+
         setMessageStats({
           unread: 0,
           lastReceived: null,
@@ -365,6 +474,12 @@ export default function Home() {
 
     if (startup.ready) {
       loadMessageStats(cancelled);
+    }
+
+    if (!startup.ready) {
+      return () => {
+        cancelled = true;
+      };
     }
 
     const interval = window.setInterval(() => {

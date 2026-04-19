@@ -62,6 +62,7 @@ function shouldCaptureEndOdometer(currentStage, nextStage) {
 }
 
 let vehiclesColumnCache = null;
+let tripsColumnCache = null;
 
 async function getVehiclesColumnMap(client) {
   if (vehiclesColumnCache) return vehiclesColumnCache;
@@ -86,6 +87,22 @@ async function getVehiclesColumnMap(client) {
   };
 
   return vehiclesColumnCache;
+}
+
+async function getTripsColumnSet(client) {
+  if (tripsColumnCache) return tripsColumnCache;
+
+  const result = await client.query(
+    `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'trips'
+    `
+  );
+
+  tripsColumnCache = new Set(result.rows.map((row) => row.column_name));
+  return tripsColumnCache;
 }
 
 async function getVehicleCurrentOdometer(client, trip) {
@@ -148,6 +165,55 @@ async function getVehicleCurrentOdometer(client, trip) {
   }
 
   return null;
+}
+
+async function updateTripMaxEngineRpm(client, trip) {
+  const columns = await getTripsColumnSet(client);
+  if (!columns.has("max_engine_rpm") || !trip?.id) {
+    return { rowCount: 0 };
+  }
+
+  return client.query(
+    `
+      UPDATE trips t
+      SET
+        max_engine_rpm = COALESCE(
+          GREATEST(t.max_engine_rpm, rpm.max_engine_rpm),
+          rpm.max_engine_rpm,
+          t.max_engine_rpm
+        ),
+        updated_at = NOW()
+      FROM (
+        SELECT
+          t2.id,
+          MAX(s.engine_rpm) AS max_engine_rpm
+        FROM trips t2
+        JOIN vehicles v
+          ON (
+            (
+              t2.turo_vehicle_id IS NOT NULL
+              AND v.turo_vehicle_id IS NOT NULL
+              AND CAST(t2.turo_vehicle_id AS text) = CAST(v.turo_vehicle_id AS text)
+            )
+            OR (
+              COALESCE(t2.vehicle_name, '') <> ''
+              AND LOWER(t2.vehicle_name) = LOWER(v.nickname)
+            )
+          )
+        JOIN vehicle_telemetry_snapshots s
+          ON s.vin = v.vin
+        WHERE s.service_name = 'dimo'
+          AND s.engine_rpm IS NOT NULL
+          AND s.captured_at >= t2.trip_start
+          AND s.captured_at <= t2.trip_end
+          AND t2.id = $1
+        GROUP BY t2.id
+      ) rpm
+      WHERE t.id = rpm.id
+        AND rpm.max_engine_rpm IS NOT NULL
+    `,
+    [trip.id]
+  );
 }
 
 async function transitionTripStage(tripId, nextStage, options = {}) {
@@ -330,6 +396,10 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
 );
 
     const updatedTrip = updateResult.rows[0];
+
+    if (captureEnd || normalizedNextStage === "complete") {
+      await updateTripMaxEngineRpm(client, updatedTrip);
+    }
 
     await client.query(
       `

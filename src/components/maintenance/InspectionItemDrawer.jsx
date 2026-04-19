@@ -454,6 +454,17 @@ export default function InspectionItemDrawer({
       return;
     }
 
+    const odometerMiles = Number(form.odometerMiles);
+
+    if (
+      form.odometerMiles === "" ||
+      !Number.isFinite(odometerMiles) ||
+      odometerMiles < 0
+    ) {
+      window.alert("Enter the odometer reading for this maintenance entry.");
+      return;
+    }
+
     const acTemperatureDeltaF = calculateAcTemperatureDelta(
       form.acAmbientTempF,
       form.acVentTempF
@@ -464,7 +475,7 @@ export default function InspectionItemDrawer({
       ruleCode: item.ruleCode,
       vehicleVin: vehicle?.vin || null,
       performedAt: form.performedAt || null,
-      odometerMiles: form.odometerMiles === "" ? null : Number(form.odometerMiles),
+      odometerMiles,
       result: form.result || null,
       notes: form.notes || "",
       data: {
@@ -606,6 +617,7 @@ export default function InspectionItemDrawer({
               step="1"
               value={form.odometerMiles}
               onChange={(e) => updateField("odometerMiles", e.target.value)}
+              required
               placeholder={
                 vehicle?.currentOdometerMiles != null
                   ? String(vehicle.currentOdometerMiles)

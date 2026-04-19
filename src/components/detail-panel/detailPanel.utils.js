@@ -371,7 +371,9 @@ export function getVehicleEmergencyTone(vehicle) {
  */
 export function buildTripUrl(trip) {
   if (trip?.trip_details_url) return trip.trip_details_url;
-  if (trip?.reservation_id) return `https://turo.com/reservation/${trip.reservation_id}`;
+  if (trip?.reservation_id) {
+    return `https://turo.com/us/en/reservation/${trip.reservation_id}`;
+  }
   return "";
 }
 

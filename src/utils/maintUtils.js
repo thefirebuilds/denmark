@@ -562,6 +562,164 @@ export function sortQueue(items) {
   );
 }
 
+function normalizePrepDueTitle(rawTitle, rawType, reason = "") {
+  const type = String(rawType || "").toLowerCase();
+  const title = String(rawTitle || "").toLowerCase();
+
+  let label = String(rawTitle || rawType || "Open maintenance item").trim();
+
+  if (type.includes("oil_change") || title.includes("oil change")) {
+    label = "Oil change";
+  } else if (
+    type.includes("wiper") ||
+    title.includes("wiper") ||
+    title.includes("windshield wiper")
+  ) {
+    label = "Change wipers";
+  } else if (type.includes("air_filter") || title.includes("air filter")) {
+    label = title.includes("cabin") ? "Cabin air filter" : "Engine air filter";
+  } else if (title.includes("tire rotation")) {
+    label = "Tire rotation";
+  } else if (title.includes("transmission")) {
+    label = "Transmission service";
+  } else if (title.includes("battery")) {
+    label = "Battery test";
+  } else if (title.includes("brake")) {
+    label = "Brake inspection";
+  } else if (title.includes("tread")) {
+    label = "Tread depth inspection";
+  } else if (title.includes("tire pressure")) {
+    label = "Set tire pressures";
+  } else if (title.includes("clean")) {
+    label = "Clean vehicle";
+  } else if (title.includes("registration")) {
+    label = "Verify registration";
+  } else if (title.includes("leak")) {
+    label = "Leak check";
+  }
+
+  return reason ? `${label} - ${reason}` : label;
+}
+
+function getPrepRuleReason(rule, cutoff = new Date()) {
+  const status = String(rule?.status || "").toLowerCase();
+  const currentOdometer = Number(rule?.currentOdometerMiles);
+
+  if (!rule?.lastEvent) return "never recorded";
+  if (status === "failed") return "failed";
+  if (status === "overdue") return "overdue";
+
+  const nextDueMiles =
+    rule?.nextDueMiles != null ? Number(rule.nextDueMiles) : null;
+  if (
+    Number.isFinite(currentOdometer) &&
+    Number.isFinite(nextDueMiles) &&
+    nextDueMiles <= currentOdometer
+  ) {
+    return "due now";
+  }
+
+  if (rule?.nextDueDate) {
+    const nextDue = new Date(rule.nextDueDate);
+    if (!Number.isNaN(nextDue.getTime()) && nextDue <= cutoff) {
+      return nextDue <= new Date() ? "due now" : "due before trip";
+    }
+  }
+
+  if (status === "due") return "due now";
+  if (status === "unknown") return "never recorded";
+
+  return "";
+}
+
+export function buildPreflightDueItems(summary, options = {}) {
+  const cutoff = options.cutoff ? new Date(options.cutoff) : new Date();
+  const safeCutoff = Number.isNaN(cutoff.getTime()) ? new Date() : cutoff;
+  const currentOdometer = Number(summary?.currentOdometerMiles);
+  const tasks = Array.isArray(summary?.tasks) ? summary.tasks : [];
+  const rules = Array.isArray(summary?.ruleStatuses) ? summary.ruleStatuses : [];
+
+  const ruleItems = rules
+    .map((rule) => ({
+      ...rule,
+      currentOdometerMiles: Number.isFinite(currentOdometer)
+        ? currentOdometer
+        : null,
+    }))
+    .map((rule) => {
+      const reason = getPrepRuleReason(rule, safeCutoff);
+      if (!reason) return null;
+
+      return {
+        id: `rule-${rule.ruleCode || rule.ruleId || rule.title}`,
+        title: normalizePrepDueTitle(rule.title, rule.ruleCode, reason),
+        source: "rule",
+        blocks:
+          Boolean(rule.blocksRentalWhenOverdue) ||
+          Boolean(rule.blocksGuestExportWhenOverdue),
+        priority:
+          reason === "failed" || reason === "overdue"
+            ? 4
+            : reason === "due now"
+            ? 3
+            : reason === "never recorded"
+            ? 2
+            : 1,
+      };
+    })
+    .filter(Boolean);
+
+  const taskItems = tasks
+    .filter((task) => String(task?.status || "").toLowerCase() === "open")
+    .filter((task) => !isTaskSatisfiedByRule(task, summary))
+    .map((task) => ({
+      id: `task-${task.id}`,
+      title: normalizePrepDueTitle(task.title, task.task_type),
+      source: "task",
+      blocks: Boolean(task.blocks_rental) || Boolean(task.blocks_guest_export),
+      priority:
+        task.priority === "urgent"
+          ? 5
+          : task.priority === "high"
+          ? 4
+          : task.priority === "medium"
+          ? 3
+          : 2,
+    }));
+
+  const dedupedMap = new Map();
+
+  for (const item of [...ruleItems, ...taskItems]) {
+    const key = item.title
+      .replace(/\s+-\s+(never recorded|due now|due before trip|overdue|failed)$/i, "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+    const existing = dedupedMap.get(key);
+
+    if (!existing) {
+      dedupedMap.set(key, item);
+      continue;
+    }
+
+    const existingScore =
+      (existing.blocks ? 100 : 0) + (existing.priority || 0);
+    const itemScore = (item.blocks ? 100 : 0) + (item.priority || 0);
+
+    if (itemScore > existingScore) {
+      dedupedMap.set(key, item);
+    }
+  }
+
+  return Array.from(dedupedMap.values())
+    .sort((a, b) => {
+      const aScore = (a.blocks ? 100 : 0) + (a.priority || 0);
+      const bScore = (b.blocks ? 100 : 0) + (b.priority || 0);
+      return bScore - aScore || a.title.localeCompare(b.title);
+    })
+    .map(({ id, title }) => ({ id, title }));
+}
+
 function getOdometerHistoryPoints(summary) {
   const points = [];
   const history = summary?.ruleHistory || {};

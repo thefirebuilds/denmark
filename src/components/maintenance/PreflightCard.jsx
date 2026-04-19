@@ -73,7 +73,7 @@ export default function PreflightCard({
   const [scale, setScale] = useState(1);
 
   const checklistSections = buildChecklistSections();
-  const dueList = Array.isArray(dueItems) ? dueItems.slice(0, 8) : [];
+  const dueList = Array.isArray(dueItems) ? dueItems.slice(0, 12) : [];
 
   useLayoutEffect(() => {
     function measureAndScale() {

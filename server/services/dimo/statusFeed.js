@@ -16,6 +16,15 @@ function toNumberOrNull(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function normalizeEngineTempF(value) {
+  const num = toNumberOrNull(value);
+  if (num == null) return null;
+
+  // DIMO integrations have historically reported some temperature signals in C
+  // and some in F. Coolant values at or below 130 are treated as Celsius.
+  return num <= 130 ? (num * 9) / 5 + 32 : num;
+}
+
 function firstNonNull(...values) {
   for (const value of values) {
     if (value !== null && value !== undefined && value !== "") return value;
@@ -101,7 +110,49 @@ async function getDimoStatusFeed() {
       engine_rpm,
       throttle_position,
       runtime_minutes,
-      def_level
+      def_level,
+      (
+        SELECT jsonb_build_object(
+          'min_f', MIN(
+            CASE
+              WHEN hist.coolant_temp <= 130 THEN hist.coolant_temp * 9 / 5 + 32
+              ELSE hist.coolant_temp
+            END
+          ),
+          'max_f', MAX(
+            CASE
+              WHEN hist.coolant_temp <= 130 THEN hist.coolant_temp * 9 / 5 + 32
+              ELSE hist.coolant_temp
+            END
+          ),
+          'sample_count', COUNT(*),
+          'since', MIN(hist.captured_at),
+          'last_overtemp_at', MAX(hist.captured_at) FILTER (
+            WHERE CASE
+              WHEN hist.coolant_temp <= 130 THEN hist.coolant_temp * 9 / 5 + 32
+              ELSE hist.coolant_temp
+            END >= 240
+          )
+        )
+        FROM vehicle_telemetry_snapshots hist
+        WHERE hist.service_name = 'dimo'
+          AND hist.dimo_token_id = vehicle_telemetry_snapshots.dimo_token_id
+          AND hist.coolant_temp IS NOT NULL
+          AND hist.captured_at >= NOW() - INTERVAL '14 days'
+      ) AS engine_temp_range,
+      (
+        SELECT jsonb_build_object(
+          'max_rpm', MAX(hist.engine_rpm),
+          'sample_count', COUNT(*),
+          'since', MIN(hist.captured_at),
+          'last_recorded_at', MAX(hist.captured_at)
+        )
+        FROM vehicle_telemetry_snapshots hist
+        WHERE hist.service_name = 'dimo'
+          AND hist.dimo_token_id = vehicle_telemetry_snapshots.dimo_token_id
+          AND hist.engine_rpm IS NOT NULL
+          AND hist.captured_at >= NOW() - INTERVAL '14 days'
+      ) AS engine_rpm_range
     FROM vehicle_telemetry_snapshots
     WHERE service_name = 'dimo'
       AND dimo_token_id IS NOT NULL
@@ -185,8 +236,16 @@ async function getDimoStatusFeed() {
           run_time_minutes: row.runtime_minutes,
         },
         engine: {
-          coolant_temp: row.coolant_temp,
+          coolant_temp: normalizeEngineTempF(row.coolant_temp),
+          coolant_temp_raw: row.coolant_temp,
+          coolant_temp_unit: "F",
+          coolant_temp_range: row.engine_temp_range || null,
+          overtemp: Boolean(
+            row.engine_temp_range?.last_overtemp_at ||
+              normalizeEngineTempF(row.coolant_temp) >= 240
+          ),
           rpm: row.engine_rpm,
+          rpm_range: row.engine_rpm_range || null,
           throttle_position: row.throttle_position,
         },
         diesel: {

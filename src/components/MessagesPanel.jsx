@@ -11,8 +11,10 @@ import { useEffect, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import GuestSafetySnapshotCard from "./maintenance/GuestSafetySnapshotCard";
 import PreflightCard from "./maintenance/PreflightCard";
+import { openPrintDialogForElement } from "../utils/printUtils";
 import {
   buildExportFileName,
+  buildPreflightDueItems,
   buildInspectionHistoryMap,
   getNextServiceDue,
   getVinLast6,
@@ -130,11 +132,29 @@ function formatPrepWindowLabel(value) {
   })}`;
 }
 
-function buildPrepDueItems(message) {
-  return (message?.maintenance_tasks || []).map((task) => ({
+function buildPrepDueItems(message, summary = null) {
+  const tripStart = message?.trip_start ? new Date(message.trip_start) : null;
+  const cutoff =
+    tripStart && !Number.isNaN(tripStart.getTime()) ? tripStart : new Date();
+  const summaryItems = summary
+    ? buildPreflightDueItems(summary, { cutoff })
+    : [];
+  const taskItems = (message?.maintenance_tasks || []).map((task) => ({
     id: task.id || task.title,
     title: task.title || "Maintenance task",
   }));
+  const seen = new Set();
+
+  return [...summaryItems, ...taskItems].filter((item) => {
+    const key = String(item.title || "")
+      .replace(/\s+-\s+(never recorded|due now|due before trip|overdue|failed)$/i, "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function buildPrepVehicle(message, vehicle = null) {
@@ -592,6 +612,8 @@ export default function MessagesPanel({
     useState(null);
   const [prepExport, setPrepExport] = useState(null);
   const [inspectionExport, setInspectionExport] = useState(null);
+  const [printingPrepMessageId, setPrintingPrepMessageId] = useState(null);
+  const [prepPrint, setPrepPrint] = useState(null);
   const [expandedMaintenanceIds, setExpandedMaintenanceIds] = useState(() => new Set());
   const [completedSyntheticTaskIds, setCompletedSyntheticTaskIds] = useState(() =>
     loadCompletedSyntheticTaskIds()
@@ -775,16 +797,33 @@ async function handleAdvanceToReadyForHandoff(message) {
   }
 }
 
-async function handleExportPrepSheet(message) {
-  if (!isMaintenanceNotice(message) || exportingPrepMessageId) {
+async function handleExportPrepSheet(message, mode = "export") {
+  if (
+    !isMaintenanceNotice(message) ||
+    exportingPrepMessageId ||
+    printingPrepMessageId
+  ) {
+    return;
+  }
+
+  const printWindow =
+    mode === "print" ? window.open("", "_blank") : null;
+
+  if (mode === "print" && !printWindow) {
+    setError("Browser blocked the print window");
     return;
   }
 
   try {
-    setExportingPrepMessageId(message.id);
+    if (mode === "print") {
+      setPrintingPrepMessageId(message.id);
+    } else {
+      setExportingPrepMessageId(message.id);
+    }
     setError("");
 
     let vehicle = null;
+    let summary = null;
     const vehicleSelector =
       message.maintenance_vehicle_vin ||
       message.maintenance_vehicle_name ||
@@ -798,18 +837,42 @@ async function handleExportPrepSheet(message) {
       if (res.ok) {
         vehicle = await res.json();
       }
+
+      const summarySelector = vehicle?.vin || vehicleSelector;
+      const summaryRes = await fetch(
+        `${API_BASE}/api/vehicles/${encodeURIComponent(
+          summarySelector
+        )}/maintenance-summary`
+      );
+
+      if (summaryRes.ok) {
+        summary = await summaryRes.json();
+      }
     }
 
-    setPrepExport({
+    const payload = {
       messageId: message.id,
       vehicle: buildPrepVehicle(message, vehicle),
       windowLabel: formatPrepWindowLabel(message.trip_start),
-      dueItems: buildPrepDueItems(message),
-    });
+      dueItems: buildPrepDueItems(message, summary),
+    };
+
+    if (mode === "print") {
+      setPrepPrint({
+        ...payload,
+        printWindow,
+      });
+    } else {
+      setPrepExport(payload);
+    }
   } catch (err) {
     console.error("Failed preparing prep sheet:", err);
-    setError(err.message || "Could not export prep sheet");
+    setError(err.message || `Could not ${mode} prep sheet`);
     setExportingPrepMessageId(null);
+    setPrintingPrepMessageId(null);
+    if (mode === "print") {
+      printWindow?.close();
+    }
   }
 }
 
@@ -1039,6 +1102,43 @@ async function handleExportGuestInspectionSheet(message) {
       cancelled = true;
     };
   }, [prepExport]);
+
+  useEffect(() => {
+    if (!prepPrint) return undefined;
+
+    let cancelled = false;
+
+    async function printPrepSheet() {
+      try {
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        });
+
+        if (cancelled || !prepExportRef.current) return;
+
+        openPrintDialogForElement(
+          prepExportRef.current,
+          `${prepPrint.vehicle?.nickname || "Vehicle"} prep card`,
+          prepPrint.printWindow
+        );
+      } catch (err) {
+        console.error("Prep sheet print failed:", err);
+        setError(err.message || "Could not print prep sheet");
+        prepPrint.printWindow?.close();
+      } finally {
+        if (!cancelled) {
+          setPrepPrint(null);
+          setPrintingPrepMessageId(null);
+        }
+      }
+    }
+
+    printPrepSheet();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [prepPrint]);
 
   useEffect(() => {
     if (!inspectionExport) return undefined;
@@ -1402,7 +1502,10 @@ async function handleExportGuestInspectionSheet(message) {
                       <button
                         type="button"
                         className="message-action"
-                        disabled={exportingPrepMessageId === message.id}
+                        disabled={
+                          exportingPrepMessageId === message.id ||
+                          printingPrepMessageId === message.id
+                        }
                         onClick={(event) => {
                           event.stopPropagation();
                           handleExportPrepSheet(message);
@@ -1411,6 +1514,25 @@ async function handleExportGuestInspectionSheet(message) {
                         {exportingPrepMessageId === message.id
                           ? "Exporting..."
                           : "Export prep sheet"}
+                      </button>
+                    )}
+
+                    {canShowMaintenance && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={
+                          exportingPrepMessageId === message.id ||
+                          printingPrepMessageId === message.id
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleExportPrepSheet(message, "print");
+                        }}
+                      >
+                        {printingPrepMessageId === message.id
+                          ? "Printing..."
+                          : "Print prep sheet"}
                       </button>
                     )}
 
@@ -1475,12 +1597,12 @@ async function handleExportGuestInspectionSheet(message) {
           })}
       </div>
 
-      {prepExport ? (
+      {prepExport || prepPrint ? (
         <div className="fleet-export-hidden">
           <PreflightCard
-            vehicle={prepExport.vehicle}
-            windowLabel={prepExport.windowLabel}
-            dueItems={prepExport.dueItems}
+            vehicle={(prepExport || prepPrint).vehicle}
+            windowLabel={(prepExport || prepPrint).windowLabel}
+            dueItems={(prepExport || prepPrint).dueItems}
             cardRef={prepExportRef}
           />
         </div>
