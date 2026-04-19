@@ -107,7 +107,6 @@ router.get("/", async (req, res) => {
         model,
         standard_engine,
         license_plate,
-        plate_number,
         bouncie_vehicle_id,
         dimo_token_id,
         turo_vehicle_id,
@@ -144,7 +143,6 @@ router.post("/", async (req, res) => {
       model: toNullableText(req.body.model),
       standard_engine: toNullableText(req.body.standard_engine),
       license_plate: normalizePlate(req.body.license_plate),
-      plate_number: normalizePlate(req.body.license_plate || req.body.plate_number),
       license_state:
         toNullableText(req.body.license_state)?.toUpperCase() || null,
       bouncie_vehicle_id: toNullableText(req.body.bouncie_vehicle_id),

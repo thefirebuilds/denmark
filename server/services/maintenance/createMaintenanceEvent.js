@@ -77,6 +77,14 @@ function normalizePerformedAt(value) {
     err.statusCode = 400;
     throw err;
   }
+
+  const maxFutureMs = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  if (d.getTime() > maxFutureMs) {
+    const err = new Error("performedAt cannot be more than 7 days in the future");
+    err.statusCode = 400;
+    throw err;
+  }
+
   return d.toISOString();
 }
 
@@ -215,7 +223,26 @@ async function createMaintenanceEvent({
     ]
   );
 
-  return insert.rows[0];
+  const taskCloseResult = await pool.query(
+    `
+    UPDATE maintenance_tasks
+    SET
+      status = 'completed',
+      updated_at = NOW()
+    WHERE vehicle_vin = $1
+      AND status IN ('open', 'scheduled', 'in_progress', 'deferred')
+      AND (
+        rule_id = $2
+        OR trigger_context->>'ruleCode' = $3
+      )
+    `,
+    [vin, rule.id, rule.rule_code]
+  );
+
+  return {
+    ...insert.rows[0],
+    closed_task_count: taskCloseResult.rowCount,
+  };
 }
 
 module.exports = {

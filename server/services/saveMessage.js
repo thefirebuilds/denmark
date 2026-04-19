@@ -558,13 +558,8 @@ async function saveMessage(message) {
       subject,
       from_header,
       to_header,
-      cc_header,
-      bcc_header,
-      reply_to_header,
       date_header,
       message_timestamp,
-      in_reply_to,
-      references_header,
       content_type_header,
       flags,
       text_body,
@@ -598,8 +593,7 @@ async function saveMessage(message) {
       $16, $17, $18, $19, $20,
       $21, $22, $23, $24, $25,
       $26, $27, $28, $29, $30,
-      $31, $32, $33, $34, $35,
-      $36, $37, $38
+      $31, $32, $33
     )
     ON CONFLICT (message_id) DO NOTHING
     RETURNING
@@ -628,13 +622,8 @@ async function saveMessage(message) {
     clean(message.subject) || null,
     clean(message.fromHeader) || null,
     clean(message.toHeader) || null,
-    clean(message.ccHeader) || null,
-    clean(message.bccHeader) || null,
-    clean(message.replyToHeader) || null,
     clean(message.dateHeader) || null,
     message.messageTimestamp || null,
-    clean(message.inReplyTo) || null,
-    clean(message.referencesHeader) || null,
     clean(message.contentTypeHeader) || null,
     message.flags?.length ? message.flags : null,
     cleanedTextBody,

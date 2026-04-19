@@ -325,7 +325,13 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
             me.data
           FROM maintenance_events me
           WHERE me.rule_id = r.id
-          ORDER BY me.performed_at DESC, me.id DESC
+          ORDER BY
+            CASE
+              WHEN me.performed_at > NOW() + INTERVAL '7 days' THEN 1
+              ELSE 0
+            END,
+            me.performed_at DESC,
+            me.id DESC
           LIMIT 1
         ) e ON TRUE
         WHERE r.vehicle_vin = $1
@@ -340,16 +346,12 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
           id,
           vehicle_vin,
           rule_id,
-          related_event_id,
           related_trip_id,
           task_type,
           title,
           description,
           priority,
           status,
-          scheduled_for,
-          due_by,
-          completed_at,
           blocks_rental,
           blocks_guest_export,
           needs_review,
@@ -357,8 +359,6 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
           trigger_type,
           trigger_context,
           source_key,
-          assigned_to,
-          resolution_notes,
           created_at,
           updated_at
         FROM maintenance_tasks
@@ -372,8 +372,6 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
             WHEN 'low' THEN 4
             ELSE 5
           END,
-          due_by NULLS LAST,
-          scheduled_for NULLS LAST,
           created_at ASC
       `,
       [vin]
@@ -420,6 +418,10 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
         WHERE r.vehicle_vin = $1
         ORDER BY
           r.rule_code ASC,
+          CASE
+            WHEN me.performed_at > NOW() + INTERVAL '7 days' THEN 1
+            ELSE 0
+          END,
           me.performed_at DESC,
           me.id DESC
       `,

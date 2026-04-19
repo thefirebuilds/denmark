@@ -119,6 +119,24 @@ const DEFAULT_MAINTENANCE_RULE_TEMPLATES = [
     ruleConfig: {},
   },
   {
+    ruleCode: "bearing_tie_rod_check",
+    title: "Bearing / Tie Rod Check",
+    description: "Check wheel bearings, tie rods, and steering play while the car is on stands",
+    category: "safety",
+    intervalMiles: 5000,
+    intervalDays: null,
+    dueSoonMiles: 500,
+    dueSoonDays: 0,
+    blocksRentalWhenOverdue: true,
+    blocksGuestExportWhenOverdue: true,
+    requiresPassResult: true,
+    ruleConfig: {
+      custom_trackable: true,
+      service_type: "bearing_tie_rod_check",
+      inspect_on_stands: true,
+    },
+  },
+  {
     ruleCode: "engine_air_filter",
     title: "Engine Air Filter",
     description: null,
@@ -429,17 +447,20 @@ async function ensureTemplateCatalogSeeded(client) {
       "SELECT COUNT(*)::int AS count FROM maintenance_rule_templates"
     );
 
-    if (Number(countResult.rows[0]?.count) > 0) {
-      return { source: "database", seededCount: 0 };
-    }
-
+    let seededCount = 0;
     for (const template of DEFAULT_MAINTENANCE_RULE_TEMPLATES) {
+      const before = await client.query(
+        "SELECT 1 FROM maintenance_rule_templates WHERE rule_code = $1",
+        [template.ruleCode]
+      );
       await upsertRuleTemplate(client, template, { reactivate: true });
+      if (!before.rows.length) seededCount += 1;
     }
 
     return {
       source: "database",
-      seededCount: DEFAULT_MAINTENANCE_RULE_TEMPLATES.length,
+      seededCount,
+      existingCount: Number(countResult.rows[0]?.count || 0),
     };
   } catch (err) {
     if (isMissingTemplateTableError(err)) {

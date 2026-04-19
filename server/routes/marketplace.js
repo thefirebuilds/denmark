@@ -931,14 +931,11 @@ router.get("/listings", async (req, res) => {
         decision_score,
         decision_notes,
         decision_tags,
-        acquisition_priority,
-        reviewed_at,
-        reviewed_by
+        reviewed_at
       FROM marketplace_listings
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY
         hidden ASC,
-        COALESCE(acquisition_priority, 999) ASC,
         last_seen_at DESC,
         created_at DESC
       LIMIT $${i}
@@ -1064,11 +1061,6 @@ router.patch("/listings/:id", async (req, res) => {
         ? undefined
         : JSON.stringify(Array.isArray(body.decision_tags) ? body.decision_tags : []);
 
-    const acquisitionPriority =
-      body.acquisition_priority === undefined
-        ? undefined
-        : toIntOrNull(body.acquisition_priority);
-
     const vin =
       body.vin === undefined
         ? undefined
@@ -1110,12 +1102,6 @@ router.patch("/listings/:id", async (req, res) => {
     if (decisionTags !== undefined) {
       fields.push(`decision_tags = $${i++}::jsonb`);
       params.push(decisionTags);
-      shouldMarkReviewed = true;
-    }
-
-    if (acquisitionPriority !== undefined) {
-      fields.push(`acquisition_priority = $${i++}`);
-      params.push(acquisitionPriority);
       shouldMarkReviewed = true;
     }
 

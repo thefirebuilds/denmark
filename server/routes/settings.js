@@ -13,6 +13,14 @@ const DEFAULT_SETTINGS = {
     openTripsSort: "priority",
     pinOverdue: true,
     showCanceled: false,
+    visibleBuckets: {
+      needs_closeout: true,
+      in_progress: true,
+      unconfirmed: true,
+      upcoming: true,
+      canceled: false,
+      closed: false,
+    },
     bucketOrder: [
       "needs_closeout",
       "in_progress",
@@ -37,10 +45,26 @@ function mergeSettings(key, value) {
     return defaultForKey(key);
   }
 
-  return {
+  const merged = {
     ...defaultForKey(key),
     ...value,
   };
+
+  if (key === "ui.dispatch") {
+    const defaults = defaultForKey(key);
+    merged.visibleBuckets = {
+      ...(defaults.visibleBuckets || {}),
+      ...(value.visibleBuckets || {}),
+    };
+
+    if (!value.visibleBuckets && value.showCanceled !== undefined) {
+      merged.visibleBuckets.canceled = Boolean(value.showCanceled);
+    }
+
+    merged.showCanceled = Boolean(merged.visibleBuckets.canceled);
+  }
+
+  return merged;
 }
 
 router.get("/", async (req, res) => {

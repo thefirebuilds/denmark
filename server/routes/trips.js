@@ -49,6 +49,54 @@ function getAllowedNextStages(workflowStage) {
   return ALLOWED_TRANSITIONS?.[workflowStage] || [];
 }
 
+function mapHandoffNoticeRow(row) {
+  const vehicleName = row.vehicle_nickname || row.vehicle_name || "vehicle";
+  const guestName = row.guest_name || "guest";
+
+  return {
+    id: `handoff:${row.trip_id}`,
+    message_id: `handoff:${row.trip_id}`,
+    subject: `${vehicleName} needs handoff prep for ${guestName}`,
+    status: "read",
+    message_type: "handoff_ready_required",
+    guest_name: row.guest_name,
+    vehicle_name: row.vehicle_name,
+    vehicle_nickname: row.vehicle_nickname,
+    reservation_id: row.reservation_id,
+    trip_id: row.trip_id,
+    trip_start: row.trip_start,
+    trip_end: row.trip_end,
+    message_timestamp: row.trip_start,
+    created_at: row.trip_start,
+    trip_workflow_stage: row.workflow_stage,
+    trip_status: row.trip_status,
+  };
+}
+
+function mapInspectionExportNoticeRow(row) {
+  const vehicleName = row.vehicle_nickname || row.vehicle_name || "vehicle";
+
+  return {
+    id: `inspection-export:${row.trip_id}`,
+    message_id: `inspection-export:${row.trip_id}`,
+    subject: `Export guest inspection sheet for ${vehicleName}`,
+    status: "read",
+    message_type: "inspection_export_required",
+    guest_name: row.guest_name,
+    vehicle_name: row.vehicle_name,
+    vehicle_nickname: row.vehicle_nickname,
+    vehicle_vin: row.vehicle_vin,
+    reservation_id: row.reservation_id,
+    trip_id: row.trip_id,
+    trip_start: row.trip_start,
+    trip_end: row.trip_end,
+    message_timestamp: row.stage_updated_at || row.trip_start,
+    created_at: row.stage_updated_at || row.trip_start,
+    trip_workflow_stage: row.workflow_stage,
+    trip_status: row.trip_status,
+  };
+}
+
 function computeDisplayStatus(trip) {
   const now = new Date();
   const todayStart = startOfTodayChicago();
@@ -81,30 +129,44 @@ function computeQueueBucket(trip) {
   const now = new Date();
   const start = trip.trip_start ? new Date(trip.trip_start) : null;
   const end = trip.trip_end ? new Date(trip.trip_end) : null;
+  const workflowStage = String(trip.workflow_stage || "").toLowerCase();
+  const status = String(trip.status || "").toLowerCase();
+
+  const confirmedWorkflowStages = new Set([
+    "confirmed",
+    "ready_for_handoff",
+    "in_progress",
+    "turnaround",
+    "awaiting_expenses",
+    "complete",
+    "closed",
+    "canceled",
+  ]);
 
   const isUnconfirmed =
-    trip.workflow_stage === "booked" ||
-    trip.status === "booked_unconfirmed" ||
-    trip.status === "updated_unconfirmed" ||
-    trip.needs_review === true;
+    workflowStage === "booked" ||
+    (!confirmedWorkflowStages.has(workflowStage) &&
+      (trip.needs_review === true ||
+        status === "booked_unconfirmed" ||
+        status === "updated_unconfirmed"));
 
-  if (trip.workflow_stage === "canceled" || trip.status === "canceled") {
+  if (workflowStage === "canceled" || status === "canceled") {
     return "canceled";
   }
 
-  if (trip.workflow_stage === "complete" || trip.closed_out) {
+  if (workflowStage === "complete" || trip.closed_out) {
     return "closed";
   }
 
-  if (trip.workflow_stage === "awaiting_expenses") {
+  if (workflowStage === "awaiting_expenses") {
     return "needs_closeout";
   }
 
-  if (trip.workflow_stage === "turnaround") {
+  if (workflowStage === "turnaround") {
     return "needs_closeout";
   }
 
-  if (trip.workflow_stage === "in_progress") {
+  if (workflowStage === "in_progress") {
     return "in_progress";
   }
 
@@ -178,6 +240,32 @@ function sortTrips(a, b) {
     default:
       return aStart - bStart;
   }
+}
+
+function isActionableBookingMessage(item) {
+  const stage = String(item.trip_workflow_stage || "").toLowerCase();
+  const status = String(item.trip_status || "").toLowerCase();
+  const terminalOrConfirmedStages = new Set([
+    "confirmed",
+    "ready_for_handoff",
+    "in_progress",
+    "turnaround",
+    "awaiting_expenses",
+    "complete",
+    "closed",
+    "canceled",
+  ]);
+
+  return (
+    item.message_type === "trip_booked" &&
+    item.trip_id &&
+    stage !== "canceled" &&
+    status !== "canceled" &&
+    (stage === "booked" ||
+      (!terminalOrConfirmedStages.has(stage) &&
+        (item.trip_needs_review === true ||
+          ["booked_unconfirmed", "updated_unconfirmed"].includes(status))))
+  );
 }
 
 function enrichTrip(trip) {
@@ -447,6 +535,8 @@ router.patch("/:id", async (req, res) => {
     toll_total,
     toll_review_status,
     fuel_reimbursement_total,
+    closed_out,
+    closed_out_at,
   } = req.body || {};
 
   const normalizedVehicleId =
@@ -473,6 +563,8 @@ router.patch("/:id", async (req, res) => {
     effectiveHasTolls == null
       ? null
       : normalizeTollReviewStatus(toll_review_status, effectiveHasTolls);
+
+  const normalizedClosedOut = toNullableBoolean(closed_out);
 
   const client = await pool.connect();
 
@@ -546,8 +638,14 @@ router.patch("/:id", async (req, res) => {
           toll_total = COALESCE($14, toll_total),
           toll_review_status = COALESCE($15, toll_review_status),
           fuel_reimbursement_total = COALESCE($16, fuel_reimbursement_total),
+          closed_out = COALESCE($17, closed_out),
+          closed_out_at = CASE
+            WHEN $17::boolean = TRUE THEN COALESCE($18::timestamptz, closed_out_at, NOW())
+            WHEN $17::boolean = FALSE THEN NULL
+            ELSE closed_out_at
+          END,
           updated_at = NOW()
-        WHERE id = $17
+        WHERE id = $19
         RETURNING id
       `,
       [
@@ -575,6 +673,8 @@ router.patch("/:id", async (req, res) => {
         fuel_reimbursement_total === "" || fuel_reimbursement_total == null
           ? null
           : Number(fuel_reimbursement_total),
+        normalizedClosedOut,
+        closed_out_at || null,
         tripId,
       ]
     );
@@ -659,34 +759,296 @@ router.get("/:id/messages", async (req, res) => {
 
     const query = `
       SELECT
-        id,
-        trip_id,
-        reservation_id,
-        message_id,
-        subject,
-        sender,
-        status,
-        message_type,
-        amount,
-        guest_name,
-        vehicle_name,
-        received_at,
-        message_timestamp,
-        text_body,
-        normalized_text_body,
-        guest_message,
-        reply_url,
-        trip_details_url,
-        created_at
-      FROM messages
-      WHERE trip_id = $1
+        m.id,
+        m.trip_id,
+        m.reservation_id,
+        m.message_id,
+        m.subject,
+        m.status,
+        m.message_type,
+        m.amount,
+        m.guest_name,
+        m.vehicle_name,
+        m.trip_start,
+        m.trip_end,
+        m.message_timestamp,
+        m.text_body,
+        m.normalized_text_body,
+        m.guest_message,
+        m.reply_url,
+        m.trip_details_url,
+        m.created_at,
+        t.workflow_stage AS trip_workflow_stage,
+        t.needs_review AS trip_needs_review,
+        t.status AS trip_status,
+        t.guest_name AS trip_record_guest_name,
+        t.vehicle_name AS trip_record_vehicle_name,
+        t.trip_start AS trip_record_start,
+        t.trip_end AS trip_record_end,
+        t.amount AS trip_record_amount,
+        t.reservation_id AS trip_record_reservation_id
+      FROM messages m
+      LEFT JOIN trips t
+        ON t.id = m.trip_id
+      WHERE m.trip_id = $1
       ORDER BY
-        COALESCE(received_at, message_timestamp, created_at) DESC,
-        id DESC
+        CASE
+          WHEN m.status = 'unread' THEN 0
+          WHEN m.message_type = 'trip_booked'
+            AND t.id IS NOT NULL
+            AND COALESCE(t.workflow_stage, '') <> 'canceled'
+            AND COALESCE(t.status, '') <> 'canceled'
+            AND (
+              t.workflow_stage = 'booked'
+              OR (
+                COALESCE(t.workflow_stage, '') NOT IN (
+                  'confirmed',
+                  'ready_for_handoff',
+                  'in_progress',
+                  'turnaround',
+                  'awaiting_expenses',
+                  'complete',
+                  'closed',
+                  'canceled'
+                )
+                AND (
+                  t.needs_review = TRUE
+                  OR t.status IN ('booked_unconfirmed', 'updated_unconfirmed')
+                )
+              )
+            )
+            THEN 1
+          ELSE 2
+        END,
+        COALESCE(m.message_timestamp, m.created_at) DESC,
+        m.id DESC
     `;
 
-    const { rows } = await pool.query(query, [tripId]);
-    res.json(rows);
+    const maintenanceQuery = `
+      SELECT
+        t.id AS trip_id,
+        t.reservation_id,
+        t.guest_name,
+        t.trip_start,
+        t.trip_end,
+        t.workflow_stage,
+        t.status AS trip_status,
+        COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin) AS vehicle_name,
+        mt.vehicle_vin,
+        COALESCE(
+          (
+            SELECT MIN(active.trip_end)
+            FROM trips active
+            LEFT JOIN vehicles active_v
+              ON active_v.turo_vehicle_id = active.turo_vehicle_id
+            WHERE COALESCE(active.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
+              AND COALESCE(active.status, '') <> 'canceled'
+              AND COALESCE(active.closed_out, false) = false
+              AND active.trip_start <= NOW()
+              AND active.trip_end > NOW()
+              AND (
+                (
+                  t.turo_vehicle_id IS NOT NULL
+                  AND active.turo_vehicle_id = t.turo_vehicle_id
+                )
+                OR (
+                  mt.vehicle_vin IS NOT NULL
+                  AND active_v.vin = mt.vehicle_vin
+                )
+                OR (
+                  COALESCE(t.vehicle_name, '') <> ''
+                  AND LOWER(COALESCE(active.vehicle_name, '')) = LOWER(t.vehicle_name)
+                )
+              )
+          ),
+          NOW()
+        ) AS maintenance_available_at,
+        COUNT(*) AS open_task_count,
+        MAX(mt.created_at) AS latest_task_created_at,
+        jsonb_agg(
+          jsonb_build_object(
+            'id', mt.id,
+            'title', mt.title,
+            'description', mt.description,
+            'priority', mt.priority,
+            'status', mt.status,
+            'blocks_rental', mt.blocks_rental,
+            'blocks_guest_export', mt.blocks_guest_export,
+            'needs_review', mt.needs_review
+          )
+          ORDER BY
+            CASE mt.priority
+              WHEN 'urgent' THEN 1
+              WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3
+              WHEN 'low' THEN 4
+              ELSE 5
+            END,
+            mt.created_at DESC,
+            mt.id DESC
+        ) AS tasks
+      FROM maintenance_tasks mt
+      JOIN trips t
+        ON t.id = mt.related_trip_id
+      LEFT JOIN vehicles v
+        ON v.vin = mt.vehicle_vin
+      WHERE mt.related_trip_id = $1
+        AND t.trip_end > NOW()
+        AND mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+      GROUP BY
+        t.id,
+        t.reservation_id,
+        t.guest_name,
+        t.trip_start,
+        t.trip_end,
+        t.workflow_stage,
+        t.status,
+        t.turo_vehicle_id,
+        COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin),
+        mt.vehicle_vin
+    `;
+
+    const handoffQuery = `
+      SELECT
+        t.id AS trip_id,
+        t.reservation_id,
+        t.guest_name,
+        t.vehicle_name,
+        v.nickname AS vehicle_nickname,
+        t.trip_start,
+        t.trip_end,
+        t.workflow_stage,
+        t.status AS trip_status
+      FROM trips t
+      LEFT JOIN vehicles v
+        ON (
+          t.turo_vehicle_id IS NOT NULL
+          AND v.turo_vehicle_id = t.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+        )
+      WHERE t.id = $1
+        AND t.trip_start > NOW()
+        AND t.trip_start <= NOW() + INTERVAL '12 hours'
+        AND COALESCE(t.workflow_stage, '') = 'confirmed'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND COALESCE(t.closed_out, false) = false
+      LIMIT 1
+    `;
+
+    const inspectionExportQuery = `
+      SELECT
+        t.id AS trip_id,
+        t.reservation_id,
+        t.guest_name,
+        t.vehicle_name,
+        v.nickname AS vehicle_nickname,
+        v.vin AS vehicle_vin,
+        t.trip_start,
+        t.trip_end,
+        t.workflow_stage,
+        t.status AS trip_status,
+        t.stage_updated_at
+      FROM trips t
+      LEFT JOIN vehicles v
+        ON (
+          t.turo_vehicle_id IS NOT NULL
+          AND v.turo_vehicle_id = t.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+        )
+      WHERE t.id = $1
+        AND t.trip_start > NOW() - INTERVAL '2 hours'
+        AND t.trip_start <= NOW() + INTERVAL '24 hours'
+        AND COALESCE(t.workflow_stage, '') = 'ready_for_handoff'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND COALESCE(t.closed_out, false) = false
+      LIMIT 1
+    `;
+
+    const [{ rows }, maintenanceResult, handoffResult, inspectionExportResult] = await Promise.all([
+      pool.query(query, [tripId]),
+      pool.query(maintenanceQuery, [tripId]),
+      pool.query(handoffQuery, [tripId]),
+      pool.query(inspectionExportQuery, [tripId]),
+    ]);
+
+    const maintenanceNotices = maintenanceResult.rows.map((row) => {
+      const now = Date.now();
+      const tripStart = row.trip_start ? new Date(row.trip_start).getTime() : null;
+      const tripEnd = row.trip_end ? new Date(row.trip_end).getTime() : null;
+      const isActiveTrip =
+        Number.isFinite(tripStart) &&
+        Number.isFinite(tripEnd) &&
+        tripStart <= now &&
+        tripEnd > now;
+      const isUpcomingTrip = Number.isFinite(tripStart) && tripStart > now;
+      const vehicleName = row.vehicle_name || "vehicle";
+      const taskLabel = `${row.open_task_count} maintenance item${
+        Number(row.open_task_count) === 1 ? "" : "s"
+      }`;
+      const subject = isActiveTrip
+        ? `${taskLabel} after ${vehicleName} returns`
+        : isUpcomingTrip
+        ? `${taskLabel} due during ${vehicleName}'s upcoming trip`
+        : `${taskLabel} before ${vehicleName} goes out`;
+
+      return {
+        id: `maintenance:${row.trip_id}`,
+        message_id: `maintenance:${row.trip_id}`,
+        subject,
+        status: "read",
+        message_type: "maintenance_required",
+        guest_name: row.guest_name,
+        vehicle_name: row.vehicle_name,
+        reservation_id: row.reservation_id,
+        trip_id: row.trip_id,
+        trip_start: row.trip_start,
+        trip_end: row.trip_end,
+        message_timestamp: row.latest_task_created_at,
+        created_at: row.latest_task_created_at,
+        trip_workflow_stage: row.workflow_stage,
+        trip_status: row.trip_status,
+        maintenance_vehicle_name: row.vehicle_name,
+        maintenance_vehicle_vin: row.vehicle_vin,
+        maintenance_available_at: row.maintenance_available_at,
+        maintenance_task_count: Number(row.open_task_count || 0),
+        maintenance_tasks: row.tasks || [],
+      };
+    });
+
+    const handoffNotices = handoffResult.rows.map(mapHandoffNoticeRow);
+    const inspectionExportNotices = inspectionExportResult.rows.map(
+      mapInspectionExportNoticeRow
+    );
+    const combined = [
+      ...handoffNotices,
+      ...inspectionExportNotices,
+      ...rows,
+      ...maintenanceNotices,
+    ].sort((a, b) => {
+      const rank = (item) => {
+        if (item.message_type === "handoff_ready_required") return -1;
+        if (item.status === "unread") return 0;
+        if (item.message_type === "inspection_export_required") return 1;
+        if (isActionableBookingMessage(item)) return 1;
+        if (item.message_type === "maintenance_required") return 2;
+        return 3;
+      };
+
+      const rankDiff = rank(a) - rank(b);
+      if (rankDiff !== 0) return rankDiff;
+
+      const aTime = new Date(a.message_timestamp || a.created_at || 0).getTime();
+      const bTime = new Date(b.message_timestamp || b.created_at || 0).getTime();
+      return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+    });
+
+    res.json(combined);
   } catch (err) {
     console.error("GET /api/trips/:id/messages failed:", err.message || err);
     res.status(500).json({ error: "Failed to load trip messages" });

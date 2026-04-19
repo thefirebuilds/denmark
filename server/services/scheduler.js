@@ -40,6 +40,109 @@ let bouncieIntervalHandle = null;
 let dimoInProgress = false;
 let dimoIntervalHandle = null;
 
+const STARTUP_TASKS = [
+  "teller",
+  "tolls",
+  "imap",
+  "bouncie",
+  "dimo",
+  "publicAvailability",
+];
+
+let startupStatus = {
+  startedAt: null,
+  completedAt: null,
+  tasks: Object.fromEntries(
+    STARTUP_TASKS.map((name) => [
+      name,
+      {
+        name,
+        state: "pending",
+        startedAt: null,
+        completedAt: null,
+        error: null,
+      },
+    ])
+  ),
+};
+
+function buildPendingStartupTasks() {
+  return Object.fromEntries(
+    STARTUP_TASKS.map((name) => [
+      name,
+      {
+        name,
+        state: "pending",
+        startedAt: null,
+        completedAt: null,
+        error: null,
+      },
+    ])
+  );
+}
+
+function resetStartupStatus() {
+  startupStatus = {
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    tasks: buildPendingStartupTasks(),
+  };
+}
+
+function updateStartupTask(name, patch) {
+  startupStatus.tasks[name] = {
+    ...startupStatus.tasks[name],
+    ...patch,
+  };
+
+  const tasks = Object.values(startupStatus.tasks);
+  const completed = tasks.every((task) =>
+    ["succeeded", "failed", "skipped"].includes(task.state)
+  );
+
+  if (completed && !startupStatus.completedAt) {
+    startupStatus.completedAt = new Date().toISOString();
+  }
+}
+
+async function runStartupTask(name, taskFn) {
+  updateStartupTask(name, {
+    state: "running",
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    error: null,
+  });
+
+  try {
+    await taskFn();
+    updateStartupTask(name, {
+      state: "succeeded",
+      completedAt: new Date().toISOString(),
+      error: null,
+    });
+  } catch (err) {
+    updateStartupTask(name, {
+      state: "failed",
+      completedAt: new Date().toISOString(),
+      error: err?.message || String(err),
+    });
+  }
+}
+
+function getStartupStatus() {
+  const tasks = Object.values(startupStatus.tasks);
+
+  return {
+    startedAt: startupStatus.startedAt,
+    completedAt: startupStatus.completedAt,
+    running: tasks.filter((task) => task.state === "running").map((task) => task.name),
+    pending: tasks.filter((task) => task.state === "pending").map((task) => task.name),
+    failed: tasks.filter((task) => task.state === "failed").map((task) => task.name),
+    completed: Boolean(startupStatus.completedAt),
+    tasks,
+  };
+}
+
 async function runTellerSync(reason = "interval") {
   if (tellerSyncInProgress) {
     console.log(`Skipping Teller sync (${reason}) because one is already running`);
@@ -159,24 +262,27 @@ function startScheduler() {
   console.log("Scheduler started");
   const everyEightHoursMs = 8 * 60 * 60 * 1000;
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
+  resetStartupStatus();
 
   // Teller sync immediately
-  void runTellerSync("startup");
+  void runStartupTask("teller", () => runTellerSync("startup"));
 
   // Toll sync immediately
-  void runTollSync("startup");
+  void runStartupTask("tolls", () => runTollSync("startup"));
 
   // IMAP immediately
-  void runPoll("startup");
+  void runStartupTask("imap", () => runPoll("startup"));
 
   // Bouncie immediately
-  void runBouncie("startup");
+  void runStartupTask("bouncie", () => runBouncie("startup"));
 
   // DIMO immediately
-  void runDimo("startup");
+  void runStartupTask("dimo", () => runDimo("startup"));
 
   // Public availability push immediately
-  pushPublicAvailabilitySnapshotSafe("server startup");
+  void runStartupTask("publicAvailability", () =>
+    pushPublicAvailabilitySnapshotSafe("server startup")
+  );
 
   // Teller sync every 8 hours
   tellerSyncIntervalHandle = setInterval(() => {
@@ -239,3 +345,4 @@ function stopScheduler() {
 
 module.exports = startScheduler;
 module.exports.stopScheduler = stopScheduler;
+module.exports.getStartupStatus = getStartupStatus;

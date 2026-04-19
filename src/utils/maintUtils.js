@@ -102,7 +102,6 @@ export function getVinLast6(vin) {
 export function getFleetLicensePlate(vehicle) {
   return (
     vehicle?.license_plate ||
-    vehicle?.plate_number ||
     vehicle?.licensePlate ||
     vehicle?.plate ||
     ""
@@ -300,6 +299,14 @@ export function mapRuleStatusToInspectionItem(rule, historyMap = {}) {
     if (rearPadMm != null) bits.push(`Rear ${rearPadMm} mm`);
     if (rotorCondition) bits.push(`Rotors: ${rotorCondition}`);
     value = bits.length ? bits.join(" • ") : "No recorded result";
+  } else if (rule?.ruleCode === "bearing_tie_rod_check") {
+    const data = rule?.lastEvent?.data || {};
+    const bits = [];
+    if (data.wheel_bearings_ok === true) bits.push("Wheel bearings OK");
+    if (data.tie_rods_ok === true) bits.push("Tie rods OK");
+    if (data.ball_joints_ok === true) bits.push("Ball joints OK");
+    if (data.steering_play_ok === true) bits.push("No steering play");
+    value = bits.length ? bits.join(" - ") : "No recorded result";
   }
 
   return {
@@ -625,11 +632,18 @@ function estimateDailyMilesFromSummary(summary) {
   return milesDelta / daysDelta;
 }
 
-export function getNextServiceDue(summary) {
+export function getNextServiceDue(summary, options = {}) {
   const rules = Array.isArray(summary?.ruleStatuses) ? summary.ruleStatuses : [];
   const currentOdometer = Number(summary?.currentOdometerMiles);
+  const ruleCodes = Array.isArray(options.ruleCodes)
+    ? new Set(options.ruleCodes.map((code) => normalizeRuleCode(code)).filter(Boolean))
+    : null;
 
   const candidates = rules
+    .filter((rule) => {
+      if (!ruleCodes || ruleCodes.size === 0) return true;
+      return ruleCodes.has(normalizeRuleCode(rule?.ruleCode));
+    })
     .map((rule) => ({
       ruleCode: rule?.ruleCode || null,
       title: rule?.title || "Maintenance",
@@ -641,6 +655,9 @@ export function getNextServiceDue(summary) {
 
   if (!candidates.length) {
     return {
+      ruleCode: null,
+      title: null,
+      label: options.label || "Next service due",
       miles: null,
       date: null,
       estimatedDate: null,
@@ -704,6 +721,9 @@ export function getNextServiceDue(summary) {
     : null;
 
   return {
+    ruleCode: next.ruleCode,
+    title: next.title,
+    label: options.label || next.title || "Next service due",
     miles: next.nextDueMiles,
     date: next.nextDueDate,
     estimatedDate,

@@ -21,6 +21,7 @@ const metricsRouter = require("./routes/metrics");
 const marketplaceRoutes = require("./routes/marketplace");
 const publicAvailabilityRouter = require("./routes/publicAvailability");
 const settingsRouter = require("./routes/settings");
+const databaseRouter = require("./routes/database");
 
 const app = express();
 const PORT = 5000;
@@ -40,10 +41,14 @@ const marketplaceCors = cors({
   optionsSuccessStatus: 204,
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "500mb" }));
 
 // Explicit preflight handling for marketplace routes
 app.options(/^\/api\/marketplace\/.*$/, marketplaceCors);
+
+app.get("/api/startup/status", defaultCors, (req, res) => {
+  res.json(startScheduler.getStartupStatus());
+});
 
 app.use("/api/messages", defaultCors, messagesRoute);
 app.use("/api/trips", defaultCors, tripsRoutes);
@@ -58,6 +63,7 @@ app.use("/api/teller", defaultCors, tellerRoutes);
 app.use("/api/metrics", defaultCors, metricsRouter);
 app.use("/api/marketplace", marketplaceCors, marketplaceRoutes);
 app.use("/api/settings", defaultCors, settingsRouter);
+app.use("/api/database", defaultCors, databaseRouter);
 app.use("/api", publicAvailabilityRouter);
 
 app.listen(PORT, () => {

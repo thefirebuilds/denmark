@@ -235,6 +235,120 @@ function resolveTripVehicleId(trip, maps) {
   return null;
 }
 
+function getTripSortTime(trip, fieldName) {
+  const value = trip?.[fieldName];
+  if (!value) return 0;
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function calculateTripOffTripMiles(trips) {
+  const odometerTrips = (trips || [])
+    .filter((trip) => toNumber(trip?.starting_odometer, null) != null)
+    .slice()
+    .sort((a, b) => {
+      const startDiff =
+        getTripSortTime(a, "trip_start") - getTripSortTime(b, "trip_start");
+      if (startDiff) return startDiff;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
+
+  if (!odometerTrips.length) {
+    return {
+      offTripMiles: 0,
+      tripMiles: 0,
+      totalMiles: 0,
+      firstTripStartOdometer: null,
+      lastClosedTripEndOdometer: null,
+      closedTripCount: 0,
+      skippedClosedTripCount: 0,
+      confidence: "missing",
+    };
+  }
+
+  let firstTripStartOdometer = null;
+  let lastClosedTripEndOdometer = null;
+  let lastKnownOdometer = null;
+  let offTripMiles = 0;
+  let tripMiles = 0;
+  let tripOdometerCount = 0;
+  let skippedTripOdometerCount = 0;
+
+  for (const trip of odometerTrips) {
+    const startOdometer = toNumber(trip.starting_odometer, null);
+    const endOdometer = toNumber(trip.ending_odometer, null);
+
+    if (startOdometer == null) {
+      skippedTripOdometerCount += 1;
+      continue;
+    }
+
+    if (firstTripStartOdometer == null) {
+      firstTripStartOdometer = startOdometer;
+      lastKnownOdometer = startOdometer;
+    }
+
+    if (lastKnownOdometer != null && startOdometer > lastKnownOdometer) {
+      offTripMiles += startOdometer - lastKnownOdometer;
+      lastKnownOdometer = startOdometer;
+    }
+
+    if (endOdometer == null) {
+      tripOdometerCount += 1;
+      continue;
+    }
+
+    if (endOdometer < startOdometer) {
+      skippedTripOdometerCount += 1;
+      continue;
+    }
+
+    if (lastKnownOdometer != null && endOdometer < lastKnownOdometer) {
+      skippedTripOdometerCount += 1;
+      continue;
+    }
+
+    tripMiles += Math.max(
+      0,
+      endOdometer - Math.max(startOdometer, lastKnownOdometer || startOdometer)
+    );
+    lastKnownOdometer = endOdometer;
+    lastClosedTripEndOdometer = endOdometer;
+    tripOdometerCount += 1;
+  }
+
+  if (
+    firstTripStartOdometer == null ||
+    lastClosedTripEndOdometer == null ||
+    lastClosedTripEndOdometer < firstTripStartOdometer
+  ) {
+    return {
+      offTripMiles: 0,
+      tripMiles,
+      totalMiles: 0,
+      firstTripStartOdometer,
+      lastClosedTripEndOdometer,
+      closedTripCount: tripOdometerCount,
+      skippedClosedTripCount: skippedTripOdometerCount,
+      confidence: "low",
+    };
+  }
+
+  const totalMiles = lastKnownOdometer - firstTripStartOdometer;
+
+  return {
+    offTripMiles: clampNonNegative(offTripMiles),
+    tripMiles,
+    totalMiles,
+    firstTripStartOdometer,
+    lastClosedTripEndOdometer,
+    closedTripCount: tripOdometerCount,
+    skippedClosedTripCount: skippedTripOdometerCount,
+    confidence: skippedTripOdometerCount > 0 ? "medium" : "high",
+  };
+}
+
 function resolveAnchorStart(anchor) {
   if (anchor?.start_before_odometer != null) {
     return {
@@ -379,14 +493,15 @@ async function getVehicleMetrics(rangeKey = "30d") {
   const client = await pool.connect();
 
   try {
-    const [vehicles, trips, expenses, odometerAnchors, capitalMetricsRows] =
-      await Promise.all([
-        fetchActiveVehicles(client),
-        fetchTripsForVehicles(client, startDate, endDate),
-        fetchExpensesForVehicles(client, startDate, endDate),
-        fetchVehicleOdometerAnchors(client, startDate, endDate),
-        getCapitalMetricsByVehicle(client),
-      ]);
+    const vehicles = await fetchActiveVehicles(client);
+    const trips = await fetchTripsForVehicles(client, startDate, endDate);
+    const expenses = await fetchExpensesForVehicles(client, startDate, endDate);
+    const odometerAnchors = await fetchVehicleOdometerAnchors(
+      client,
+      startDate,
+      endDate
+    );
+    const capitalMetricsRows = await getCapitalMetricsByVehicle(client);
 
     const odometerMap = toMapBy(odometerAnchors, (row) =>
       String(row.vehicle_id)
@@ -499,9 +614,30 @@ async function getVehicleMetrics(rangeKey = "30d") {
       const vehicleId = String(vehicle.id);
       const metrics = vehicleMetrics.get(vehicleId);
       const tripsForVehicle = vehicleTrips.get(vehicleId) || [];
+      const closedTripMileage = calculateTripOffTripMiles(tripsForVehicle);
       
       const openTripAtRangeEnd = hasOpenTripAtRangeEnd(tripsForVehicle, endDate);
       metrics.has_open_trip_at_range_end = openTripAtRangeEnd;
+      metrics.closed_trip_mileage_count = closedTripMileage.closedTripCount;
+      metrics.closed_trip_mileage_skipped_count =
+        closedTripMileage.skippedClosedTripCount;
+      metrics.closed_trip_mileage_total = roundNumber(
+        closedTripMileage.totalMiles,
+        1
+      );
+      metrics.closed_trip_recorded_miles = roundNumber(
+        closedTripMileage.tripMiles,
+        1
+      );
+      metrics.closed_trip_mileage_confidence = closedTripMileage.confidence;
+      metrics.closed_trip_off_trip_miles = roundNumber(
+        closedTripMileage.offTripMiles,
+        1
+      );
+      metrics.first_trip_start_odometer =
+        closedTripMileage.firstTripStartOdometer;
+      metrics.last_closed_trip_end_odometer =
+        closedTripMileage.lastClosedTripEndOdometer;
       metrics.trip_count_overlapping = tripsForVehicle.length;
 
       metrics.trip_count_prorated = tripsForVehicle.reduce(
@@ -709,20 +845,18 @@ async function getVehicleMetrics(rangeKey = "30d") {
       );
 
       const residualMiles = clampNonNegative(
-          toNumber(metrics.total_miles) - toNumber(metrics.trip_miles)
-        );
+        toNumber(metrics.total_miles) - toNumber(metrics.trip_miles)
+      );
 
-        metrics.unallocated_miles = residualMiles;
+      metrics.unallocated_miles = roundNumber(residualMiles, 1);
+      metrics.off_trip_miles = roundNumber(metrics.closed_trip_off_trip_miles, 1);
 
-        if (metrics.has_open_trip_at_range_end) {
-          metrics.off_trip_miles = 0;
-
-          if (String(metrics.mileage_confidence).toLowerCase() === "high") {
-            metrics.mileage_confidence = "medium";
-          }
-        } else {
-          metrics.off_trip_miles = residualMiles;
-        }
+      if (
+        metrics.closed_trip_mileage_confidence === "missing" &&
+        String(metrics.mileage_confidence).toLowerCase() === "high"
+      ) {
+        metrics.mileage_confidence = "medium";
+      }
 
       metrics.tolls_paid = roundMoney(metrics.tolls_paid);
 

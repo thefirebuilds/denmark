@@ -273,7 +273,14 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
     : [];
 
   const historyMap = buildInspectionHistoryMap(summary);
-  const nextServiceDue = getNextServiceDue(summary);
+  const oilServiceDue = getNextServiceDue(summary, {
+    ruleCodes: ["oil_change", "brake_inspection"],
+    label: "Next service due",
+  });
+  const nextServiceDue =
+    oilServiceDue?.text && oilServiceDue.text !== "Unknown"
+      ? oilServiceDue
+      : getNextServiceDue(summary);
 
   const actionableTasks = tasks.filter(
     (task) =>
@@ -291,11 +298,9 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
     hasBlockingIssue || hasNeedsReview || hasOpenTasks ? "attention" : "pass";
 
   const plate = pickFirstFilled(
-    sourceVehicle.plate_number,
     sourceVehicle.license_plate,
     sourceVehicle.licensePlate,
     sourceVehicle.plate,
-    fleetVehicle?.plate_number,
     fleetVehicle?.license_plate
   );
 

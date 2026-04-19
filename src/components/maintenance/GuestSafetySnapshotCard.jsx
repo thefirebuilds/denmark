@@ -7,11 +7,34 @@
 
 import { getVinLast6, formatMiles } from "../../utils/maintUtils";
 
+const DOCUMENTED_CHECK_PRIORITY = [
+  "oil_change",
+  "brake_inspection",
+  "bearing_tie_rod_check",
+  "tire_age_review",
+  "tread_depth",
+  "tire_pressure_check",
+  "fluid_leak_check",
+  "battery_test",
+];
+
+function getDocumentedCheckRank(item) {
+  const ruleCode = String(item?.ruleCode || "").toLowerCase();
+  const index = DOCUMENTED_CHECK_PRIORITY.indexOf(ruleCode);
+  return index === -1 ? DOCUMENTED_CHECK_PRIORITY.length : index;
+}
 
 export default function GuestSafetySnapshotCard({ vehicle, cardRef }) {
   if (!vehicle) return null;
 
   const passItems = vehicle.inspection_items.filter((item) => item.status === "pass");
+  const documentedItems = [...passItems]
+    .sort((a, b) => {
+      const rankDiff = getDocumentedCheckRank(a) - getDocumentedCheckRank(b);
+      if (rankDiff !== 0) return rankDiff;
+      return String(a?.label || "").localeCompare(String(b?.label || ""));
+    })
+    .slice(0, 8);
   const attentionItems = vehicle.inspection_items.filter(
     (item) => item.status === "attention" || item.status === "fail"
   );
@@ -81,7 +104,7 @@ export default function GuestSafetySnapshotCard({ vehicle, cardRef }) {
 
           <div className="guest-snapshot-block">
             <div className="guest-snapshot-block-title">Checked and documented</div>
-            {passItems.slice(0, 6).map((item) => {
+            {documentedItems.map((item) => {
               const rawDot = item.lastEvent?.data?.dot_code || item.lastEvent?.data?.dotCode || null;
 
               function parseDotCode(dotCode) {

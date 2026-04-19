@@ -35,6 +35,14 @@ const DEFAULT_DISPATCH_SETTINGS = {
   openTripsSort: "priority",
   pinOverdue: true,
   showCanceled: false,
+  visibleBuckets: {
+    needs_closeout: true,
+    in_progress: true,
+    unconfirmed: true,
+    upcoming: true,
+    canceled: false,
+    closed: false,
+  },
   bucketOrder: [
     "needs_closeout",
     "in_progress",
@@ -45,12 +53,7 @@ const DEFAULT_DISPATCH_SETTINGS = {
   ],
 };
 
-const OPEN_QUEUE_BUCKETS = new Set([
-  "unconfirmed",
-  "in_progress",
-  "needs_closeout",
-  "upcoming",
-]);
+const DEFAULT_VISIBLE_BUCKETS = DEFAULT_DISPATCH_SETTINGS.visibleBuckets;
 
 function shouldShowCurrentLocation(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
@@ -67,7 +70,7 @@ function getStringValue(value) {
 }
 
 function normalizeDispatchSettings(settings) {
-  return {
+  const merged = {
     ...DEFAULT_DISPATCH_SETTINGS,
     ...(settings || {}),
     bucketOrder:
@@ -75,6 +78,42 @@ function normalizeDispatchSettings(settings) {
         ? settings.bucketOrder
         : DEFAULT_DISPATCH_SETTINGS.bucketOrder,
   };
+
+  merged.visibleBuckets = {
+    ...DEFAULT_VISIBLE_BUCKETS,
+    ...(settings?.visibleBuckets || {}),
+  };
+
+  if (!settings?.visibleBuckets && settings?.showCanceled !== undefined) {
+    merged.visibleBuckets.canceled = Boolean(settings.showCanceled);
+  }
+
+  merged.showCanceled = Boolean(merged.visibleBuckets.canceled);
+  return merged;
+}
+
+function isBucketVisible(trip, settings) {
+  const bucket = trip?.queue_bucket || "";
+  return settings.visibleBuckets?.[bucket] !== false;
+}
+
+function getPriorityBucketRank(trip, bucketRank) {
+  const baseRank = bucketRank.get(trip.queue_bucket) ?? 99;
+  const inProgressRank = bucketRank.get("in_progress");
+
+  if (trip.queue_bucket === "unconfirmed") {
+    return -1;
+  }
+
+  if (Number(trip.priorityBucket) <= 1) {
+    return 0;
+  }
+
+  if (trip.queue_bucket !== "upcoming" || inProgressRank == null) {
+    return baseRank;
+  }
+
+  return Math.max(baseRank, inProgressRank + 0.5);
 }
 
 function sortTripsWithSettings(trips, rawSettings) {
@@ -91,8 +130,8 @@ function sortTripsWithSettings(trips, rawSettings) {
 
       if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
 
-      const aBucket = bucketRank.get(a.queue_bucket) ?? 99;
-      const bBucket = bucketRank.get(b.queue_bucket) ?? 99;
+      const aBucket = getPriorityBucketRank(a, bucketRank);
+      const bBucket = getPriorityBucketRank(b, bucketRank);
       if (aBucket !== bBucket) return aBucket - bBucket;
 
       return sortTrips([a, b])[0] === a ? -1 : 1;
@@ -143,11 +182,21 @@ export default function TripsPanel({
   trips,
   setTrips,
   dispatchSettings,
+  initialVehicles = [],
+  initialLoadComplete = false,
 }) {
-  const [vehicles, setVehicles] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [vehicles, setVehicles] = useState(() =>
+    Array.isArray(initialVehicles) ? initialVehicles : []
+  );
+  const [loading, setLoading] = useState(!initialLoadComplete);
   const [error, setError] = useState("");
   const normalizedDispatchSettings = normalizeDispatchSettings(dispatchSettings);
+
+  useEffect(() => {
+    if (Array.isArray(initialVehicles)) {
+      setVehicles(initialVehicles);
+    }
+  }, [initialVehicles]);
 
   useEffect(() => {
     let ignore = false;
@@ -177,13 +226,9 @@ export default function TripsPanel({
       if (ignore) return;
 
       const rawTrips = Array.isArray(tripsData) ? tripsData : [];
-      const nextTrips = rawTrips.filter((trip) => {
-        if (OPEN_QUEUE_BUCKETS.has(trip?.queue_bucket)) return true;
-        return (
-          normalizedDispatchSettings.showCanceled &&
-          trip?.queue_bucket === "canceled"
-        );
-      });
+      const nextTrips = rawTrips.filter((trip) =>
+        isBucketVisible(trip, normalizedDispatchSettings)
+      );
       const nextVehicles = Array.isArray(vehiclesData) ? vehiclesData : [];
 
       setTrips(nextTrips);
@@ -219,7 +264,7 @@ export default function TripsPanel({
     selectedTrip?.id,
     onSelectTrip,
     pauseRefresh,
-    normalizedDispatchSettings.showCanceled,
+    JSON.stringify(normalizedDispatchSettings.visibleBuckets),
   ]);
 
 const mappedTrips = useMemo(() => {
@@ -309,13 +354,15 @@ if (urgency.dependencyNote) {
 
   const activeTrips = sortTripsWithSettings(
     mappedTrips.filter(
-      (trip) => !trip.canceled && OPEN_QUEUE_BUCKETS.has(trip.queue_bucket)
+      (trip) => !trip.canceled && isBucketVisible(trip, normalizedDispatchSettings)
     ),
     normalizedDispatchSettings
   );
-  const canceledTrips = normalizedDispatchSettings.showCanceled
+  const canceledTrips = normalizedDispatchSettings.visibleBuckets.canceled
     ? sortTripsWithSettings(
-        mappedTrips.filter((trip) => trip.canceled),
+        mappedTrips.filter(
+          (trip) => trip.canceled && isBucketVisible(trip, normalizedDispatchSettings)
+        ),
         normalizedDispatchSettings
       )
     : [];

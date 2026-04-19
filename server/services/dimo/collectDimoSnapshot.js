@@ -9,6 +9,9 @@ const pool = require("../../db");
 const {
   ensureDefaultMaintenanceRulesForVehicle,
 } = require("../maintenance/ruleTemplates");
+const {
+  maybeAutoStartReadyTripFromTelemetry,
+} = require("../trips/autoStartReadyTrip");
 
 let snapshotColumnCache = null;
 let vehicleColumnCache = null;
@@ -542,8 +545,24 @@ async function persistDimoTelemetry({ normalized, raw }) {
   await client.query("BEGIN");
 
   try {
-    const snapshotResult = await insertVehicleTelemetrySnapshot(normalized, client);
     const vehicleResult = await upsertDimoVehicle(normalized, client);
+    const autoStartResult = await maybeAutoStartReadyTripFromTelemetry(client, {
+      serviceName: "dimo",
+      vin: normalized.vin,
+      dimoTokenId: normalized.dimo_token_id,
+      isRunning: normalized.is_running,
+      speed: normalized.speed,
+      latitude: normalized.latitude,
+      longitude: normalized.longitude,
+      odometer:
+        normalized.odometer == null ? null : Math.round(Number(normalized.odometer)),
+      eventTimestamp:
+        normalized.vehicle_last_updated ||
+        normalized.ignition_last_updated ||
+        normalized.location_last_updated ||
+        normalized.speed_last_updated,
+    });
+    const snapshotResult = await insertVehicleTelemetrySnapshot(normalized, client);
     const maintenanceRules = normalized.vin
       ? await ensureDefaultMaintenanceRulesForVehicle(client, normalized.vin)
       : [];
@@ -564,6 +583,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
       snapshotId: snapshot.id,
       capturedAt: snapshot.captured_at,
       vehicleRows: vehicleResult.rowCount,
+      autoStartedTrip: autoStartResult?.id || null,
       maintenanceRuleRows: maintenanceRules.length,
       odometerRows: odometerResult.rowCount,
       rawSignalRows: rawResult.rowCount,

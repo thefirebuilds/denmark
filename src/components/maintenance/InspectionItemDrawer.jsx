@@ -94,6 +94,20 @@ function renderHistorySummary(ruleCode, entry) {
           .join(" • ");
   }
 
+  if (code === "bearing_tie_rod_check" || code.includes("tie_rod")) {
+    const bits = [];
+    if (data.wheel_bearings_ok === true) bits.push("Wheel bearings OK");
+    if (data.tie_rods_ok === true) bits.push("Tie rods OK");
+    if (data.ball_joints_ok === true) bits.push("Ball joints OK");
+    if (data.steering_play_ok === true) bits.push("No steering play");
+
+    return bits.length
+      ? bits.join(" â€¢ ")
+      : [entry?.result || "No result", entry?.notes || null]
+          .filter(Boolean)
+          .join(" â€¢ ");
+  }
+
   if (code === "ac_performance_check" || code.includes("ac_performance")) {
     const bits = [];
     if (data.ambient_temp_f != null) bits.push(`Ambient ${data.ambient_temp_f} F`);
@@ -245,6 +259,10 @@ export default function InspectionItemDrawer({
     acLowSidePressurePsi: "",
     acHighSidePressurePsi: "",
     acCompressorEngages: false,
+    wheelBearingsOk: false,
+    tieRodsOk: false,
+    ballJointsOk: false,
+    steeringPlayOk: false,
   });
 
   const recentHistory = useMemo(() => {
@@ -278,6 +296,7 @@ export default function InspectionItemDrawer({
     const isTreadDepth = code === "tread_depth";
     const isCleaning = code === "cleaning";
     const isBrakeInspection = code === "brake_inspection";
+    const isBearingTieRodCheck = code === "bearing_tie_rod_check";
     const isAcPerformanceCheck = code === "ac_performance_check";
     const isFluidCheck =
       code === "fluid_leak_check" ||
@@ -298,6 +317,7 @@ export default function InspectionItemDrawer({
         isTireAgeReview ||
         isTreadDepth ||
         isCleaning ||
+        isBearingTieRodCheck ||
         isAcPerformanceCheck ||
         isFluidCheck ||
         isTirePressure
@@ -328,6 +348,10 @@ export default function InspectionItemDrawer({
       rearPadMm:
         lastData.rear_pad_mm != null ? String(lastData.rear_pad_mm) : "",
       rotorCondition: lastData.rotor_condition || "",
+      wheelBearingsOk: Boolean(lastData.wheel_bearings_ok),
+      tieRodsOk: Boolean(lastData.tie_rods_ok),
+      ballJointsOk: Boolean(lastData.ball_joints_ok),
+      steeringPlayOk: Boolean(lastData.steering_play_ok),
       acAmbientTempF:
         lastData.ambient_temp_f != null
           ? String(lastData.ambient_temp_f)
@@ -382,6 +406,7 @@ export default function InspectionItemDrawer({
     const isTreadDepth = code === "tread_depth";
     const isCleaning = code === "cleaning";
     const isBrakeInspection = code === "brake_inspection";
+    const isBearingTieRodCheck = code === "bearing_tie_rod_check";
     const isAcPerformanceCheck = code === "ac_performance_check";
     const isFluidCheck =
       code === "fluid_leak_check" ||
@@ -410,6 +435,17 @@ export default function InspectionItemDrawer({
       !form.rotorCondition
     ) {
       window.alert("Enter at least one brake measurement or rotor condition.");
+      return;
+    }
+
+    if (
+      isBearingTieRodCheck &&
+      !form.wheelBearingsOk &&
+      !form.tieRodsOk &&
+      !form.ballJointsOk &&
+      !form.steeringPlayOk
+    ) {
+      window.alert("Mark at least one bearing, tie rod, ball joint, or steering check.");
       return;
     }
 
@@ -455,6 +491,14 @@ export default function InspectionItemDrawer({
               rear_pad_mm:
                 form.rearPadMm === "" ? null : Number(form.rearPadMm),
               rotor_condition: form.rotorCondition || null,
+            }
+          : {}),
+        ...(isBearingTieRodCheck
+          ? {
+              wheel_bearings_ok: form.wheelBearingsOk,
+              tie_rods_ok: form.tieRodsOk,
+              ball_joints_ok: form.ballJointsOk,
+              steering_play_ok: form.steeringPlayOk,
             }
           : {}),
         ...(isAcPerformanceCheck
@@ -684,6 +728,46 @@ export default function InspectionItemDrawer({
                   <option value="scored">Scored</option>
                   <option value="replace soon">Replace soon</option>
                 </select>
+              </div>
+            </div>
+          ) : null}
+
+          {item.ruleCode === "bearing_tie_rod_check" ? (
+            <div className="drawer-field">
+              <label className="drawer-label">Bearing / tie rod check</label>
+              <div className="drawer-check-grid">
+                <button
+                  type="button"
+                  className={`drawer-radio-pill ${form.wheelBearingsOk ? "selected" : ""}`}
+                  onClick={() => updateCheckbox("wheelBearingsOk")}
+                  disabled={saving}
+                >
+                  Wheel bearings
+                </button>
+                <button
+                  type="button"
+                  className={`drawer-radio-pill ${form.tieRodsOk ? "selected" : ""}`}
+                  onClick={() => updateCheckbox("tieRodsOk")}
+                  disabled={saving}
+                >
+                  Tie rods
+                </button>
+                <button
+                  type="button"
+                  className={`drawer-radio-pill ${form.ballJointsOk ? "selected" : ""}`}
+                  onClick={() => updateCheckbox("ballJointsOk")}
+                  disabled={saving}
+                >
+                  Ball joints
+                </button>
+                <button
+                  type="button"
+                  className={`drawer-radio-pill ${form.steeringPlayOk ? "selected" : ""}`}
+                  onClick={() => updateCheckbox("steeringPlayOk")}
+                  disabled={saving}
+                >
+                  No steering play
+                </button>
               </div>
             </div>
           ) : null}

@@ -41,6 +41,14 @@ const DEFAULT_DISPATCH_SETTINGS = {
   openTripsSort: "priority",
   pinOverdue: true,
   showCanceled: false,
+  visibleBuckets: {
+    needs_closeout: true,
+    in_progress: true,
+    unconfirmed: true,
+    upcoming: true,
+    canceled: false,
+    closed: false,
+  },
   bucketOrder: [
     "needs_closeout",
     "in_progress",
@@ -51,13 +59,49 @@ const DEFAULT_DISPATCH_SETTINGS = {
   ],
 };
 
+function mergeDispatchSettings(settings: any) {
+  const visibleBuckets = {
+    ...DEFAULT_DISPATCH_SETTINGS.visibleBuckets,
+    ...(settings?.visibleBuckets || {}),
+  };
+
+  if (!settings?.visibleBuckets && settings?.showCanceled !== undefined) {
+    visibleBuckets.canceled = Boolean(settings.showCanceled);
+  }
+
+  return {
+    ...DEFAULT_DISPATCH_SETTINGS,
+    ...(settings || {}),
+    visibleBuckets,
+    showCanceled: Boolean(visibleBuckets.canceled),
+    bucketOrder:
+      Array.isArray(settings?.bucketOrder) && settings.bucketOrder.length
+        ? settings.bucketOrder
+        : DEFAULT_DISPATCH_SETTINGS.bucketOrder,
+  };
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export default function Home() {
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [trips, setTrips] = useState([]);
+  const [startupVehicles, setStartupVehicles] = useState([]);
+  const [startupMessages, setStartupMessages] = useState([]);
   const [activeView, setActiveView] = useState("dispatch");
+  const [messageMode, setMessageMode] = useState<"live" | "trip">("live");
   const [selectedVehicleId, setSelectedVehicleId] = useState("belle");
   const [selectedExpenseVehicleId, setSelectedExpenseVehicleId] = useState<number | null>(null);
   const [dispatchSettings, setDispatchSettings] = useState(DEFAULT_DISPATCH_SETTINGS);
+  const [startup, setStartup] = useState({
+    ready: false,
+    label: "Starting Denmark",
+    error: "",
+  });
 
   const [messageStats, setMessageStats] = useState({
     unread: 0,
@@ -85,24 +129,139 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadDispatchSettings() {
+    async function loadStartup() {
       try {
-        const res = await fetch(`${API_BASE}/api/settings/ui.dispatch`);
-        if (!res.ok) throw new Error(`Settings request failed: ${res.status}`);
-        const data = await res.json();
+        setStartup({
+          ready: false,
+          label: "Waiting for startup jobs",
+          error: "",
+        });
+
+        for (;;) {
+          const statusRes = await fetch(`${API_BASE}/api/startup/status`, {
+            headers: { Accept: "application/json" },
+          });
+
+          if (!statusRes.ok) {
+            throw new Error(`Startup status request failed: ${statusRes.status}`);
+          }
+
+          const statusData = await statusRes.json();
+          if (statusData?.completed) break;
+
+          const running = Array.isArray(statusData?.running)
+            ? statusData.running
+            : [];
+          const pending = Array.isArray(statusData?.pending)
+            ? statusData.pending
+            : [];
+          const activeJobs = running.length ? running : pending;
+
+          if (cancelled) return;
+          setStartup({
+            ready: false,
+            label: activeJobs.length
+              ? `Running ${activeJobs.join(", ")}`
+              : "Waiting for startup jobs",
+            error: "",
+          });
+
+          await delay(900);
+          if (cancelled) return;
+        }
+
+        setStartup({
+          ready: false,
+          label: "Loading dispatch settings",
+          error: "",
+        });
+
+        const settingsRes = await fetch(`${API_BASE}/api/settings/ui.dispatch`);
+        if (!settingsRes.ok) {
+          throw new Error(`Settings request failed: ${settingsRes.status}`);
+        }
+
+        const settingsData = await settingsRes.json();
+        const mergedSettings = mergeDispatchSettings(settingsData?.value);
+
+        if (cancelled) return;
+        setDispatchSettings(mergedSettings);
+        setStartup({
+          ready: false,
+          label: "Loading trips, vehicles, and tasks",
+          error: "",
+        });
+
+        const [statsRes, tripsRes, vehiclesRes, messagesRes] = await Promise.all([
+          fetch(`${API_BASE}/api/messages/stats`, {
+            headers: { Accept: "application/json" },
+          }),
+          fetch(`${API_BASE}/api/trips?scope=all`, {
+            headers: { Accept: "application/json" },
+          }),
+          fetch(`${API_BASE}/api/vehicles/live-status`, {
+            headers: { Accept: "application/json" },
+          }),
+          fetch(`${API_BASE}/api/messages`, {
+            headers: { Accept: "application/json" },
+          }),
+        ]);
+
+        const failures = [
+          ["message stats", statsRes],
+          ["trips", tripsRes],
+          ["vehicle telemetry", vehiclesRes],
+          ["dispatch tasks", messagesRes],
+        ].filter(([, res]) => !res.ok);
+
+        if (failures.length > 0) {
+          const [name, res] = failures[0];
+          throw new Error(`${name} request failed: ${res.status}`);
+        }
+
+        const [statsData, tripsData, vehiclesData, messagesData] =
+          await Promise.all([
+            statsRes.json(),
+            tripsRes.json(),
+            vehiclesRes.json(),
+            messagesRes.json(),
+          ]);
+
+        if (cancelled) return;
+
+        const nextUnread = Number(statsData?.unread ?? 0);
+        previousUnreadRef.current = nextUnread;
+        setMessageStats({
+          unread: nextUnread,
+          lastReceived: statsData?.lastReceived ?? null,
+        });
+        setMessageStatsLoading(false);
+        setTrips(Array.isArray(tripsData) ? tripsData : []);
+        setStartupVehicles(Array.isArray(vehiclesData) ? vehiclesData : []);
+        setStartupMessages(
+          Array.isArray(messagesData) ? messagesData.slice(0, 5) : []
+        );
+        setStartup({
+          ready: true,
+          label: "Ready",
+          error: "",
+        });
+      } catch (err) {
+        console.error("Startup load failed:", err);
 
         if (!cancelled) {
-          setDispatchSettings({
-            ...DEFAULT_DISPATCH_SETTINGS,
-            ...(data?.value || {}),
+          setStartup({
+            ready: false,
+            label: "Startup paused",
+          error:
+            err instanceof Error ? err.message : "Failed to load startup data",
           });
+          setMessageStatsLoading(false);
         }
-      } catch (err) {
-        console.warn("Dispatch settings load failed:", err);
       }
     }
 
-    loadDispatchSettings();
+    loadStartup();
 
     return () => {
       cancelled = true;
@@ -204,7 +363,9 @@ export default function Home() {
       loadMessageStats(cancelled);
     }
 
-    loadMessageStats(cancelled);
+    if (startup.ready) {
+      loadMessageStats(cancelled);
+    }
 
     const interval = window.setInterval(() => {
       loadMessageStats(cancelled);
@@ -217,11 +378,76 @@ export default function Home() {
       window.clearInterval(interval);
       window.removeEventListener("messages:stats-updated", handleStatsUpdated);
     };
-  }, []);
+  }, [startup.ready]);
 
   function handleTripUpdated(savedTrip) {
     setSelectedTrip((prev) =>
       prev?.id === savedTrip?.id ? savedTrip : prev
+    );
+    setTrips((prev) =>
+      prev.map((trip) => (trip.id === savedTrip?.id ? savedTrip : trip))
+    );
+  }
+
+  function handleTripFocused(trip) {
+    if (!trip?.id) return;
+
+    setMessageMode("trip");
+    setSelectedTrip(trip);
+    setTrips((prev) =>
+      prev.map((candidate) => (candidate.id === trip.id ? trip : candidate))
+    );
+  }
+
+  function handleTripSelectedFromQueue(trip) {
+    setSelectedTrip(trip);
+    setMessageMode(trip?.id ? "trip" : "live");
+  }
+
+  function handleClearSelectedTrip() {
+    setSelectedTrip(null);
+    setMessageMode("live");
+  }
+
+  function handleOpenMaintenanceVehicle(vehicleId) {
+    if (!vehicleId) return;
+
+    setSelectedVehicleId(String(vehicleId).trim().toLowerCase().replace(/\s+/g, "_"));
+    setActiveView("maintenance");
+  }
+
+  if (!startup.ready) {
+    return (
+      <div className="startup-screen">
+        <div className="startup-card">
+          <div className="startup-brand">
+            <img src="/Fresh%20Coast-R3-05.png" alt="Fresh Coast" />
+          </div>
+          <div>
+            <div className="startup-eyebrow">Denmark</div>
+            <h1>Bringing the dispatch board online</h1>
+            <p>
+              {startup.error
+                ? startup.error
+                : `${startup.label}. Hold tight while the queue gets its facts straight.`}
+            </p>
+          </div>
+
+          {startup.error ? (
+            <button
+              type="button"
+              className="startup-action"
+              onClick={() => window.location.reload()}
+            >
+              Try again
+            </button>
+          ) : (
+            <div className="startup-progress" aria-label="Loading">
+              <span />
+            </div>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -278,15 +504,23 @@ export default function Home() {
         <>
           <TripsPanel
             selectedTrip={selectedTrip}
-            onSelectTrip={setSelectedTrip}
+            onSelectTrip={handleTripSelectedFromQueue}
             trips={trips}
             setTrips={setTrips}
             dispatchSettings={dispatchSettings}
+            initialVehicles={startupVehicles}
+            initialLoadComplete={startup.ready}
           />
 
           <MessagesPanel
             selectedTrip={selectedTrip}
-            onClearSelectedTrip={() => setSelectedTrip(null)}
+            messageMode={messageMode}
+            onClearSelectedTrip={handleClearSelectedTrip}
+            onSelectTrip={handleTripFocused}
+            onOpenMaintenanceVehicle={handleOpenMaintenanceVehicle}
+            initialMessages={startupMessages}
+            initialUnreadCount={messageStats.unread}
+            initialLoadComplete={startup.ready}
           />
 
           <DetailPanel

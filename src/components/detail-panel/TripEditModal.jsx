@@ -99,6 +99,12 @@ function toNullableIso(value) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+function getNowLocalInputValue() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 function toNullableNumber(value) {
   if (value === "" || value == null) return null;
   const n = Number(value);
@@ -145,7 +151,6 @@ export default function TripEditModal({
     trip_start: "",
     trip_end: "",
     amount: "",
-    status: "",
     mileage_included: "",
     starting_odometer: "",
     ending_odometer: "",
@@ -154,6 +159,8 @@ export default function TripEditModal({
     toll_total: "",
     toll_review_status: "pending",
     fuel_reimbursement_total: "",
+    closed_out: false,
+    closed_out_at: "",
     notes: "",
   });
 
@@ -217,7 +224,6 @@ export default function TripEditModal({
       trip_start: toLocalInputValue(trip.trip_start),
       trip_end: toLocalInputValue(trip.trip_end),
       amount: trip.amount ?? "",
-      status: trip.status || "",
       mileage_included:
         trip.mileage_included ??
         trip.allowed_miles ??
@@ -238,6 +244,8 @@ export default function TripEditModal({
       toll_total: trip.toll_total ?? "",
       toll_review_status: trip.toll_review_status || "pending",
       fuel_reimbursement_total: trip.fuel_reimbursement_total ?? "",
+      closed_out: Boolean(trip.closed_out),
+      closed_out_at: toLocalInputValue(trip.closed_out_at),
       notes: trip.notes ?? "",
     });
 
@@ -298,6 +306,22 @@ export default function TripEditModal({
         };
       }
 
+      if (name === "closed_out" && checked) {
+        return {
+          ...prev,
+          closed_out: true,
+          closed_out_at: prev.closed_out_at || getNowLocalInputValue(),
+        };
+      }
+
+      if (name === "closed_out" && !checked) {
+        return {
+          ...prev,
+          closed_out: false,
+          closed_out_at: "",
+        };
+      }
+
       return {
         ...prev,
         [name]: nextValue,
@@ -320,7 +344,6 @@ export default function TripEditModal({
         trip_start: toNullableIso(form.trip_start),
         trip_end: toNullableIso(form.trip_end),
         amount: form.amount === "" ? null : String(form.amount),
-        status: form.status || null,
         mileage_included: toNullableNumber(form.mileage_included),
         starting_odometer: toNullableNumber(form.starting_odometer),
         ending_odometer: toNullableNumber(form.ending_odometer),
@@ -333,6 +356,8 @@ export default function TripEditModal({
         fuel_reimbursement_total: toNullableNumber(
           form.fuel_reimbursement_total
         ),
+        closed_out: Boolean(form.closed_out),
+        closed_out_at: form.closed_out ? toNullableIso(form.closed_out_at) : null,
         notes: form.notes || null,
         needs_review: false,
       };
@@ -577,15 +602,6 @@ export default function TripEditModal({
           </label>
 
           <label>
-            Source Status
-            <input
-              name="status"
-              value={form.status}
-              onChange={handleChange}
-            />
-          </label>
-
-          <label>
             Mileage Included
             <input
               type="number"
@@ -682,6 +698,31 @@ export default function TripEditModal({
                 onChange={handleChange}
               />
             </label>
+          ) : null}
+
+          {trip?.trip_end && new Date(trip.trip_end).getTime() <= Date.now() ? (
+            <>
+              <label className="trip-edit-checkbox">
+                <span>Closed Out</span>
+                <input
+                  type="checkbox"
+                  name="closed_out"
+                  checked={form.closed_out}
+                  onChange={handleChange}
+                />
+              </label>
+
+              <label>
+                Closed Out At
+                <input
+                  type="datetime-local"
+                  name="closed_out_at"
+                  value={form.closed_out_at}
+                  onChange={handleChange}
+                  disabled={!form.closed_out}
+                />
+              </label>
+            </>
           ) : null}
 
           <label>

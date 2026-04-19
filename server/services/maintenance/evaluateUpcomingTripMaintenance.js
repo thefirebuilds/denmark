@@ -1,6 +1,11 @@
 const { createTaskIfMissing } = require("./taskHelpers");
 
 const ASSUMED_MILES_PER_DAY = 35;
+const AFTER_RETURN_DATE_PROJECTION_RULE_CODES = new Set([
+  "cleaning",
+  "fluid_leak_check",
+  "tire_pressure_check",
+]);
 
 function getTripLengthDays(trip) {
   if (!trip?.trip_start || !trip?.trip_end) return 0;
@@ -113,18 +118,27 @@ async function evaluateUpcomingTripMaintenance(client, { vehicle, trip, summary 
       rule.ruleId,
       "trip_projection_maintenance_risk",
     ].join(":");
+    const afterReturnDateProjection =
+      dateRisk &&
+      !mileageRisk &&
+      AFTER_RETURN_DATE_PROJECTION_RULE_CODES.has(rule.ruleCode);
+    const taskTitle = afterReturnDateProjection
+      ? `${rule.title} after return`
+      : `${rule.title} likely due during upcoming trip`;
+    const taskDescription = afterReturnDateProjection
+      ? `${rule.title} was handled for handoff. Plan the next check after this trip returns.`
+      : `${rule.title} is projected to become due during this scheduled trip. ` +
+        `Trip length: ${tripLengthDays} day(s). Estimated trip miles: ${projectedTripMiles}.`;
 
     const result = await createTaskIfMissing(client, {
       vehicleVin: vehicle.vin,
       ruleId: rule.ruleId,
       relatedTripId: trip.id,
       taskType: "trip_projection_maintenance_risk",
-      title: `${rule.title} likely due during upcoming trip`,
-      description:
-        `${rule.title} is projected to become due during this scheduled trip. ` +
-        `Trip length: ${tripLengthDays} day(s). Estimated trip miles: ${projectedTripMiles}.`,
-      priority: "high",
-      needsReview: true,
+      title: taskTitle,
+      description: taskDescription,
+      priority: afterReturnDateProjection ? "medium" : "high",
+      needsReview: !afterReturnDateProjection,
       source: "system",
       triggerType: "trip_projection",
       sourceKey,
@@ -138,6 +152,7 @@ async function evaluateUpcomingTripMaintenance(client, { vehicle, trip, summary 
         remainingMilesToDue,
         mileageRisk,
         dateRisk,
+        planningMode: afterReturnDateProjection ? "after_return" : "during_trip",
       },
     });
 

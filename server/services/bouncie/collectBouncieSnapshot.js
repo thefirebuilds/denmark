@@ -1,6 +1,8 @@
 const pool = require("../../db");
 const { getVehicles } = require("./client");
-const { transitionTripStage } = require("../trips/transitionTripStage");
+const {
+  maybeAutoStartReadyTripFromTelemetry,
+} = require("../trips/autoStartReadyTrip");
 
 function toIntegerOrNull(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -295,22 +297,16 @@ async function findEligibleReadyTrip(client, snapshot) {
 }
 
 async function maybeAutoStartReadyTrip(client, snapshot) {
-  if (!looksLikeRealTripStart(snapshot)) return null;
-
-  const trip = await findEligibleReadyTrip(client, snapshot);
-  if (!trip) return null;
-
-  if (trip.starting_odometer != null) {
-    return null;
-  }
-
-  console.log(
-    `Auto-starting trip ${trip.id} (${trip.guest_name || "unknown guest"} / ${trip.vehicle_name || snapshot.nickname || snapshot.vin}) from Bouncie telemetry`
-  );
-
-  return transitionTripStage(trip.id, "in_progress", {
-    changedBy: "system:bouncie",
-    reason: "auto-start from bouncie telemetry near scheduled trip start",
+  return maybeAutoStartReadyTripFromTelemetry(client, {
+    serviceName: "bouncie",
+    vin: snapshot.vin,
+    bouncieVehicleId: snapshot.bouncie_vehicle_id,
+    isRunning: snapshot.is_running,
+    speed: snapshot.speed,
+    latitude: snapshot.latitude,
+    longitude: snapshot.longitude,
+    odometer: snapshot.current_odometer_miles,
+    eventTimestamp: snapshot.vehicle_last_updated,
   });
 }
 

@@ -82,6 +82,7 @@ async function getVehiclesColumnMap(client) {
     hasTelemetry: columns.has("telemetry"),
     hasOdometer: columns.has("odometer"),
     hasCurrentOdometer: columns.has("current_odometer"),
+    hasCurrentOdometerMiles: columns.has("current_odometer_miles"),
   };
 
   return vehiclesColumnCache;
@@ -102,6 +103,9 @@ async function getVehicleCurrentOdometer(client, trip) {
   }
 
   const selectParts = [];
+  if (columnMap.hasCurrentOdometerMiles) {
+    selectParts.push("current_odometer_miles");
+  }
   if (columnMap.hasCurrentOdometer) {
     selectParts.push("current_odometer");
   }
@@ -130,6 +134,7 @@ async function getVehicleCurrentOdometer(client, trip) {
   if (!vehicle) return null;
 
   const candidates = [
+    vehicle.current_odometer_miles,
     vehicle.current_odometer,
     vehicle.odometer,
     vehicle.telemetry?.odometer,
@@ -229,7 +234,9 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
     );
 
     if (captureStart || captureEnd) {
-      capturedOdometer = await getVehicleCurrentOdometer(client, trip);
+      capturedOdometer =
+        normalizeOdometer(options.currentOdometer) ??
+        (await getVehicleCurrentOdometer(client, trip));
     }
 
     const startingOdometerToSet =
@@ -245,6 +252,18 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       workflow_stage = $2,
       stage_updated_at = NOW(),
 
+      status = CASE
+        WHEN $2 = 'confirmed'
+          AND status IN ('booked_unconfirmed', 'updated_unconfirmed')
+          THEN 'booked'
+        ELSE status
+      END,
+
+      needs_review = CASE
+        WHEN $2 = 'confirmed' THEN FALSE
+        ELSE needs_review
+      END,
+
       starting_odometer = COALESCE(
         starting_odometer,
         $3::integer
@@ -258,6 +277,16 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       completed_at = CASE
         WHEN $2 = 'complete' AND completed_at IS NULL THEN NOW()
         ELSE completed_at
+      END,
+
+      closed_out = CASE
+        WHEN $2 = 'complete' THEN TRUE
+        ELSE closed_out
+      END,
+
+      closed_out_at = CASE
+        WHEN $2 = 'complete' AND closed_out_at IS NULL THEN NOW()
+        ELSE closed_out_at
       END,
 
       canceled_at = CASE
@@ -286,6 +315,8 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       turo_vehicle_id,
       expense_status,
       completed_at,
+      closed_out,
+      closed_out_at,
       canceled_at,
       starting_odometer,
       ending_odometer

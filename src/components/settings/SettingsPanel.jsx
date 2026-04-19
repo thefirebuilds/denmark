@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = "http://localhost:5000";
 
@@ -6,6 +6,14 @@ const DEFAULT_DISPATCH_SETTINGS = {
   openTripsSort: "priority",
   pinOverdue: true,
   showCanceled: false,
+  visibleBuckets: {
+    needs_closeout: true,
+    in_progress: true,
+    unconfirmed: true,
+    upcoming: true,
+    canceled: false,
+    closed: false,
+  },
   bucketOrder: [
     "needs_closeout",
     "in_progress",
@@ -15,6 +23,8 @@ const DEFAULT_DISPATCH_SETTINGS = {
     "closed",
   ],
 };
+
+const DEFAULT_VISIBLE_BUCKETS = DEFAULT_DISPATCH_SETTINGS.visibleBuckets;
 
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority queue" },
@@ -57,7 +67,7 @@ const EMPTY_VEHICLE = {
 };
 
 function mergeDispatchSettings(settings) {
-  return {
+  const merged = {
     ...DEFAULT_DISPATCH_SETTINGS,
     ...(settings || {}),
     bucketOrder:
@@ -65,6 +75,18 @@ function mergeDispatchSettings(settings) {
         ? settings.bucketOrder
         : DEFAULT_DISPATCH_SETTINGS.bucketOrder,
   };
+
+  merged.visibleBuckets = {
+    ...DEFAULT_VISIBLE_BUCKETS,
+    ...(settings?.visibleBuckets || {}),
+  };
+
+  if (!settings?.visibleBuckets && settings?.showCanceled !== undefined) {
+    merged.visibleBuckets.canceled = Boolean(settings.showCanceled);
+  }
+
+  merged.showCanceled = Boolean(merged.visibleBuckets.canceled);
+  return merged;
 }
 
 function moveItem(items, index, direction) {
@@ -91,6 +113,7 @@ function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
+    { key: "database", title: "Database", sub: "Backup and restore" },
     { key: "telemetry", title: "Telemetry", sub: "Coming next" },
     { key: "maintenance", title: "Maintenance", sub: "Template defaults" },
     { key: "integrations", title: "Integrations", sub: "External systems" },
@@ -128,35 +151,64 @@ function DispatchSettingsPanel({ settings, onSaved }) {
   const [form, setForm] = useState(() => mergeDispatchSettings(settings));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const dirtyRef = useRef(false);
+  const saveSeqRef = useRef(0);
 
   useEffect(() => {
+    dirtyRef.current = false;
     setForm(mergeDispatchSettings(settings));
   }, [settings]);
 
-  async function save() {
-    try {
-      setSaving(true);
-      setMessage("");
+  useEffect(() => {
+    if (!dirtyRef.current) return undefined;
 
-      const res = await fetch(`${API_BASE}/api/settings/ui.dispatch`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: form }),
-      });
+    const payload = mergeDispatchSettings(form);
+    const saveSeq = saveSeqRef.current + 1;
+    saveSeqRef.current = saveSeq;
 
-      const json = await res.json().catch(() => ({}));
+    setSaving(true);
+    setMessage("Saving...");
 
-      if (!res.ok) {
-        throw new Error(json?.error || "Failed to save dispatch settings");
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/settings/ui.dispatch`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: payload }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(json?.error || "Failed to save dispatch settings");
+        }
+
+        if (saveSeq !== saveSeqRef.current) return;
+
+        dirtyRef.current = false;
+        onSaved?.(mergeDispatchSettings(json.value || payload));
+        setMessage("Saved");
+      } catch (err) {
+        if (saveSeq !== saveSeqRef.current) return;
+
+        setMessage(err.message || "Failed to save");
+      } finally {
+        if (saveSeq === saveSeqRef.current) {
+          setSaving(false);
+        }
       }
+    }, 350);
 
-      onSaved?.(mergeDispatchSettings(json.value));
-      setMessage("Saved");
-    } catch (err) {
-      setMessage(err.message || "Failed to save");
-    } finally {
-      setSaving(false);
-    }
+    return () => window.clearTimeout(timeoutId);
+  }, [form, onSaved]);
+
+  function updateForm(updater) {
+    dirtyRef.current = true;
+    setForm((current) =>
+      mergeDispatchSettings(
+        typeof updater === "function" ? updater(current) : updater
+      )
+    );
   }
 
   return (
@@ -166,14 +218,9 @@ function DispatchSettingsPanel({ settings, onSaved }) {
           <h2>Dispatch</h2>
           <span>open trip queue behavior</span>
         </div>
-        <button
-          type="button"
-          className="settings-action-btn"
-          onClick={save}
-          disabled={saving}
-        >
-          {saving ? "Saving..." : "Save"}
-        </button>
+        <div className="settings-autosave-state">
+          {saving ? "Saving..." : message || "Autosaves"}
+        </div>
       </div>
 
       <div className="settings-form">
@@ -182,7 +229,7 @@ function DispatchSettingsPanel({ settings, onSaved }) {
           <select
             value={form.openTripsSort}
             onChange={(e) =>
-              setForm((current) => ({
+              updateForm((current) => ({
                 ...current,
                 openTripsSort: e.target.value,
               }))
@@ -201,7 +248,7 @@ function DispatchSettingsPanel({ settings, onSaved }) {
             type="checkbox"
             checked={Boolean(form.pinOverdue)}
             onChange={(e) =>
-              setForm((current) => ({
+              updateForm((current) => ({
                 ...current,
                 pinOverdue: e.target.checked,
               }))
@@ -210,50 +257,69 @@ function DispatchSettingsPanel({ settings, onSaved }) {
           <span>Keep overdue in-progress trips pinned to the top</span>
         </label>
 
-        <label className="settings-check-row">
-          <input
-            type="checkbox"
-            checked={Boolean(form.showCanceled)}
-            onChange={(e) =>
-              setForm((current) => ({
-                ...current,
-                showCanceled: e.target.checked,
-              }))
-            }
-          />
-          <span>Show canceled trips in the Open Trips panel</span>
-        </label>
-
         <div className="settings-group">
-          <div className="settings-group-title">Priority bucket order</div>
+          <div className="settings-group-title">Priority bucket order and visibility</div>
           <div className="settings-bucket-list">
             {form.bucketOrder.map((bucket, index) => (
               <div key={bucket} className="settings-bucket-row">
-                <span>{BUCKET_LABELS[bucket] || bucket}</span>
-                <div className="settings-bucket-actions">
+                <span className="settings-bucket-label">
+                  {BUCKET_LABELS[bucket] || bucket}
+                </span>
+                <div className="settings-bucket-controls">
+                  <div className="settings-bucket-actions">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateForm((current) => ({
+                          ...current,
+                          bucketOrder: moveItem(current.bucketOrder, index, -1),
+                        }))
+                      }
+                      disabled={index === 0}
+                    >
+                      Up
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateForm((current) => ({
+                          ...current,
+                          bucketOrder: moveItem(current.bucketOrder, index, 1),
+                        }))
+                      }
+                      disabled={index === form.bucketOrder.length - 1}
+                    >
+                      Down
+                    </button>
+                  </div>
                   <button
                     type="button"
+                    className={`settings-visibility-pill ${
+                      form.visibleBuckets?.[bucket] !== false ? "is-visible" : ""
+                    }`}
+                    aria-pressed={form.visibleBuckets?.[bucket] !== false}
                     onClick={() =>
-                      setForm((current) => ({
-                        ...current,
-                        bucketOrder: moveItem(current.bucketOrder, index, -1),
-                      }))
+                      updateForm((current) => {
+                        const currentlyVisible =
+                          current.visibleBuckets?.[bucket] !== false;
+                        const visibleBuckets = {
+                          ...DEFAULT_VISIBLE_BUCKETS,
+                          ...(current.visibleBuckets || {}),
+                          [bucket]: !currentlyVisible,
+                        };
+
+                        return {
+                          ...current,
+                          visibleBuckets,
+                          showCanceled: Boolean(visibleBuckets.canceled),
+                        };
+                      })
                     }
-                    disabled={index === 0}
                   >
-                    Up
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setForm((current) => ({
-                        ...current,
-                        bucketOrder: moveItem(current.bucketOrder, index, 1),
-                      }))
-                    }
-                    disabled={index === form.bucketOrder.length - 1}
-                  >
-                    Down
+                    <span className="settings-visibility-knob" />
+                    <span className="settings-visibility-text">
+                      {form.visibleBuckets?.[bucket] !== false ? "Visible" : "Hidden"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -261,7 +327,9 @@ function DispatchSettingsPanel({ settings, onSaved }) {
           </div>
         </div>
 
-        {message ? <div className="settings-message">{message}</div> : null}
+        {message && !saving && message !== "Saved" ? (
+          <div className="settings-message">{message}</div>
+        ) : null}
       </div>
     </section>
   );
@@ -517,6 +585,170 @@ function FleetSettingsPanel() {
   );
 }
 
+function DatabaseSettingsPanel() {
+  const [backupStatus, setBackupStatus] = useState("");
+  const [restoreFile, setRestoreFile] = useState(null);
+  const [restoreConfirm, setRestoreConfirm] = useState("");
+  const [restoreStatus, setRestoreStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function downloadBackup() {
+    try {
+      setBusy(true);
+      setBackupStatus("Building backup...");
+
+      const res = await fetch(`${API_BASE}/api/database/backup`);
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json?.error || `Backup failed (${res.status})`);
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename =
+        match?.[1] || `denmark-db-backup-${new Date().toISOString()}.json`;
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setBackupStatus(`Downloaded ${filename}`);
+    } catch (err) {
+      setBackupStatus(err.message || "Backup failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreBackup() {
+    if (!restoreFile) {
+      setRestoreStatus("Choose a backup JSON file first.");
+      return;
+    }
+
+    if (restoreConfirm !== "RESTORE") {
+      setRestoreStatus("Type RESTORE to confirm.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setRestoreStatus("Reading backup...");
+
+      const text = await restoreFile.text();
+      const backup = JSON.parse(text);
+
+      setRestoreStatus("Restoring database...");
+
+      const res = await fetch(`${API_BASE}/api/database/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: restoreConfirm, backup }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || `Restore failed (${res.status})`);
+      }
+
+      setRestoreStatus(
+        `Restored ${json.restoredRows || 0} rows across ${
+          json.restoredTables || 0
+        } tables. Refresh the app.`
+      );
+      setRestoreFile(null);
+      setRestoreConfirm("");
+    } catch (err) {
+      setRestoreStatus(err.message || "Restore failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Database</h2>
+          <span>backup and restore local Postgres data</span>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Backup</div>
+          <div className="settings-empty-state">
+            Download a JSON snapshot of every table in the public schema. Keep
+            this somewhere private; it can contain guest, trip, expense, and
+            vehicle data.
+          </div>
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={busy}
+              onClick={downloadBackup}
+            >
+              {busy ? "Working..." : "Download Backup"}
+            </button>
+            {backupStatus ? (
+              <span className="settings-message">{backupStatus}</span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Restore</div>
+          <div className="settings-empty-state">
+            Restore replaces the current database contents with the selected
+            backup. This is meant for local recovery, not merging two datasets.
+          </div>
+
+          <label className="settings-field">
+            <span>Backup file</span>
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={(e) => setRestoreFile(e.target.files?.[0] || null)}
+            />
+          </label>
+
+          <label className="settings-field">
+            <span>Type RESTORE to confirm</span>
+            <input
+              value={restoreConfirm}
+              onChange={(e) => setRestoreConfirm(e.target.value)}
+              placeholder="RESTORE"
+            />
+          </label>
+
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn settings-action-btn--danger"
+              disabled={busy || !restoreFile || restoreConfirm !== "RESTORE"}
+              onClick={restoreBackup}
+            >
+              Restore Database
+            </button>
+            {restoreStatus ? (
+              <span className="settings-message">{restoreStatus}</span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SettingsHelpPanel({ activeSection }) {
   const copy = useMemo(() => {
     if (activeSection === "dispatch") {
@@ -532,6 +764,14 @@ function SettingsHelpPanel({ activeSection }) {
         title: "Fleet notes",
         body:
           "Add cars here before telemetry exists. Bouncie and DIMO can enrich the same vehicle later when their IDs or VINs match.",
+      };
+    }
+
+    if (activeSection === "database") {
+      return {
+        title: "Database safety",
+        body:
+          "Backups are full JSON snapshots of the local public schema. Restore is intentionally destructive: it clears current tables and reloads the backup.",
       };
     }
 
@@ -572,6 +812,8 @@ export default function SettingsPanel({
         />
       ) : activeSection === "fleet" ? (
         <FleetSettingsPanel />
+      ) : activeSection === "database" ? (
+        <DatabaseSettingsPanel />
       ) : (
         <section className="panel settings-main-panel">
           <div className="panel-header">

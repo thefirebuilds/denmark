@@ -11,6 +11,7 @@ import {
   normalizeVehicleKey,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
+  getNextServiceDue,
 } from "../../utils/maintUtils";
 
 function getVehicleRouteKey(vehicle) {
@@ -23,7 +24,62 @@ function getVehicleRouteKey(vehicle) {
   );
 }
 
-function buildLiveFleetCard(vehicle, trips = []) {
+function getMaintenanceSort(vehicleCard) {
+  const due = vehicleCard?.nextMaintenanceDue;
+  const currentOdometer =
+    vehicleCard?.currentOdometerMiles != null
+      ? Number(vehicleCard.currentOdometerMiles)
+      : NaN;
+  const dueMiles = due?.miles != null ? Number(due.miles) : NaN;
+  const dateMs = due?.estimatedDate
+    ? new Date(due.estimatedDate).getTime()
+    : due?.date
+    ? new Date(due.date).getTime()
+    : NaN;
+
+  if (vehicleCard?.milOn || vehicleCard?.serviceDue) {
+    return { group: 0, value: 0 };
+  }
+
+  if (
+    Number.isFinite(currentOdometer) &&
+    Number.isFinite(dueMiles) &&
+    dueMiles <= currentOdometer
+  ) {
+    return { group: 0, value: dueMiles - currentOdometer };
+  }
+
+  if (Number.isFinite(dateMs)) {
+    return { group: dateMs <= Date.now() ? 0 : 1, value: dateMs };
+  }
+
+  if (Number.isFinite(currentOdometer) && Number.isFinite(dueMiles)) {
+    return { group: 2, value: dueMiles - currentOdometer };
+  }
+
+  return { group: 3, value: Number.POSITIVE_INFINITY };
+}
+
+function compareFleetByMaintenance(a, b) {
+  const aSort = getMaintenanceSort(a);
+  const bSort = getMaintenanceSort(b);
+
+  if (aSort.group !== bSort.group) return aSort.group - bSort.group;
+  if (aSort.value !== bSort.value) return aSort.value - bSort.value;
+
+  const aAvailable = a.nextAvailableDate
+    ? new Date(a.nextAvailableDate).getTime()
+    : Number.POSITIVE_INFINITY;
+  const bAvailable = b.nextAvailableDate
+    ? new Date(b.nextAvailableDate).getTime()
+    : Number.POSITIVE_INFINITY;
+
+  if (aAvailable !== bAvailable) return aAvailable - bAvailable;
+
+  return String(a.nickname).localeCompare(String(b.nickname));
+}
+
+function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
   if (!vehicle) return null;
 
   const milOn = vehicle?.telemetry?.mil?.mil_on;
@@ -64,6 +120,15 @@ function buildLiveFleetCard(vehicle, trips = []) {
     tone,
     nextOffTrip: getEarliestAvailableLabel(trips),
     nextAvailableDate: getEarliestAvailableDate(trips),
+    currentOdometerMiles:
+      maintenanceSummary?.currentOdometerMiles ??
+      vehicle?.telemetry?.odometer ??
+      null,
+    nextMaintenanceDue: maintenanceSummary
+      ? getNextServiceDue(maintenanceSummary)
+      : null,
+    milOn,
+    serviceDue,
     isLive: true,
   };
 }
@@ -98,21 +163,32 @@ export default function FleetListPanel({
         const tripResults = await Promise.all(
           vehicles.map(async (vehicle) => {
             const routeKey = getVehicleRouteKey(vehicle);
+            const maintenanceSelector = vehicle?.vin || routeKey;
 
             try {
-              const tripsRes = await fetch(
-                `http://localhost:5000/api/trips/vehicle/${routeKey}?mode=relevant`
-              );
+              const [tripsRes, maintenanceRes] = await Promise.all([
+                fetch(`http://localhost:5000/api/trips/vehicle/${routeKey}?mode=relevant`),
+                maintenanceSelector
+                  ? fetch(
+                      `http://localhost:5000/api/vehicles/${encodeURIComponent(
+                        maintenanceSelector
+                      )}/maintenance-summary`
+                    )
+                  : Promise.resolve(null),
+              ]);
 
               if (!tripsRes.ok) {
                 throw new Error(`Trip status HTTP ${tripsRes.status}`);
               }
 
               const tripData = await tripsRes.json();
+              const maintenanceSummary =
+                maintenanceRes?.ok ? await maintenanceRes.json() : null;
 
               return {
                 vehicle,
                 trips: Array.isArray(tripData) ? tripData : [],
+                maintenanceSummary,
               };
             } catch (err) {
               console.error(`Failed to load trips for ${routeKey}:`, err);
@@ -120,15 +196,18 @@ export default function FleetListPanel({
               return {
                 vehicle,
                 trips: [],
+                maintenanceSummary: null,
               };
             }
           })
         );
 
         const liveFleet = tripResults
-          .map(({ vehicle, trips }) => buildLiveFleetCard(vehicle, trips))
+          .map(({ vehicle, trips, maintenanceSummary }) =>
+            buildLiveFleetCard(vehicle, trips, maintenanceSummary)
+          )
           .filter(Boolean)
-          .sort((a, b) => String(a.nickname).localeCompare(String(b.nickname)));
+          .sort(compareFleetByMaintenance);
 
         if (isMounted) {
           setFleet(liveFleet);
@@ -207,6 +286,18 @@ export default function FleetListPanel({
                   </span>
                   <span className="fleet-status-card-value">
                     {vehicle.nextOffTrip}
+                  </span>
+                </div>
+
+                <div className="fleet-status-card-meta">
+                  <span className="fleet-status-card-label">
+                    Next Maintenance:{" "}
+                  </span>
+                  <span className="fleet-status-card-value">
+                    {vehicle.nextMaintenanceDue?.text &&
+                    vehicle.nextMaintenanceDue.text !== "Unknown"
+                      ? `${vehicle.nextMaintenanceDue.label}: ${vehicle.nextMaintenanceDue.text}`
+                      : "No scheduled item"}
                   </span>
                 </div>
               </button>

@@ -211,7 +211,7 @@ async function getVehicleBySelector(selector) {
     FROM vehicles
     WHERE lower(trim(vin)) = $1
        OR lower(trim(nickname)) = $1
-       OR lower(trim(plate_number)) = $1
+       OR lower(trim(COALESCE(license_plate, ''))) = $1
     LIMIT 1
   `;
 
@@ -256,9 +256,7 @@ async function getVehicleStatusFeed() {
   model: toTitleCase(vehicle.model || live?.model?.name || null),
   standard_engine: vehicle.standard_engine || live?.standardEngine || null,
 
-  plate_number: normalizePlate(vehicle.plate_number),
-
-  plate_number: normalizePlate(vehicle.license_plate),
+  license_plate: normalizePlate(vehicle.license_plate),
 
 registration: {
   state: vehicle.license_state || null,

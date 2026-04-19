@@ -182,6 +182,55 @@ export default function FleetSnapshotPanel({
     return `Returning in ${days} day${days === 1 ? "" : "s"}`;
   }
 
+  function getCurrentTripForVehicle(vehicle) {
+    return trips.find(
+      (trip) => tripMatchesVehicle(vehicle, trip) && isActiveTrip(trip)
+    );
+  }
+
+  function getNextTripForVehicle(vehicle) {
+    return trips
+      .filter(
+        (trip) =>
+          tripMatchesVehicle(vehicle, trip) &&
+          !isActiveTrip(trip) &&
+          !isCanceledTrip(trip) &&
+          getTripStartMs(trip) > Date.now()
+      )
+      .sort((a, b) => getTripStartMs(a) - getTripStartMs(b))[0];
+  }
+
+  const sortedVehicleRows = useMemo(() => {
+    return vehicles
+      .map((vehicle) => {
+        const currentTrip = getCurrentTripForVehicle(vehicle);
+        const nextTrip = currentTrip ? null : getNextTripForVehicle(vehicle);
+        const currentReturnMs = currentTrip
+          ? getTripEndMs(currentTrip)
+          : Number.POSITIVE_INFINITY;
+        const nextStartMs = nextTrip
+          ? getTripStartMs(nextTrip)
+          : Number.POSITIVE_INFINITY;
+        const name = normalizeValue(
+          vehicle?.nickname || vehicle?.vehicle_name || vehicle?.vin || ""
+        );
+
+        return {
+          vehicle,
+          currentTrip,
+          nextTrip,
+          sortGroup: currentTrip ? 0 : nextTrip ? 1 : 2,
+          sortTime: currentTrip ? currentReturnMs : nextStartMs,
+          name,
+        };
+      })
+      .sort((a, b) => {
+        if (a.sortGroup !== b.sortGroup) return a.sortGroup - b.sortGroup;
+        if (a.sortTime !== b.sortTime) return a.sortTime - b.sortTime;
+        return a.name.localeCompare(b.name);
+      });
+  }, [vehicles, trips]);
+
   function renderLocationLink(vehicle) {
   const { label, url, title, clickable } = getVehicleLocationLinkData(vehicle);
 
@@ -219,7 +268,7 @@ export default function FleetSnapshotPanel({
         ) : null}
 
         <div className="fleet-list">
-          {vehicles.map((vehicle) => {
+          {sortedVehicleRows.map(({ vehicle, currentTrip, nextTrip }) => {
             const nameTitle = vehicle.nickname || "Unknown vehicle";
             const subtitle = [vehicle.year, vehicle.make, vehicle.model]
               .filter(Boolean)
@@ -229,19 +278,6 @@ export default function FleetSnapshotPanel({
             const batteryAlert = getBatteryAlert(vehicle);
             const fuelLabel = formatFuelLevel(vehicle?.telemetry?.fuel_level);
             const statusTone = getVehicleEmergencyTone(vehicle);
-            const currentTrip = trips.find(
-              (trip) => tripMatchesVehicle(vehicle, trip) && isActiveTrip(trip)
-            );
-            const nextTrip = trips
-              .filter(
-                (trip) =>
-                  tripMatchesVehicle(vehicle, trip) &&
-                  !isActiveTrip(trip) &&
-                  !isCanceledTrip(trip) &&
-                  getTripStartMs(trip) > Date.now()
-              )
-              .sort((a, b) => getTripStartMs(a) - getTripStartMs(b))[0];
-
             const tripStateLabel = currentTrip
               ? `On trip • ${getReturnLabel(currentTrip)}`
               : nextTrip

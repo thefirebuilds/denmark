@@ -122,13 +122,11 @@ function marketplaceLocationSource(item) {
 }
 
 function inferYear(item) {
-  if (item.listing_year) return item.listing_year;
   const match = marketplaceTextSource(item).match(/\b(19\d{2}|20\d{2})\b/);
   return match ? Number(match[1]) : null;
 }
 
 function inferMake(item) {
-  if (item.make_normalized) return item.make_normalized;
   const inferred = inferVehicleFromDescription(marketplaceTextSource(item));
   if (inferred.make) return inferred.make;
   const parts = marketplaceTextSource(item).split(/\s+/);
@@ -137,7 +135,6 @@ function inferMake(item) {
 }
 
 function inferModel(item) {
-  if (item.model_normalized) return item.model_normalized;
   const inferred = inferVehicleFromDescription(marketplaceTextSource(item));
   if (inferred.model) return inferred.model;
   const parts = marketplaceTextSource(item).split(/\s+/);

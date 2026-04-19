@@ -65,15 +65,12 @@ async function createTaskIfMissing(
   const {
     vehicleVin,
     ruleId = null,
-    relatedEventId = null,
     relatedTripId = null,
     taskType,
     title,
     description = null,
     priority = "medium",
     status = "open",
-    scheduledFor = null,
-    dueBy = null,
     blocksRental = false,
     blocksGuestExport = false,
     needsReview = false,
@@ -101,15 +98,12 @@ async function createTaskIfMissing(
         INSERT INTO maintenance_tasks (
           vehicle_vin,
           rule_id,
-          related_event_id,
           related_trip_id,
           task_type,
           title,
           description,
           priority,
           status,
-          scheduled_for,
-          due_by,
           blocks_rental,
           blocks_guest_export,
           needs_review,
@@ -119,8 +113,8 @@ async function createTaskIfMissing(
           source_key
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-          $12, $13, $14, $15, $16, $17::jsonb, $18
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12, $13, $14::jsonb, $15
         )
         ON CONFLICT (source_key) DO NOTHING
         RETURNING *
@@ -128,15 +122,12 @@ async function createTaskIfMissing(
       [
         vehicleVin,
         ruleId,
-        relatedEventId,
         relatedTripId,
         taskType,
         title,
         description,
         priority,
         status,
-        scheduledFor,
-        dueBy,
         blocksRental,
         blocksGuestExport,
         needsReview,
@@ -191,15 +182,12 @@ async function createTaskIfMissing(
       INSERT INTO maintenance_tasks (
         vehicle_vin,
         rule_id,
-        related_event_id,
         related_trip_id,
         task_type,
         title,
         description,
         priority,
         status,
-        scheduled_for,
-        due_by,
         blocks_rental,
         blocks_guest_export,
         needs_review,
@@ -209,23 +197,20 @@ async function createTaskIfMissing(
         source_key
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17::jsonb, $18
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, $14::jsonb, $15
       )
       RETURNING *
     `,
     [
       vehicleVin,
       ruleId,
-      relatedEventId,
       relatedTripId,
       taskType,
       title,
       description,
       priority,
       status,
-      scheduledFor,
-      dueBy,
       blocksRental,
       blocksGuestExport,
       needsReview,
