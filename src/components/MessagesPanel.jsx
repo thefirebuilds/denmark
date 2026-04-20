@@ -519,6 +519,77 @@ function isCompletableSyntheticTask(message) {
   return isInspectionExportTask(message);
 }
 
+function boolOrReason(message, field, reason) {
+  if (typeof message?.[field] === "boolean") return message[field];
+  const reasons = Array.isArray(message?.closeout_reasons)
+    ? message.closeout_reasons
+    : [];
+  return reasons.includes(reason);
+}
+
+function buildCloseoutActionItems(message) {
+  return [
+    {
+      key: "workflow",
+      label: "Advance workflow",
+      pending: boolOrReason(message, "closeout_workflow_incomplete", "advance workflow"),
+      detail: "Move the trip through turnaround / awaiting expenses and finish it as complete.",
+      where: "Detail panel stage button",
+    },
+    {
+      key: "starting_odometer",
+      label: "Starting odometer",
+      pending: boolOrReason(
+        message,
+        "closeout_missing_starting_odometer",
+        "starting odometer"
+      ),
+      detail: message?.starting_odometer
+        ? `Recorded: ${Number(message.starting_odometer).toLocaleString("en-US")} mi`
+        : "Enter the starting odometer from trip start.",
+      where: "Main panel",
+    },
+    {
+      key: "ending_odometer",
+      label: "Ending odometer",
+      pending: boolOrReason(
+        message,
+        "closeout_missing_ending_odometer",
+        "ending odometer"
+      ),
+      detail: message?.ending_odometer
+        ? `Recorded: ${Number(message.ending_odometer).toLocaleString("en-US")} mi`
+        : "Enter the return odometer so mileage and overage can calculate.",
+      where: "Main panel",
+    },
+    {
+      key: "expenses",
+      label: "Turo expense review",
+      pending: boolOrReason(message, "closeout_expenses_pending", "expense review"),
+      detail: `Review fuel and incidentals in Turo, then record the result here. Current status: ${
+        message?.closeout_expense_status || "pending"
+      }`,
+      where: "Main panel",
+    },
+    {
+      key: "tolls",
+      label: "Turo toll billing",
+      pending: boolOrReason(message, "closeout_tolls_pending", "toll billing"),
+      detail: `Audit HCTRA tolls against Turo billing. Current status: ${
+        message?.closeout_toll_review_status || "none"
+      }`,
+      where: "Main panel",
+    },
+    {
+      key: "closed_out",
+      label: "Closeout flag",
+      pending: boolOrReason(message, "closeout_flag_incomplete", "closeout flag"),
+      detail: "Mark the trip closed out once the audit items above are handled.",
+      where: "Main panel",
+    },
+  ];
+}
+
 function normalizeCompareValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
@@ -614,6 +685,7 @@ export default function MessagesPanel({
   const [inspectionExport, setInspectionExport] = useState(null);
   const [printingPrepMessageId, setPrintingPrepMessageId] = useState(null);
   const [prepPrint, setPrepPrint] = useState(null);
+  const [focusedCloseoutTask, setFocusedCloseoutTask] = useState(null);
   const [expandedMaintenanceIds, setExpandedMaintenanceIds] = useState(() => new Set());
   const [completedSyntheticTaskIds, setCompletedSyntheticTaskIds] = useState(() =>
     loadCompletedSyntheticTaskIds()
@@ -684,6 +756,21 @@ async function handleFocusTrip(message) {
     }
 
     const trip = await res.json();
+    if (isCloseoutTask(message)) {
+      setFocusedCloseoutTask({
+        ...message,
+        trip_workflow_stage: trip.workflow_stage ?? message.trip_workflow_stage,
+        trip_status: trip.status ?? message.trip_status,
+        starting_odometer: trip.starting_odometer ?? message.starting_odometer,
+        ending_odometer: trip.ending_odometer ?? message.ending_odometer,
+        closeout_expense_status:
+          trip.expense_status ?? message.closeout_expense_status,
+        closeout_toll_review_status:
+          trip.toll_review_status ?? message.closeout_toll_review_status,
+        has_tolls: trip.has_tolls ?? message.has_tolls,
+        closed_out: trip.closed_out ?? message.closed_out,
+      });
+    }
     onSelectTrip?.(trip);
   } catch (err) {
     setError(err.message || "Failed to focus trip");
@@ -963,8 +1050,18 @@ async function handleExportGuestInspectionSheet(message) {
           !isCompletableSyntheticTask(message) ||
           !completedSyntheticTaskIdsRef.current.has(message.id)
       );
+      const closeoutTaskIsFocused =
+        showingTripMessages &&
+        !selectedTrip?.closed_out &&
+        focusedCloseoutTask?.trip_id &&
+        Number(focusedCloseoutTask.trip_id) === Number(selectedTrip?.id);
+      const displayMessages =
+        closeoutTaskIsFocused &&
+        !visibleMessages.some((message) => message.id === focusedCloseoutTask.id)
+          ? [focusedCloseoutTask, ...visibleMessages]
+          : visibleMessages;
 
-      const nextIds = visibleMessages.map((msg) => msg.id);
+      const nextIds = displayMessages.map((msg) => msg.id);
       const seenIds = seenIdsRef.current;
 
       if (isInitialLoad) {
@@ -996,7 +1093,7 @@ async function handleExportGuestInspectionSheet(message) {
         nextIds.forEach((id) => seenIds.add(id));
       }
 
-      setMessages(visibleMessages);
+      setMessages(displayMessages);
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load messages");
@@ -1014,6 +1111,27 @@ async function handleExportGuestInspectionSheet(message) {
 
     return () => clearInterval(timerId);
   }, []);
+
+  useEffect(() => {
+    if (messageMode !== "trip" || !selectedTrip?.id) {
+      setFocusedCloseoutTask(null);
+      return;
+    }
+
+    if (selectedTrip?.closed_out) {
+      setFocusedCloseoutTask(null);
+      setMessages((current) =>
+        current.filter((message) => !isCloseoutTask(message))
+      );
+      return;
+    }
+
+    setFocusedCloseoutTask((current) =>
+      current?.trip_id && Number(current.trip_id) === Number(selectedTrip.id)
+        ? current
+        : null
+    );
+  }, [messageMode, selectedTrip?.id, selectedTrip?.closed_out]);
 
   useEffect(() => {
     audioRef.current = new Audio("/boop.mp3");
@@ -1060,7 +1178,7 @@ async function handleExportGuestInspectionSheet(message) {
         clearTimeout(highlightTimeoutRef.current);
       }
     };
-  }, [selectedTrip?.id, messageMode]);
+  }, [selectedTrip?.id, selectedTrip?.closed_out, messageMode]);
 
   useEffect(() => {
     if (!prepExport) return undefined;
@@ -1256,13 +1374,21 @@ async function handleExportGuestInspectionSheet(message) {
             const bookingComparisonRows = canConfirmBooking
               ? buildBookingComparisonRows(message)
               : [];
+            const closeoutActionItems = canCloseoutTrip
+              ? buildCloseoutActionItems(message)
+              : [];
+            const closeoutPendingCount = closeoutActionItems.filter(
+              (item) => item.pending
+            ).length;
 
             return (
               <article
                 key={message.id}
                 className={`message ${isUnread ? "unread" : ""} ${
                   isNew ? "message-new" : ""
-                } ${canFocusTrip ? "message-focusable" : ""}`}
+                } ${canFocusTrip ? "message-focusable" : ""} ${
+                  canCloseoutTrip ? "message-closeout-guide" : ""
+                }`}
                 onClick={() => {
                   if (canShowMaintenance) {
                     toggleMaintenanceNotice(message.id);
@@ -1338,25 +1464,39 @@ async function handleExportGuestInspectionSheet(message) {
                     <div className="message-booking-title">
                       Finish trip closeout
                       <span>
-                        {message.vehicle_nickname || message.vehicle_name || "Vehicle"}
+                        {closeoutPendingCount
+                          ? `${closeoutPendingCount} action${
+                              closeoutPendingCount === 1 ? "" : "s"
+                            } left`
+                          : "ready to close"}
                       </span>
                     </div>
                     <div className="message-maintenance-plan-date">
                       <span>Returned</span>
                       <strong>{formatTripTime(message.trip_end)}</strong>
                     </div>
-                    {Array.isArray(message.closeout_reasons) &&
-                    message.closeout_reasons.length ? (
-                      <div className="message-maintenance-list">
-                        {message.closeout_reasons.map((reason) => (
-                          <div key={reason} className="message-maintenance-item">
-                            <div>
-                              <strong>{reason}</strong>
-                            </div>
+                    <div className="message-closeout-hint">
+                      Reconcile tolls and incidentals in Turo, transcribe the result
+                      in the selected trip panel, then close the trip.
+                    </div>
+                    <div className="message-maintenance-list">
+                      {closeoutActionItems.map((item) => (
+                        <div
+                          key={item.key}
+                          className={`message-maintenance-item message-closeout-item ${
+                            item.pending
+                              ? "message-closeout-item--pending"
+                              : "message-closeout-item--done"
+                          }`}
+                        >
+                          <div>
+                            <strong>{item.label}</strong>
+                            <span>{item.detail}</span>
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
+                          <em>{item.pending ? item.where : "done"}</em>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 

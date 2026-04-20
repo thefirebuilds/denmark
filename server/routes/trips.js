@@ -670,6 +670,7 @@ router.patch("/:id", async (req, res) => {
     toll_total,
     toll_review_status,
     fuel_reimbursement_total,
+    expense_status,
     closed_out,
     closed_out_at,
   } = req.body || {};
@@ -700,6 +701,10 @@ router.patch("/:id", async (req, res) => {
       : normalizeTollReviewStatus(toll_review_status, effectiveHasTolls);
 
   const normalizedClosedOut = toNullableBoolean(closed_out);
+  const normalizedExpenseStatus =
+    typeof expense_status === "string" && expense_status.trim() !== ""
+      ? expense_status.trim().toLowerCase()
+      : null;
 
   const client = await pool.connect();
 
@@ -779,8 +784,9 @@ router.patch("/:id", async (req, res) => {
             WHEN $17::boolean = FALSE THEN NULL
             ELSE closed_out_at
           END,
+          expense_status = COALESCE($19, expense_status),
           updated_at = NOW()
-        WHERE id = $19
+        WHERE id = $20
         RETURNING id
       `,
       [
@@ -810,6 +816,7 @@ router.patch("/:id", async (req, res) => {
           : Number(fuel_reimbursement_total),
         normalizedClosedOut,
         closed_out_at || null,
+        normalizedExpenseStatus,
         tripId,
       ]
     );

@@ -137,19 +137,39 @@ The system is designed around a practical separation of concerns:
 
 ---
 
-## First Install / Repave Path
+## Install / Repave Path
 
-This repo includes a schema-only PostgreSQL bootstrap file for rebuilding the app from an empty machine or after total local data loss.
+This repo includes everything needed to stand up a blank Denmark2.0 install after data loss, a new workstation setup, or a deliberate repave. The install path creates the app schema, installs frontend/backend dependencies, and starts the local services.
 
-### 1. Create the database schema
+### Prerequisites
 
-The bootstrap file lives at:
+Install these first:
+
+- Node.js 20.19+ or 22.12+
+- npm
+- PostgreSQL with `psql` available on your PATH
+- Git
+
+The app expects a PostgreSQL database, a Node/Express backend on port `5000`, and a Vite frontend on port `5173`.
+
+### 1. Clone and enter the repo
+
+```bash
+git clone <repo-url> Denmark2.0
+cd Denmark2.0
+```
+
+If the repo is already present, start from the repo root.
+
+### 2. Create the database schema
+
+The schema bootstrap file lives at:
 
 ```text
 server/db/schema.sql
 ```
 
-It creates the default `denmark` database if it does not exist, connects to it, drops/recreates the public app schema, and inserts safe default UI settings. It does **not** include private data, vehicle history, bank data, tokens, guest data, or marketplace rows.
+It creates the default `denmark` database if needed, connects to it, drops and recreates the public app schema, then inserts safe default UI settings. It does **not** include private fleet data, guest data, bank data, telemetry history, provider tokens, marketplace rows, or local secrets.
 
 Run it from the repo root with a PostgreSQL admin user:
 
@@ -157,11 +177,17 @@ Run it from the repo root with a PostgreSQL admin user:
 psql -U postgres -d postgres -f server/db/schema.sql
 ```
 
-If your local database should use a name other than `denmark`, edit the `\set dbname denmark` line at the top of `server/db/schema.sql`, then make the same change in `.env`.
+PowerShell example:
 
-This file is intentionally useful for repaving, so treat it as destructive when pointed at an existing database.
+```powershell
+psql -U postgres -d postgres -f .\server\db\schema.sql
+```
 
-### 2. Create `.env`
+If your local database should use a name other than `denmark`, edit the `\set dbname denmark` line at the top of `server/db/schema.sql`, then use the same database name in `.env`.
+
+This schema file is intentionally destructive to the target app schema. Do not point it at a database whose app data you still need.
+
+### 3. Create `.env`
 
 Copy the checked-in example:
 
@@ -169,7 +195,15 @@ Copy the checked-in example:
 cp .env.example .env
 ```
 
-Then replace the placeholder values. A safe example looks like this:
+PowerShell example:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then replace placeholder values with local credentials. Keep real secrets only in `.env`; never commit that file.
+
+Minimal local database values:
 
 ```dotenv
 PGHOST=localhost
@@ -180,40 +214,20 @@ PGPASSWORD=replace-with-local-postgres-password
 DATABASE_URL=postgres://postgres:replace-with-local-postgres-password@localhost:5432/denmark
 
 VITE_API_BASE_URL=http://localhost:5000
+```
 
-IMAP_HOST=imap.example.com
-IMAP_PORT=993
-IMAP_USER=alerts@example.com
-IMAP_PASS=replace-with-imap-app-password
-IMAP_TARGET_MAILBOXES=INBOX
-IMAP_LOOKBACK_HOURS=72
-IMAP_INGEST_LIMIT=100
+Provider integrations can stay as placeholders until you are ready to enable them. For DIMO, use `DIMO_FLEET_JSON` to map the token to the intended local vehicle record, for example:
 
-BOUNCIE_CLIENT_ID=replace-with-bouncie-client-id
-BOUNCIE_CLIENT_SECRET=replace-with-bouncie-client-secret
-BOUNCIE_AUTH_CODE=replace-with-one-time-auth-code
-BOUNCIE_REDIRECT_URI=http://localhost:5000/api/bouncie/callback
-
+```dotenv
 DIMO_CLIENT_ID=replace-with-dimo-client-id
 DIMO_DOMAIN=replace-with-dimo-domain
 DIMO_PRIVATE_KEY=replace-with-dimo-private-key
-DIMO_FLEET_JSON=[]
-
-TELLER_CERT_BASE64=replace-with-base64-client-cert
-TELLER_KEY_BASE64=replace-with-base64-client-key
-
-EZTAG_USERNAME=replace-with-eztag-username
-EZTAG_PASSWORD=replace-with-eztag-password
-EZTAG_USER_AGENT=Mozilla/5.0 Denmark2.0 local dev
-
-PUBLIC_AVAILABILITY_INGEST_URL=https://example.com/api/availability
-PUBLIC_AVAILABILITY_BEARER_TOKEN=replace-with-public-availability-token
-PUBLIC_AVAILABILITY_HMAC_SECRET=replace-with-public-availability-hmac-secret
+DIMO_FLEET_JSON=[{"tokenId":191373,"nickname":"Geneva","vin":"KMHTC6AD3GU260321","active":true}]
 ```
 
-Never commit a real `.env`; it contains credentials and provider tokens.
+If a DIMO dongle was previously plugged into another vehicle, make sure the `vin`/`nickname` mapping is correct before enabling polling so stale device history does not masquerade as the current car.
 
-### 3. Install dependencies
+### 4. Install dependencies
 
 Install frontend dependencies from the repo root:
 
@@ -226,9 +240,10 @@ Install backend dependencies:
 ```bash
 cd server
 npm install
+cd ..
 ```
 
-### 4. Start the app
+### 5. Start the app
 
 Start the backend:
 
@@ -237,17 +252,43 @@ cd server
 npm start
 ```
 
-Start the frontend from the repo root:
+In a second terminal, start the frontend from the repo root:
 
 ```bash
 npm run dev
 ```
 
-The frontend defaults to `http://localhost:5173`, and the backend defaults to `http://localhost:5000`.
+Default URLs:
 
-### 5. Restoring real data later
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:5000`
 
-The Settings screen includes a database backup/restore workflow for JSON snapshots created by this app. The SQL schema is the blank foundation; the backup/restore flow is for bringing back actual operational data when you have a saved snapshot.
+### 6. Verify the install
+
+Check the backend:
+
+```bash
+curl http://localhost:5000/api/vehicles/live-status
+```
+
+Check the frontend build:
+
+```bash
+npm run build
+```
+
+If the backend is down, the UI is designed to fall back to its loading state instead of spraying backend errors across the screen.
+
+### 7. Restore data when available
+
+The SQL file is the blank foundation. Use the app's Settings database backup/restore workflow for JSON backups created by Denmark2.0 when you have a saved operational snapshot to restore.
+
+After restoring data, verify:
+
+- `.env` points to the restored database
+- vehicle VINs and provider IDs are correct
+- DIMO/Bouncie token mappings match the physical dongles installed in each vehicle
+- trips and maintenance summaries load without selector errors
 
 ---
 

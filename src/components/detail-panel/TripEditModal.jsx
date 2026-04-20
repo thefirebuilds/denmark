@@ -29,6 +29,14 @@ const TOLL_REVIEW_STATUS_OPTIONS = [
   { value: "waived", label: "Waived" },
 ];
 
+const EXPENSE_STATUS_OPTIONS = [
+  { value: "none", label: "No expense claim" },
+  { value: "pending", label: "Pending review" },
+  { value: "submitted", label: "Submitted" },
+  { value: "resolved", label: "Resolved" },
+  { value: "waived", label: "Waived" },
+];
+
 function normalizeTollReviewStatus(value) {
   const normalized = String(value || "").trim().toLowerCase();
 
@@ -187,6 +195,7 @@ export default function TripEditModal({
     toll_total: "",
     toll_review_status: "pending",
     fuel_reimbursement_total: "",
+    expense_status: "pending",
     closed_out: false,
     closed_out_at: "",
     notes: "",
@@ -272,6 +281,7 @@ export default function TripEditModal({
       toll_total: trip.toll_total ?? "",
       toll_review_status: normalizeTollReviewStatus(trip.toll_review_status),
       fuel_reimbursement_total: trip.fuel_reimbursement_total ?? "",
+      expense_status: trip.expense_status || "pending",
       closed_out: Boolean(trip.closed_out),
       closed_out_at: toLocalInputValue(trip.closed_out_at),
       notes: trip.notes ?? "",
@@ -442,6 +452,7 @@ export default function TripEditModal({
         fuel_reimbursement_total: toNullableNumber(
           form.fuel_reimbursement_total
         ),
+        expense_status: form.expense_status || null,
         closed_out: Boolean(form.closed_out),
         closed_out_at: form.closed_out ? toNullableIso(form.closed_out_at) : null,
         notes: form.notes || null,
@@ -780,16 +791,33 @@ export default function TripEditModal({
           {trip?.workflow_stage === "awaiting_expenses" ||
           trip?.workflow_stage === "turnaround" ||
           trip?.workflow_stage === "complete" ? (
-            <label>
-              Fuel Reimbursement
-              <input
-                type="number"
-                step="0.01"
-                name="fuel_reimbursement_total"
-                value={form.fuel_reimbursement_total}
-                onChange={handleChange}
-              />
-            </label>
+            <>
+              <label>
+                Fuel Reimbursement
+                <input
+                  type="number"
+                  step="0.01"
+                  name="fuel_reimbursement_total"
+                  value={form.fuel_reimbursement_total}
+                  onChange={handleChange}
+                />
+              </label>
+
+              <label>
+                Expense Status
+                <select
+                  name="expense_status"
+                  value={form.expense_status}
+                  onChange={handleChange}
+                >
+                  {EXPENSE_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
           ) : null}
 
           {trip?.trip_end && new Date(trip.trip_end).getTime() <= Date.now() ? (

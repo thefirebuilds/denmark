@@ -32,6 +32,8 @@ export default function DetailPanel({ selectedTrip, onTripUpdated, trips }) {
 
   const [editingTripId, setEditingTripId] = useState(null);
   const [stageSaving, setStageSaving] = useState(false);
+  const [closeoutSaving, setCloseoutSaving] = useState(false);
+  const [closeoutError, setCloseoutError] = useState("");
 
   const [maintenanceSummary, setMaintenanceSummary] = useState(null);
   const [maintenanceLoading, setMaintenanceLoading] = useState(false);
@@ -142,6 +144,38 @@ export default function DetailPanel({ selectedTrip, onTripUpdated, trips }) {
     }
   }
 
+  async function handleCloseoutSave(trip, payload) {
+    if (!trip?.id || !payload) return null;
+
+    setCloseoutSaving(true);
+    setCloseoutError("");
+
+    try {
+      const resp = await fetch(`${API_BASE}/api/trips/${trip.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        const maybeJson = await resp.json().catch(() => null);
+        throw new Error(maybeJson?.error || `HTTP ${resp.status}`);
+      }
+
+      const savedTrip = await resp.json();
+      onTripUpdated?.(savedTrip);
+      return savedTrip;
+    } catch (err) {
+      const message = err.message || "Failed to save closeout details";
+      setCloseoutError(message);
+      throw err;
+    } finally {
+      setCloseoutSaving(false);
+    }
+  }
+
   if (!selectedTrip) {
     return (
       <FleetSnapshotPanel
@@ -164,6 +198,9 @@ export default function DetailPanel({ selectedTrip, onTripUpdated, trips }) {
         onEditTrip={handleEditTrip}
         onAdvanceStage={handleAdvanceStage}
         stageSaving={stageSaving}
+        onCloseoutSave={handleCloseoutSave}
+        closeoutSaving={closeoutSaving}
+        closeoutError={closeoutError}
         maintenanceSummary={maintenanceSummary}
         maintenanceLoading={maintenanceLoading}
         maintenanceError={maintenanceError}

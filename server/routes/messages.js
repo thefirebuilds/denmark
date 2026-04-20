@@ -309,8 +309,18 @@ function mapCloseoutNoticeRow(row) {
     trip_status: row.trip_status,
     closeout_sort_at: row.trip_end,
     closeout_reasons: reasons,
+    closeout_workflow_incomplete: row.workflow_incomplete,
+    closeout_missing_starting_odometer: row.missing_starting_odometer,
+    closeout_missing_ending_odometer: row.missing_ending_odometer,
+    closeout_expenses_pending: row.expenses_pending,
+    closeout_tolls_pending: row.tolls_pending,
+    closeout_flag_incomplete: row.closeout_flag_incomplete,
     closeout_expense_status: row.expense_status,
     closeout_toll_review_status: row.toll_review_status,
+    starting_odometer: row.starting_odometer,
+    ending_odometer: row.ending_odometer,
+    has_tolls: row.has_tolls,
+    closed_out: row.closed_out,
     created_at: row.trip_end,
   };
 }

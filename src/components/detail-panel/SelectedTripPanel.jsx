@@ -5,8 +5,7 @@
 // It also provides action buttons for editing the trip, sending messages, and opening the trip in Turo.
 // -------------------------------------------------------------------------- 
 
-
-
+import { useEffect, useMemo, useState } from "react";
 import "../../styles/selected-trip.css";
 import {
   buildBouncieVehicleDetailsUrl,
@@ -64,6 +63,36 @@ function formatRpm(value) {
   return `${Math.round(num).toLocaleString("en-US")} RPM`;
 }
 
+const EXPENSE_STATUS_OPTIONS = [
+  { value: "none", label: "No Turo expense claim" },
+  { value: "pending", label: "Needs Turo review" },
+  { value: "submitted", label: "Submitted in Turo" },
+  { value: "resolved", label: "Paid or resolved" },
+  { value: "waived", label: "Waived" },
+];
+
+const TOLL_REVIEW_OPTIONS = [
+  { value: "none", label: "No tolls" },
+  { value: "pending", label: "Needs audit" },
+  { value: "reviewed", label: "Audited" },
+  { value: "billed", label: "Billed in Turo" },
+  { value: "waived", label: "Waived" },
+];
+
+function toFieldValue(value) {
+  return value == null ? "" : String(value);
+}
+
+function toNullableNumber(value) {
+  if (value === "" || value == null) return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function getNowIso() {
+  return new Date().toISOString();
+}
+
 export default function SelectedTripPanel({
   selectedTrip,
   selectedVehicleInfo,
@@ -72,11 +101,50 @@ export default function SelectedTripPanel({
   onEditTrip,
   onAdvanceStage,
   stageSaving = false,
+  onCloseoutSave,
+  closeoutSaving = false,
+  closeoutError = "",
   maintenanceSummary,
   maintenanceLoading = false,
   maintenanceError = "",
   trips = [],
 }) {
+  const [closeoutForm, setCloseoutForm] = useState({
+    starting_odometer: "",
+    ending_odometer: "",
+    expense_status: "pending",
+    fuel_reimbursement_total: "",
+    has_tolls: false,
+    toll_count: "",
+    toll_total: "",
+    toll_review_status: "none",
+    closed_out: false,
+  });
+  const [closeoutSavedNotice, setCloseoutSavedNotice] = useState("");
+
+  useEffect(() => {
+    setCloseoutForm({
+      starting_odometer: toFieldValue(
+        selectedTrip?.starting_odometer ??
+          selectedTrip?.start_odometer ??
+          selectedTrip?.odometer_start
+      ),
+      ending_odometer: toFieldValue(
+        selectedTrip?.ending_odometer ??
+          selectedTrip?.end_odometer ??
+          selectedTrip?.odometer_end
+      ),
+      expense_status: selectedTrip?.expense_status || "pending",
+      fuel_reimbursement_total: toFieldValue(selectedTrip?.fuel_reimbursement_total),
+      has_tolls: Boolean(selectedTrip?.has_tolls),
+      toll_count: toFieldValue(selectedTrip?.toll_count),
+      toll_total: toFieldValue(selectedTrip?.toll_total),
+      toll_review_status: selectedTrip?.toll_review_status || "none",
+      closed_out: Boolean(selectedTrip?.closed_out),
+    });
+    setCloseoutSavedNotice("");
+  }, [selectedTrip?.id, selectedTrip?.updated_at]);
+
   const tripUrl = buildTripUrl(selectedTrip);
   const replyUrl = buildReplyUrl(selectedTrip);
   const progressPercent = getTripProgressPercent(selectedTrip);
@@ -122,6 +190,160 @@ export default function SelectedTripPanel({
   const tripTitle = `${vehicleLabel} • Trip #${
     selectedTrip.reservation_id || selectedTrip.id
   }`;
+
+  const canShowCloseoutOps =
+    tripHasEnded || isCloseoutStage || Boolean(selectedTrip?.closed_out);
+
+  const closeoutChecks = useMemo(() => {
+    const expenseStatus = String(closeoutForm.expense_status || "").toLowerCase();
+    const tollReview = String(closeoutForm.toll_review_status || "").toLowerCase();
+    const tollTotalValue = Number(closeoutForm.toll_total || 0);
+    const tollCountValue = Number(closeoutForm.toll_count || 0);
+    const hasTollsValue =
+      Boolean(closeoutForm.has_tolls) || tollTotalValue > 0 || tollCountValue > 0;
+
+    return [
+      {
+        key: "stage",
+        label: "Workflow is ready",
+        done: ["complete", "canceled"].includes(
+          String(selectedTrip?.workflow_stage || "").toLowerCase()
+        ),
+      },
+      {
+        key: "start_odo",
+        label: "Starting odometer recorded",
+        done: toNullableNumber(closeoutForm.starting_odometer) != null,
+      },
+      {
+        key: "end_odo",
+        label: "Ending odometer recorded",
+        done: toNullableNumber(closeoutForm.ending_odometer) != null,
+      },
+      {
+        key: "expenses",
+        label: "Turo expenses reconciled",
+        done: ["none", "submitted", "resolved", "waived"].includes(expenseStatus),
+      },
+      {
+        key: "tolls",
+        label: "Tolls audited for Turo",
+        done:
+          !hasTollsValue ||
+          ["billed", "waived", "none"].includes(tollReview),
+      },
+      {
+        key: "closed",
+        label: "Closeout flag set",
+        done: Boolean(closeoutForm.closed_out),
+      },
+    ];
+  }, [closeoutForm, selectedTrip?.workflow_stage]);
+
+  const closeoutRemaining = closeoutChecks.filter((item) => !item.done).length;
+  const closeoutBlockers = closeoutChecks.filter(
+    (item) => item.key !== "closed" && !item.done
+  );
+
+  function updateCloseoutField(key, value) {
+    setCloseoutSavedNotice("");
+    setCloseoutForm((prev) => {
+      const next = {
+        ...prev,
+        [key]: value,
+      };
+
+      if (key === "has_tolls" && !value) {
+        next.toll_count = "";
+        next.toll_total = "";
+        next.toll_review_status = "none";
+      }
+
+      if ((key === "toll_count" || key === "toll_total") && Number(value) > 0) {
+        next.has_tolls = true;
+        if (!next.toll_review_status || next.toll_review_status === "none") {
+          next.toll_review_status = "pending";
+        }
+      }
+
+      if (key === "toll_review_status" && value !== "none") {
+        next.has_tolls = true;
+        if (!next.toll_count || Number(next.toll_count) < 1) {
+          next.toll_count = "1";
+        }
+      }
+
+      return next;
+    });
+  }
+
+  function buildCloseoutPayload(overrides = {}) {
+    const merged = {
+      ...closeoutForm,
+      ...overrides,
+    };
+    const hasTollsPayload =
+      Boolean(merged.has_tolls) ||
+      Number(merged.toll_count || 0) > 0 ||
+      Number(merged.toll_total || 0) > 0;
+    const closedOut = Boolean(merged.closed_out);
+
+    return {
+      starting_odometer: toNullableNumber(merged.starting_odometer),
+      ending_odometer: toNullableNumber(merged.ending_odometer),
+      expense_status: merged.expense_status || "pending",
+      fuel_reimbursement_total: toNullableNumber(merged.fuel_reimbursement_total),
+      has_tolls: hasTollsPayload,
+      toll_count: hasTollsPayload ? toNullableNumber(merged.toll_count) ?? 0 : 0,
+      toll_total: hasTollsPayload ? toNullableNumber(merged.toll_total) ?? 0 : 0,
+      toll_review_status: hasTollsPayload
+        ? merged.toll_review_status || "pending"
+        : "none",
+      closed_out: closedOut,
+      closed_out_at: closedOut ? selectedTrip?.closed_out_at || getNowIso() : null,
+      needs_review: false,
+    };
+  }
+
+  async function saveCloseout(overrides = {}) {
+    if (!onCloseoutSave) return;
+    const optimisticForm = {
+      ...closeoutForm,
+      ...overrides,
+    };
+    const optimisticPayload = buildCloseoutPayload(overrides);
+
+    const savedTrip = await onCloseoutSave(
+      selectedTrip,
+      optimisticPayload
+    );
+
+    if (savedTrip) {
+      setCloseoutForm({
+        starting_odometer: toFieldValue(
+          savedTrip.starting_odometer ?? optimisticForm.starting_odometer
+        ),
+        ending_odometer: toFieldValue(
+          savedTrip.ending_odometer ?? optimisticForm.ending_odometer
+        ),
+        expense_status:
+          savedTrip.expense_status || optimisticForm.expense_status || "pending",
+        fuel_reimbursement_total: toFieldValue(
+          savedTrip.fuel_reimbursement_total ??
+            optimisticForm.fuel_reimbursement_total
+        ),
+        has_tolls: Boolean(savedTrip.has_tolls ?? optimisticPayload.has_tolls),
+        toll_count: toFieldValue(savedTrip.toll_count ?? optimisticPayload.toll_count),
+        toll_total: toFieldValue(savedTrip.toll_total ?? optimisticPayload.toll_total),
+        toll_review_status:
+          savedTrip.toll_review_status ||
+          optimisticPayload.toll_review_status ||
+          "none",
+        closed_out: Boolean(savedTrip.closed_out ?? optimisticPayload.closed_out),
+      });
+      setCloseoutSavedNotice("Saved to trip record");
+    }
+  }
 
   // Determine trip assignment status for the selected vehicle
   const getVehicleAssignment = () => {
@@ -272,6 +494,203 @@ function renderLocationLink(vehicle) {
       </div>
 
       <div className="detail-body">
+        {canShowCloseoutOps ? (
+          <div className="detail-closeout-panel">
+            <div className="detail-closeout-head">
+              <div>
+                <div className="detail-label">Turo reconciliation</div>
+                <div className="detail-closeout-title">
+                  {closeoutRemaining
+                    ? `${closeoutRemaining} item${closeoutRemaining === 1 ? "" : "s"} left`
+                    : "Ready to close"}
+                </div>
+                <div className="detail-closeout-copy">
+                  Audit HCTRA tolls, send tolls and incidentals through Turo,
+                  then transcribe the result here.
+                </div>
+              </div>
+              <button
+                type="button"
+                className="detail-action-button detail-action-button--edit"
+                disabled={
+                  closeoutSaving ||
+                  Boolean(closeoutForm.closed_out) ||
+                  closeoutBlockers.length > 0
+                }
+                onClick={() => saveCloseout({ closed_out: true })}
+              >
+                {closeoutSaving
+                  ? "Saving..."
+                  : closeoutForm.closed_out
+                  ? "Closed out"
+                  : "Close out trip"}
+              </button>
+            </div>
+
+            <div className="detail-closeout-checks">
+              {closeoutChecks.map((item) => (
+                <div
+                  key={item.key}
+                  className={`detail-closeout-check ${
+                    item.done ? "detail-closeout-check--done" : ""
+                  }`}
+                >
+                  <span>{item.done ? "Done" : "Open"}</span>
+                  <strong>{item.label}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="detail-closeout-grid">
+              <label className="detail-closeout-field">
+                <span>Starting odometer</span>
+                <input
+                  type="number"
+                  value={closeoutForm.starting_odometer}
+                  onChange={(event) =>
+                    updateCloseoutField("starting_odometer", event.target.value)
+                  }
+                />
+              </label>
+
+              <label className="detail-closeout-field">
+                <span>Ending odometer</span>
+                <input
+                  type="number"
+                  value={closeoutForm.ending_odometer}
+                  onChange={(event) =>
+                    updateCloseoutField("ending_odometer", event.target.value)
+                  }
+                />
+              </label>
+
+              <label className="detail-closeout-field">
+                <span>Turo expense status</span>
+                <select
+                  value={closeoutForm.expense_status}
+                  onChange={(event) =>
+                    updateCloseoutField("expense_status", event.target.value)
+                  }
+                >
+                  {EXPENSE_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="detail-closeout-field">
+                <span>Fuel reimbursement</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={closeoutForm.fuel_reimbursement_total}
+                  onChange={(event) =>
+                    updateCloseoutField("fuel_reimbursement_total", event.target.value)
+                  }
+                />
+              </label>
+
+              <label className="detail-closeout-field detail-closeout-checkfield">
+                <span>Has tolls</span>
+                <input
+                  type="checkbox"
+                  checked={closeoutForm.has_tolls}
+                  onChange={(event) =>
+                    updateCloseoutField("has_tolls", event.target.checked)
+                  }
+                />
+              </label>
+
+              <label className="detail-closeout-field">
+                <span>Toll count</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={closeoutForm.toll_count}
+                  onChange={(event) =>
+                    updateCloseoutField("toll_count", event.target.value)
+                  }
+                  disabled={!closeoutForm.has_tolls}
+                />
+              </label>
+
+              <label className="detail-closeout-field">
+                <span>Toll total</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={closeoutForm.toll_total}
+                  onChange={(event) =>
+                    updateCloseoutField("toll_total", event.target.value)
+                  }
+                  disabled={!closeoutForm.has_tolls}
+                />
+              </label>
+
+              <label className="detail-closeout-field">
+                <span>Turo toll status</span>
+                <select
+                  value={closeoutForm.toll_review_status}
+                  onChange={(event) =>
+                    updateCloseoutField("toll_review_status", event.target.value)
+                  }
+                  disabled={!closeoutForm.has_tolls}
+                >
+                  {TOLL_REVIEW_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="detail-closeout-actions">
+              <button
+                type="button"
+                className="detail-action-button secondary"
+                disabled={closeoutSaving}
+                onClick={() => saveCloseout({ expense_status: "resolved" })}
+              >
+                Expenses reconciled
+              </button>
+              <button
+                type="button"
+                className="detail-action-button secondary"
+                disabled={closeoutSaving}
+                onClick={() =>
+                  saveCloseout({
+                    has_tolls: false,
+                    toll_count: "",
+                    toll_total: "",
+                    toll_review_status: "none",
+                  })
+                }
+              >
+                No tolls to bill
+              </button>
+              <button
+                type="button"
+                className="detail-action-button"
+                disabled={closeoutSaving}
+                onClick={() => saveCloseout()}
+              >
+                {closeoutSaving ? "Saving..." : "Save reconciliation"}
+              </button>
+            </div>
+
+            {closeoutError ? (
+              <div className="detail-closeout-error">{closeoutError}</div>
+            ) : null}
+            {closeoutSavedNotice ? (
+              <div className="detail-closeout-saved">{closeoutSavedNotice}</div>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="detail-progress-card">
           <div className="detail-progress-head">
             <div className="detail-label">Trip progress</div>

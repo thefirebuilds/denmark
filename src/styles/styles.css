@@ -601,6 +601,16 @@ body {
   box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.12) inset;
 }
 
+.message.message-closeout-guide {
+  border-color: rgba(251, 191, 36, 0.62);
+  background: linear-gradient(180deg, rgba(65, 45, 18, 0.72), #10182c);
+}
+
+.message.message-closeout-guide:hover {
+  border-color: rgba(251, 191, 36, 0.8);
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.14) inset;
+}
+
 .message-head {
   display: flex;
   justify-content: space-between;
@@ -637,6 +647,22 @@ body {
   padding: 10px;
   display: grid;
   gap: 8px;
+}
+
+.message-closeout-guide .message-booking-task {
+  border-color: rgba(251, 191, 36, 0.42);
+  background: rgba(69, 49, 20, 0.48);
+}
+
+.message-closeout-hint {
+  color: #fef3c7;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  border-radius: 8px;
+  padding: 8px 9px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  font-weight: 800;
 }
 
 .message-maintenance-task {
@@ -798,6 +824,34 @@ body {
   font-style: normal;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+.message-closeout-item--pending {
+  border-top-color: rgba(251, 191, 36, 0.28);
+}
+
+.message-closeout-item--pending strong {
+  color: #fef3c7;
+}
+
+.message-closeout-item--pending em {
+  color: #fef3c7;
+  background: rgba(251, 191, 36, 0.14);
+  border-color: rgba(251, 191, 36, 0.34);
+}
+
+.message-closeout-item--done {
+  opacity: 0.76;
+}
+
+.message-closeout-item--done strong {
+  color: #bbf7d0;
+}
+
+.message-closeout-item--done em {
+  color: #bbf7d0;
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.28);
 }
 
 .message-maintenance-more {
