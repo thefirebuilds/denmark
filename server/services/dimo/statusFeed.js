@@ -68,51 +68,60 @@ async function getDimoStatusFeed() {
   }
 
   const sql = `
-    SELECT DISTINCT ON (dimo_token_id)
-      id,
-      service_name,
-      vin,
-      nickname,
-      make,
-      model,
-      year,
-      odometer,
-      fuel_level,
-      is_running,
-      speed,
-      latitude,
-      longitude,
-      heading,
-      address,
-      mil_on,
-      mil_last_updated,
-      battery_status,
-      battery_last_updated,
-      battery_voltage,
-      battery_voltage_last_updated,
-      vehicle_last_updated,
-      captured_at,
-      raw_payload,
-      local_time_zone,
-      qualified_dtc_list,
-      dimo_token_id,
-      fuel_level_last_updated,
-      odometer_last_updated,
-      speed_last_updated,
-      location_last_updated,
-      heading_last_updated,
-      ignition_last_updated,
-      obd_plugged_in,
-      obd_plugged_in_last_updated,
-      dtc_count,
-      distance_with_mil,
-      coolant_temp,
-      engine_rpm,
-      throttle_position,
-      runtime_minutes,
-      def_level,
-      (
-        SELECT jsonb_build_object(
+    WITH latest AS (
+      SELECT DISTINCT ON (dimo_token_id)
+        id,
+        service_name,
+        vin,
+        nickname,
+        make,
+        model,
+        year,
+        odometer,
+        fuel_level,
+        is_running,
+        speed,
+        latitude,
+        longitude,
+        heading,
+        address,
+        mil_on,
+        mil_last_updated,
+        battery_status,
+        battery_last_updated,
+        battery_voltage,
+        battery_voltage_last_updated,
+        vehicle_last_updated,
+        captured_at,
+        raw_payload,
+        local_time_zone,
+        qualified_dtc_list,
+        dimo_token_id,
+        fuel_level_last_updated,
+        odometer_last_updated,
+        speed_last_updated,
+        location_last_updated,
+        heading_last_updated,
+        ignition_last_updated,
+        obd_plugged_in,
+        obd_plugged_in_last_updated,
+        dtc_count,
+        distance_with_mil,
+        coolant_temp,
+        engine_rpm,
+        throttle_position,
+        runtime_minutes,
+        def_level
+      FROM vehicle_telemetry_snapshots
+      WHERE service_name = 'dimo'
+        AND dimo_token_id IS NOT NULL
+        AND dimo_token_id = ANY($1::bigint[])
+      ORDER BY dimo_token_id, captured_at DESC
+    ),
+    engine_temp AS (
+      SELECT
+        hist.dimo_token_id,
+        jsonb_build_object(
           'min_f', MIN(
             CASE
               WHEN hist.coolant_temp <= 130 THEN hist.coolant_temp * 9 / 5 + 32
@@ -133,31 +142,40 @@ async function getDimoStatusFeed() {
               ELSE hist.coolant_temp
             END >= 240
           )
-        )
-        FROM vehicle_telemetry_snapshots hist
-        WHERE hist.service_name = 'dimo'
-          AND hist.dimo_token_id = vehicle_telemetry_snapshots.dimo_token_id
-          AND hist.coolant_temp IS NOT NULL
-          AND hist.captured_at >= NOW() - INTERVAL '14 days'
-      ) AS engine_temp_range,
-      (
-        SELECT jsonb_build_object(
+        ) AS engine_temp_range
+      FROM vehicle_telemetry_snapshots hist
+      WHERE hist.service_name = 'dimo'
+        AND hist.dimo_token_id = ANY($1::bigint[])
+        AND hist.coolant_temp IS NOT NULL
+        AND hist.captured_at >= NOW() - INTERVAL '14 days'
+      GROUP BY hist.dimo_token_id
+    ),
+    engine_rpm AS (
+      SELECT
+        hist.dimo_token_id,
+        jsonb_build_object(
           'max_rpm', MAX(hist.engine_rpm),
           'sample_count', COUNT(*),
           'since', MIN(hist.captured_at),
           'last_recorded_at', MAX(hist.captured_at)
-        )
-        FROM vehicle_telemetry_snapshots hist
-        WHERE hist.service_name = 'dimo'
-          AND hist.dimo_token_id = vehicle_telemetry_snapshots.dimo_token_id
-          AND hist.engine_rpm IS NOT NULL
-          AND hist.captured_at >= NOW() - INTERVAL '14 days'
-      ) AS engine_rpm_range
-    FROM vehicle_telemetry_snapshots
-    WHERE service_name = 'dimo'
-      AND dimo_token_id IS NOT NULL
-      AND dimo_token_id = ANY($1::bigint[])
-    ORDER BY dimo_token_id, captured_at DESC
+        ) AS engine_rpm_range
+      FROM vehicle_telemetry_snapshots hist
+      WHERE hist.service_name = 'dimo'
+        AND hist.dimo_token_id = ANY($1::bigint[])
+        AND hist.engine_rpm IS NOT NULL
+        AND hist.captured_at >= NOW() - INTERVAL '14 days'
+      GROUP BY hist.dimo_token_id
+    )
+    SELECT
+      latest.*,
+      engine_temp.engine_temp_range,
+      engine_rpm.engine_rpm_range
+    FROM latest
+    LEFT JOIN engine_temp
+      ON engine_temp.dimo_token_id = latest.dimo_token_id
+    LEFT JOIN engine_rpm
+      ON engine_rpm.dimo_token_id = latest.dimo_token_id
+    ORDER BY latest.dimo_token_id
   `;
 
   const { rows } = await pool.query(sql, [activeTokenIds]);
