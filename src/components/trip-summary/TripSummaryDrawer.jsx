@@ -12,6 +12,8 @@ const TOLL_REVIEW_STATUS_OPTIONS = [
 
 const WORKFLOW_STAGE_OPTIONS = [
   { value: "", label: "— Select workflow stage —" },
+  { value: "booked_unconfirmed", label: "Booked - Needs Review" },
+  { value: "updated_unconfirmed", label: "Updated - Needs Review" },
   { value: "booked", label: "Booked" },
   { value: "confirmed", label: "Confirmed" },
   { value: "ready_for_handoff", label: "Ready for Handoff" },
@@ -92,6 +94,7 @@ export default function TripSummaryDrawer({
   onSave,
   onDelete,
 }) {
+  const isNewTrip = !trip?.id;
   const [form, setForm] = useState({
     reservation_id: "",
     guest_name: "",
@@ -465,13 +468,15 @@ async function handleSubmit(e) {
       >
         <div className="app-drawer-header trip-summary-drawer-header">
           <div className="trip-summary-drawer-title-wrap">
-            <h2 id="trip-summary-drawer-title">Edit Trip</h2>
+            <h2 id="trip-summary-drawer-title">
+              {isNewTrip ? "New Trip" : "Edit Trip"}
+            </h2>
             <div className="trip-summary-drawer-subtitle">
               <span>{trip.vehicle_name || trip.vehicle_nickname || "Unknown Vehicle"}</span>
               <span> • </span>
               <span>{trip.guest_name || "Unknown Guest"}</span>
               <span> • </span>
-              <span>Trip ID: {trip.id ?? "—"}</span>
+              <span>{isNewTrip ? "Manual entry" : `Trip ID: ${trip.id ?? "new"}`}</span>
             </div>
           </div>
 
@@ -492,7 +497,7 @@ async function handleSubmit(e) {
             <div className="trip-summary-drawer-grid">
               <label className="trip-summary-drawer-field">
                 <span className="trip-summary-drawer-label">Trip ID</span>
-                <input value={trip.id ?? ""} readOnly />
+                <input value={isNewTrip ? "New trip" : trip.id ?? ""} readOnly />
               </label>
 
               <label className="trip-summary-drawer-field">
@@ -877,7 +882,7 @@ async function handleSubmit(e) {
               type="button"
               className="danger-button trip-summary-drawer-delete"
               onClick={handleDelete}
-              disabled={saving}
+              disabled={saving || isNewTrip}
             >
               Delete
             </button>
@@ -887,7 +892,7 @@ async function handleSubmit(e) {
               className="trip-summary-drawer-save"
               disabled={saving}
             >
-              {saving ? "Saving..." : "Save Changes"}
+              {saving ? "Saving..." : isNewTrip ? "Create Trip" : "Save Changes"}
             </button>
           </div>
         </form>

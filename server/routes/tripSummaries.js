@@ -92,6 +92,90 @@ function enrichTripSummary(trip) {
   };
 }
 
+function parseOptionalInteger(value, label) {
+  if (value === "" || value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    const err = new Error(`${label} must be a valid integer`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return n;
+}
+
+function parseOptionalNumber(value, label) {
+  if (value === "" || value == null) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    const err = new Error(`${label} must be a valid number`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return n;
+}
+
+function cleanOptionalText(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+async function resolveTripVehicle(client, { turo_vehicle_id, vehicle_name }) {
+  const normalizedVehicleId = cleanOptionalText(turo_vehicle_id);
+  const normalizedVehicleName = cleanOptionalText(vehicle_name);
+
+  if (normalizedVehicleId) {
+    const vehicleLookup = await client.query(
+      `
+        SELECT turo_vehicle_id, nickname
+        FROM vehicles
+        WHERE CAST(turo_vehicle_id AS text) = $1
+        LIMIT 1
+      `,
+      [normalizedVehicleId]
+    );
+
+    if (!vehicleLookup.rows.length) {
+      const err = new Error(`Vehicle id not found: ${turo_vehicle_id}`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return {
+      turoVehicleId: vehicleLookup.rows[0].turo_vehicle_id,
+      vehicleName: vehicleLookup.rows[0].nickname,
+    };
+  }
+
+  if (normalizedVehicleName) {
+    const vehicleLookup = await client.query(
+      `
+        SELECT turo_vehicle_id, nickname
+        FROM vehicles
+        WHERE LOWER(nickname) = LOWER($1)
+        LIMIT 1
+      `,
+      [normalizedVehicleName]
+    );
+
+    if (!vehicleLookup.rows.length) {
+      const err = new Error(`Vehicle nickname not found: ${normalizedVehicleName}`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return {
+      turoVehicleId: vehicleLookup.rows[0].turo_vehicle_id,
+      vehicleName: vehicleLookup.rows[0].nickname,
+    };
+  }
+
+  return {
+    turoVehicleId: null,
+    vehicleName: null,
+  };
+}
+
 const TRIP_SUMMARY_SELECT = `
   SELECT
     t.id,
@@ -220,6 +304,184 @@ router.get("/", async (req, res) => {
       stack: err.stack,
     });
     res.status(500).json({ error: "Failed to load trip summaries" });
+  }
+});
+
+router.post("/", async (req, res) => {
+  const body = req.body || {};
+
+  let parsed;
+  try {
+    parsed = {
+      reservation_id: parseOptionalInteger(body.reservation_id, "reservation_id"),
+      guest_name: cleanOptionalText(body.guest_name),
+      trip_start: body.trip_start || null,
+      trip_end: body.trip_end || null,
+      amount: parseOptionalNumber(
+        body.gross_income === "" || body.gross_income == null
+          ? body.amount
+          : body.gross_income,
+        "Amount"
+      ),
+      status: cleanOptionalText(body.status) || "booked_unconfirmed",
+      needs_review:
+        typeof body.needs_review === "boolean" ? body.needs_review : true,
+      mileage_included: parseOptionalInteger(
+        body.mileage_included,
+        "mileage_included"
+      ),
+      starting_odometer: parseOptionalInteger(
+        body.starting_odometer,
+        "starting_odometer"
+      ),
+      ending_odometer: parseOptionalInteger(
+        body.ending_odometer,
+        "ending_odometer"
+      ),
+      fuel_reimbursement_total: parseOptionalNumber(
+        body.fuel_reimbursement_total,
+        "fuel_reimbursement_total"
+      ),
+      notes: cleanOptionalText(body.notes),
+      workflow_stage: cleanOptionalText(body.workflow_stage) || "booked",
+      expense_status: cleanOptionalText(body.expense_status),
+      trip_details_url: cleanOptionalText(body.trip_details_url),
+      guest_profile_url: cleanOptionalText(body.guest_profile_url),
+    };
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
+
+  if (!parsed.reservation_id) {
+    return res.status(400).json({ error: "reservation_id is required" });
+  }
+
+  if (!parsed.trip_start || !parsed.trip_end) {
+    return res.status(400).json({ error: "trip_start and trip_end are required" });
+  }
+
+  if (!parsed.guest_name) {
+    return res.status(400).json({ error: "guest_name is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const vehicle = await resolveTripVehicle(client, {
+      turo_vehicle_id: body.turo_vehicle_id,
+      vehicle_name: body.vehicle_name,
+    });
+
+    const hasMeaningfulTolls =
+      body.has_tolls === true ||
+      Number(body.toll_count ?? 0) > 0 ||
+      Number(body.toll_total ?? 0) > 0 ||
+      (cleanOptionalText(body.toll_review_status) &&
+        cleanOptionalText(body.toll_review_status) !== "none");
+
+    const tollCount = hasMeaningfulTolls
+      ? Math.max(1, parseOptionalInteger(body.toll_count, "toll_count") ?? 1)
+      : 0;
+    const tollTotal = parseOptionalNumber(body.toll_total, "toll_total") ?? 0;
+    const tollReviewStatus = hasMeaningfulTolls
+      ? cleanOptionalText(body.toll_review_status) || "pending"
+      : "none";
+
+    const insertResult = await client.query(
+      `
+        INSERT INTO trips (
+          reservation_id,
+          guest_name,
+          vehicle_name,
+          turo_vehicle_id,
+          trip_start,
+          trip_end,
+          amount,
+          status,
+          needs_review,
+          mileage_included,
+          starting_odometer,
+          ending_odometer,
+          fuel_reimbursement_total,
+          notes,
+          has_tolls,
+          toll_count,
+          toll_total,
+          toll_review_status,
+          workflow_stage,
+          stage_updated_at,
+          expense_status,
+          trip_details_url,
+          guest_profile_url
+        )
+        VALUES (
+          $1, $2, $3, $4, $5::timestamptz, $6::timestamptz, $7, $8, $9,
+          $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), $20, $21, $22
+        )
+        RETURNING id
+      `,
+      [
+        parsed.reservation_id,
+        parsed.guest_name,
+        vehicle.vehicleName,
+        vehicle.turoVehicleId,
+        parsed.trip_start,
+        parsed.trip_end,
+        parsed.amount,
+        parsed.status,
+        parsed.needs_review,
+        parsed.mileage_included,
+        parsed.starting_odometer,
+        parsed.ending_odometer,
+        parsed.fuel_reimbursement_total,
+        parsed.notes,
+        hasMeaningfulTolls,
+        tollCount,
+        tollTotal,
+        tollReviewStatus,
+        parsed.workflow_stage,
+        parsed.expense_status,
+        parsed.trip_details_url,
+        parsed.guest_profile_url,
+      ]
+    );
+
+    const tripId = insertResult.rows[0].id;
+    const refreshed = await client.query(
+      `
+        ${TRIP_SUMMARY_SELECT}
+        WHERE t.id = $1
+        LIMIT 1
+      `,
+      [tripId]
+    );
+
+    await client.query("COMMIT");
+
+    void pushPublicAvailabilitySnapshotSafe("trip created manually");
+
+    return res.status(201).json(enrichTripSummary(refreshed.rows[0]));
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/trip-summaries failed:", {
+      message: err.message,
+      body: req.body,
+      stack: err.stack,
+    });
+
+    if (err.code === "23505") {
+      return res.status(409).json({
+        error: "A trip with that reservation_id already exists",
+      });
+    }
+
+    return res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to create trip summary",
+    });
+  } finally {
+    client.release();
   }
 });
 

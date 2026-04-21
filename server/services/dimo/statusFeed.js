@@ -154,7 +154,12 @@ async function getDimoStatusFeed() {
       SELECT
         hist.dimo_token_id,
         jsonb_build_object(
-          'max_rpm', MAX(hist.engine_rpm),
+          'max_rpm', MAX(
+            COALESCE(
+              (hist.raw_payload -> 'rpmHistory' ->> 'maxRpm')::numeric,
+              hist.engine_rpm
+            )
+          ),
           'sample_count', COUNT(*),
           'since', MIN(hist.captured_at),
           'last_recorded_at', MAX(hist.captured_at)
@@ -162,7 +167,10 @@ async function getDimoStatusFeed() {
       FROM vehicle_telemetry_snapshots hist
       WHERE hist.service_name = 'dimo'
         AND hist.dimo_token_id = ANY($1::bigint[])
-        AND hist.engine_rpm IS NOT NULL
+        AND (
+          hist.engine_rpm IS NOT NULL
+          OR hist.raw_payload -> 'rpmHistory' ->> 'maxRpm' IS NOT NULL
+        )
         AND hist.captured_at >= NOW() - INTERVAL '14 days'
       GROUP BY hist.dimo_token_id
     )

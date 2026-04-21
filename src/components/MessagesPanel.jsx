@@ -468,6 +468,16 @@ function getMessageTimestamp(message) {
   );
 }
 
+function getNotificationCreatedAtMs(message) {
+  const value =
+    message?.notification_created_at ||
+    message?.created_at ||
+    message?.message_timestamp ||
+    message?.timestamp;
+  const ms = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 function isBookingConfirmationTask(message) {
   const type = message?.type || message?.message_type;
   const stage = String(message?.trip_workflow_stage || "").toLowerCase();
@@ -692,6 +702,8 @@ export default function MessagesPanel({
   );
 
   const seenIdsRef = useRef(new Set());
+  const knownQueueItemIdsRef = useRef(new Set());
+  const queueChimeWatermarkRef = useRef(Date.now());
   const audioRef = useRef(null);
   const highlightTimeoutRef = useRef(null);
   const prepExportRef = useRef(null);
@@ -1062,13 +1074,26 @@ async function handleExportGuestInspectionSheet(message) {
           : visibleMessages;
 
       const nextIds = displayMessages.map((msg) => msg.id);
+      const nextIdKeys = displayMessages.map((msg) => String(msg.id));
       const seenIds = seenIdsRef.current;
+      const knownQueueItemIds = knownQueueItemIdsRef.current;
 
       if (isInitialLoad) {
         seenIds.clear();
         nextIds.forEach((id) => seenIds.add(id));
+        knownQueueItemIds.clear();
+        nextIdKeys.forEach((id) => knownQueueItemIds.add(id));
+        queueChimeWatermarkRef.current = Date.now();
       } else {
-        const freshIds = nextIds.filter((id) => !seenIds.has(id));
+        const watermark = queueChimeWatermarkRef.current;
+        const freshMessages = displayMessages.filter((message) => {
+          const idKey = String(message.id);
+          if (knownQueueItemIds.has(idKey)) return false;
+
+          const createdAtMs = getNotificationCreatedAtMs(message);
+          return createdAtMs > watermark - 5000;
+        });
+        const freshIds = freshMessages.map((message) => message.id);
 
         if (freshIds.length > 0) {
           setNewMessageIds(freshIds);
@@ -1081,7 +1106,7 @@ async function handleExportGuestInspectionSheet(message) {
             setNewMessageIds([]);
           }, 6000);
 
-          if (audioRef.current) {
+          if (!showingTripMessages && audioRef.current) {
             audioRef.current.currentTime = 0;
             audioRef.current.play().catch(() => {
               // Browser may block autoplay until user interacts with the page.
@@ -1091,6 +1116,8 @@ async function handleExportGuestInspectionSheet(message) {
 
         seenIds.clear();
         nextIds.forEach((id) => seenIds.add(id));
+        nextIdKeys.forEach((id) => knownQueueItemIds.add(id));
+        queueChimeWatermarkRef.current = Date.now();
       }
 
       setMessages(displayMessages);
@@ -1155,6 +1182,11 @@ async function handleExportGuestInspectionSheet(message) {
     setNewMessageIds([]);
     seenIdsRef.current.clear();
     visibleSeededMessages.forEach((message) => seenIdsRef.current.add(message.id));
+    knownQueueItemIdsRef.current.clear();
+    visibleSeededMessages.forEach((message) =>
+      knownQueueItemIdsRef.current.add(String(message.id))
+    );
+    queueChimeWatermarkRef.current = Date.now();
     consumedInitialLiveMessagesRef.current =
       consumedInitialLiveMessagesRef.current || canUseInitialMessages;
 

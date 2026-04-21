@@ -69,6 +69,43 @@ export default function TripSummary() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
 
+  function buildNewTripDraft() {
+    const selectedVehicle =
+      vehicles.find(
+        (vehicle) =>
+          selectedVehicleId &&
+          selectedVehicleId !== UNASSIGNED_VEHICLE_FILTER &&
+          String(vehicle?.turo_vehicle_id ?? "") === String(selectedVehicleId)
+      ) || null;
+
+    return {
+      id: null,
+      is_new: true,
+      reservation_id: "",
+      guest_name: "",
+      vehicle_name: selectedVehicle?.nickname || "",
+      vehicle_nickname: selectedVehicle?.nickname || "",
+      turo_vehicle_id:
+        selectedVehicle?.turo_vehicle_id == null
+          ? ""
+          : String(selectedVehicle.turo_vehicle_id),
+      trip_start: "",
+      trip_end: "",
+      status: "booked_unconfirmed",
+      workflow_stage: "booked",
+      needs_review: true,
+      mileage_included: "",
+      gross_income: "",
+      amount: "",
+      has_tolls: false,
+      toll_count: 0,
+      toll_total: 0,
+      toll_review_status: "none",
+      expense_status: "",
+      notes: "",
+    };
+  }
+
   useEffect(() => {
     let ignore = false;
 
@@ -255,9 +292,19 @@ async function handleSelectTrip(trip) {
   }
 }
 
+  function handleCreateTrip() {
+    setSelectedTrip(buildNewTripDraft());
+    setDrawerOpen(true);
+  }
+
   async function handleSaveTrip(updatedTrip) {
-    const res = await fetch(`${API_BASE}/api/trip-summaries/${updatedTrip.id}`, {
-      method: "PATCH",
+    const isNewTrip = !updatedTrip.id;
+    const url = isNewTrip
+      ? `${API_BASE}/api/trip-summaries`
+      : `${API_BASE}/api/trip-summaries/${updatedTrip.id}`;
+
+    const res = await fetch(url, {
+      method: isNewTrip ? "POST" : "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updatedTrip),
     });
@@ -269,9 +316,13 @@ async function handleSelectTrip(trip) {
 
     const saved = await res.json();
 
-    setTrips((prev) =>
-      prev.map((trip) => (trip.id === saved.id ? saved : trip))
-    );
+    setTrips((prev) => {
+      if (isNewTrip) {
+        return [saved, ...prev];
+      }
+
+      return prev.map((trip) => (trip.id === saved.id ? saved : trip));
+    });
     setSelectedTrip(saved);
 
     return saved;
@@ -311,6 +362,7 @@ async function handleSelectTrip(trip) {
         onFiltersChange={setFilters}
         selectedTripId={selectedTrip?.id ?? null}
         onSelectTrip={handleSelectTrip}
+        onCreateTrip={handleCreateTrip}
         vehicleStatuses={vehicles}
       />
 

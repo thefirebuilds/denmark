@@ -467,6 +467,42 @@ async function queryDimoSignalsLatest(tokenId, authHeader, selectedSignals) {
   });
 }
 
+async function fetchDimoEngineRpmSignals(tokenId, options = {}) {
+  const numericTokenId = normalizeTokenId(tokenId);
+  const authHeader =
+    options.authHeader || (await getDimoVehicleAuthHeader(numericTokenId));
+  const from = cleanString(options.from);
+  const to = cleanString(options.to);
+  const interval = cleanString(options.interval) || "5s";
+
+  if (!from || !to) {
+    throw new Error("fetchDimoEngineRpmSignals requires from and to timestamps");
+  }
+
+  const query = `
+    query Signals($tokenId: Int!, $from: Time!, $to: Time!, $interval: String!, $filter: SignalFilter) {
+      signals(tokenId: $tokenId, from: $from, to: $to, interval: $interval, filter: $filter) {
+        timestamp
+        speed(agg: AVG)
+        powertrainCombustionEngineSpeed(agg: LAST)
+      }
+    }
+  `;
+
+  return postGraphQL({
+    url: TELEMETRY_URL,
+    query,
+    variables: {
+      tokenId: numericTokenId,
+      from,
+      to,
+      interval,
+      filter: options.filter ?? null,
+    },
+    authHeader,
+  });
+}
+
 async function fetchDimoSignalsLatest(tokenId, options = {}) {
   const numericTokenId = normalizeTokenId(tokenId);
   const authHeader =
@@ -696,6 +732,7 @@ module.exports = {
   buildDimoSignalSelections,
   extractMissingPrivilegesFromGraphQLErrorMessage,
   fetchDimoAvailableSignals,
+  fetchDimoEngineRpmSignals,
   fetchDimoSharedVehicles,
   fetchDimoSignalsLatest,
   fetchDimoVin,

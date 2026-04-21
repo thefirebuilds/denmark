@@ -186,7 +186,12 @@ async function updateTripMaxEngineRpm(client, trip) {
       FROM (
         SELECT
           t2.id,
-          MAX(s.engine_rpm) AS max_engine_rpm
+          MAX(
+            COALESCE(
+              (s.raw_payload -> 'rpmHistory' ->> 'maxRpm')::numeric,
+              s.engine_rpm
+            )
+          ) AS max_engine_rpm
         FROM trips t2
         JOIN vehicles v
           ON (

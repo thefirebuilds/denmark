@@ -153,6 +153,23 @@
   flex-wrap: wrap;
 }
 
+.trip-summary-new-button {
+  border: 1px solid #36507f;
+  background: #17233d;
+  color: #eef4ff;
+  border-radius: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.trip-summary-new-button:hover {
+  border-color: #4a82d9;
+  background: #1d2b4b;
+}
+
 .trip-summary-toolbar input,
 .trip-summary-toolbar select,
 .trip-summary-toolbar textarea {

@@ -105,6 +105,7 @@ function getAuditFlags(trip, vehicleStatuses = []) {
 export default function TripSummaryListPanel({
   selectedTripId = null,
   onSelectTrip,
+  onCreateTrip,
   filters = {
     startDate: "",
     endDate: "",
@@ -134,8 +135,17 @@ export default function TripSummaryListPanel({
   return (
     <section className="panel trip-summary-list-panel">
       <div className="panel-header">
-        <h2>Trip Ledger</h2>
-        <span>historical record and audit log</span>
+        <div>
+          <h2>Trip Ledger</h2>
+          <span>historical record and audit log</span>
+        </div>
+        <button
+          type="button"
+          className="trip-summary-new-button"
+          onClick={onCreateTrip}
+        >
+          New Trip
+        </button>
       </div>
 
       <div className="panel-subbar trip-summary-toolbar">

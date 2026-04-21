@@ -1,5 +1,6 @@
 const {
   fetchDimoAvailableSignals,
+  fetchDimoEngineRpmSignals,
   fetchDimoSignalsLatest,
   fetchDimoVin,
   getDimoFleet,
@@ -16,6 +17,10 @@ const {
 let snapshotColumnCache = null;
 let vehicleColumnCache = null;
 let tripColumnCache = null;
+
+const DIMO_RPM_HISTORY_INTERVAL = "5s";
+const DEFAULT_RPM_HISTORY_LOOKBACK_MINUTES = 10;
+const MAX_RPM_HISTORY_LOOKBACK_MINUTES = 24 * 60;
 
 function cleanString(value) {
   if (value == null) return null;
@@ -89,6 +94,14 @@ function toNumber(value) {
   if (value == null || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function getRpmHistoryLookbackMinutes() {
+  const configured = toNumber(process.env.DIMO_RPM_HISTORY_LOOKBACK_MINUTES);
+  if (configured == null || configured <= 0) {
+    return DEFAULT_RPM_HISTORY_LOOKBACK_MINUTES;
+  }
+  return Math.min(configured, MAX_RPM_HISTORY_LOOKBACK_MINUTES);
 }
 
 function kmToMiles(km) {
@@ -185,6 +198,123 @@ async function getLastKnownVinForToken(tokenId) {
   return cleanString(result.rows[0]?.vin);
 }
 
+async function getLastDimoSnapshotCapturedAt(tokenId) {
+  const result = await pool.query(
+    `
+      SELECT captured_at
+      FROM vehicle_telemetry_snapshots
+      WHERE service_name = 'dimo'
+        AND dimo_token_id = $1
+      ORDER BY captured_at DESC, id DESC
+      LIMIT 1
+    `,
+    [tokenId]
+  );
+
+  const capturedAt = result.rows[0]?.captured_at;
+  if (!capturedAt) return null;
+
+  const parsed = new Date(capturedAt);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getRpmHistoryWindow(lastCapturedAt, capturedAt) {
+  const to = new Date(capturedAt);
+  const now = Number.isNaN(to.getTime()) ? new Date() : to;
+  const defaultFrom = new Date(
+    now.getTime() - getRpmHistoryLookbackMinutes() * 60 * 1000
+  );
+
+  let from = lastCapturedAt instanceof Date ? lastCapturedAt : defaultFrom;
+  const maxFrom = new Date(now.getTime() - MAX_RPM_HISTORY_LOOKBACK_MINUTES * 60 * 1000);
+
+  if (Number.isNaN(from.getTime())) {
+    from = defaultFrom;
+  }
+  if (from < maxFrom) {
+    from = maxFrom;
+  }
+  if (from >= now) {
+    from = defaultFrom;
+  }
+
+  return {
+    from: from.toISOString(),
+    to: now.toISOString(),
+  };
+}
+
+function summarizeRpmHistory(rawHistory) {
+  const rows = Array.isArray(rawHistory?.data?.signals)
+    ? rawHistory.data.signals
+    : [];
+  const rpmRows = rows
+    .map((row) => ({
+      timestamp: cleanString(row?.timestamp),
+      rpm: toNumber(row?.powertrainCombustionEngineSpeed),
+      speed: toNumber(row?.speed),
+    }))
+    .filter((row) => row.timestamp && row.rpm != null);
+
+  if (!rpmRows.length) {
+    return {
+      sampleCount: rows.length,
+      rpmSampleCount: 0,
+      latestRpm: null,
+      latestRpmAt: null,
+      maxRpm: null,
+      maxRpmAt: null,
+    };
+  }
+
+  const latest = rpmRows[rpmRows.length - 1];
+  const max = rpmRows.reduce((best, row) => (row.rpm > best.rpm ? row : best));
+
+  return {
+    sampleCount: rows.length,
+    rpmSampleCount: rpmRows.length,
+    latestRpm: latest.rpm,
+    latestRpmAt: latest.timestamp,
+    maxRpm: max.rpm,
+    maxRpmAt: max.timestamp,
+  };
+}
+
+async function fetchDimoRpmHistorySummary(tokenId, authHeader, capturedAt) {
+  const lastCapturedAt = await getLastDimoSnapshotCapturedAt(tokenId);
+  const window = getRpmHistoryWindow(lastCapturedAt, capturedAt);
+
+  try {
+    const raw = await fetchDimoEngineRpmSignals(tokenId, {
+      authHeader,
+      from: window.from,
+      to: window.to,
+      interval: DIMO_RPM_HISTORY_INTERVAL,
+      filter: null,
+    });
+
+    return {
+      ok: true,
+      interval: DIMO_RPM_HISTORY_INTERVAL,
+      window,
+      ...summarizeRpmHistory(raw),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      interval: DIMO_RPM_HISTORY_INTERVAL,
+      window,
+      error: err.message || String(err),
+      sampleCount: 0,
+      rpmSampleCount: 0,
+      latestRpm: null,
+      latestRpmAt: null,
+      maxRpm: null,
+      maxRpmAt: null,
+    };
+  }
+}
+
 async function resolveVin(tokenId, vehicleConfig, authHeader) {
   const vinLookup = await fetchDimoVin(tokenId, authHeader);
   if (vinLookup?.vin) {
@@ -227,6 +357,19 @@ async function resolveVin(tokenId, vehicleConfig, authHeader) {
 function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
   const s = raw?.data?.signalsLatest ?? {};
   const odometerKm = signalValue(s.powertrainTransmissionTravelledDistance);
+  const rpmHistory = options.rpmHistory || null;
+  const fallbackLatestRpm =
+    toNumber(signalValue(s.powertrainCombustionEngineSpeed));
+  const seriesLatestRpm =
+    rpmHistory?.latestRpm != null
+      ? rpmHistory.latestRpm
+      : fallbackLatestRpm;
+  const rpmForStorage =
+    rpmHistory?.maxRpm != null ? rpmHistory.maxRpm : seriesLatestRpm;
+  const rpmForStorageAt =
+    rpmHistory?.maxRpmAt ||
+    rpmHistory?.latestRpmAt ||
+    signalTimestamp(s.powertrainCombustionEngineSpeed);
   const coordinates =
     signalValue(s.currentLocationCoordinates) ||
     signalValue(s.currentLocationApproximateCoordinates) ||
@@ -283,6 +426,7 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
       requestedSignals: options.requestedSignals || [],
       fetchedSignals: options.fetchedSignals || [],
       skippedSignals: options.skippedSignals || [],
+      rpmHistory,
       blockedSignals: options.blockedSignals || [],
       missingPrivileges: options.missingPrivileges || [],
       degraded: Boolean(options.degraded),
@@ -313,7 +457,10 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
     dtc_count: toNumber(signalValue(s.obdStatusDTCCount)),
     distance_with_mil: toNumber(signalValue(s.obdDistanceWithMIL)),
     coolant_temp: toNumber(signalValue(s.powertrainCombustionEngineECT)),
-    engine_rpm: toNumber(signalValue(s.powertrainCombustionEngineSpeed)),
+    engine_rpm: rpmForStorage,
+    engine_rpm_last_updated: rpmForStorageAt,
+    engine_rpm_window_max: rpmHistory?.maxRpm ?? seriesLatestRpm,
+    engine_rpm_window_max_at: rpmHistory?.maxRpmAt || rpmForStorageAt,
     throttle_position: toNumber(signalValue(s.powertrainCombustionEngineTPS)),
     runtime_minutes: toNumber(signalValue(s.obdRunTime)),
     def_level: toNumber(signalValue(s.powertrainCombustionEngineDieselExhaustFluidLevel)),
@@ -481,13 +628,15 @@ async function updateActiveTripMaxEngineRpm(snapshot, client = pool) {
     return { rowCount: 0 };
   }
 
-  const rpm = toNumber(snapshot.engine_rpm);
+  const rpm = toNumber(snapshot.engine_rpm_window_max ?? snapshot.engine_rpm);
   const vin = cleanString(snapshot.vin);
   if (!vin || rpm == null || rpm < 0) {
     return { rowCount: 0 };
   }
 
   const eventTimestamp =
+    cleanString(snapshot.engine_rpm_window_max_at) ||
+    cleanString(snapshot.engine_rpm_last_updated) ||
     cleanString(snapshot.vehicle_last_updated) ||
     cleanString(snapshot.ignition_last_updated) ||
     cleanString(snapshot.speed_last_updated) ||
@@ -676,6 +825,7 @@ async function collectDimoVehicleSnapshot(vehicleConfig) {
     authHeader,
     availableSignals,
   });
+  const rpmHistory = await fetchDimoRpmHistorySummary(tokenId, authHeader, capturedAt);
 
   const vinResolution = await resolveVin(tokenId, vehicleConfig, authHeader);
   const mergedVehicleConfig = {
@@ -693,6 +843,7 @@ async function collectDimoVehicleSnapshot(vehicleConfig) {
     requestedSignals: raw.meta?.requestedSignals || [],
     fetchedSignals: raw.meta?.fetchedSignals || [],
     skippedSignals: raw.meta?.skippedSignals || [],
+    rpmHistory,
     blockedSignals: raw.meta?.blockedSignals || [],
     missingPrivileges: unique([
       ...(raw.meta?.missingPrivileges || []),

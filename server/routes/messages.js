@@ -203,6 +203,7 @@ function mapMessageRow(row) {
     subject: row.subject,
     status: row.status,
     timestamp: row.message_timestamp,
+    notification_created_at: row.created_at || row.message_timestamp,
     amount: row.amount,
     type: row.message_type,
     guest_message: row.guest_message,
@@ -250,7 +251,8 @@ function mapHandoffNoticeRow(row) {
     trip_workflow_stage: row.workflow_stage,
     trip_status: row.trip_status,
     handoff_sort_at: row.trip_start,
-    created_at: row.trip_start,
+    notification_created_at: row.stage_updated_at || row.trip_start,
+    created_at: row.stage_updated_at || row.trip_start,
   };
 }
 
@@ -264,6 +266,7 @@ function mapInspectionExportNoticeRow(row) {
     subject: `Export guest inspection sheet for ${vehicleName}`,
     status: "read",
     timestamp: row.stage_updated_at || row.trip_start,
+    notification_created_at: row.stage_updated_at || row.trip_start,
     type: "inspection_export_required",
     guest_name: guestName,
     vehicle_name: row.vehicle_name,
@@ -297,6 +300,7 @@ function mapCloseoutNoticeRow(row) {
     subject: `Close out ${vehicleName}'s trip for ${guestName}`,
     status: "read",
     timestamp: row.trip_end,
+    notification_created_at: row.trip_end,
     type: "closeout_required",
     guest_name: row.guest_name,
     vehicle_name: row.vehicle_name,
@@ -371,6 +375,7 @@ function mapMaintenanceNoticeRow(row) {
     subject,
     status: "read",
     timestamp: row.latest_task_created_at || row.trip_start || row.created_at,
+    notification_created_at: row.latest_task_created_at || row.created_at,
     type: "maintenance_required",
     guest_name: row.guest_name,
     vehicle_name: row.vehicle_name,
@@ -441,6 +446,7 @@ router.get("/", async (req, res) => {
         subject,
         mailbox,
         message_timestamp,
+        created_at,
         status,
         amount,
         guest_message,
@@ -469,6 +475,7 @@ router.get("/", async (req, res) => {
           m.subject,
           m.mailbox,
           m.message_timestamp,
+          m.created_at,
           m.status,
           m.amount,
           m.guest_message,
@@ -683,6 +690,7 @@ router.get("/", async (req, res) => {
         v.nickname AS vehicle_nickname,
         t.trip_start,
         t.trip_end,
+        t.stage_updated_at,
         t.workflow_stage,
         t.status AS trip_status
       FROM trips t
@@ -713,9 +721,9 @@ router.get("/", async (req, res) => {
         v.vin AS vehicle_vin,
         t.trip_start,
         t.trip_end,
+        t.stage_updated_at,
         t.workflow_stage,
-        t.status AS trip_status,
-        t.stage_updated_at
+        t.status AS trip_status
       FROM trips t
       LEFT JOIN vehicles v
         ON (
