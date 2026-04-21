@@ -568,6 +568,15 @@
   word-break: break-word;
 }
 
+.trip-meta .trip-meta-stacked .meta-label,
+.trip-meta .trip-meta-stacked .meta-value {
+  display: block;
+}
+
+.trip-meta .trip-meta-stacked .meta-label {
+  margin-right: 0;
+}
+
 /* --------------------------------------------------------------
    Chips inside trip cards
 -------------------------------------------------------------- */

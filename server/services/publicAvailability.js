@@ -2,6 +2,7 @@ const pool = require("../db");
 
 const LONG_TERM_DAYS = 28;
 const AVAILABILITY_WINDOW_DAYS = 90;
+const MIN_PUBLIC_BOOKING_GAP_HOURS = 48;
 const PUBLIC_TIME_ZONE = "America/Chicago";
 
 const INACTIVE_STATUSES = new Set([
@@ -171,6 +172,48 @@ function getDateKeysBetweenInclusive(startDate, endDate) {
   return keys;
 }
 
+function blockDateRange(unavailableKeySet, startDate, endDate) {
+  const blockedKeys = getDateKeysBetweenInclusive(startDate, endDate);
+  for (const key of blockedKeys) {
+    unavailableKeySet.add(key);
+  }
+}
+
+function getActiveCalendarTrips(trips) {
+  return trips
+    .filter((trip) => trip.start && trip.end && !isInactiveTrip(trip))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+function blockShortBookingGaps(unavailableKeySet, trips, windowStart, windowEnd) {
+  let previousTrip = null;
+
+  for (const trip of trips) {
+    if (!previousTrip) {
+      previousTrip = trip;
+      continue;
+    }
+
+    if (trip.end > previousTrip.end) {
+      if (trip.start > previousTrip.end) {
+        const gapHours =
+          (trip.start.getTime() - previousTrip.end.getTime()) / (1000 * 60 * 60);
+
+        if (gapHours < MIN_PUBLIC_BOOKING_GAP_HOURS) {
+          const gapStart = previousTrip.end > windowStart ? previousTrip.end : windowStart;
+          const gapEnd = trip.start < windowEnd ? trip.start : windowEnd;
+
+          if (gapEnd >= windowStart && gapStart <= windowEnd) {
+            blockDateRange(unavailableKeySet, gapStart, gapEnd);
+          }
+        }
+      }
+
+      previousTrip = trip;
+    }
+  }
+}
+
 function compressDateKeysToRanges(dateKeys, reason = "trip") {
   if (!dateKeys.length) return [];
 
@@ -212,21 +255,18 @@ function buildAvailabilityCalendar(trips) {
   const { start: windowStart, end: windowEnd } = getDateWindow();
   const allWindowKeys = getDateKeysBetweenInclusive(windowStart, windowEnd);
   const unavailableKeySet = new Set();
+  const activeCalendarTrips = getActiveCalendarTrips(trips);
 
-  for (const trip of trips) {
-    if (!trip.start || !trip.end) continue;
-    if (isInactiveTrip(trip)) continue;
-
+  for (const trip of activeCalendarTrips) {
     const tripStart = trip.start > windowStart ? trip.start : windowStart;
     const tripEnd = trip.end < windowEnd ? trip.end : windowEnd;
 
     if (tripEnd < windowStart || tripStart > windowEnd) continue;
 
-    const blockedKeys = getDateKeysBetweenInclusive(tripStart, tripEnd);
-    for (const key of blockedKeys) {
-      unavailableKeySet.add(key);
-    }
+    blockDateRange(unavailableKeySet, tripStart, tripEnd);
   }
+
+  blockShortBookingGaps(unavailableKeySet, activeCalendarTrips, windowStart, windowEnd);
 
   const unavailableDates = [...unavailableKeySet].sort();
   const availableDates = allWindowKeys.filter((key) => !unavailableKeySet.has(key));

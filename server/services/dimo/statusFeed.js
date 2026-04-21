@@ -2,6 +2,8 @@ const pool = require("../../db");
 const collectDimoSnapshot = require("./collectDimoSnapshot");
 const { getDimoFleetFromEnv } = require("./client");
 
+const LIVE_SIGNAL_MAX_AGE_MINUTES = 15;
+
 let dimoInProgress = false;
 
 function celsiusToFahrenheit(celsius) {
@@ -30,6 +32,18 @@ function firstNonNull(...values) {
     if (value !== null && value !== undefined && value !== "") return value;
   }
   return null;
+}
+
+function getAgeMinutes(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+}
+
+function isFreshLiveSignal(value) {
+  const ageMinutes = getAgeMinutes(value);
+  return ageMinutes != null && ageMinutes <= LIVE_SIGNAL_MAX_AGE_MINUTES;
 }
 
 async function runDimo(reason = "interval") {
@@ -211,6 +225,21 @@ async function getDimoStatusFeed() {
       row.heading_last_updated,
       rawSignals.currentLocationHeading?.timestamp
     );
+    const ignitionLastUpdated = firstNonNull(
+      row.ignition_last_updated,
+      rawSignals.isIgnitionOn?.timestamp
+    );
+    const speedLastUpdated = firstNonNull(
+      row.speed_last_updated,
+      rawSignals.speed?.timestamp
+    );
+    const rpmLastUpdated = firstNonNull(
+      rawSignals.powertrainCombustionEngineSpeed?.timestamp,
+      ignitionLastUpdated
+    );
+    const ignitionFresh = isFreshLiveSignal(ignitionLastUpdated);
+    const speedFresh = isFreshLiveSignal(speedLastUpdated);
+    const rpmFresh = isFreshLiveSignal(rpmLastUpdated);
     const hasLocation = latitude != null && longitude != null;
     const missingPrivileges = Array.isArray(row.raw_payload?.missingPrivileges)
       ? row.raw_payload.missingPrivileges
@@ -231,8 +260,8 @@ async function getDimoStatusFeed() {
         last_comm: row.vehicle_last_updated || row.captured_at,
         odometer: row.odometer,
         fuel_level: row.fuel_level,
-        engine_running: row.is_running,
-        speed: row.speed,
+        engine_running: ignitionFresh ? row.is_running : null,
+        speed: speedFresh ? row.speed : null,
         location: {
           lat: latitude,
           lon: longitude,
@@ -270,7 +299,7 @@ async function getDimoStatusFeed() {
             row.engine_temp_range?.last_overtemp_at ||
               normalizeEngineTempF(row.coolant_temp) >= 240
           ),
-          rpm: row.engine_rpm,
+          rpm: rpmFresh ? row.engine_rpm : null,
           rpm_range: row.engine_rpm_range || null,
           throttle_position: row.throttle_position,
         },
@@ -287,10 +316,10 @@ async function getDimoStatusFeed() {
         timestamps: {
           fuel_level_last_updated: row.fuel_level_last_updated,
           odometer_last_updated: row.odometer_last_updated,
-          speed_last_updated: row.speed_last_updated,
+          speed_last_updated: speedLastUpdated,
           location_last_updated: locationLastUpdated,
           heading_last_updated: headingLastUpdated,
-          ignition_last_updated: row.ignition_last_updated,
+          ignition_last_updated: ignitionLastUpdated,
         },
         dimo: {
           degraded: Boolean(row.raw_payload?.degraded),
@@ -301,6 +330,17 @@ async function getDimoStatusFeed() {
           requested_signals: row.raw_payload?.requestedSignals || [],
           available_signals_count: row.raw_payload?.availableSignalsCount ?? null,
           supported_signals_count: row.raw_payload?.supportedSignalsCount ?? null,
+          live_signal_max_age_minutes: LIVE_SIGNAL_MAX_AGE_MINUTES,
+          stale_signals: {
+            ignition: !ignitionFresh,
+            speed: !speedFresh,
+            rpm: !rpmFresh,
+          },
+          signal_ages_minutes: {
+            ignition: getAgeMinutes(ignitionLastUpdated),
+            speed: getAgeMinutes(speedLastUpdated),
+            rpm: getAgeMinutes(rpmLastUpdated),
+          },
         },
       },
     };

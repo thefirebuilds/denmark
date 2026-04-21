@@ -454,6 +454,13 @@ async function handleSubmit(e) {
     }
   }
 
+  const startingOdometer = toNullableNumber(form.starting_odometer);
+  const endingOdometer = toNullableNumber(form.ending_odometer);
+  const usedMileage =
+    startingOdometer != null && endingOdometer != null
+      ? endingOdometer - startingOdometer
+      : null;
+
   return createPortal(
     <div
       className="app-drawer-backdrop trip-summary-drawer-backdrop"
@@ -600,15 +607,6 @@ async function handleSubmit(e) {
               </label>
 
               <label className="trip-summary-drawer-field">
-                <span className="trip-summary-drawer-label">Included Mileage</span>
-                <input
-                  type="number"
-                  value={form.mileage_included}
-                  onChange={(e) => updateField("mileage_included", e.target.value)}
-                />
-              </label>
-
-              <label className="trip-summary-drawer-field">
                 <span className="trip-summary-drawer-label">Starting Odometer</span>
                 <input
                   type="number"
@@ -623,6 +621,24 @@ async function handleSubmit(e) {
                   type="number"
                   value={form.ending_odometer}
                   onChange={(e) => updateField("ending_odometer", e.target.value)}
+                />
+              </label>
+
+              <label className="trip-summary-drawer-field">
+                <span className="trip-summary-drawer-label">Included Mileage</span>
+                <input
+                  type="number"
+                  value={form.mileage_included}
+                  onChange={(e) => updateField("mileage_included", e.target.value)}
+                />
+              </label>
+
+              <label className="trip-summary-drawer-field">
+                <span className="trip-summary-drawer-label">Used Mileage</span>
+                <input
+                  type="number"
+                  value={usedMileage == null ? "" : usedMileage}
+                  readOnly
                 />
               </label>
             </div>

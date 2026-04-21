@@ -282,7 +282,7 @@ export default function TripSummaryListPanel({
                     </div>
                   </div>
 
-                  <div>
+                  <div className="trip-meta-stacked">
                     <div className="meta-label">Miles driven</div>
                     <div className="meta-value">
                       {Number.isFinite(miles) ? miles.toLocaleString("en-US") : "—"}

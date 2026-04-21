@@ -41,10 +41,12 @@ function formatStageLabel(value) {
     .join(" ");
 }
 
-function formatTollReviewStatus(value) {
+function formatTollReviewStatus(value, hasTollExposure = false) {
   const normalized = String(value || "").trim().toLowerCase();
 
-  if (!normalized || normalized === "none") return "No tolls";
+  if (!normalized || normalized === "none") {
+    return hasTollExposure ? "Needs audit" : "No tolls";
+  }
   if (normalized === "pending") return "Pending review";
   if (normalized === "reviewed") return "Reviewed";
   if (normalized === "billed") return "Billed";
@@ -179,7 +181,7 @@ export default function SelectedTripPanel({
   const hasTollExposure =
     Boolean(selectedTrip?.has_tolls) || tollCount > 0 || tollTotal > 0;
   const hasOpenTolls =
-    tollTotal > 0 && !["billed", "waived", "none"].includes(tollStatus);
+    hasTollExposure && !["billed", "waived"].includes(tollStatus);
   const showTollFields = hasTollExposure || isCloseoutStage || tripHasEnded;
 
   const showFuelFields =
@@ -764,7 +766,8 @@ function renderLocationLink(vehicle) {
                   <strong>
                     {hasTollExposure
                       ? `${tollCount} toll${tollCount === 1 ? "" : "s"} • ${formatTollReviewStatus(
-                          selectedTrip?.toll_review_status
+                          selectedTrip?.toll_review_status,
+                          hasTollExposure
                         )}`
                       : "No tolls"}
                   </strong>
