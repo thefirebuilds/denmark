@@ -311,7 +311,7 @@ async function maybeAutoStartReadyTrip(client, snapshot) {
 }
 
 async function main() {
-  console.log("Collecting Bouncie telemetry snapshot...");
+  console.log("[bouncie] snapshot start");
 
   const vehicles = await getVehicles();
 
@@ -319,7 +319,7 @@ async function main() {
     throw new Error("Bouncie vehicles response was not an array");
   }
 
-  console.log(`Fetched ${vehicles.length} vehicle(s) from Bouncie.`);
+  console.log(`[bouncie] vehicles=${vehicles.length}`);
 
   const dbClient = await pool.connect();
 
@@ -333,10 +333,9 @@ async function main() {
       const snapshot = normalizeVehicle(vehicle);
 
       if (!snapshot.vin) {
-        console.warn("Skipping vehicle with no VIN:", {
-          nickname: snapshot.nickname,
-          imei: snapshot.imei,
-        });
+        console.warn(
+          `[bouncie] skipping vehicle with no VIN | nickname=${snapshot.nickname || "unknown"} imei=${snapshot.imei || "unknown"}`
+        );
         continue;
       }
 
@@ -350,9 +349,7 @@ async function main() {
     }
 
     await dbClient.query("COMMIT");
-    console.log(
-      `Inserted ${inserted} telemetry snapshot row(s). Auto-started ${autoStarted} trip(s).`
-    );
+    console.log(`[bouncie] snapshot done | inserted=${inserted} autoStarted=${autoStarted}`);
   } catch (err) {
     await dbClient.query("ROLLBACK");
     throw err;
@@ -365,7 +362,7 @@ module.exports = main;
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error("collectBouncieSnapshot failed:", err.message);
+    console.error(`[bouncie] snapshot failed | ${err.message}`);
     process.exit(1);
   });
 }

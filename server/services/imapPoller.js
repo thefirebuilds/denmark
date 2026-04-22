@@ -70,13 +70,11 @@ async function pollImap() {
   const SAMPLE_LIMIT = 5;
 
   try {
-    const startedAt = new Date().toISOString();
     const LOOKBACK_HOURS = Number(process.env.IMAP_LOOKBACK_HOURS || 72);
     const INGEST_LIMIT = Number(process.env.IMAP_INGEST_LIMIT || 100);
 
-    console.log(`IMAP poll start ${startedAt}`);
     console.log(
-      `Polling mailboxes=${TARGET_MAILBOXES.join(", ")} lookbackHours=${LOOKBACK_HOURS}`
+      `[imap] poll start | mailboxes=${TARGET_MAILBOXES.join(",")} lookbackHours=${LOOKBACK_HOURS}`
     );
 
     await client.connect();
@@ -94,13 +92,13 @@ async function pollImap() {
         });
 
         if (!results.length) {
-          console.log(`Mailbox ${mailbox}: 0 match(es)`);
+          console.log(`[imap] ${mailbox} | matches=0`);
           continue;
         }
 
         const limitedResults = results.slice(-INGEST_LIMIT);
         console.log(
-          `Mailbox ${mailbox}: ${results.length} match(es), fetching ${limitedResults.length}`
+          `[imap] ${mailbox} | matches=${results.length} fetching=${limitedResults.length}`
         );
 
         for await (const msg of client.fetch(limitedResults, {
@@ -180,44 +178,32 @@ async function pollImap() {
         }
       } catch (err) {
         errorCount += 1;
-        console.error(`Mailbox ${mailbox} failed: ${err.message}`);
+        console.error(`[imap] ${mailbox} failed | ${err.message}`);
       } finally {
         if (lock) lock.release();
       }
     }
 
     console.log(
-      `IMAP poll end ${new Date().toISOString()} | mailboxes=${mailboxCount} matched=${matchedCount} inserted=${insertedCount} duplicates=${duplicateCount} mailboxErrors=${errorCount}`
+      `[imap] poll done | mailboxes=${mailboxCount} matched=${matchedCount} inserted=${insertedCount} duplicates=${duplicateCount} errors=${errorCount}`
     );
 
     if (recentSamples.length) {
-      console.log("Recent inserted messages:");
-      recentSamples.forEach((msg, index) => {
-        console.log(
-          `${index + 1}. [${msg.date || "no-date"}] ${msg.subject || "(no subject)"}`
-        );
-        console.log(`   from: ${msg.from || "(no from)"}`);
-        console.log(`   to:   ${msg.to || "(no to)"}`);
-        console.log(`   box:  ${msg.mailbox} | uid: ${msg.uid}`);
-        console.log(`   id:   ${msg.messageId || "(no message-id)"}`);
-        console.log(`   body: ${msg.preview || "(no text preview)"}`);
-      });
+      console.log(`[imap] inserted recent=${recentSamples.length}`);
     }
     } catch (err) {
-        console.error("IMAP poll failed");
-        console.error("code:", err?.code);
-        console.error("message:", err?.message);
-        console.error("response:", err?.response);
-        console.error("responseStatus:", err?.responseStatus);
-        console.error("command:", err?.command);
-        console.error("stack:", err?.stack || err);
+        console.error(
+          `[imap] poll failed | code=${err?.code || "unknown"} message=${
+            err?.message || err
+          }`
+        );
       } finally {
     try {
       if (client.usable) {
         await client.logout();
       }
     } catch (err) {
-      console.warn("IMAP logout failed:", err?.message || err);
+      console.warn(`[imap] logout failed | ${err?.message || err}`);
     }
   }
 }

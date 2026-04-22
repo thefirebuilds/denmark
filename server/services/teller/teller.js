@@ -178,14 +178,14 @@ async function syncTransactionsForAccount(accountId, token, ignoreRules) {
 }
 
 async function syncTellerTransactions() {
-  console.log("🔐 Fetching Teller token...");
+  console.log("[teller] fetching token");
   const token = await getAccessToken();
 
   if (!token) {
     throw new Error("No Teller token found");
   }
 
-  console.log("🏦 Fetching Teller accounts...");
+  console.log("[teller] fetching accounts");
   const accounts = await getAccounts(token);
 
   if (!accounts.length) {
@@ -196,12 +196,12 @@ async function syncTellerTransactions() {
   let totalProcessed = 0;
 
   for (const account of accounts) {
-    console.log(`💸 Syncing Teller transactions for account ${account.id}...`);
+    console.log(`[teller] syncing account=${account.id}`);
     const count = await syncTransactionsForAccount(account.id, token, ignoreRules);
     totalProcessed += count;
   }
 
-  console.log(`✨ Teller sync complete. Processed ${totalProcessed} transactions.`);
+  console.log(`[teller] sync done | processed=${totalProcessed}`);
   return { processed: totalProcessed };
 }
 

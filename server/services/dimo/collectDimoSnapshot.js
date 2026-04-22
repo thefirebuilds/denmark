@@ -880,7 +880,9 @@ async function collectDimoVehicleSnapshot(vehicleConfig) {
     durationMs: Date.now() - startedAt,
   };
 
-  console.log("DIMO vehicle poll ok:", summary);
+  console.log(
+    `[dimo] ${normalized.nickname || tokenId} ok | snapshot=${persistResult.snapshotId} signals=${summary.availableSignalsCount} rawRows=${persistResult.rawSignalRows} durationMs=${summary.durationMs}`
+  );
 
   return {
     ok: true,
@@ -905,11 +907,11 @@ async function collectDimoFleetSnapshots() {
   const { fleet, sharedVehicles, localFleet } = await getDimoFleet();
   const results = [];
 
-  console.log("DIMO fleet poll start:", {
-    sharedCount: sharedVehicles?.totalCount ?? sharedVehicles?.nodes?.length ?? 0,
-    localOverrideCount: localFleet.length,
-    pollCount: fleet.length,
-  });
+  console.log(
+    `[dimo] fleet poll start | vehicles=${fleet.length} shared=${
+      sharedVehicles?.totalCount ?? sharedVehicles?.nodes?.length ?? 0
+    } localOverrides=${localFleet.length}`
+  );
 
   for (const vehicle of fleet) {
     try {
@@ -947,7 +949,9 @@ async function collectDimoFleetSnapshots() {
         },
       };
 
-      console.error("DIMO vehicle poll failed:", failure.summary);
+      console.error(
+        `[dimo] ${vehicle.nickname || vehicle.tokenId} failed | ${failure.error}`
+      );
       results.push(failure);
     }
   }
@@ -962,7 +966,9 @@ async function collectDimoFleetSnapshots() {
     vehicles: results.map((result) => result.summary),
   };
 
-  console.log("DIMO fleet poll finished:", summary);
+  console.log(
+    `[dimo] fleet poll done | total=${summary.total} succeeded=${summary.succeeded} degraded=${summary.degraded} failed=${summary.failed} durationMs=${summary.durationMs}`
+  );
 
   return summary;
 }

@@ -5,25 +5,28 @@
 // The IMAP polling task checks for new maintenance requests and customer-reported issues for each vehicle. This is an internal-facing
 // view to help fleet managers prioritize and track work needed to keep vehicles guest-ready.
 // The Bouncie snapshot task collects the latest vehicle data from the Bouncie API to keep our records up to date.
-// -----------------------------------------------------------------------------------------------------------------------  
+// -----------------------------------------------------------------------------------------------------------------------
 
 // dimo connectivity
 const collectDimoSnapshot = require("./dimo/collectDimoSnapshot");
 
-//availability push
+// availability push
 const { pushPublicAvailabilitySnapshotSafe } = require("./pushPublicAvailability");
 
-//bank transX
+// bank transX
 const syncTellerTransactions = require("./teller/teller");
 
-//email connectivity
+// email connectivity
 const pollImap = require("./imapPoller");
 
-//bouncie connectivity
+// bouncie connectivity
 const collectBouncieSnapshot = require("./bouncie/collectBouncieSnapshot");
 
-//hctra connectivity (tolls)
+// hctra connectivity (tolls)
 const syncTolls = require("./tolls/syncTolls");
+
+// Google Calendar
+const { reconcileTripsToGoogle } = require("./googleCalendar/googleTripSync");
 
 let tellerSyncInProgress = false;
 let tellerSyncIntervalHandle = null;
@@ -40,6 +43,9 @@ let bouncieIntervalHandle = null;
 let dimoInProgress = false;
 let dimoIntervalHandle = null;
 
+let googleCalendarInProgress = false;
+let googleCalendarIntervalHandle = null;
+
 const STARTUP_TASKS = [
   "teller",
   "tolls",
@@ -47,6 +53,7 @@ const STARTUP_TASKS = [
   "bouncie",
   "dimo",
   "publicAvailability",
+  "googleCalendar",
 ];
 
 let startupStatus = {
@@ -145,7 +152,7 @@ function getStartupStatus() {
 
 async function runTellerSync(reason = "interval") {
   if (tellerSyncInProgress) {
-    console.log(`Skipping Teller sync (${reason}) because one is already running`);
+    console.log(`[scheduler] teller skipped | reason=${reason} alreadyRunning=true`);
     return;
   }
 
@@ -153,14 +160,14 @@ async function runTellerSync(reason = "interval") {
   const startedAt = Date.now();
 
   try {
-    console.log(`Running Teller sync (${reason})`);
+    console.log(`[scheduler] teller start | reason=${reason}`);
     const result = await syncTellerTransactions();
 
     console.log(
-      `Teller sync (${reason}) ok | processed=${result.processed} durationMs=${Date.now() - startedAt}`
+      `[scheduler] teller done | reason=${reason} processed=${result.processed} durationMs=${Date.now() - startedAt}`
     );
   } catch (err) {
-    console.error(`Teller sync failed (${reason}):`, err.message || err);
+    console.error(`[scheduler] teller failed | reason=${reason} error=${err.message || err}`);
   } finally {
     tellerSyncInProgress = false;
   }
@@ -168,7 +175,7 @@ async function runTellerSync(reason = "interval") {
 
 async function runTollSync(reason = "interval") {
   if (tollSyncInProgress) {
-    console.log(`Skipping toll sync (${reason}) because one is already running`);
+    console.log(`[scheduler] tolls skipped | reason=${reason} alreadyRunning=true`);
     return;
   }
 
@@ -176,14 +183,14 @@ async function runTollSync(reason = "interval") {
   const startedAt = Date.now();
 
   try {
-    console.log(`Running toll sync (${reason})`);
+    console.log(`[scheduler] tolls start | reason=${reason}`);
     const result = await syncTolls();
 
     console.log(
-      `Toll sync (${reason}) ok | seen=${result.recordsSeen} imported=${result.recordsImported} skipped=${result.recordsSkipped} vehicleMatched=${result.recordsMatchedVehicle} tripMatched=${result.recordsMatchedTrip} runId=${result.runId} durationMs=${Date.now() - startedAt}`
+      `[scheduler] tolls done | reason=${reason} seen=${result.recordsSeen} imported=${result.recordsImported} skipped=${result.recordsSkipped} vehicleMatched=${result.recordsMatchedVehicle} tripMatched=${result.recordsMatchedTrip} runId=${result.runId} durationMs=${Date.now() - startedAt}`
     );
   } catch (err) {
-    console.error(`Toll sync failed (${reason}):`, err.message || err);
+    console.error(`[scheduler] tolls failed | reason=${reason} error=${err.message || err}`);
   } finally {
     tollSyncInProgress = false;
   }
@@ -191,7 +198,7 @@ async function runTollSync(reason = "interval") {
 
 async function runPoll(reason = "interval") {
   if (pollInProgress) {
-    console.log(`Skipping IMAP poll (${reason}) because one is already running`);
+    console.log(`[scheduler] imap skipped | reason=${reason} alreadyRunning=true`);
     return;
   }
 
@@ -199,13 +206,13 @@ async function runPoll(reason = "interval") {
   const startedAt = Date.now();
 
   try {
-    console.log(`Running IMAP poll (${reason})`);
+    console.log(`[scheduler] imap start | reason=${reason}`);
     await pollImap();
   } catch (err) {
-    console.error(`IMAP poll failed (${reason}):`, err.message || err);
+    console.error(`[scheduler] imap failed | reason=${reason} error=${err.message || err}`);
   } finally {
     console.log(
-      `IMAP poll finished (${reason}) in ${Date.now() - startedAt}ms`
+      `[scheduler] imap done | reason=${reason} durationMs=${Date.now() - startedAt}`
     );
     pollInProgress = false;
   }
@@ -213,7 +220,7 @@ async function runPoll(reason = "interval") {
 
 async function runBouncie(reason = "interval") {
   if (bouncieInProgress) {
-    console.log(`Skipping Bouncie snapshot (${reason}) because one is already running`);
+    console.log(`[scheduler] bouncie skipped | reason=${reason} alreadyRunning=true`);
     return;
   }
 
@@ -221,13 +228,13 @@ async function runBouncie(reason = "interval") {
   const startedAt = Date.now();
 
   try {
-    console.log(`Running Bouncie snapshot (${reason})`);
+    console.log(`[scheduler] bouncie start | reason=${reason}`);
     await collectBouncieSnapshot();
   } catch (err) {
-    console.error(`Bouncie snapshot failed (${reason}):`, err.message || err);
+    console.error(`[scheduler] bouncie failed | reason=${reason} error=${err.message || err}`);
   } finally {
     console.log(
-      `Bouncie snapshot finished (${reason}) in ${Date.now() - startedAt}ms`
+      `[scheduler] bouncie done | reason=${reason} durationMs=${Date.now() - startedAt}`
     );
     bouncieInProgress = false;
   }
@@ -235,7 +242,7 @@ async function runBouncie(reason = "interval") {
 
 async function runDimo(reason = "interval") {
   if (dimoInProgress) {
-    console.log(`Skipping DIMO snapshot (${reason}) because one is already running`);
+    console.log(`[scheduler] dimo skipped | reason=${reason} alreadyRunning=true`);
     return;
   }
 
@@ -243,25 +250,53 @@ async function runDimo(reason = "interval") {
   const startedAt = Date.now();
 
   try {
-    console.log(`Running DIMO snapshot (${reason})`);
+    console.log(`[scheduler] dimo start | reason=${reason}`);
     const summary = await collectDimoSnapshot();
     console.log(
-      `DIMO snapshot (${reason}) ok | total=${summary.total} succeeded=${summary.succeeded} degraded=${summary.degraded} failed=${summary.failed}`
+      `[scheduler] dimo done | reason=${reason} total=${summary.total} succeeded=${summary.succeeded} degraded=${summary.degraded} failed=${summary.failed}`
     );
   } catch (err) {
-    console.error(`DIMO snapshot failed (${reason}):`, err.message || err);
+    console.error(`[scheduler] dimo failed | reason=${reason} error=${err.message || err}`);
   } finally {
     console.log(
-      `DIMO snapshot finished (${reason}) in ${Date.now() - startedAt}ms`
+      `[scheduler] dimo finished | reason=${reason} durationMs=${Date.now() - startedAt}`
     );
     dimoInProgress = false;
   }
 }
 
+async function runGoogleCalendarReconcile(reason = "interval") {
+  if (googleCalendarInProgress) {
+    console.log(`[scheduler] googleCalendar skipped | reason=${reason} alreadyRunning=true`);
+    return;
+  }
+
+  googleCalendarInProgress = true;
+  const startedAt = Date.now();
+
+  try {
+    console.log(`[scheduler] googleCalendar start | reason=${reason}`);
+    const result = await reconcileTripsToGoogle({ userId: null, limit: 500 });
+
+    console.log(
+      `[scheduler] googleCalendar done | reason=${reason} processed=${result.processed} durationMs=${Date.now() - startedAt}`
+    );
+  } catch (err) {
+    console.error(
+      `[scheduler] googleCalendar failed | reason=${reason} error=${err.message || err}`
+    );
+  } finally {
+    googleCalendarInProgress = false;
+  }
+}
+
 function startScheduler() {
-  console.log("Scheduler started");
+  console.log("[scheduler] started");
+
   const everyEightHoursMs = 8 * 60 * 60 * 1000;
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
+  const everyFiveMinutesMs = 5 * 60 * 1000;
+
   resetStartupStatus();
 
   // Teller sync immediately
@@ -284,18 +319,22 @@ function startScheduler() {
     pushPublicAvailabilitySnapshotSafe("server startup")
   );
 
-  // Teller sync every 8 hours
+  // Google Calendar reconcile immediately
+  void runStartupTask("googleCalendar", () =>
+    runGoogleCalendarReconcile("startup")
+  );
+
+  // Teller sync every 2 hours
   tellerSyncIntervalHandle = setInterval(() => {
     void runTellerSync("interval");
   }, everyTwoHoursMs);
 
-  // Toll sync every 8 hours
+  // Toll sync every 2 hours
   tollSyncIntervalHandle = setInterval(() => {
     void runTollSync("interval");
   }, everyTwoHoursMs);
 
   // IMAP every 5 minutes
-  const everyFiveMinutesMs = 5 * 60 * 1000;
   intervalHandle = setInterval(() => {
     void runPoll("interval");
   }, everyFiveMinutesMs);
@@ -310,13 +349,13 @@ function startScheduler() {
     void runDimo("interval");
   }, everyFiveMinutesMs);
 
+  // Google Calendar reconcile every 8 hours
+  googleCalendarIntervalHandle = setInterval(() => {
+    void runGoogleCalendarReconcile("interval");
+  }, everyEightHoursMs);
 }
 
-
-
-
 function stopScheduler() {
-
   if (tellerSyncIntervalHandle) {
     clearInterval(tellerSyncIntervalHandle);
     tellerSyncIntervalHandle = null;
@@ -336,11 +375,18 @@ function stopScheduler() {
     clearInterval(bouncieIntervalHandle);
     bouncieIntervalHandle = null;
   }
-    if (dimoIntervalHandle) {
+
+  if (dimoIntervalHandle) {
     clearInterval(dimoIntervalHandle);
     dimoIntervalHandle = null;
   }
-  console.log("Scheduler stopped");
+
+  if (googleCalendarIntervalHandle) {
+    clearInterval(googleCalendarIntervalHandle);
+    googleCalendarIntervalHandle = null;
+  }
+
+  console.log("[scheduler] stopped");
 }
 
 module.exports = startScheduler;

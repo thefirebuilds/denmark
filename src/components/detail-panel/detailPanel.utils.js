@@ -411,6 +411,14 @@ export function deriveReturnEta(trip) {
   return formatDateTime(end);
 }
 
+function formatStatusText(value) {
+  return String(value || "")
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 /**
  * Friendly status label for display.
  */
@@ -421,7 +429,10 @@ export function deriveStatusLabel(trip) {
   if (trip.display_status === "active") return "Active";
   if (trip.display_status === "upcoming") return "Upcoming";
   if (trip.display_status === "canceled") return "Canceled";
-  return trip.status || "—";
+  if (trip.display_status === "past") {
+    return formatStatusText(trip.workflow_stage) || "Past trip";
+  }
+  return formatStatusText(trip.workflow_stage) || formatStatusText(trip.status) || "—";
 }
 
 /**

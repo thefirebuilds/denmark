@@ -53,10 +53,12 @@ async function pushPublicAvailabilitySnapshot() {
 async function pushPublicAvailabilitySnapshotSafe(reason = "unspecified") {
   try {
     const result = await pushPublicAvailabilitySnapshot();
-    console.log(`[public-availability] push ok (${reason})`, result);
+    console.log(`[availability] push ok | reason=${reason}`);
     return result;
   } catch (error) {
-    console.error(`[public-availability] push failed (${reason})`, error);
+    console.error(
+      `[availability] push failed | reason=${reason} error=${error?.message || error}`
+    );
     return null;
   }
 }

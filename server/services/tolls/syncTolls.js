@@ -333,14 +333,11 @@ async function refreshTripTollCaches(client) {
         updated_at = NOW()
       FROM agg
       WHERE t.id = agg.trip_id
-         OR (
-           t.id NOT IN (SELECT trip_id FROM agg)
-           AND (
-             COALESCE(t.has_tolls, false) = true
-             OR COALESCE(t.toll_count, 0) <> 0
-             OR COALESCE(t.toll_total, 0) <> 0
-           )
-         )
+        AND (
+          COALESCE(t.has_tolls, false) IS DISTINCT FROM (COALESCE(agg.toll_count, 0) > 0)
+          OR COALESCE(t.toll_count, 0) IS DISTINCT FROM COALESCE(agg.toll_count, 0)
+          OR COALESCE(t.toll_total, 0)::numeric(10,2) IS DISTINCT FROM COALESCE(agg.toll_total, 0)::numeric(10,2)
+        )
     `
   );
 
@@ -446,3 +443,4 @@ async function syncTolls() {
 }
 
 module.exports = syncTolls;
+module.exports.refreshTripTollCaches = refreshTripTollCaches;
