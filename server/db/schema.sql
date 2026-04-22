@@ -176,8 +176,12 @@ ALTER TABLE IF EXISTS public.maintenance_tasks ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.maintenance_rules ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.maintenance_rule_templates ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.maintenance_events ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.trip_google_sync ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.google_calendar_connections ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.expenses ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.api_auth_tokens ALTER COLUMN id DROP DEFAULT;
+DROP SEQUENCE IF EXISTS public.trip_google_sync_id_seq;
+DROP TABLE IF EXISTS public.trip_google_sync;
 DROP SEQUENCE IF EXISTS public.vehicles_id_seq;
 DROP TABLE IF EXISTS public.vehicles;
 DROP SEQUENCE IF EXISTS public.vehicle_telemetry_snapshots_id_seq;
@@ -216,6 +220,8 @@ DROP SEQUENCE IF EXISTS public.maintenance_rule_templates_id_seq;
 DROP TABLE IF EXISTS public.maintenance_rule_templates;
 DROP SEQUENCE IF EXISTS public.maintenance_events_id_seq;
 DROP TABLE IF EXISTS public.maintenance_events;
+DROP SEQUENCE IF EXISTS public.google_calendar_connections_id_seq;
+DROP TABLE IF EXISTS public.google_calendar_connections;
 DROP SEQUENCE IF EXISTS public.expenses_id_seq;
 DROP TABLE IF EXISTS public.expenses;
 DROP TABLE IF EXISTS public.app_settings;
@@ -344,6 +350,43 @@ CREATE SEQUENCE public.expenses_id_seq
 --
 
 ALTER SEQUENCE public.expenses_id_seq OWNED BY public.expenses.id;
+
+
+--
+-- Name: google_calendar_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.google_calendar_connections (
+    id integer NOT NULL,
+    user_id integer,
+    google_email text,
+    calendar_id text,
+    calendar_summary text,
+    refresh_token_encrypted text NOT NULL,
+    scope_string text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: google_calendar_connections_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.google_calendar_connections_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: google_calendar_connections_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.google_calendar_connections_id_seq OWNED BY public.google_calendar_connections.id;
 
 
 --
@@ -1010,6 +1053,43 @@ ALTER SEQUENCE public.trips_id_seq OWNED BY public.trips.id;
 
 
 --
+-- Name: trip_google_sync; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trip_google_sync (
+    id integer NOT NULL,
+    trip_id integer NOT NULL,
+    google_calendar_connection_id integer NOT NULL,
+    event_type text NOT NULL,
+    google_event_id text NOT NULL,
+    sync_status text DEFAULT 'synced'::text NOT NULL,
+    last_synced_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trip_google_sync_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.trip_google_sync_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: trip_google_sync_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.trip_google_sync_id_seq OWNED BY public.trip_google_sync.id;
+
+
+--
 -- Name: vehicle_condition_notes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1271,6 +1351,13 @@ ALTER TABLE ONLY public.expenses ALTER COLUMN id SET DEFAULT nextval('public.exp
 
 
 --
+-- Name: google_calendar_connections id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.google_calendar_connections ALTER COLUMN id SET DEFAULT nextval('public.google_calendar_connections_id_seq'::regclass);
+
+
+--
 -- Name: maintenance_events id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1362,6 +1449,13 @@ ALTER TABLE ONLY public.trips ALTER COLUMN id SET DEFAULT nextval('public.trips_
 
 
 --
+-- Name: trip_google_sync id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trip_google_sync ALTER COLUMN id SET DEFAULT nextval('public.trip_google_sync_id_seq'::regclass);
+
+
+--
 -- Name: vehicle_condition_notes id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1426,6 +1520,14 @@ ALTER TABLE ONLY public.app_settings
 
 ALTER TABLE ONLY public.expenses
     ADD CONSTRAINT expenses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: google_calendar_connections google_calendar_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.google_calendar_connections
+    ADD CONSTRAINT google_calendar_connections_pkey PRIMARY KEY (id);
 
 
 --
@@ -1594,6 +1696,22 @@ ALTER TABLE ONLY public.trips
 
 ALTER TABLE ONLY public.trips
     ADD CONSTRAINT trips_reservation_id_key UNIQUE (reservation_id);
+
+
+--
+-- Name: trip_google_sync trip_google_sync_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trip_google_sync
+    ADD CONSTRAINT trip_google_sync_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trip_google_sync trip_google_sync_trip_id_google_calendar_connection_id_even_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trip_google_sync
+    ADD CONSTRAINT trip_google_sync_trip_id_google_calendar_connection_id_even_key UNIQUE (trip_id, google_calendar_connection_id, event_type);
 
 
 --
@@ -2192,6 +2310,22 @@ ALTER TABLE ONLY public.messages
 
 ALTER TABLE ONLY public.trip_stage_history
     ADD CONSTRAINT trip_stage_history_trip_id_fkey FOREIGN KEY (trip_id) REFERENCES public.trips(id) ON DELETE CASCADE;
+
+
+--
+-- Name: trip_google_sync trip_google_sync_google_calendar_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trip_google_sync
+    ADD CONSTRAINT trip_google_sync_google_calendar_connection_id_fkey FOREIGN KEY (google_calendar_connection_id) REFERENCES public.google_calendar_connections(id);
+
+
+--
+-- Name: trip_google_sync trip_google_sync_trip_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trip_google_sync
+    ADD CONSTRAINT trip_google_sync_trip_id_fkey FOREIGN KEY (trip_id) REFERENCES public.trips(id);
 
 
 --
