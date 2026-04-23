@@ -194,6 +194,11 @@ export default function PreflightCard({
                       : "—"}
                   </strong>
                 </div>
+
+                <div className="preflight-row">
+                  <span>Lockbox PIN</span>
+                  <strong>{vehicle.lockbox_pin || "Not set"}</strong>
+                </div>
               </div>
 
               <div className="preflight-block">

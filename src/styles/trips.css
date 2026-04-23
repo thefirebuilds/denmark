@@ -46,6 +46,11 @@
   box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.28) inset;
 }
 
+.trips-panel .trip-card.compact {
+  padding: 12px 14px;
+  gap: 8px;
+}
+
 .trips-panel .trip-card.canceled {
   opacity: 0.6;
   filter: grayscale(0.25);
@@ -111,6 +116,10 @@
   line-height: 1.3;
 }
 
+.trips-panel .trip-card.compact .trip-sub {
+  font-size: 0.8rem;
+}
+
 .trips-panel .trip-section-divider {
   margin: 0.75rem 0 0.25rem;
   padding-top: 0.5rem;
@@ -145,6 +154,10 @@
 
 .trips-panel .trip-facts-bubble {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18) inset;
+}
+
+.trips-panel .trip-compact-meta {
+  margin-top: 2px;
 }
 
 .trips-panel .trip-fact-row {

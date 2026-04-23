@@ -205,10 +205,9 @@ export default function FleetSnapshotPanel({
       .map((vehicle) => {
         const currentTrip = getCurrentTripForVehicle(vehicle);
         const nextTrip = currentTrip ? null : getNextTripForVehicle(vehicle);
-        const currentReturnMs = currentTrip
+        const nextActionMs = currentTrip
           ? getTripEndMs(currentTrip)
-          : Number.POSITIVE_INFINITY;
-        const nextStartMs = nextTrip
+          : nextTrip
           ? getTripStartMs(nextTrip)
           : Number.POSITIVE_INFINITY;
         const name = normalizeValue(
@@ -219,8 +218,8 @@ export default function FleetSnapshotPanel({
           vehicle,
           currentTrip,
           nextTrip,
-          sortGroup: currentTrip ? 0 : nextTrip ? 1 : 2,
-          sortTime: currentTrip ? currentReturnMs : nextStartMs,
+          sortGroup: Number.isFinite(nextActionMs) ? 0 : 1,
+          sortTime: nextActionMs,
           name,
         };
       })

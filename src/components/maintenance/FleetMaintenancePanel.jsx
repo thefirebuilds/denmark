@@ -29,6 +29,7 @@ import {
   mapRuleStatusToInspectionItem,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
+  getNextUpcomingTrip,
 } from "../../utils/maintUtils";
 
 function pickFirstFilled(...values) {
@@ -405,6 +406,13 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
     registration_expires:
       sourceVehicle.registration?.code ||
       formatRegistration(registrationMonth, registrationYear),
+    lockbox_pin:
+      pickFirstFilled(
+        sourceVehicle.lockbox_pin,
+        sourceVehicle.lockboxPin,
+        fleetVehicle?.lockbox_pin,
+        fleetVehicle?.lockboxPin
+      ) || "",
     rentable: !summary.blocksRental,
     overall_status: overallStatus,
     export_ready: !summary.blocksGuestExport,
@@ -519,6 +527,10 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
     registration_month: "",
     registration_year: "",
   });
+  const [editingLockboxPin, setEditingLockboxPin] = useState(false);
+  const [savingLockboxPin, setSavingLockboxPin] = useState(false);
+  const [lockboxPinError, setLockboxPinError] = useState("");
+  const [lockboxPinForm, setLockboxPinForm] = useState("");
 
   const [addingCustomRule, setAddingCustomRule] = useState(false);
   const [savingCustomRule, setSavingCustomRule] = useState(false);
@@ -840,6 +852,10 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
     return buildPreflightData(vehicleTrips, maintenanceSummary);
   }, [vehicleTrips, maintenanceSummary]);
 
+  const nextUpcomingTrip = useMemo(() => {
+    return getNextUpcomingTrip(vehicleTrips);
+  }, [vehicleTrips]);
+
   const vehicle = useMemo(() => {
     if (liveVehicle) return liveVehicle;
 
@@ -875,6 +891,10 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           selectedFleetVehicle.registration_month,
           selectedFleetVehicle.registration_year
         ),
+        lockbox_pin:
+          selectedFleetVehicle.lockbox_pin ||
+          selectedFleetVehicle.lockboxPin ||
+          "",
         rentable: true,
         overall_status: "attention",
         export_ready: false,
@@ -961,6 +981,22 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
     selectedFleetVehicle?.registration_month,
     selectedFleetVehicle?.registration_year,
     selectedFleetVehicle?.license_plate,
+  ]);
+
+  useEffect(() => {
+    setLockboxPinForm(
+      selectedFleetVehicle?.lockbox_pin ||
+        selectedFleetVehicle?.lockboxPin ||
+        vehicle?.lockbox_pin ||
+        ""
+    );
+    setEditingLockboxPin(false);
+    setLockboxPinError("");
+  }, [
+    selectedFleetVehicle?.vin,
+    selectedFleetVehicle?.lockbox_pin,
+    selectedFleetVehicle?.lockboxPin,
+    vehicle?.lockbox_pin,
   ]);
 
   const groupedInspectionItems = useMemo(() => {
@@ -1145,6 +1181,69 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
     });
     setEditingRegistration(false);
     setRegistrationError("");
+  }
+
+  async function handleSaveLockboxPin() {
+    try {
+      if (!selectedFleetVehicle?.vin) {
+        throw new Error("No selected vehicle VIN available.");
+      }
+
+      setSavingLockboxPin(true);
+      setLockboxPinError("");
+
+      const res = await fetch(
+        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+          selectedFleetVehicle.vin
+        )}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            lockbox_pin: lockboxPinForm.trim() || null,
+          }),
+        }
+      );
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      setFleetVehicles((prev) =>
+        prev.map((item) =>
+          String(item.vin || "") === String(selectedFleetVehicle.vin || "")
+            ? {
+                ...item,
+                lockbox_pin: body.lockbox_pin || "",
+              }
+            : item
+        )
+      );
+
+      setMaintenanceSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              vehicle: {
+                ...(prev.vehicle || {}),
+                lockbox_pin: body.lockbox_pin || null,
+                lockboxPin: body.lockbox_pin || null,
+              },
+            }
+          : prev
+      );
+
+      setEditingLockboxPin(false);
+    } catch (err) {
+      console.error("Failed to save lockbox PIN:", err);
+      setLockboxPinError(err.message || "Could not save lockbox PIN.");
+    } finally {
+      setSavingLockboxPin(false);
+    }
   }
 
   function resetCustomRuleForm() {
@@ -1740,6 +1839,80 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                   )}
                 </div>
 
+                <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
+                  <div className="fleet-maintenance-meta-row">
+                    <span className="fleet-maintenance-meta-label">
+                      Lockbox PIN
+                    </span>
+
+                    {!editingLockboxPin ? (
+                      <button
+                        type="button"
+                        className="fleet-maintenance-inline-action fleet-maintenance-action-button"
+                        onClick={() => setEditingLockboxPin(true)}
+                        disabled={!selectedFleetVehicle?.vin}
+                      >
+                        Edit
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {!editingLockboxPin ? (
+                    <div className="fleet-maintenance-registration-readonly">
+                      <span className="fleet-maintenance-meta-value">
+                        {vehicle.lockbox_pin || "Not set"}
+                      </span>
+                      <span className="fleet-maintenance-registration-subvalue">
+                        Publish on guest printout
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="fleet-maintenance-registration-editor">
+                      <div className="fleet-maintenance-registration-grid">
+                        <label>
+                          <span>PIN</span>
+                          <input
+                            value={lockboxPinForm}
+                            onChange={(e) => setLockboxPinForm(e.target.value)}
+                            placeholder="1234"
+                            disabled={savingLockboxPin}
+                          />
+                        </label>
+                      </div>
+
+                      {lockboxPinError ? (
+                        <div className="fleet-maintenance-note fleet-maintenance-note--error">
+                          {lockboxPinError}
+                        </div>
+                      ) : null}
+
+                      <div className="fleet-maintenance-registration-actions">
+                        <button
+                          type="button"
+                          className="fleet-maintenance-action-button"
+                          onClick={() => {
+                            setLockboxPinForm(vehicle.lockbox_pin || "");
+                            setEditingLockboxPin(false);
+                            setLockboxPinError("");
+                          }}
+                          disabled={savingLockboxPin}
+                        >
+                          Cancel
+                        </button>
+
+                        <button
+                          type="button"
+                          className="fleet-maintenance-action-button fleet-maintenance-action-button--primary"
+                          onClick={handleSaveLockboxPin}
+                          disabled={savingLockboxPin}
+                        >
+                          {savingLockboxPin ? "Savingâ€¦" : "Save"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="fleet-maintenance-meta-item">
                   <span className="fleet-maintenance-meta-label">
                     Recall status
@@ -2251,7 +2424,11 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                 <div className="fleet-maintenance-section-title">
                   Guest snapshot preview
                 </div>
-                <GuestSafetySnapshotCard vehicle={vehicle} cardRef={cardRef} />
+                <GuestSafetySnapshotCard
+                  vehicle={vehicle}
+                  cardRef={cardRef}
+                  guestName={nextUpcomingTrip?.guest_name || ""}
+                />
               </div>
             ) : null}
 

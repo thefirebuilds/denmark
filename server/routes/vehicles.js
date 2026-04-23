@@ -300,6 +300,11 @@ router.patch("/:selector", async (req, res) => {
         ? toNullableText(req.body.rockauto_url)
         : existing.rockauto_url;
 
+    const lockbox_pin =
+      req.body.lockbox_pin !== undefined
+        ? toNullableText(req.body.lockbox_pin)
+        : existing.lockbox_pin;
+
     const guestVisibleConditionNotes = normalizeGuestVisibleNotes(
       req.body.guest_visible_condition_notes
     );
@@ -333,8 +338,9 @@ router.patch("/:selector", async (req, res) => {
         oil_capacity_quarts = $6,
         oil_capacity_liters = $7,
         rockauto_url = $8,
+        lockbox_pin = $9,
         updated_at = NOW()
-      WHERE id = $9
+      WHERE id = $10
       RETURNING *
     `;
 
@@ -347,6 +353,7 @@ router.patch("/:selector", async (req, res) => {
       oil_capacity_quarts,
       oil_capacity_liters,
       rockauto_url,
+      lockbox_pin,
       existing.id,
     ];
 

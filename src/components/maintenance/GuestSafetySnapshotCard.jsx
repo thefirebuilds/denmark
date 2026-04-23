@@ -24,7 +24,7 @@ function getDocumentedCheckRank(item) {
   return index === -1 ? DOCUMENTED_CHECK_PRIORITY.length : index;
 }
 
-export default function GuestSafetySnapshotCard({ vehicle, cardRef }) {
+export default function GuestSafetySnapshotCard({ vehicle, cardRef, guestName }) {
   if (!vehicle) return null;
 
   const passItems = vehicle.inspection_items.filter((item) => item.status === "pass");
@@ -35,14 +35,10 @@ export default function GuestSafetySnapshotCard({ vehicle, cardRef }) {
       return String(a?.label || "").localeCompare(String(b?.label || ""));
     })
     .slice(0, 8);
-  const attentionItems = vehicle.inspection_items.filter(
-    (item) => item.status === "attention" || item.status === "fail"
-  );
-
-  const headline =
-    attentionItems.length === 0
-      ? "No known safety issues at time of inspection."
-      : "Inspection review recommended before next guest handoff.";
+  const headline = "Prepared and documented by Fresh Coast Garage.";
+  const footerLabel = String(guestName || "").trim()
+    ? `Prepared for ${String(guestName || "").trim()}`
+    : "Generated for guest review";
 
   return (
     <div className="guest-snapshot-shell">
@@ -65,16 +61,14 @@ export default function GuestSafetySnapshotCard({ vehicle, cardRef }) {
             </div>
           </div>
 
-          <div
-            className={`guest-snapshot-status ${
-              attentionItems.length === 0 ? "ok" : "review"
-            }`}
-          >
-            {attentionItems.length === 0 ? "Guest-ready" : "Needs review"}
-          </div>
+          <div className="guest-snapshot-status ok">Guest-ready</div>
         </div>
 
         <div className="guest-snapshot-hero">
+          <div className="guest-snapshot-subtitle">
+            {vehicle.nickname} - {vehicle.year} {vehicle.make} {vehicle.model}
+          </div>
+
           <div className="guest-snapshot-subtitle">
             Plate {vehicle.plate || "—"} • VIN ending {getVinLast6(vehicle.vin)}
           </div>
@@ -99,6 +93,10 @@ export default function GuestSafetySnapshotCard({ vehicle, cardRef }) {
             <div className="guest-snapshot-row">
               <span>Body condition</span>
               <strong>{vehicle.body_condition}</strong>
+            </div>
+            <div className="guest-snapshot-row">
+              <span>Lockbox PIN</span>
+              <strong>{vehicle.lockbox_pin || "Not set"}</strong>
             </div>
           </div>
 
@@ -176,10 +174,12 @@ export default function GuestSafetySnapshotCard({ vehicle, cardRef }) {
         </div>
 
         <div className="guest-snapshot-footer">
-          <div>Generated for guest review</div>
-          <div>This vehicle is monitored and inspected by the host.</div>
+          <div>{footerLabel}</div>
+          <div>This vehicle is monitored and inspected by Fresh Coast Garage.</div>
         </div>
       </div>
     </div>
   );
 }
+
+

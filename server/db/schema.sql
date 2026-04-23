@@ -1313,7 +1313,8 @@ CREATE TABLE public.vehicles (
     dimo_token_id bigint,
     external_vehicle_key text,
     provider_vehicle_id text,
-    rockauto_url text
+    rockauto_url text,
+    lockbox_pin text
 );
 
 

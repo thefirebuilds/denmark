@@ -24,6 +24,49 @@ function getVehicleRouteKey(vehicle) {
   );
 }
 
+function getNextActivitySort(trips = []) {
+  const relevantTrips = Array.isArray(trips) ? trips : [];
+  const now = Date.now();
+
+  const candidates = relevantTrips
+    .map((trip) => {
+      const bucket = String(trip?.queue_bucket || "").toLowerCase();
+      const stage = String(trip?.workflow_stage || "").toLowerCase();
+      const startMs = trip?.trip_start ? new Date(trip.trip_start).getTime() : NaN;
+      const endMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+
+      if (bucket === "in_progress" || stage === "in_progress") {
+        return Number.isFinite(endMs) ? endMs : Number.POSITIVE_INFINITY;
+      }
+
+      if (
+        bucket === "unconfirmed" ||
+        bucket === "upcoming" ||
+        stage === "ready_for_handoff" ||
+        stage === "confirmed"
+      ) {
+        return Number.isFinite(startMs) ? startMs : Number.POSITIVE_INFINITY;
+      }
+
+      if (bucket === "needs_closeout") {
+        return Number.isFinite(endMs) ? endMs : Number.POSITIVE_INFINITY;
+      }
+
+      return Number.POSITIVE_INFINITY;
+    })
+    .filter(Number.isFinite);
+
+  if (!candidates.length) {
+    return { group: 3, value: Number.POSITIVE_INFINITY };
+  }
+
+  const nextAt = Math.min(...candidates);
+  return {
+    group: nextAt <= now ? 0 : 1,
+    value: nextAt,
+  };
+}
+
 function getMaintenanceSort(vehicleCard) {
   const due = vehicleCard?.nextMaintenanceDue;
   const currentOdometer =
@@ -61,6 +104,12 @@ function getMaintenanceSort(vehicleCard) {
 }
 
 function compareFleetByMaintenance(a, b) {
+  const aActivity = a?.nextActivitySort || { group: 3, value: Number.POSITIVE_INFINITY };
+  const bActivity = b?.nextActivitySort || { group: 3, value: Number.POSITIVE_INFINITY };
+
+  if (aActivity.group !== bActivity.group) return aActivity.group - bActivity.group;
+  if (aActivity.value !== bActivity.value) return aActivity.value - bActivity.value;
+
   const aSort = getMaintenanceSort(a);
   const bSort = getMaintenanceSort(b);
 
@@ -124,6 +173,7 @@ function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
       maintenanceSummary?.currentOdometerMiles ??
       vehicle?.telemetry?.odometer ??
       null,
+    nextActivitySort: getNextActivitySort(trips),
     nextMaintenanceDue: maintenanceSummary
       ? getNextServiceDue(maintenanceSummary)
       : null,

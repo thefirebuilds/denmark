@@ -257,6 +257,7 @@ async function getVehicleStatusFeed() {
   standard_engine: vehicle.standard_engine || live?.standardEngine || null,
 
   license_plate: normalizePlate(vehicle.license_plate),
+  lockbox_pin: vehicle.lockbox_pin || null,
 
 registration: {
   state: vehicle.license_state || null,

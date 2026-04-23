@@ -270,6 +270,7 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
         v.turo_vehicle_id,
         v.bouncie_vehicle_id,
         v.rockauto_url,
+        v.lockbox_pin,
         v.current_odometer_miles,
         latest_maintenance_odometer.odometer_miles AS latest_maintenance_odometer_miles,
         v.is_active
@@ -510,6 +511,8 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
       bouncieVehicleId: vehicle.bouncie_vehicle_id,
       rockautoUrl: vehicle.rockauto_url,
       rockauto_url: vehicle.rockauto_url,
+      lockboxPin: vehicle.lockbox_pin || null,
+      lockbox_pin: vehicle.lockbox_pin || null,
       currentOdometerMiles,
       isActive: vehicle.is_active,
     },

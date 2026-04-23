@@ -408,8 +408,57 @@ function getRuleStatus(summary, ruleCode) {
   );
 }
 
+function getRuleStatusById(summary, ruleId) {
+  if (ruleId == null || ruleId === "") return null;
+  const normalizedId = Number(ruleId);
+  if (!Number.isFinite(normalizedId)) return null;
+
+  const rules = Array.isArray(summary?.ruleStatuses) ? summary.ruleStatuses : [];
+  return (
+    rules.find((rule) => Number(rule?.ruleId) === normalizedId) || null
+  );
+}
+
 export function getPrimaryLinkedRuleCode(task) {
   return getTaskLinkedRuleCodes(task)[0] || null;
+}
+
+function getLinkedRulesForTask(summary, task) {
+  const rules = Array.isArray(summary?.ruleStatuses) ? summary.ruleStatuses : [];
+  const matches = [];
+  const seen = new Set();
+
+  const addRule = (rule) => {
+    if (!rule) return;
+    const key =
+      rule?.ruleId != null && rule?.ruleId !== ""
+        ? `id:${rule.ruleId}`
+        : `code:${normalizeRuleCode(rule?.ruleCode)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    matches.push(rule);
+  };
+
+  addRule(getRuleStatusById(summary, task?.rule_id));
+
+  const triggerRuleCode = String(task?.trigger_context?.ruleCode || "")
+    .trim()
+    .toLowerCase();
+  if (triggerRuleCode) {
+    addRule(getRuleStatus(summary, triggerRuleCode));
+  }
+
+  const linkedRuleCodes = getTaskLinkedRuleCodes(task);
+  linkedRuleCodes.forEach((ruleCode) => addRule(getRuleStatus(summary, ruleCode)));
+
+  if (!matches.length && task?.rule_id != null) {
+    const normalizedId = Number(task.rule_id);
+    rules
+      .filter((rule) => Number(rule?.ruleId) === normalizedId)
+      .forEach(addRule);
+  }
+
+  return matches;
 }
 
 function getLatestRuleEvent(summary, ruleCode) {
@@ -470,17 +519,14 @@ function isEventRecentEnoughForTask(event, summary) {
 }
 
 export function isTaskSatisfiedByRule(task, summary) {
-  const ruleCodes = getTaskLinkedRuleCodes(task);
-  if (!ruleCodes.length) return false;
+  const linkedRules = getLinkedRulesForTask(summary, task);
+  if (!linkedRules.length) return false;
 
   const taskType = String(task?.task_type || "").toLowerCase();
   const createdAtRaw = task?.created_at || task?.updated_at || null;
   const taskCreatedAt = createdAtRaw ? new Date(createdAtRaw) : null;
 
-  return ruleCodes.some((ruleCode) => {
-    const rule = getRuleStatus(summary, ruleCode);
-    if (!rule) return false;
-
+  return linkedRules.some((rule) => {
     const ruleStatus = String(rule?.status || "").toLowerCase();
 
     // For projection / due-risk tasks, if the rule is currently OK, the task is satisfied.
@@ -538,10 +584,14 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
     .filter((task) => !isTaskSatisfiedByRule(task, summary))
     .map((task) => {
       const linkedRuleCodes = getTaskLinkedRuleCodes(task);
-      const linkedRuleCode = getPrimaryLinkedRuleCode(task);
-      const linkedRule = rules.find((rule) =>
-        linkedRuleCodes.includes(normalizeRuleCode(rule?.ruleCode))
-      );
+      const linkedRules = getLinkedRulesForTask(summary, task);
+      const linkedRule =
+        linkedRules[0] ||
+        rules.find((rule) =>
+          linkedRuleCodes.includes(normalizeRuleCode(rule?.ruleCode))
+        ) ||
+        null;
+      const linkedRuleCode = linkedRule?.ruleCode || getPrimaryLinkedRuleCode(task);
 
       return {
         id: `task-${task.id}`,

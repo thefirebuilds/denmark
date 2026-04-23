@@ -5,6 +5,23 @@
 
 const pool = require("../../db");
 
+function getResolvableTaskTypesForRuleCode(ruleCode) {
+  const normalized = String(ruleCode || "").trim().toLowerCase();
+
+  if (normalized === "fluid_leak_check" || normalized === "leak_check") {
+    return ["post_trip_fluid_leak_check", "post_trip_oil_level_check"];
+  }
+
+  if (
+    normalized === "tire_pressure_check" ||
+    normalized === "tire_pressure_inspection"
+  ) {
+    return ["post_trip_tire_pressure_check"];
+  }
+
+  return [];
+}
+
 async function resolveRule(client, { ruleId, ruleCode }) {
   if (ruleId) {
     const byId = await client.query(
@@ -268,6 +285,8 @@ async function createMaintenanceEvent({
 
     await recordVehicleOdometer(client, vehicle, odo, performedTimestamp);
 
+    const resolvableTaskTypes = getResolvableTaskTypesForRuleCode(rule.rule_code);
+
     const taskCloseResult = await client.query(
       `
       UPDATE maintenance_tasks
@@ -279,9 +298,10 @@ async function createMaintenanceEvent({
         AND (
           rule_id = $2
           OR trigger_context->>'ruleCode' = $3
+          OR task_type = ANY($4::text[])
         )
       `,
-      [vin, rule.id, rule.rule_code]
+      [vin, rule.id, rule.rule_code, resolvableTaskTypes]
     );
 
     await client.query("COMMIT");

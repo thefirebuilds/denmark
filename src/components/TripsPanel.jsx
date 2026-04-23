@@ -65,6 +65,43 @@ function getTripEndMs(trip) {
   return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
 }
 
+function formatAttentionDateTime(value) {
+  if (value == null) return "Schedule pending";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Schedule pending";
+  return `${formatDateShort(date)} ${formatTimeShort(date)}`;
+}
+
+function getCompactNextActivityText(trip) {
+  const stage = String(trip?.workflow_stage || "").toLowerCase();
+  const attentionText = formatAttentionDateTime(trip?.attentionAt);
+  const previousGuestName = trip?.previousTrip?.guest_name || "current guest";
+  const previousReturnText = trip?.previousTrip?.trip_end
+    ? formatAttentionDateTime(trip.previousTrip.trip_end)
+    : null;
+
+  if (stage === "in_progress") {
+    return `Dropoff ${attentionText}`;
+  }
+
+  if (
+    (stage === "ready_for_handoff" ||
+      stage === "confirmed" ||
+      trip?.queue_bucket === "upcoming") &&
+    String(trip?.operationalNote || "").toLowerCase().startsWith("await return from")
+  ) {
+    return previousReturnText
+      ? `Pending ${previousGuestName} return - ${previousReturnText}`
+      : `Pending ${previousGuestName} return`;
+  }
+
+  if (stage === "ready_for_handoff" || stage === "confirmed" || trip?.queue_bucket === "upcoming") {
+    return `Pickup ${attentionText}`;
+  }
+
+  return `${trip?.urgencyLabel || "Next step"} ${attentionText}`;
+}
+
 function getStringValue(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -97,41 +134,37 @@ function isBucketVisible(trip, settings) {
   return settings.visibleBuckets?.[bucket] !== false;
 }
 
-function getPriorityBucketRank(trip, bucketRank) {
-  const baseRank = bucketRank.get(trip.queue_bucket) ?? 99;
-  const inProgressRank = bucketRank.get("in_progress");
-
+function getPriorityBucketRank(trip) {
   if (trip.queue_bucket === "unconfirmed") {
     return -1;
   }
 
-  if (Number(trip.priorityBucket) <= 1) {
-    return 0;
-  }
+  return Number.isFinite(Number(trip.priorityBucket))
+    ? Number(trip.priorityBucket)
+    : 99;
+}
 
-  if (trip.queue_bucket !== "upcoming" || inProgressRank == null) {
-    return baseRank;
-  }
-
-  return Math.max(baseRank, inProgressRank + 0.5);
+function getAttentionAtRank(trip) {
+  return Number.isFinite(Number(trip?.attentionAt))
+    ? Number(trip.attentionAt)
+    : Number.MAX_SAFE_INTEGER;
 }
 
 function sortTripsWithSettings(trips, rawSettings) {
   const settings = normalizeDispatchSettings(rawSettings);
 
   if (settings.openTripsSort === "priority") {
-    const bucketRank = new Map(
-      settings.bucketOrder.map((bucket, index) => [bucket, index])
-    );
-
     return [...trips].sort((a, b) => {
       const aOverdue = settings.pinOverdue && isOverdueTrip(a);
       const bOverdue = settings.pinOverdue && isOverdueTrip(b);
 
       if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
 
-      const aBucket = getPriorityBucketRank(a, bucketRank);
-      const bBucket = getPriorityBucketRank(b, bucketRank);
+      const attentionDiff = getAttentionAtRank(a) - getAttentionAtRank(b);
+      if (attentionDiff !== 0) return attentionDiff;
+
+      const aBucket = getPriorityBucketRank(a);
+      const bBucket = getPriorityBucketRank(b);
       if (aBucket !== bBucket) return aBucket - bBucket;
 
       return sortTrips([a, b])[0] === a ? -1 : 1;
@@ -424,23 +457,30 @@ if (urgency.dependencyNote) {
       </div>
 
       <div className="list">
-        {activeTrips.map((trip) => (
-          <article
-            key={trip.id}
-            className={`trip-card ${trip.cardStatus} ${
-              trip.id === selectedTrip?.id ? "selected" : ""
-            }`}
-            onClick={() =>
-                onSelectTrip(selectedTrip?.id === trip.id ? null : trip)
-            }
-          >
+        {activeTrips.map((trip) => {
+          const isSelected = trip.id === selectedTrip?.id;
+
+          return (
+            <article
+              key={trip.id}
+              className={`trip-card ${trip.cardStatus} ${
+                isSelected ? "selected" : "compact"
+              }`}
+              onClick={() => onSelectTrip(isSelected ? null : trip)}
+            >
               <div className="trip-top">
                 <div className="trip-top-main">
                   <div className="trip-title">
-                    {trip.cardGuestName} • {trip.cardNickname}
+                    {trip.cardGuestName} - {trip.cardNickname}
                   </div>
-                  <div className="trip-sub">{trip.cardVehicleLine} • {trip.statusLabel}</div>
-                  <div className="trip-sub">{trip.reservationText}</div>
+                  {isSelected ? (
+                    <>
+                      <div className="trip-sub">{trip.cardVehicleLine} - {trip.statusLabel}</div>
+                      <div className="trip-sub">{trip.reservationText}</div>
+                    </>
+                  ) : trip.alertCount > 0 ? (
+                    <div className="trip-sub">{trip.statusLabel}</div>
+                  ) : null}
                 </div>
 
                 {trip.alertCount > 0 ? (
@@ -450,48 +490,60 @@ if (urgency.dependencyNote) {
                 )}
               </div>
 
-            <div className="trip-facts-bubble">
-              <div className="trip-facts">
-                <div className="trip-fact-row">
-                  <span className="trip-fact-label">Window:</span>
-                  <span className="trip-fact-value">{trip.windowText}</span>
-                </div>
-
-                <div className="trip-fact-row">
-                  <span className="trip-fact-label">{trip.etaLabel}:</span>
-                  <span className="trip-fact-value">{trip.returnEtaText}</span>
-                </div>
-
-                {shouldShowCurrentLocation(trip) && (
-                  <div className="trip-fact-row">
-                    <span className="trip-fact-label">Current location:</span>
-                    <span className="trip-fact-value">{trip.locationText}</span>
-                  </div>
-                )}
-
-                {trip.operationalNote &&
-                  trip.meta4Value &&
-                  trip.operationalNote.trim().toLowerCase() !== trip.meta4Value.trim().toLowerCase() ? (
-                    <>
-                      <div className="trip-fact-row">
-                        <span className="trip-fact-label">Priority:</span>
-                        <span className="trip-fact-value">{trip.operationalNote}</span>
-                      </div>
-                      <div className="trip-fact-row">
-                        <span className="trip-fact-label">{trip.meta4Label}:</span>
-                        <span className="trip-fact-value">{trip.meta4Value}</span>
-                      </div>
-                    </>
-                  ) : (
+              {isSelected ? (
+                <div className="trip-facts-bubble">
+                  <div className="trip-facts">
                     <div className="trip-fact-row">
-                      <span className="trip-fact-label">{trip.meta4Label || "Priority"}:</span>
-                      <span className="trip-fact-value">{trip.meta4Value || trip.operationalNote}</span>
+                      <span className="trip-fact-label">Window:</span>
+                      <span className="trip-fact-value">{trip.windowText}</span>
                     </div>
-                  )}
-              </div>
-            </div>
-          </article>
-        ))}
+
+                    <div className="trip-fact-row">
+                      <span className="trip-fact-label">{trip.etaLabel}:</span>
+                      <span className="trip-fact-value">{trip.returnEtaText}</span>
+                    </div>
+
+                    {shouldShowCurrentLocation(trip) && (
+                      <div className="trip-fact-row">
+                        <span className="trip-fact-label">Current location:</span>
+                        <span className="trip-fact-value">{trip.locationText}</span>
+                      </div>
+                    )}
+
+                    {trip.operationalNote &&
+                    trip.meta4Value &&
+                    trip.operationalNote.trim().toLowerCase() !== trip.meta4Value.trim().toLowerCase() ? (
+                      <>
+                        <div className="trip-fact-row">
+                          <span className="trip-fact-label">Priority:</span>
+                          <span className="trip-fact-value">{trip.operationalNote}</span>
+                        </div>
+                        <div className="trip-fact-row">
+                          <span className="trip-fact-label">{trip.meta4Label}:</span>
+                          <span className="trip-fact-value">{trip.meta4Value}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="trip-fact-row">
+                        <span className="trip-fact-label">{trip.meta4Label || "Priority"}:</span>
+                        <span className="trip-fact-value">{trip.meta4Value || trip.operationalNote}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="trip-compact-meta">
+                  <div className="trip-fact-row">
+                    <span className="trip-fact-label">Next activity:</span>
+                    <span className="trip-fact-value">
+                      {getCompactNextActivityText(trip)}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
 
         {canceledTrips.length > 0 && (
           <div className="trip-section-divider">
