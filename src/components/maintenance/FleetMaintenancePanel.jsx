@@ -22,6 +22,7 @@ import {
   formatMiles,
   getVinLast6,
   getNextServiceDue,
+  getNextIntervalDueText,
   buildPreflightDueItems,
   buildInspectionHistoryMap,
   buildQueueItemsFromSummary,
@@ -1545,6 +1546,9 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                             <div className="fleet-maintenance-grid-value">
                               {it.notes || ""}
                             </div>
+                            <div className="fleet-maintenance-card-ticker">
+                              {it.nextDueText || getNextIntervalDueText(it)}
+                            </div>
                           </button>
                         ))
                       ) : (
@@ -2089,11 +2093,14 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                               {item.value}
                             </div>
 
-                            {item.ruleCode === "oil_change" ? (
-                              <div className={getRuleCountdownClass(item, vehicle.currentOdometerMiles)}>
-                                {formatRuleCountdown(item, vehicle.currentOdometerMiles) || "Countdown unavailable"}
-                              </div>
-                            ) : null}
+                            <div
+                              className={getRuleCountdownClass(
+                                item,
+                                vehicle.currentOdometerMiles
+                              )}
+                            >
+                              {getNextIntervalDueText(item)}
+                            </div>
 
                             <div className="fleet-maintenance-grid-status">
                               {getStatusLabel(item.status)}

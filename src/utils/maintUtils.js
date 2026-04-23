@@ -220,6 +220,30 @@ export function getActionableQueueRules(rules = [], now = new Date()) {
   return rules.filter((rule) => isRuleActionableForQueue(rule, now));
 }
 
+export function getNextIntervalDueText(item) {
+  const nextDueMiles =
+    item?.lastEvent?.nextDueMiles != null
+      ? Number(item.lastEvent.nextDueMiles)
+      : item?.nextDueMiles != null
+      ? Number(item.nextDueMiles)
+      : null;
+  const nextDueDate = item?.lastEvent?.nextDueDate || item?.nextDueDate || null;
+  const parts = [];
+
+  if (Number.isFinite(nextDueMiles)) {
+    parts.push(`${Math.round(nextDueMiles).toLocaleString()} mi`);
+  }
+
+  if (nextDueDate) {
+    const date = new Date(nextDueDate);
+    parts.push(Number.isNaN(date.getTime()) ? nextDueDate : formatDateShort(date));
+  }
+
+  return parts.length
+    ? `Next interval due: ${parts.join(" / ")}`
+    : "Next interval due: No interval scheduled";
+}
+
 export function buildInspectionHistoryMap(summary) {
   const map = {};
   const history = summary?.ruleHistory || {};
@@ -506,24 +530,36 @@ export function getPriorityScore(priority) {
 
 export function buildQueueItemsFromSummary(summary, historyMap = {}) {
   const tasks = Array.isArray(summary?.tasks) ? summary.tasks : [];
+  const rules = Array.isArray(summary?.ruleStatuses) ? summary.ruleStatuses : [];
   const actionableRules = getActionableQueueRules(summary?.ruleStatuses);
 
   const taskItems = tasks
     .filter((task) => String(task?.status || "").toLowerCase() === "open")
     .filter((task) => !isTaskSatisfiedByRule(task, summary))
-    .map((task) => ({
-      id: `task-${task.id}`,
-      title: task.title || task.task_type || "Open maintenance item",
-      type: task.task_type || "maintenance",
-      priority: task.priority || "medium",
-      notes: task.description || "",
-      source: "task",
-      task,
-      linkedRuleCode: getPrimaryLinkedRuleCode(task),
-      linkedRuleCodes: getTaskLinkedRuleCodes(task),
-      blocksRentalWhenOverdue: Boolean(task?.blocks_rental),
-      blocksGuestExportWhenOverdue: Boolean(task?.blocks_guest_export),
-    }));
+    .map((task) => {
+      const linkedRuleCodes = getTaskLinkedRuleCodes(task);
+      const linkedRuleCode = getPrimaryLinkedRuleCode(task);
+      const linkedRule = rules.find((rule) =>
+        linkedRuleCodes.includes(normalizeRuleCode(rule?.ruleCode))
+      );
+
+      return {
+        id: `task-${task.id}`,
+        title: task.title || task.task_type || "Open maintenance item",
+        type: task.task_type || "maintenance",
+        priority: task.priority || "medium",
+        notes: task.description || "",
+        source: "task",
+        task,
+        linkedRuleCode,
+        linkedRuleCodes,
+        nextDueMiles: linkedRule?.nextDueMiles ?? null,
+        nextDueDate: linkedRule?.nextDueDate ?? null,
+        nextDueText: getNextIntervalDueText(linkedRule),
+        blocksRentalWhenOverdue: Boolean(task?.blocks_rental),
+        blocksGuestExportWhenOverdue: Boolean(task?.blocks_guest_export),
+      };
+    });
 
   const ruleItems = actionableRules.map((rule) => ({
     id: `rule-${rule.ruleId || rule.ruleCode}`,
@@ -540,6 +576,9 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
     source: "rule",
     linkedRuleCode: rule.ruleCode,
     linkedRuleCodes: [rule.ruleCode].filter(Boolean),
+    nextDueMiles: rule.nextDueMiles ?? null,
+    nextDueDate: rule.nextDueDate ?? null,
+    nextDueText: getNextIntervalDueText(rule),
     history: historyMap[rule.ruleCode] || [],
     blocksRentalWhenOverdue: Boolean(rule.blocksRentalWhenOverdue),
     blocksGuestExportWhenOverdue: Boolean(rule.blocksGuestExportWhenOverdue),

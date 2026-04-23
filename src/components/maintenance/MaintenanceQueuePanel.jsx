@@ -11,6 +11,7 @@ import {
   buildInspectionHistoryMap,
   mapRuleStatusToInspectionItem,
   buildQueueItemsFromSummary,
+  getNextIntervalDueText,
   sortQueue,
   getPriorityScore,
   getEarliestAvailableDate,
@@ -455,6 +456,10 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
                     Available for maintenance: {item.nextOffTrip || "Unknown"}
                   </div>
 
+                  <div className="maintenance-queue-notes">
+                    {item.nextDueText || getNextIntervalDueText(item)}
+                  </div>
+
                   {item.notes ? (
                     <div className="maintenance-queue-notes">{item.notes}</div>
                   ) : null}
@@ -504,6 +509,10 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
                 </div>
 
                 <div className="maintenance-queue-type">{item.type}</div>
+
+                <div className="maintenance-queue-notes">
+                  {item.nextDueText || getNextIntervalDueText(item)}
+                </div>
 
                 {item.notes ? (
                   <div className="maintenance-queue-notes">{item.notes}</div>
