@@ -1,10 +1,10 @@
 import { useMemo } from "react";
 
 function formatLastReceived(ts) {
-  if (!ts) return "—";
+  if (!ts) return "-";
 
   const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return "—";
+  if (Number.isNaN(date.getTime())) return "-";
 
   const now = new Date();
   const diffMs = now - date;
@@ -27,6 +27,9 @@ export default function TopBanner({
   stats,
   loading = false,
   refreshing = false,
+  layoutMode = "auto",
+  effectiveLayoutMode = "desktop",
+  onChangeLayoutMode,
 }) {
   const todayLabel = useMemo(() => {
     return new Intl.DateTimeFormat("en-US", {
@@ -37,30 +40,51 @@ export default function TopBanner({
 
   return (
     <div className="top-banner">
-      <div>
+      <div className="top-banner-copy">
         <strong>Trip Dispatch Console</strong>{" "}
         Live operations view built around messages, returns, and timing risk.
       </div>
 
-      <div className="top-banner-status">
-        <span
-          className={`top-banner-sync ${refreshing ? "is-refreshing" : ""}`}
-          aria-hidden="true"
-        />
+      <div className="top-banner-side">
+        <div className="layout-mode-switch" aria-label="Layout mode">
+          {[
+            { key: "auto", label: "Auto" },
+            { key: "desktop", label: "Desktop" },
+            { key: "mobile", label: "Mobile" },
+          ].map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className={`layout-mode-btn ${
+                layoutMode === option.key ? "is-active" : ""
+              }`}
+              onClick={() => onChangeLayoutMode?.(option.key)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
 
-        {refreshing && (
-          <span className="top-banner-checking">
-            checking<span className="top-banner-ellipsis">...</span>
+        <div className="top-banner-status">
+          <span
+            className={`top-banner-sync ${refreshing ? "is-refreshing" : ""}`}
+            aria-hidden="true"
+          />
+
+          {refreshing && (
+            <span className="top-banner-checking">
+              checking<span className="top-banner-ellipsis">...</span>
+            </span>
+          )}
+
+          <span>
+            {loading
+              ? "Loading..."
+              : `${todayLabel} • ${stats?.unread ?? 0} unread • last received ${formatLastReceived(
+                  stats?.lastReceived
+                )} • ${effectiveLayoutMode} view`}
           </span>
-        )}
-
-        <span>
-          {loading
-            ? "Loading…"
-            : `${todayLabel} • ${stats?.unread ?? 0} unread • last received ${formatLastReceived(
-                stats?.lastReceived
-              )}`}
-        </span>
+        </div>
       </div>
     </div>
   );

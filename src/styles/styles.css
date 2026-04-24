@@ -1098,6 +1098,112 @@ body {
   font-size: 0.84rem;
 }
 
+.top-banner-copy {
+  min-width: 0;
+}
+
+.top-banner-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.layout-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid #2a395d;
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.layout-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.layout-mode-btn.is-active {
+  background: #163968;
+  color: #eff6ff;
+}
+
+.app.app--mobile-maintenance {
+  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-areas:
+    "rail banner"
+    "rail content";
+}
+
+.mobile-maintenance-shell {
+  grid-area: content;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mobile-maintenance-shell-header {
+  align-items: flex-start;
+}
+
+.mobile-maintenance-shell-current {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.mobile-maintenance-shell-current strong {
+  color: var(--text);
+  font-size: 0.96rem;
+}
+
+.mobile-maintenance-shell-current span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.mobile-maintenance-shell-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px 0;
+  flex-wrap: wrap;
+}
+
+.mobile-maintenance-shell-tab {
+  border: 1px solid #2a395d;
+  background: #121b31;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mobile-maintenance-shell-tab.is-active {
+  background: #163968;
+  border-color: #3b82f6;
+  color: #eff6ff;
+}
+
+.mobile-maintenance-shell-body {
+  min-height: 0;
+  padding: 12px 0 0;
+}
+
+.mobile-maintenance-shell .fleet-list-panel,
+.mobile-maintenance-shell .fleet-maintenance-panel,
+.mobile-maintenance-shell .maintenance-queue-panel {
+  min-height: 0;
+}
+
 .top-banner strong {
   color: var(--text);
   font-size: 1.15rem;
@@ -1139,6 +1245,33 @@ body {
 
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .app.app--mobile-maintenance {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "rail"
+      "banner"
+      "content";
+  }
+
+  .top-banner {
+    align-items: flex-start;
+    gap: 10px;
+    flex-direction: column;
+  }
+
+  .top-banner-side {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .mobile-maintenance-shell-header {
+    flex-direction: column;
+  }
+
+  .mobile-maintenance-shell-current {
+    text-align: left;
   }
 }
 

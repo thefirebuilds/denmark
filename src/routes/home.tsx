@@ -32,10 +32,17 @@ import InboxPanel from "../components/inbox/InboxPanel";
 import MetricsPanel from "../components/MetricsPanel";
 import MarketplacePanel from "../components/MarketplacePanel";
 import SettingsPanel from "../components/settings/SettingsPanel";
+import MobileMaintenanceShell from "../components/mobile/MobileMaintenanceShell";
 
 const APP_TITLE = "Trip Dispatch Console";
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const LAYOUT_MODE_STORAGE_KEY = "denmark.layoutMode";
+const MOBILE_LAYOUT_QUERY = "(max-width: 900px)";
+const LOCAL_API_ORIGINS = new Set([
+  "http://localhost:5000",
+  "http://127.0.0.1:5000",
+]);
 
 const DEFAULT_DISPATCH_SETTINGS = {
   openTripsSort: "priority",
@@ -111,6 +118,48 @@ function isApiFetch(input: RequestInfo | URL) {
   return url.startsWith(API_BASE) || url.startsWith("/api/");
 }
 
+function rewriteDevApiRequest(input: RequestInfo | URL) {
+  if (typeof window === "undefined") return input;
+
+  if (typeof input !== "string" && !(input instanceof URL)) {
+    return input;
+  }
+
+  const rawUrl = typeof input === "string" ? input : input.toString();
+  if (!rawUrl) return input;
+
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    const isLegacyLocalApi = LOCAL_API_ORIGINS.has(parsed.origin);
+    const sameOriginFrontend = parsed.origin === window.location.origin;
+
+    if (!isLegacyLocalApi || sameOriginFrontend) {
+      return input;
+    }
+
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return input;
+  }
+}
+
+function getSavedLayoutMode() {
+  if (typeof window === "undefined") return "auto";
+
+  const saved = window.localStorage.getItem(LAYOUT_MODE_STORAGE_KEY);
+  return saved === "desktop" || saved === "mobile" || saved === "auto"
+    ? saved
+    : "auto";
+}
+
+function getIsCompactViewport() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+
+  return window.matchMedia(MOBILE_LAYOUT_QUERY).matches;
+}
+
 export default function Home() {
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [trips, setTrips] = useState([]);
@@ -121,6 +170,10 @@ export default function Home() {
   const [selectedVehicleId, setSelectedVehicleId] = useState("belle");
   const [selectedExpenseVehicleId, setSelectedExpenseVehicleId] = useState<number | null>(null);
   const [dispatchSettings, setDispatchSettings] = useState(DEFAULT_DISPATCH_SETTINGS);
+  const [layoutMode, setLayoutMode] = useState<"auto" | "desktop" | "mobile">(
+    getSavedLayoutMode
+  );
+  const [isCompactViewport, setIsCompactViewport] = useState(getIsCompactViewport);
   const [startup, setStartup] = useState({
     ready: false,
     label: "Starting Denmark",
@@ -160,10 +213,11 @@ export default function Home() {
     const originalFetch = window.fetch.bind(window);
 
     window.fetch = async (input, init) => {
-      const apiRequest = isApiFetch(input);
+      const rewrittenInput = rewriteDevApiRequest(input);
+      const apiRequest = isApiFetch(rewrittenInput);
 
       try {
-        const response = await originalFetch(input, init);
+        const response = await originalFetch(rewrittenInput, init);
 
         if (apiRequest && response.status >= 500) {
           window.dispatchEvent(new CustomEvent("denmark:backend-unavailable"));
@@ -531,6 +585,37 @@ export default function Home() {
     setActiveView("maintenance");
   }
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia(MOBILE_LAYOUT_QUERY);
+    const handleChange = (event) => {
+      setIsCompactViewport(event.matches);
+    };
+
+    setIsCompactViewport(mediaQuery.matches);
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, layoutMode);
+  }, [layoutMode]);
+
+  const effectiveLayoutMode =
+    layoutMode === "auto" ? (isCompactViewport ? "mobile" : "desktop") : layoutMode;
+  const useMobileMaintenanceShell =
+    activeView === "maintenance" && effectiveLayoutMode === "mobile";
+
   if (!startup.ready) {
     return (
       <div className="startup-screen">
@@ -567,16 +652,24 @@ export default function Home() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${useMobileMaintenanceShell ? "app--mobile-maintenance" : ""}`}>
       <Rail activeView={activeView} onChangeView={setActiveView} />
 
       <TopBanner
         stats={messageStats}
         loading={messageStatsLoading}
         refreshing={messageStatsRefreshing}
+        layoutMode={layoutMode}
+        effectiveLayoutMode={effectiveLayoutMode}
+        onChangeLayoutMode={setLayoutMode}
       />
 
-      {activeView === "maintenance" ? (
+      {useMobileMaintenanceShell ? (
+        <MobileMaintenanceShell
+          selectedVehicleId={selectedVehicleId}
+          onSelectVehicle={setSelectedVehicleId}
+        />
+      ) : activeView === "maintenance" ? (
         <>
           <FleetListPanel
             selectedVehicleId={selectedVehicleId}
