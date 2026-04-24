@@ -25,7 +25,11 @@ import {
   isCanceledTrip,
   isTripInProgress,
 } from "../../utils/tripUtils";
-import { getNextServiceDue } from "../../utils/maintUtils";
+import {
+  buildInspectionHistoryMap,
+  buildQueueItemsFromSummary,
+  getNextServiceDue,
+} from "../../utils/maintUtils";
 
 const API_BASE = "http://localhost:5000";
 
@@ -90,6 +94,22 @@ export default function FleetSnapshotPanel({
 
   const [serviceDueByVin, setServiceDueByVin] = useState({});
 
+  function buildServiceDueMeta(summary) {
+    const historyMap = buildInspectionHistoryMap(summary);
+    const queueItems = buildQueueItemsFromSummary(summary, historyMap);
+
+    return {
+      nextServiceDue: getNextServiceDue(summary),
+      dueTaskText: queueItems.length
+        ? queueItems
+            .slice(0, 3)
+            .map((item) => item?.title)
+            .filter(Boolean)
+            .join(" • ")
+        : null,
+    };
+  }
+
   function toggleVehicleExpanded(vehicleKey) {
     setExpandedVehicles((prev) => ({
       ...prev,
@@ -129,7 +149,7 @@ export default function FleetSnapshotPanel({
             if (!resp.ok) return;
             const summary = await resp.json();
             if (!cancelled) {
-              nextServiceDueMap[vin] = getNextServiceDue(summary);
+              nextServiceDueMap[vin] = buildServiceDueMeta(summary);
             }
           } catch (err) {
             // ignore individual failures
@@ -152,8 +172,9 @@ export default function FleetSnapshotPanel({
   }, [vehicleVins.join(","), serviceDueByVin]);
 
   function getServiceDueText(vehicle) {
+    const serviceDueMeta = serviceDueByVin[vehicle?.vin];
     const nextServiceDue =
-      vehicle?.next_service_due || serviceDueByVin[vehicle?.vin];
+      vehicle?.next_service_due || serviceDueMeta?.nextServiceDue;
 
     if (nextServiceDue?.text) {
       const text = String(nextServiceDue.text).trim();
@@ -168,6 +189,23 @@ export default function FleetSnapshotPanel({
     if (vehicle?.telemetry?.mil?.mil_on) return "MIL on";
     if (vehicle?.service_due) return "Maintenance due";
     return "No service due";
+  }
+
+  function getServiceDueDetailText(vehicle) {
+    const serviceDueMeta = serviceDueByVin[vehicle?.vin];
+    const nextServiceDue =
+      vehicle?.next_service_due || serviceDueMeta?.nextServiceDue;
+    const dueTiming = nextServiceDue?.text
+      ? String(nextServiceDue.text).trim()
+      : "";
+
+    if (serviceDueMeta?.dueTaskText) {
+      return [serviceDueMeta.dueTaskText, dueTiming]
+        .filter((part) => part && part !== "Unknown")
+        .join(" • ");
+    }
+
+    return getServiceDueText(vehicle);
   }
 
   function getReturnLabel(trip) {
@@ -186,6 +224,20 @@ export default function FleetSnapshotPanel({
     return trips.find(
       (trip) => tripMatchesVehicle(vehicle, trip) && isActiveTrip(trip)
     );
+  }
+
+  function getVehicleDisplayOdometer(vehicle) {
+    const liveOdometer = Number(vehicle?.telemetry?.odometer);
+    if (Number.isFinite(liveOdometer) && liveOdometer > 0) {
+      return liveOdometer;
+    }
+
+    const storedOdometer = Number(vehicle?.current_odometer_miles);
+    if (Number.isFinite(storedOdometer) && storedOdometer > 0) {
+      return storedOdometer;
+    }
+
+    return null;
   }
 
   function getNextTripForVehicle(vehicle) {
@@ -327,7 +379,7 @@ export default function FleetSnapshotPanel({
 
                     <div className="fleet-row-summary-tags">
                       <div className="fleet-row-odometer">
-                        {formatOdometer(vehicle?.telemetry?.odometer)}
+                        {formatOdometer(getVehicleDisplayOdometer(vehicle))}
                       </div>
                       {commAlert ? (
                         <div className={`fleet-inline-alert ${commAlert.level}`}>
@@ -414,11 +466,11 @@ export default function FleetSnapshotPanel({
                         <div className="detail-label">Service Due</div>
                         {hasServiceDue ? (
                           <div className={serviceDueBadgeClass}>
-                            {serviceDueLabel}
+                            {getServiceDueDetailText(vehicle)}
                           </div>
                         ) : (
                           <div className="detail-value detail-value--compact detail-value--muted">
-                            {serviceDueLabel}
+                            {getServiceDueDetailText(vehicle)}
                           </div>
                         )}
                       </div>

@@ -607,68 +607,67 @@ async function getExpenseSummary(rawFilters = {}) {
   const filters = normalizeListFilters(rawFilters);
   const { whereSql, values } = buildWhereClause(filters);
 
-  const result = await pool.query(
-    `
-      SELECT
-        COUNT(*)::int AS row_count,
-        COALESCE(SUM(price), 0)::numeric(12,2) AS subtotal,
-        COALESCE(SUM(tax), 0)::numeric(12,2) AS tax_total,
-        COALESCE(SUM(COALESCE(price, 0) + COALESCE(tax, 0)), 0)::numeric(12,2) AS grand_total,
-        COALESCE(SUM(CASE WHEN is_capitalized THEN COALESCE(price, 0) + COALESCE(tax, 0) ELSE 0 END), 0)::numeric(12,2) AS capitalized_total,
-        COALESCE(SUM(CASE WHEN NOT is_capitalized THEN COALESCE(price, 0) + COALESCE(tax, 0) ELSE 0 END), 0)::numeric(12,2) AS non_capitalized_total
-      FROM expenses e
-      ${whereSql}
-    `,
-    values
-  );
-
-  const byCategory = await pool.query(
-    `
-      SELECT
-        COALESCE(NULLIF(TRIM(category), ''), 'Uncategorized') AS category,
-        COUNT(*)::int AS row_count,
-        COALESCE(SUM(COALESCE(price, 0) + COALESCE(tax, 0)), 0)::numeric(12,2) AS total
-      FROM expenses e
-      ${whereSql}
-      GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'Uncategorized')
-      ORDER BY total DESC, category ASC
-    `,
-    values
-  );
-
-const byVehicle = await pool.query(
-  `
-    SELECT
-      e.vehicle_id,
-      COALESCE(
-        NULLIF(TRIM(v.nickname), ''),
-        NULLIF(TRIM(CONCAT_WS(' ', v.year::text, v.make, v.model)), ''),
-        'No vehicle'
-      ) AS vehicle_label,
-      COUNT(*)::int AS row_count,
-      COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS total
-    FROM expenses e
-    LEFT JOIN vehicles v ON v.id = e.vehicle_id
-    ${whereSql}
-    GROUP BY e.vehicle_id, vehicle_label
-    ORDER BY total DESC, vehicle_label ASC
-  `,
-  values
-);
-
-  const byScope = await pool.query(
-    `
+  const [result, byCategory, byVehicle, byScope] = await Promise.all([
+    pool.query(
+      `
         SELECT
-        e.expense_scope,
-        COUNT(*)::int AS row_count,
-        COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS total
+          COUNT(*)::int AS row_count,
+          COALESCE(SUM(price), 0)::numeric(12,2) AS subtotal,
+          COALESCE(SUM(tax), 0)::numeric(12,2) AS tax_total,
+          COALESCE(SUM(COALESCE(price, 0) + COALESCE(tax, 0)), 0)::numeric(12,2) AS grand_total,
+          COALESCE(SUM(CASE WHEN is_capitalized THEN COALESCE(price, 0) + COALESCE(tax, 0) ELSE 0 END), 0)::numeric(12,2) AS capitalized_total,
+          COALESCE(SUM(CASE WHEN NOT is_capitalized THEN COALESCE(price, 0) + COALESCE(tax, 0) ELSE 0 END), 0)::numeric(12,2) AS non_capitalized_total
+        FROM expenses e
+        ${whereSql}
+      `,
+      values
+    ),
+    pool.query(
+      `
+        SELECT
+          COALESCE(NULLIF(TRIM(category), ''), 'Uncategorized') AS category,
+          COUNT(*)::int AS row_count,
+          COALESCE(SUM(COALESCE(price, 0) + COALESCE(tax, 0)), 0)::numeric(12,2) AS total
+        FROM expenses e
+        ${whereSql}
+        GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'Uncategorized')
+        ORDER BY total DESC, category ASC
+      `,
+      values
+    ),
+    pool.query(
+      `
+        SELECT
+          e.vehicle_id,
+          COALESCE(
+            NULLIF(TRIM(v.nickname), ''),
+            NULLIF(TRIM(CONCAT_WS(' ', v.year::text, v.make, v.model)), ''),
+            'No vehicle'
+          ) AS vehicle_label,
+          COUNT(*)::int AS row_count,
+          COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS total
+        FROM expenses e
+        LEFT JOIN vehicles v ON v.id = e.vehicle_id
+        ${whereSql}
+        GROUP BY e.vehicle_id, vehicle_label
+        ORDER BY total DESC, vehicle_label ASC
+      `,
+      values
+    ),
+    pool.query(
+      `
+        SELECT
+          e.expense_scope,
+          COUNT(*)::int AS row_count,
+          COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS total
         FROM expenses e
         ${whereSql}
         GROUP BY e.expense_scope
         ORDER BY total DESC, e.expense_scope ASC
-    `,
-    values
-    );
+      `,
+      values
+    ),
+  ]);
 
   return {
     totals: result.rows[0] || null,

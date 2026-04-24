@@ -12,6 +12,10 @@ import SelectedTripPanel from "./SelectedTripPanel";
 import TripEditModal from "./TripEditModal";
 import { getSelectedTripVehicle } from "./detailPanel.utils";
 import { useVehicleStatus } from "./useVehicleStatus";
+import {
+  buildInspectionHistoryMap,
+  buildQueueItemsFromSummary,
+} from "../../utils/maintUtils";
 
 const API_BASE = "http://localhost:5000";
 
@@ -24,6 +28,22 @@ function sumOpenTaskCounts(openTaskCounts) {
     Number(openTaskCounts.medium || 0) +
     Number(openTaskCounts.low || 0)
   );
+}
+
+function buildActionableTaskStats(summary) {
+  const historyMap = buildInspectionHistoryMap(summary);
+  const queueItems = buildQueueItemsFromSummary(summary, historyMap);
+  const counts = { urgent: 0, high: 0, medium: 0, low: 0 };
+
+  queueItems.forEach((item) => {
+    const key = String(item?.priority || "").toLowerCase();
+    if (counts[key] != null) counts[key] += 1;
+  });
+
+  return {
+    totalOpenTasks: queueItems.length,
+    openTaskCounts: counts,
+  };
 }
 
 export default function DetailPanel({ selectedTrip, onTripUpdated, trips }) {
@@ -78,9 +98,13 @@ export default function DetailPanel({ selectedTrip, onTripUpdated, trips }) {
 
         if (cancelled) return;
 
+        const actionableStats = buildActionableTaskStats(data);
+
         setMaintenanceSummary({
           ...data,
-          totalOpenTasks: sumOpenTaskCounts(data?.openTaskCounts),
+          totalOpenTasks: actionableStats.totalOpenTasks,
+          openTaskCounts: actionableStats.openTaskCounts,
+          rawOpenTaskCount: sumOpenTaskCounts(data?.openTaskCounts),
         });
       } catch (err) {
         if (cancelled) return;

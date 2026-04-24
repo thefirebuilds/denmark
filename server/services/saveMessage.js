@@ -529,6 +529,50 @@ function extractStructuredFieldsByType(
   }
 }
 
+function shouldCreateTripStub({
+  messageType,
+  subject = "",
+  normalizedTextBody = "",
+  extracted = {},
+}) {
+  if (!extracted?.reservationId) {
+    return false;
+  }
+
+  if (messageType !== "turo_notification") {
+    return true;
+  }
+
+  const subjectText = String(subject || "").trim();
+  const bodyText = String(normalizedTextBody || "");
+  const vehicleName = String(extracted?.vehicleName || "").trim();
+  const guestName = String(extracted?.guestName || "").trim();
+
+  const renterSideSignals = [
+    /^you[â€™']re booked!/i,
+    /\babout their\b/i,
+    /\byour trip with\b/i,
+    /\bowned by:\b/i,
+    /\bsend .+ a message:\s*https?:\/\/turo\.com\/reservation\//i,
+  ];
+
+  const combined = `${subjectText}\n${bodyText}`;
+  if (renterSideSignals.some((pattern) => pattern.test(combined))) {
+    return false;
+  }
+
+  if (!guestName && vehicleName) {
+    return false;
+  }
+
+  return Boolean(
+    guestName ||
+      extracted?.tripStart ||
+      extracted?.tripEnd ||
+      extracted?.tripDetailsUrl
+  );
+}
+
 async function saveMessage(message) {
   const cleanedTextBody = cleanTextBody(message.textBody);
   const cleanedHtmlBody = cleanHtmlBody(message.htmlBody);
@@ -674,7 +718,15 @@ async function saveMessage(message) {
     trip = existingTrip.rows[0] || null;
   }
 
-  if (!trip?.id && savedMessage.reservation_id) {
+  if (
+    !trip?.id &&
+    shouldCreateTripStub({
+      messageType,
+      subject: message.subject,
+      normalizedTextBody,
+      extracted,
+    })
+  ) {
     const stubTrip = await pool.query(
       `
         INSERT INTO trips (

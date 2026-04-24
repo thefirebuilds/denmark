@@ -127,6 +127,9 @@ DROP INDEX IF EXISTS public.idx_maintenance_events_rule_id_performed_at_desc;
 DROP INDEX IF EXISTS public.idx_maintenance_events_result;
 DROP INDEX IF EXISTS public.idx_maintenance_events_data_gin;
 DROP INDEX IF EXISTS public.idx_expenses_date_category;
+DROP INDEX IF EXISTS public.idx_expenses_trip_id;
+DROP INDEX IF EXISTS public.idx_expenses_updated_at;
+DROP INDEX IF EXISTS public.idx_expenses_vehicle_date;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_id_key;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_snapshots DROP CONSTRAINT IF EXISTS vehicle_telemetry_snapshots_pkey;
@@ -1768,6 +1771,15 @@ ALTER TABLE ONLY public.vehicles
 --
 
 CREATE INDEX idx_expenses_date_category ON public.expenses USING btree (date, category);
+
+-- Name: idx_expenses_trip_id; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX idx_expenses_trip_id ON public.expenses USING btree (trip_id);
+
+-- Name: idx_expenses_updated_at; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX idx_expenses_updated_at ON public.expenses USING btree (updated_at DESC);
+
+-- Name: idx_expenses_vehicle_date; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX idx_expenses_vehicle_date ON public.expenses USING btree (vehicle_id, date DESC);
 
 
 --

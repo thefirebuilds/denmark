@@ -7,6 +7,13 @@ const pool = new Pool({
   database: process.env.PGDATABASE || "denmark",
   user: process.env.PGUSER || "postgres",
   password: String(process.env.PGPASSWORD || ""),
+  max: Number(process.env.PGPOOL_MAX || 20),
+  idleTimeoutMillis: Number(process.env.PGIDLE_TIMEOUT_MS || 30000),
+  connectionTimeoutMillis: Number(process.env.PGCONNECT_TIMEOUT_MS || 5000),
+  keepAlive: true,
+  keepAliveInitialDelayMillis: Number(
+    process.env.PGKEEPALIVE_INITIAL_DELAY_MS || 10000
+  ),
 });
 
 module.exports = pool;
