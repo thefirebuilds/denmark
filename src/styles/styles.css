@@ -289,6 +289,24 @@ body {
   font-weight: 700;
 }
 
+.panel-subbar .chip {
+  padding: 5px 9px;
+  font-size: 0.73rem;
+  line-height: 1.1;
+}
+
+.chip-filter {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.chip-filter.is-active {
+  background: #163968;
+  border-color: #3b82f6;
+  color: #eff6ff;
+}
+
 .search {
   flex: 1 1 220px;
   min-width: 0;

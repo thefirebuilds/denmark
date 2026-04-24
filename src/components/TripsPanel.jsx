@@ -25,6 +25,7 @@ import {
   getHoursUntilTripEnd,
   getTripStartMs,
   isCanceledTrip,
+  isTripInProgress,
   isOverdueTrip,
   sortTrips,
 } from "../utils/tripUtils";
@@ -150,6 +151,49 @@ function getAttentionAtRank(trip) {
     : Number.MAX_SAFE_INTEGER;
 }
 
+function isUnconfirmedTrip(trip) {
+  const bucket = String(trip?.queue_bucket || "").toLowerCase();
+  const stage = String(trip?.workflow_stage || "").toLowerCase();
+
+  return (
+    bucket === "unconfirmed" ||
+    stage === "booked"
+  );
+}
+
+function isPickupAttentionSoon(trip) {
+  if (isCanceledTrip(trip) || isTripInProgress(trip) || isOverdueTrip(trip)) {
+    return false;
+  }
+
+  const attentionAt = Number(trip?.attentionAt);
+  if (!Number.isFinite(attentionAt)) return false;
+
+  const withinNext24Hours = attentionAt >= Date.now() && attentionAt <= Date.now() + (24 * 60 * 60 * 1000);
+  if (!withinNext24Hours) return false;
+
+  const bucket = String(trip?.queue_bucket || "").toLowerCase();
+  const stage = String(trip?.workflow_stage || "").toLowerCase();
+  return (
+    bucket === "unconfirmed" ||
+    bucket === "upcoming" ||
+    stage === "booked_unconfirmed" ||
+    stage === "confirmed" ||
+    stage === "ready_for_handoff"
+  );
+}
+
+function isReturnSoonTrip(trip) {
+  if (isCanceledTrip(trip) || !isTripInProgress(trip) || isOverdueTrip(trip)) {
+    return false;
+  }
+
+  const tripEndMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+  if (!Number.isFinite(tripEndMs)) return false;
+
+  return tripEndMs >= Date.now() && tripEndMs <= Date.now() + (24 * 60 * 60 * 1000);
+}
+
 function sortTripsWithSettings(trips, rawSettings) {
   const settings = normalizeDispatchSettings(rawSettings);
 
@@ -221,6 +265,7 @@ export default function TripsPanel({
   const [vehicles, setVehicles] = useState(() =>
     Array.isArray(initialVehicles) ? initialVehicles : []
   );
+  const [summaryFilter, setSummaryFilter] = useState(null);
   const [loading, setLoading] = useState(!initialLoadComplete);
   const [error, setError] = useState("");
   const normalizedDispatchSettings = normalizeDispatchSettings(dispatchSettings);
@@ -400,12 +445,57 @@ if (urgency.dependencyNote) {
       )
     : [];
 
-  const openCount = activeTrips.length;
-  const returningTodayCount = activeTrips.filter(
-    (trip) => trip.display_status === "ending_today"
+  const unconfirmedCount = activeTrips.filter((trip) => isUnconfirmedTrip(trip)).length;
+  const inProgressCount = activeTrips.filter((trip) => isTripInProgress(trip)).length;
+  const upcomingCount = activeTrips.filter(
+    (trip) => String(trip?.queue_bucket || "").toLowerCase() === "upcoming"
   ).length;
-  
-  const atRiskCount = activeTrips.filter((trip) => isOverdueTrip(trip)).length;
+  const returningSoonCount = activeTrips.filter((trip) => isReturnSoonTrip(trip)).length;
+  const overdueCount = activeTrips.filter((trip) => isOverdueTrip(trip)).length;
+  const pickupTodayCount = activeTrips.filter((trip) => isPickupAttentionSoon(trip)).length;
+  const filteredActiveTrips = activeTrips.filter((trip) => {
+    switch (summaryFilter) {
+      case "unconfirmed":
+        return isUnconfirmedTrip(trip);
+      case "in_progress":
+        return isTripInProgress(trip);
+      case "upcoming":
+        return String(trip?.queue_bucket || "").toLowerCase() === "upcoming";
+      case "returning_soon":
+        return isReturnSoonTrip(trip);
+      case "overdue":
+        return isOverdueTrip(trip);
+      case "pickup_today":
+        return isPickupAttentionSoon(trip);
+      default:
+        return true;
+    }
+  });
+
+  function toggleSummaryFilter(nextFilter) {
+    setSummaryFilter((current) => (current === nextFilter ? null : nextFilter));
+  }
+
+  useEffect(() => {
+    if (
+      (summaryFilter === "unconfirmed" && unconfirmedCount === 0) ||
+      (summaryFilter === "in_progress" && inProgressCount === 0) ||
+      (summaryFilter === "upcoming" && upcomingCount === 0) ||
+      (summaryFilter === "returning_soon" && returningSoonCount === 0) ||
+      (summaryFilter === "overdue" && overdueCount === 0) ||
+      (summaryFilter === "pickup_today" && pickupTodayCount === 0)
+    ) {
+      setSummaryFilter(null);
+    }
+  }, [
+    summaryFilter,
+    unconfirmedCount,
+    inProgressCount,
+    upcomingCount,
+    returningSoonCount,
+    overdueCount,
+    pickupTodayCount,
+  ]);
 
   if (loading) {
     return (
@@ -448,16 +538,67 @@ if (urgency.dependencyNote) {
       </div>
 
       <div className="panel-subbar">
-        <div className="chip">{openCount} open</div>
-        <div className="chip">{returningTodayCount} returning today</div>
-        <div className="chip">{atRiskCount} at risk</div>
+        {unconfirmedCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter ${summaryFilter === "unconfirmed" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("unconfirmed")}
+          >
+            {unconfirmedCount} unconfirmed
+          </button>
+        )}
+        {inProgressCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter ${summaryFilter === "in_progress" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("in_progress")}
+          >
+            {inProgressCount} in progress
+          </button>
+        )}
+        {upcomingCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter ${summaryFilter === "upcoming" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("upcoming")}
+          >
+            {upcomingCount} upcoming
+          </button>
+        )}
+        {returningSoonCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter ${summaryFilter === "returning_soon" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("returning_soon")}
+          >
+            {returningSoonCount} returning soon
+          </button>
+        )}
+        {overdueCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter ${summaryFilter === "overdue" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("overdue")}
+          >
+            {overdueCount} overdue
+          </button>
+        )}
+        {pickupTodayCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter ${summaryFilter === "pickup_today" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("pickup_today")}
+          >
+            {pickupTodayCount} pickup today
+          </button>
+        )}
         {canceledTrips.length > 0 && (
           <div className="chip">{canceledTrips.length} canceled</div>
         )}
       </div>
 
       <div className="list">
-        {activeTrips.map((trip) => {
+        {filteredActiveTrips.map((trip) => {
           const isSelected = trip.id === selectedTrip?.id;
 
           return (
@@ -544,6 +685,13 @@ if (urgency.dependencyNote) {
             </article>
           );
         })}
+
+        {!filteredActiveTrips.length && summaryFilter && (
+          <article className="trip-card compact">
+            <div className="trip-title">No trips in this slice</div>
+            <div className="trip-sub">Try another status chip or click the active one again to clear the filter.</div>
+          </article>
+        )}
 
         {canceledTrips.length > 0 && (
           <div className="trip-section-divider">
