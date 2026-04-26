@@ -214,9 +214,36 @@ PGPASSWORD=replace-with-local-postgres-password
 DATABASE_URL=postgres://postgres:replace-with-local-postgres-password@localhost:5432/denmark
 
 VITE_API_BASE_URL=http://localhost:5000
+DENMARK_BRIDGE_SECRET=replace-with-shared-secret-for-android-bridge
 ```
 
 Provider integrations can stay as placeholders until you are ready to enable them. For DIMO, use `DIMO_FLEET_JSON` to map the token to the intended local vehicle record, for example:
+
+### Android bridge webhook
+
+The Android `Denmark Turo Bridge` app posts captured Turo notifications to:
+
+```text
+POST /api/notifications/turo
+```
+
+Local curl example:
+
+```bash
+curl -X POST http://localhost:5000/api/notifications/turo \
+  -H "Content-Type: application/json" \
+  -H "X-Denmark-Bridge-Secret: $DENMARK_BRIDGE_SECRET" \
+  -d '{
+    "source": "android_notification_test",
+    "app": "turo",
+    "package": "com.relayrides.android.relayrides",
+    "title": "Denmark bridge test",
+    "body": "If this arrives, the bridge path is alive.",
+    "posted_at_ms": 1777136400000,
+    "device": "pixel-turo-bridge-01",
+    "notification_key": "manual-test"
+  }'
+```
 
 ```dotenv
 DIMO_CLIENT_ID=replace-with-dimo-client-id

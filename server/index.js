@@ -24,6 +24,10 @@ const publicAvailabilityRouter = require("./routes/publicAvailability");
 const settingsRouter = require("./routes/settings");
 const databaseRouter = require("./routes/database");
 const googleCalendarRoutes = require("./routes/googleCalendar");
+const {
+  router: notificationRoutes,
+  ensureNotificationEventsTable,
+} = require("./routes/notificationRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -66,6 +70,13 @@ app.use(
 );
 
 app.use(express.json({ limit: "500mb" }));
+app.use((err, req, res, next) => {
+  if (err && err.type === "entity.parse.failed") {
+    return res.status(400).json({ ok: false, error: "Invalid JSON payload" });
+  }
+
+  return next(err);
+});
 
 // Explicit preflight handling for marketplace routes
 app.options(/^\/api\/marketplace\/.*$/, marketplaceCors);
@@ -89,6 +100,7 @@ app.use("/api/marketplace", marketplaceCors, marketplaceRoutes);
 app.use("/api/settings", defaultCors, settingsRouter);
 app.use("/api/database", defaultCors, databaseRouter);
 app.use("/api/integrations/google-calendar", defaultCors, googleCalendarRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use("/api", publicAvailabilityRouter);
 
 app.get("/__whoami", (req, res) => {
@@ -100,7 +112,14 @@ app.get("/__whoami", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`[server] listening on http://localhost:${PORT}`);
-  startScheduler();
-});
+ensureNotificationEventsTable()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`[server] listening on http://localhost:${PORT}`);
+      startScheduler();
+    });
+  })
+  .catch((err) => {
+    console.error("[server] failed to initialize notification events:", err);
+    process.exit(1);
+  });

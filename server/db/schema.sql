@@ -106,6 +106,9 @@ DROP INDEX IF EXISTS public.idx_messages_status;
 DROP INDEX IF EXISTS public.idx_messages_reservation_id;
 DROP INDEX IF EXISTS public.idx_messages_message_timestamp;
 DROP INDEX IF EXISTS public.idx_messages_mailbox_uid;
+DROP INDEX IF EXISTS public.idx_notification_events_received_at;
+DROP INDEX IF EXISTS public.idx_notification_events_classification;
+DROP INDEX IF EXISTS public.idx_notification_events_reservation_id;
 DROP INDEX IF EXISTS public.idx_marketplace_listings_vin;
 DROP INDEX IF EXISTS public.idx_marketplace_listings_price_numeric;
 DROP INDEX IF EXISTS public.idx_marketplace_listings_last_seen_at;
@@ -148,6 +151,8 @@ ALTER TABLE IF EXISTS ONLY public.teller_tokens DROP CONSTRAINT IF EXISTS teller
 ALTER TABLE IF EXISTS ONLY public.teller_ignore_rules DROP CONSTRAINT IF EXISTS teller_ignore_rules_pkey;
 ALTER TABLE IF EXISTS ONLY public.messages DROP CONSTRAINT IF EXISTS messages_pkey;
 ALTER TABLE IF EXISTS ONLY public.messages DROP CONSTRAINT IF EXISTS messages_message_id_key;
+ALTER TABLE IF EXISTS ONLY public.notification_events DROP CONSTRAINT IF EXISTS notification_events_pkey;
+ALTER TABLE IF EXISTS ONLY public.notification_events DROP CONSTRAINT IF EXISTS notification_events_event_hash_key;
 ALTER TABLE IF EXISTS ONLY public.marketplace_preferences DROP CONSTRAINT IF EXISTS marketplace_preferences_pkey;
 ALTER TABLE IF EXISTS ONLY public.marketplace_listings DROP CONSTRAINT IF EXISTS marketplace_listings_url_key;
 ALTER TABLE IF EXISTS ONLY public.marketplace_listings DROP CONSTRAINT IF EXISTS marketplace_listings_pkey;
@@ -212,6 +217,8 @@ DROP SEQUENCE IF EXISTS public.teller_ignore_rules_id_seq;
 DROP TABLE IF EXISTS public.teller_ignore_rules;
 DROP SEQUENCE IF EXISTS public.messages_id_seq;
 DROP TABLE IF EXISTS public.messages;
+DROP SEQUENCE IF EXISTS public.notification_events_id_seq;
+DROP TABLE IF EXISTS public.notification_events;
 DROP TABLE IF EXISTS public.marketplace_preferences;
 DROP SEQUENCE IF EXISTS public.marketplace_listings_id_seq;
 DROP TABLE IF EXISTS public.marketplace_listings;
@@ -658,6 +665,36 @@ CREATE TABLE public.marketplace_preferences (
     preference_value jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: notification_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.notification_events (
+    id bigserial NOT NULL,
+    source text NOT NULL,
+    app text,
+    package_name text,
+    title text,
+    body text,
+    big_text text,
+    sub_text text,
+    posted_at_ms bigint,
+    posted_at timestamp with time zone,
+    device text,
+    notification_key text,
+    event_hash text,
+    raw jsonb NOT NULL,
+    classification text,
+    reservation_id bigint,
+    vehicle_name text,
+    guest_name text,
+    processed_at timestamp with time zone,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT notification_events_event_hash_key UNIQUE (event_hash),
+    CONSTRAINT notification_events_pkey PRIMARY KEY (id)
 );
 
 
@@ -1955,6 +1992,27 @@ CREATE INDEX idx_messages_status ON public.messages USING btree (status);
 --
 
 CREATE INDEX idx_messages_trip_id ON public.messages USING btree (trip_id);
+
+
+--
+-- Name: idx_notification_events_classification; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_notification_events_classification ON public.notification_events USING btree (classification);
+
+
+--
+-- Name: idx_notification_events_received_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_notification_events_received_at ON public.notification_events USING btree (received_at DESC);
+
+
+--
+-- Name: idx_notification_events_reservation_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_notification_events_reservation_id ON public.notification_events USING btree (reservation_id);
 
 
 --
