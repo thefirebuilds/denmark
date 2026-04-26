@@ -1,209 +1,180 @@
 # Denmark2.0
 
-Denmark2.0 is an operations and intelligence platform for running a small vehicle fleet business with a strong focus on **Turo hosting, vehicle tracking, reservation awareness, telemetry, profitability, and acquisition workflow**.
+Denmark2.0 is a working operations console for running a small Turo-centered vehicle fleet.
 
-The project pulls together data that normally lives in too many separate places — booking platforms, telematics providers, financial systems, marketplace listings, and internal notes — and turns it into something operationally useful.
+It pulls together trips, messages, vehicle telemetry, maintenance state, tolls, expenses, Google Calendar sync, and sourcing work into one local app so the daily question becomes:
 
-This is not just a dashboard.  
-It is meant to become the **single working surface for managing a real-world fleet**: where the cars are, whether they are booked, what they are earning, what they cost, what condition they are in, and whether a prospective vehicle is worth buying.
+`What matters right now?`
 
----
+This is not generic fleet software and it is not a polished SaaS product. It is a real operations tool shaped around one host workflow, with real-world edge cases, partial integrations, and active iteration.
 
-## Mission
+## What Denmark does today
 
-The mission of Denmark2.0 is to help a small fleet operator make better decisions, faster, with less manual digging.
+### Dispatch and trip operations
+- Shows a priority-sorted open trip queue with operational timing
+- Tracks `in_progress`, `upcoming`, `unconfirmed`, closeout, overdue, and near-term pickup/return slices
+- Supports trip detail editing and workflow-stage transitions
+- Keeps fleet and trip views aware of blockers, turnarounds, and next required activity
 
-That includes:
+### Messages and notifications
+- Ingests Turo-related email through IMAP and links messages to trips where possible
+- Tracks unread message state and message-driven operational notices
+- Accepts Android bridge notifications at `POST /api/notifications/turo`
+- Deduplicates bridge events, stores raw payloads, and applies lightweight classification
 
-- understanding fleet health at a glance
-- reconciling bookings with real vehicles
-- tracking telemetry and odometer movement
-- identifying utilization and downtime
-- monitoring revenue and expenses
-- evaluating marketplace vehicles for expansion
-- reducing the amount of “spreadsheet plus gut feeling” required to run the business
+### Vehicle telemetry
+- Integrates with:
+  - Bouncie
+  - DIMO
+- Maintains live status feeds for vehicles
+- Stores telemetry snapshots and signal history
+- Supports odometer and engine-related operational checks, including DIMO RPM investigations
 
-The long-term goal is a unified platform for **fleet visibility, decision support, and operational control**.
+### Maintenance and readiness
+- Stores maintenance rules, tasks, and events in Postgres
+- Shows fleet maintenance summaries, queue views, next interval due, and guest-facing safety/preflight exports
+- Correlates maintenance events with queue items and recurring rules
+- Supports lockbox PIN editing and host-side readiness workflows
 
----
+### Financials and tolls
+- Tracks expenses and associates them to trips or vehicles where possible
+- Splits shared/general expense across the active fleet for metrics purposes
+- Imports and audits toll activity with trip matching logic
+- Surfaces trip-summary financial details and vehicle-level metrics
 
-## Current Capabilities
+### Calendar and host workflow
+- Syncs trip events into Google Calendar
+- Creates and updates trip-linked calendar events
+- Supports Google auth connection storage and sync metadata
 
-### Fleet and vehicle management
-- Stores and displays a working fleet of vehicles
-- Associates internal vehicle records with external platform identifiers
-- Supports vehicle nicknames and internal labeling for operational use
-- Tracks fields like VIN, odometer, and linked provider IDs
+### Marketplace and sourcing
+- Ingests vehicle listings for sourcing workflow
+- Stores candidate vehicles and review preferences
+- Supports filtering, hide/ignore behavior, and enrichment work
 
-### Booking and trip awareness
-- Ingests and works with trip / reservation data
-- Matches bookings to vehicles where possible
-- Supports booking status visibility and reconciliation
-- Handles edge cases where trip metadata may be incomplete or inconsistent
+### Mobile direction
+- Desktop UI remains the primary control surface
+- A mobile maintenance shell now exists as an alternate view
+- Mobile presentation is still partial, not full parity
 
-### Telematics integration
-- Integrates with telematics providers including:
-  - **Bouncie**
-  - **DIMO** (in progress / expanding)
-- Pulls available vehicle telemetry such as:
-  - location
-  - ignition state
-  - temperature
-  - heading
-  - voltage
-  - odometer-related data where available
-- Designed to be resilient when some signals are unavailable or unauthorized rather than failing hard
+## Current architecture
 
-### Snapshotting and historical tracking
-- Captures operational snapshots over time
-- Supports telemetry snapshot ingestion
-- Enables comparison of historical vehicle state and movement
-- Intended to support trend analysis rather than only “latest known value”
+- Frontend: React 19 + Vite
+- Backend: Node.js + Express
+- Database: PostgreSQL
+- Local integrations: IMAP, Google Calendar, Bouncie, DIMO, Teller, HCTRA, Android notification bridge
 
-### Metrics and analytics
-- Surfaces vehicle-level metrics over date ranges
-- Supports analysis around:
-  - mileage movement
-  - utilization
-  - trip deltas
-  - inferred downtime / blackout periods
-  - revenue-oriented comparisons
-- Includes work toward payoff pace / performance comparison views
+Code shape today:
+- `src/` contains the React app and operational panels
+- `server/routes/` contains HTTP routes
+- `server/services/` contains ingestion, sync, telemetry, maintenance, and scheduler logic
+- `server/db/schema.sql` is the destructive repave/bootstrap path
+- `server/db/migrations/` holds targeted follow-on schema changes
 
-### Marketplace sourcing workflow
-- Scrapes and ingests external vehicle listings from:
-  - **Facebook Marketplace**
-  - **Cars.com**
-- Stores listings in a database for review
-- Supports review and filtering of candidate cars
-- Includes ignore / suppression workflow for junk listings and unwanted keywords
-- Built to support “is this a good buy for the fleet?” rather than passive browsing
+## Current state
 
-### Financial visibility
-- Pulls financial transaction data from connected providers such as:
-  - **Teller**
-- Intended to connect real expenses and cash movement back to fleet operations
-- Supports categorization and review of business-related transactions
+Denmark is useful now, but not finished.
 
-### Ops-oriented UI
-- React-based frontend for working views and panels
-- Detail panel workflow for reviewing specific cars and listings
-- Sorting and filtering for operational triage
-- Built for dense, real-world usage rather than pretty demo screenshots
+What is solid enough for daily use:
+- trip queue and trip detail workflow
+- maintenance queue and vehicle readiness views
+- toll and expense review workflow
+- live Bouncie/DIMO vehicle status views
+- Google Calendar sync foundations
+- Android bridge ingestion receiver
 
----
+What is still evolving:
+- mobile parity beyond maintenance
+- stricter normalization of legacy trip status vs workflow stage
+- better shared-expense attribution by historical fleet composition
+- deeper DIMO signal interpretation and anomaly handling
+- stronger notification-to-trip linking
+- more complete docs for every subsystem
 
-## What Problem This Project Solves
+## Known gaps and rough edges
 
-Running a Turo or small rental fleet usually means living in five different systems at once:
+These are worth knowing before you trust the repo blindly.
 
-- booking platform
-- telematics app
-- bank account
-- maintenance notes
-- marketplace tabs
-- and usually at least one cursed spreadsheet
+### Documentation gaps
+- The README had drifted behind the product shape; this file is catching up, but some subsystem docs are still implicit in code.
+- There is not yet a dedicated operator handbook for common recovery/debug procedures.
 
-Denmark2.0 exists to reduce that chaos.
+### Local environment assumptions
+- The app assumes a local Postgres-backed workflow.
+- The schema repave file is intentionally destructive.
+- Some workflows depend on real provider credentials and real local `.env` values.
 
-Instead of checking each system separately and trying to mentally reconcile everything, the platform aims to answer questions like:
+### Frontend build/runtime caveats
+- Vite wants Node `20.19+` or `22.12+`.
+- Running with Node `22.9.0` may still work in some places, but it produces warnings and can trip local build behavior.
+- Mobile access in dev is supported, but it depends on the Vite LAN host/proxy setup and a reachable local backend.
 
-- Which vehicles are actually active right now?
-- Which car is booked, idle, missing, or underperforming?
-- What has each vehicle done lately?
-- What is each car costing vs. earning?
-- Is this marketplace listing worth chasing?
-- Are my data sources agreeing with each other?
-- Where do I need to pay attention today?
+### Data quality reality
+- Some legacy trip rows still carry stale raw `status` values even when `workflow_stage` and `queue_bucket` are correct.
+- DIMO coverage varies by vehicle and available permissions/signals.
+- Not every notification, email, or toll event can be perfectly linked on first pass.
 
----
+## Install / repave
 
-## Architecture
-
-While the implementation is still evolving, the current stack is centered around:
-
-- **Frontend:** React / Vite
-- **Backend:** Node.js / Express-style API services
-- **Database:** PostgreSQL
-- **Data ingestion:** provider APIs, polling jobs, and scraper pipelines
-- **Deployment / infra work:** local development with ongoing CI/CD and containerized patterns in related parts of the project
-
-The system is designed around a practical separation of concerns:
-
-- provider clients and ingestion jobs
-- API routes for normalized data access
-- database-backed persistence
-- frontend panels for operational decision-making
-
----
-
-## Install / Repave Path
-
-This repo includes everything needed to stand up a blank Denmark2.0 install after data loss, a new workstation setup, or a deliberate repave. The install path creates the app schema, installs frontend/backend dependencies, and starts the local services.
+This repo includes a full blank-install path for a new workstation or a rebuild after data loss.
 
 ### Prerequisites
 
-Install these first:
-
-- Node.js 20.19+ or 22.12+
+- Node.js `20.19+` or `22.12+`
 - npm
-- PostgreSQL with `psql` available on your PATH
+- PostgreSQL with `psql` on PATH
 - Git
 
-The app expects a PostgreSQL database, a Node/Express backend on port `5000`, and a Vite frontend on port `5173`.
+Expected local ports:
+- frontend: `5173`
+- backend: `5000`
 
-### 1. Clone and enter the repo
+### 1. Clone
 
 ```bash
 git clone <repo-url> Denmark2.0
 cd Denmark2.0
 ```
 
-If the repo is already present, start from the repo root.
+### 2. Create the schema
 
-### 2. Create the database schema
-
-The schema bootstrap file lives at:
+Bootstrap file:
 
 ```text
 server/db/schema.sql
 ```
 
-It creates the default `denmark` database if needed, connects to it, drops and recreates the public app schema, then inserts safe default UI settings. It does **not** include private fleet data, guest data, bank data, telemetry history, provider tokens, marketplace rows, or local secrets.
-
-Run it from the repo root with a PostgreSQL admin user:
+Run from the repo root:
 
 ```bash
 psql -U postgres -d postgres -f server/db/schema.sql
 ```
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 psql -U postgres -d postgres -f .\server\db\schema.sql
 ```
 
-If your local database should use a name other than `denmark`, edit the `\set dbname denmark` line at the top of `server/db/schema.sql`, then use the same database name in `.env`.
-
-This schema file is intentionally destructive to the target app schema. Do not point it at a database whose app data you still need.
+Notes:
+- it creates the default `denmark` database if needed
+- it drops and recreates the public app schema
+- it does not include private operational data
+- it is destructive, so do not point it at a database you still need
 
 ### 3. Create `.env`
-
-Copy the checked-in example:
 
 ```bash
 cp .env.example .env
 ```
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Then replace placeholder values with local credentials. Keep real secrets only in `.env`; never commit that file.
-
-Minimal local database values:
+Minimal local values:
 
 ```dotenv
 PGHOST=localhost
@@ -213,21 +184,102 @@ PGUSER=postgres
 PGPASSWORD=replace-with-local-postgres-password
 DATABASE_URL=postgres://postgres:replace-with-local-postgres-password@localhost:5432/denmark
 
+PORT=5000
 VITE_API_BASE_URL=http://localhost:5000
+FRONTEND_BASE_URL=http://localhost:5173
+SESSION_SECRET=replace-with-long-random-session-secret
+TOKEN_ENCRYPTION_KEY=replace-with-64-char-hex-or-long-random-secret
 DENMARK_BRIDGE_SECRET=replace-with-shared-secret-for-android-bridge
 ```
 
-Provider integrations can stay as placeholders until you are ready to enable them. For DIMO, use `DIMO_FLEET_JSON` to map the token to the intended local vehicle record, for example:
+Important integration values you will likely need later:
+- `BOUNCIE_*`
+- `DIMO_*`
+- `GOOGLE_*`
+- `IMAP_*`
+- `EZTAG_*`
+- `TELLER_*`
 
-### Android bridge webhook
+For DIMO, map known vehicles deliberately:
 
-The Android `Denmark Turo Bridge` app posts captured Turo notifications to:
+```dotenv
+DIMO_FLEET_JSON=[{"tokenId":191373,"nickname":"Geneva","vin":"KMHTC6AD3GU260321","active":true}]
+```
+
+### 4. Install dependencies
+
+Frontend:
+
+```bash
+npm install
+```
+
+Backend:
+
+```bash
+cd server
+npm install
+cd ..
+```
+
+### 5. Start the app
+
+Backend:
+
+```bash
+cd server
+npm start
+```
+
+Frontend:
+
+```bash
+npm run dev
+```
+
+Default local URLs:
+- frontend: `http://localhost:5173`
+- backend: `http://localhost:5000`
+
+### 6. Verify basic health
+
+Backend check:
+
+```bash
+curl http://localhost:5000/api/vehicles/live-status
+```
+
+Frontend build:
+
+```bash
+npm run build
+```
+
+## Android Turo bridge webhook
+
+Webhook:
 
 ```text
 POST /api/notifications/turo
 ```
 
-Local curl example:
+Local URL:
+
+```text
+http://localhost:5000/api/notifications/turo
+```
+
+LAN example:
+
+```text
+http://<workstation-lan-ip>:5000/api/notifications/turo
+```
+
+The request should send:
+- `Content-Type: application/json`
+- `X-Denmark-Bridge-Secret: <DENMARK_BRIDGE_SECRET>`
+
+Example:
 
 ```bash
 curl -X POST http://localhost:5000/api/notifications/turo \
@@ -245,187 +297,67 @@ curl -X POST http://localhost:5000/api/notifications/turo \
   }'
 ```
 
-```dotenv
-DIMO_CLIENT_ID=replace-with-dimo-client-id
-DIMO_DOMAIN=replace-with-dimo-domain
-DIMO_PRIVATE_KEY=replace-with-dimo-private-key
-DIMO_FLEET_JSON=[{"tokenId":191373,"nickname":"Geneva","vin":"KMHTC6AD3GU260321","active":true}]
-```
+Behavior:
+- if `DENMARK_BRIDGE_SECRET` is set and does not match, the route returns `401`
+- if the secret is missing, the route is allowed but the server logs a warning
+- duplicates are deduped by `event_hash`
+- if `event_hash` is omitted, Denmark computes a fallback hash
 
-If a DIMO dongle was previously plugged into another vehicle, make sure the `vin`/`nickname` mapping is correct before enabling polling so stale device history does not masquerade as the current car.
+## Useful scripts and commands
 
-### 4. Install dependencies
-
-Install frontend dependencies from the repo root:
+Frontend:
 
 ```bash
-npm install
+npm run dev
+npm run build
+npm run preview
 ```
 
-Install backend dependencies:
-
-```bash
-cd server
-npm install
-cd ..
-```
-
-### 5. Start the app
-
-Start the backend:
+Backend:
 
 ```bash
 cd server
 npm start
-```
-
-In a second terminal, start the frontend from the repo root:
-
-```bash
 npm run dev
 ```
 
-Default URLs:
+## Future improvements
 
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:5000`
+These are the most obvious next improvements based on the current project shape.
 
-### 6. Verify the install
+### Product and workflow
+- expand mobile beyond the maintenance shell
+- deepen notification handling from Android bridge events into actual dispatch notices
+- improve trip/vehicle/guest extraction from notifications and messages
+- keep aligning summary pills, detail panels, and queue buckets so they tell the same story
 
-Check the backend:
+### Data model and attribution
+- move shared-expense attribution toward historically accurate fleet composition
+- continue reducing stale legacy `status` dependence in favor of `workflow_stage` and derived queue state
+- improve toll matching confidence and audit visibility
 
-```bash
-curl http://localhost:5000/api/vehicles/live-status
-```
+### Telemetry and maintenance
+- keep expanding DIMO support and signal interpretation
+- strengthen maintenance forecasting and post-trip task generation
+- attach more host-side notes, evidence, and inspection history where useful
 
-Check the frontend build:
+### Engineering and docs
+- document subsystem-specific setup and recovery flows
+- tighten startup/runtime verification for local environments
+- introduce clearer migration application guidance
+- continue breaking out reusable API base/config helpers on the frontend where old `localhost` assumptions still linger
 
-```bash
-npm run build
-```
+## Design philosophy
 
-If the backend is down, the UI is designed to fall back to its loading state instead of spraying backend errors across the screen.
+Denmark is optimized for operational truth over polish.
 
-### 7. Restore data when available
-
-The SQL file is the blank foundation. Use the app's Settings database backup/restore workflow for JSON backups created by Denmark2.0 when you have a saved operational snapshot to restore.
-
-After restoring data, verify:
-
-- `.env` points to the restored database
-- vehicle VINs and provider IDs are correct
-- DIMO/Bouncie token mappings match the physical dongles installed in each vehicle
-- trips and maintenance summaries load without selector errors
-
----
-
-## Integrations
-
-### Platform / operations
-- Turo-related reservation and vehicle context
-- Internal fleet mapping and nickname management
-
-### Telematics
-- Bouncie
-- DIMO
-
-### Financial
-- Teller
-
-### Vehicle sourcing
-- Facebook Marketplace
-- Cars.com
-
----
-
-## Design Philosophy
-
-This project is opinionated.
-
-It is being built for actual daily use, which means:
-
-- resilience matters more than elegance
-- partial data is better than broken pages
-- ugly truth is better than pretty lies
-- workflows should favor speed and triage
-- every screen should answer an operational question
-
-In other words: if a provider returns incomplete junk, the app should note it and move on — not fall on its face.
-
----
-
-## Current State
-
-Denmark2.0 is an active working project, not a polished SaaS product.
-
-Some areas are already useful in day-to-day operations. Others are still being hardened, expanded, or cleaned up. The project currently includes a mix of:
-
-- production-useful workflows
-- in-progress integrations
-- UI improvements
-- schema / matching logic refinement
-- operational debugging and data-quality fixes
-
-That is normal for the stage it is in.
-
----
-
-## Planned / Emerging Direction
-
-The current trajectory suggests Denmark2.0 will continue toward:
-
-- stronger reservation-to-vehicle matching
-- deeper telemetry coverage across providers
-- better historical analytics and trend views
-- maintenance and condition tracking
-- richer financial attribution by vehicle
-- smarter marketplace scoring and buy recommendations
-- improved filtering, notes, and decision-support tools
-- a more complete “fleet command center” experience
-
----
-
-## Who This Is For
-
-This project is primarily built for a small, hands-on fleet operator who needs:
-
-- operational clarity
-- acquisition support
-- telemetry visibility
-- booking awareness
-- financial context
-- less manual nonsense
-
-It is especially suited to someone running a Turo-style fleet and making frequent decisions about utilization, maintenance, sourcing, and expansion.
-
----
-
-## Why the Name?
-
-Because every serious project deserves a codename, and this one grew into something much bigger than a few scripts.
-
----
+That means:
+- resilience beats elegance
+- partial data beats broken pages
+- host workflow beats generic abstraction
+- real queue accuracy beats pretty dashboards
+- local usefulness beats theoretical platform purity
 
 ## Status
 
-**Actively developed**
-
-This repository reflects an evolving real-world operations platform. Expect active changes, shifting priorities, and occasional rough edges while the system is being shaped around actual fleet needs.
-
----
-
-## Notes
-
-If you are looking at this repo from the outside, the most important thing to understand is that Denmark2.0 is not trying to be generic fleet software.
-
-It is trying to be **useful**.
-
-That means the codebase is shaped by real operational pain:
-- missing provider data
-- flaky identifiers
-- weird booking edge cases
-- bad marketplace noise
-- financial ambiguity
-- and the constant need to answer “what matters right now?”
-
-That is the heart of the project.
+Actively developed, actively used, and still being shaped around real fleet pain.
