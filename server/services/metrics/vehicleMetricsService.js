@@ -58,6 +58,7 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
       SELECT
         id,
         reservation_id,
+        guest_name,
         turo_vehicle_id,
         trip_start,
         trip_end,
@@ -347,6 +348,82 @@ function calculateTripOffTripMiles(trips) {
     skippedClosedTripCount: skippedTripOdometerCount,
     confidence: skippedTripOdometerCount > 0 ? "medium" : "high",
   };
+}
+
+function calculateTripOffTripAudit(trips) {
+  const odometerTrips = (trips || [])
+    .filter((trip) => toNumber(trip?.starting_odometer, null) != null)
+    .slice()
+    .sort((a, b) => {
+      const startDiff =
+        getTripSortTime(a, "trip_start") - getTripSortTime(b, "trip_start");
+      if (startDiff) return startDiff;
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
+
+  const segments = [];
+  let lastKnownOdometer = null;
+  let lastClosedTrip = null;
+
+  for (const trip of odometerTrips) {
+    const startOdometer = toNumber(trip.starting_odometer, null);
+    const endOdometer = toNumber(trip.ending_odometer, null);
+
+    if (startOdometer == null) {
+      continue;
+    }
+
+    if (lastKnownOdometer == null) {
+      lastKnownOdometer = startOdometer;
+    }
+
+    if (lastKnownOdometer != null && startOdometer > lastKnownOdometer) {
+      const gapMiles = clampNonNegative(startOdometer - lastKnownOdometer);
+      const previousTripEndMs =
+        lastClosedTrip?.trip_end ? new Date(lastClosedTrip.trip_end).getTime() : NaN;
+      const nextTripStartMs = trip?.trip_start ? new Date(trip.trip_start).getTime() : NaN;
+
+      segments.push({
+        previous_trip_id: lastClosedTrip?.id ?? null,
+        previous_reservation_id: lastClosedTrip?.reservation_id ?? null,
+        previous_guest_name: lastClosedTrip?.guest_name ?? null,
+        previous_trip_end: lastClosedTrip?.trip_end ?? null,
+        previous_ending_odometer: lastKnownOdometer,
+        next_trip_id: trip?.id ?? null,
+        next_reservation_id: trip?.reservation_id ?? null,
+        next_guest_name: trip?.guest_name ?? null,
+        next_trip_start: trip?.trip_start ?? null,
+        next_starting_odometer: startOdometer,
+        off_trip_miles: gapMiles,
+        gap_days:
+          Number.isFinite(previousTripEndMs) && Number.isFinite(nextTripStartMs)
+            ? roundNumber(
+                (nextTripStartMs - previousTripEndMs) / (1000 * 60 * 60 * 24),
+                2
+              )
+            : null,
+      });
+
+      lastKnownOdometer = startOdometer;
+    }
+
+    if (endOdometer == null) {
+      continue;
+    }
+
+    if (endOdometer < startOdometer) {
+      continue;
+    }
+
+    if (lastKnownOdometer != null && endOdometer < lastKnownOdometer) {
+      continue;
+    }
+
+    lastKnownOdometer = endOdometer;
+    lastClosedTrip = trip;
+  }
+
+  return segments;
 }
 
 function resolveAnchorStart(anchor) {
@@ -906,6 +983,107 @@ async function getVehicleMetrics(rangeKey = "30d") {
   }
 }
 
+async function getOffTripMileageAudit(rangeKey = "30d") {
+  const { key, startDate, endDate } = getDateRange(rangeKey);
+  const client = await pool.connect();
+
+  try {
+    const [vehicles, trips] = await Promise.all([
+      fetchActiveVehicles(client),
+      fetchTripsForVehicles(client, startDate, endDate),
+    ]);
+
+    const maps = buildTripVehicleKeyMaps(vehicles);
+    const vehicleTrips = new Map();
+
+    for (const trip of trips) {
+      const vehicleId = resolveTripVehicleId(trip, maps);
+      if (!vehicleId) continue;
+
+      if (!vehicleTrips.has(vehicleId)) {
+        vehicleTrips.set(vehicleId, []);
+      }
+
+      vehicleTrips.get(vehicleId).push(trip);
+    }
+
+    const rows = [];
+    const vehiclesWithSegments = [];
+
+    for (const vehicle of vehicles) {
+      const vehicleId = String(vehicle.id);
+      const tripsForVehicle = vehicleTrips.get(vehicleId) || [];
+      const segments = calculateTripOffTripAudit(tripsForVehicle);
+      const totalMiles = segments.reduce(
+        (sum, segment) => sum + Number(segment?.off_trip_miles ?? 0),
+        0
+      );
+
+      if (!segments.length) continue;
+
+      const vehicleLabel = [vehicle.year, vehicle.make, vehicle.model]
+        .filter(Boolean)
+        .join(" ");
+
+      vehiclesWithSegments.push({
+        vehicle_id: vehicle.id,
+        vin: vehicle.vin,
+        nickname: vehicle.nickname,
+        label: vehicleLabel || vehicle.nickname || vehicle.vin,
+        segment_count: segments.length,
+        off_trip_miles: roundNumber(totalMiles, 1),
+      });
+
+      for (const segment of segments) {
+        rows.push({
+          vehicle_id: vehicle.id,
+          vin: vehicle.vin,
+          nickname: vehicle.nickname,
+          vehicle_label: vehicleLabel || vehicle.nickname || vehicle.vin,
+          ...segment,
+        });
+      }
+    }
+
+    rows.sort((a, b) => {
+      const milesDiff =
+        Number(b?.off_trip_miles ?? 0) - Number(a?.off_trip_miles ?? 0);
+      if (milesDiff !== 0) return milesDiff;
+
+      const aStart = a.next_trip_start ? new Date(a.next_trip_start).getTime() : 0;
+      const bStart = b.next_trip_start ? new Date(b.next_trip_start).getTime() : 0;
+      if (aStart !== bStart) return bStart - aStart;
+
+      return String(a.nickname || "").localeCompare(String(b.nickname || ""));
+    });
+
+    vehiclesWithSegments.sort((a, b) => {
+      if (b.off_trip_miles !== a.off_trip_miles) {
+        return b.off_trip_miles - a.off_trip_miles;
+      }
+      return String(a.nickname || "").localeCompare(String(b.nickname || ""));
+    });
+
+    return {
+      range: key,
+      generated_at: new Date().toISOString(),
+      summary: {
+        total_off_trip_miles: roundNumber(
+          rows.reduce((sum, row) => sum + Number(row?.off_trip_miles ?? 0), 0),
+          1
+        ),
+        segment_count: rows.length,
+        vehicle_count: vehiclesWithSegments.length,
+      },
+      vehicles: vehiclesWithSegments,
+      segments: rows,
+    };
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getVehicleMetrics,
+  getOffTripMileageAudit,
 };

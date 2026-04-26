@@ -7,6 +7,7 @@
 const express = require("express");
 const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
+const { evaluateCloseoutCompleteness } = require("../services/trips/closeoutState");
 
 const router = express.Router();
 
@@ -732,6 +733,30 @@ router.patch("/:id", async (req, res) => {
   try {
     await client.query("BEGIN");
 
+    const existingTripResult = await client.query(
+      `
+        SELECT
+          id,
+          starting_odometer,
+          ending_odometer,
+          expense_status,
+          has_tolls,
+          toll_review_status,
+          closed_out
+        FROM trips
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [tripId]
+    );
+
+    if (!existingTripResult.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Trip summary not found" });
+    }
+
+    const existingTrip = existingTripResult.rows[0];
+
     let resolvedVehicleId = null;
     let resolvedVehicleName = null;
 
@@ -777,6 +802,41 @@ router.patch("/:id", async (req, res) => {
         resolvedVehicleId = vehicleLookup.rows[0].turo_vehicle_id;
         resolvedVehicleName = vehicleLookup.rows[0].nickname;
       }
+    }
+
+    const proposedTrip = {
+      ...existingTrip,
+      starting_odometer: hasField("starting_odometer")
+        ? numericStartingOdometer
+        : existingTrip.starting_odometer,
+      ending_odometer: hasField("ending_odometer")
+        ? numericEndingOdometer
+        : existingTrip.ending_odometer,
+      expense_status: hasField("expense_status")
+        ? expense_status ?? null
+        : existingTrip.expense_status,
+      has_tolls:
+        tollFieldsWereProvided || hasField("has_tolls")
+          ? normalizedHasTolls
+          : existingTrip.has_tolls,
+      toll_review_status:
+        tollFieldsWereProvided || hasField("toll_review_status")
+          ? normalizedTollReviewStatus
+          : existingTrip.toll_review_status,
+      closed_out: hasField("closed_out")
+        ? typeof closed_out === "boolean"
+          ? closed_out
+          : null
+        : existingTrip.closed_out,
+    };
+
+    const closeoutState = evaluateCloseoutCompleteness(proposedTrip);
+
+    if (proposedTrip.closed_out === true && closeoutState.isIncomplete) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: `Trip cannot be marked closed out until ${closeoutState.reasons.join(", ")} ${closeoutState.reasons.length === 1 ? "is" : "are"} complete`,
+      });
     }
 
     const updateResult = await client.query(

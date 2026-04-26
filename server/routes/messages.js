@@ -782,8 +782,9 @@ router.get("/", async (req, res) => {
         AND t.trip_end >= NOW() - INTERVAL '45 days'
         AND COALESCE(t.workflow_stage, '') <> 'canceled'
         AND COALESCE(t.status, '') <> 'canceled'
-        AND COALESCE(t.closed_out, false) = false
         AND (
+          COALESCE(t.closed_out, false) = false
+          OR
           COALESCE(t.workflow_stage, '') NOT IN ('complete', 'closed')
           OR t.starting_odometer IS NULL
           OR t.ending_odometer IS NULL

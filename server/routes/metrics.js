@@ -10,6 +10,7 @@ const {
 } = require("../services/metrics/summaryService");
 const {
   getVehicleMetrics,
+  getOffTripMileageAudit,
 } = require("../services/metrics/vehicleMetricsService");
 const {
   getTrendMetrics,
@@ -34,6 +35,16 @@ router.get("/vehicles", async (req, res) => {
   } catch (err) {
     console.error("GET /api/metrics/vehicles failed:", err);
     return res.status(500).json({ error: "Failed to load vehicle metrics" });
+  }
+});
+
+router.get("/off-trip-audit", async (req, res) => {
+  try {
+    const data = await getOffTripMileageAudit(req.query.range || "30d");
+    return res.json(data);
+  } catch (err) {
+    console.error("GET /api/metrics/off-trip-audit failed:", err);
+    return res.status(500).json({ error: "Failed to load off-trip mileage audit" });
   }
 });
 

@@ -85,6 +85,24 @@
     0 8px 20px rgba(0, 0, 0, 0.14);
 }
 
+.metric-card--clickable {
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 140ms ease;
+}
+
+.metric-card--clickable:hover {
+  transform: translateY(-1px);
+  border-color: #36507f;
+}
+
+.metric-card--clickable:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
 .metric-card__label {
   color: #8fa6ca;
   font-size: 0.64rem;
@@ -132,6 +150,134 @@
 
 .metric-card--negative .metric-card__value {
   color: #ffd0d0;
+}
+
+/* --------------------------------------------------------------
+   Off-trip audit drawer
+-------------------------------------------------------------- */
+
+.metrics-audit-drawer {
+  width: min(640px, 100%);
+}
+
+.metrics-audit-drawer-body {
+  gap: 18px;
+}
+
+.metrics-audit-empty {
+  color: #cbd5e1;
+  font-size: 0.92rem;
+}
+
+.metrics-audit-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metrics-audit-summary-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(42, 57, 93, 0.85);
+  border-radius: 8px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.015)
+  );
+}
+
+.metrics-audit-summary-label,
+.metrics-audit-label {
+  color: #8fa6ca;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metrics-audit-summary-value {
+  margin-top: 6px;
+  color: #eef4ff;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.metrics-audit-section {
+  display: grid;
+  gap: 10px;
+}
+
+.metrics-audit-section-title {
+  color: #eef4ff;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.metrics-audit-vehicle-list,
+.metrics-audit-segment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.metrics-audit-vehicle-item,
+.metrics-audit-segment {
+  border: 1px solid rgba(42, 57, 93, 0.85);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.015)
+  );
+}
+
+.metrics-audit-vehicle-item,
+.metrics-audit-segment-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metrics-audit-vehicle-name,
+.metrics-audit-segment-name {
+  color: #eef4ff;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.metrics-audit-vehicle-meta,
+.metrics-audit-segment-meta {
+  margin-top: 3px;
+  color: #7489ae;
+  font-size: 0.72rem;
+}
+
+.metrics-audit-vehicle-miles,
+.metrics-audit-segment-miles {
+  color: #baf7db;
+  font-size: 0.92rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.metrics-audit-segment-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.metrics-audit-field {
+  min-width: 0;
+}
+
+.metrics-audit-value {
+  margin-top: 4px;
+  color: #eef4ff;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  word-break: break-word;
 }
 
 /* --------------------------------------------------------------
@@ -432,6 +578,11 @@
 
   .vehicle-card__stats {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .metrics-audit-summary,
+  .metrics-audit-segment-grid {
+    grid-template-columns: 1fr;
   }
 }
 

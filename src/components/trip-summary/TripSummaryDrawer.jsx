@@ -69,6 +69,16 @@ function toNullableIso(value) {
   return value ? new Date(value).toISOString() : null;
 }
 
+function formatStatusLabel(value) {
+  const text = String(value || "")
+    .trim()
+    .replace(/[_-]+/g, " ");
+
+  if (!text) return "—";
+
+  return text.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function toNullableNumber(value) {
   if (value === "" || value == null) return null;
   const n = Number(value);
@@ -548,16 +558,12 @@ async function handleSubmit(e) {
 
               <label className="trip-summary-drawer-field">
                 <span className="trip-summary-drawer-label">Status</span>
-                <select
-                  value={form.status}
-                  onChange={(e) => updateField("status", e.target.value)}
-                >
-                  {STATUS_OPTIONS.map((option) => (
-                    <option key={option.value || "blank"} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <input
+                  value={formatStatusLabel(
+                    trip.display_status || trip.workflow_stage || trip.status
+                  )}
+                  readOnly
+                />
               </label>
 
               <label className="trip-summary-drawer-field">

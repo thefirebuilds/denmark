@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import MetricCard from "./metrics/MetricCard";
+import OffTripMilesDrawer from "./metrics/OffTripMilesDrawer";
 import TollStat from "./metrics/TollStat";
 import VehicleComparisonRow from "./metrics/VehicleComparisonRow";
 
@@ -106,6 +107,10 @@ export default function MetricsPanel() {
   const [expandedVehicleId, setExpandedVehicleId] = useState(null);
   const [sortBy, setSortBy] = useState("profit_desc");
   const [filterBy, setFilterBy] = useState("all");
+  const [offTripAuditOpen, setOffTripAuditOpen] = useState(false);
+  const [offTripAudit, setOffTripAudit] = useState(null);
+  const [offTripAuditLoading, setOffTripAuditLoading] = useState(false);
+  const [offTripAuditError, setOffTripAuditError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,6 +177,51 @@ export default function MetricsPanel() {
       cancelled = true;
     };
   }, [selectedRange]);
+
+  useEffect(() => {
+    if (!offTripAuditOpen) return undefined;
+
+    let cancelled = false;
+
+    async function loadOffTripAudit() {
+      try {
+        setOffTripAuditLoading(true);
+        setOffTripAuditError(null);
+
+        const params = new URLSearchParams({ range: selectedRange });
+        const response = await fetch(
+          `${API_BASE}/api/metrics/off-trip-audit?${params.toString()}`,
+          {
+            headers: { Accept: "application/json" },
+          }
+        );
+
+        const text = await response.text();
+        if (!response.ok) {
+          throw new Error(`Off-trip audit request failed: ${response.status} ${text}`);
+        }
+
+        const data = JSON.parse(text);
+        if (!cancelled) {
+          setOffTripAudit(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setOffTripAuditError(err.message || "Failed to load off-trip audit");
+        }
+      } finally {
+        if (!cancelled) {
+          setOffTripAuditLoading(false);
+        }
+      }
+    }
+
+    loadOffTripAudit();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [offTripAuditOpen, selectedRange]);
 
   const avgVehiclesBookedPerDay = useMemo(() => {
     if (!summary) return 0;
@@ -419,6 +469,7 @@ const mileageStats = useMemo(() => {
                   : "positive"
               }
               subtitle={`${formatPercent(mileageStats.offTripShare, 0)} of total miles`}
+              onClick={() => setOffTripAuditOpen(true)}
             />
 
             <MetricCard
@@ -446,6 +497,14 @@ const mileageStats = useMemo(() => {
               subtitle={`${formatCurrencyCompact(mileageStats.expensePerTripMile)} / trip mile`}
             />
           </section>
+
+          <OffTripMilesDrawer
+            open={offTripAuditOpen}
+            loading={offTripAuditLoading}
+            error={offTripAuditError}
+            audit={offTripAudit}
+            onClose={() => setOffTripAuditOpen(false)}
+          />
 
           <section className="toll-panel">
             <div className="toll-panel__header">

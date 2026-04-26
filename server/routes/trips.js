@@ -10,6 +10,7 @@
 const express = require("express");
 const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
+const { evaluateCloseoutCompleteness } = require("../services/trips/closeoutState");
 
 const {
   transitionTripStage,
@@ -152,6 +153,12 @@ function computeQueueBucket(trip) {
 
   if (workflowStage === "canceled" || status === "canceled") {
     return "canceled";
+  }
+
+  const closeoutState = evaluateCloseoutCompleteness(trip);
+
+  if (closeoutState.isIncomplete && end && end < now) {
+    return "needs_closeout";
   }
 
   if (workflowStage === "complete" || trip.closed_out) {
@@ -711,6 +718,30 @@ router.patch("/:id", async (req, res) => {
   try {
     await client.query("BEGIN");
 
+    const existingTripResult = await client.query(
+      `
+        SELECT
+          id,
+          starting_odometer,
+          ending_odometer,
+          expense_status,
+          has_tolls,
+          toll_review_status,
+          closed_out
+        FROM trips
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [tripId]
+    );
+
+    if (!existingTripResult.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    const existingTrip = existingTripResult.rows[0];
+
     let resolvedVehicleId = null;
     let resolvedVehicleName = null;
 
@@ -824,6 +855,39 @@ router.patch("/:id", async (req, res) => {
     if (updateResult.rowCount === 0) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Trip not found" });
+    }
+
+    const proposedTrip = {
+      ...existingTrip,
+      starting_odometer:
+        starting_odometer === "" || starting_odometer == null
+          ? existingTrip.starting_odometer
+          : Number(starting_odometer),
+      ending_odometer:
+        ending_odometer === "" || ending_odometer == null
+          ? existingTrip.ending_odometer
+          : Number(ending_odometer),
+      expense_status:
+        normalizedExpenseStatus == null
+          ? existingTrip.expense_status
+          : normalizedExpenseStatus,
+      has_tolls:
+        effectiveHasTolls == null ? existingTrip.has_tolls : effectiveHasTolls,
+      toll_review_status:
+        effectiveTollReviewStatus == null
+          ? existingTrip.toll_review_status
+          : effectiveTollReviewStatus,
+      closed_out:
+        normalizedClosedOut == null ? existingTrip.closed_out : normalizedClosedOut,
+    };
+
+    const closeoutState = evaluateCloseoutCompleteness(proposedTrip);
+
+    if (proposedTrip.closed_out === true && closeoutState.isIncomplete) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: `Trip cannot be marked closed out until ${closeoutState.reasons.join(", ")} ${closeoutState.reasons.length === 1 ? "is" : "are"} complete`,
+      });
     }
 
     const refreshed = await client.query(
