@@ -5,6 +5,7 @@
 // ------------------------------------------------------------
 
 const express = require("express");
+const pool = require("../db");
 const {
   getSummaryMetrics,
 } = require("../services/metrics/summaryService");
@@ -45,6 +46,103 @@ router.get("/off-trip-audit", async (req, res) => {
   } catch (err) {
     console.error("GET /api/metrics/off-trip-audit failed:", err);
     return res.status(500).json({ error: "Failed to load off-trip mileage audit" });
+  }
+});
+
+router.put("/off-trip-audit/review", async (req, res) => {
+  try {
+    const auditKey =
+      typeof req.body?.audit_key === "string" ? req.body.audit_key.trim() : "";
+    const reviewStatus =
+      typeof req.body?.review_status === "string"
+        ? req.body.review_status.trim().toLowerCase()
+        : "";
+    const reviewReason =
+      typeof req.body?.review_reason === "string"
+        ? req.body.review_reason.trim()
+        : "";
+    const reconciledOffTripMiles =
+      req.body?.reconciled_off_trip_miles === "" ||
+      req.body?.reconciled_off_trip_miles == null
+        ? null
+        : Number(req.body.reconciled_off_trip_miles);
+
+    if (!auditKey) {
+      return res.status(400).json({ error: "audit_key is required" });
+    }
+
+    const allowedStatuses = new Set(["", "validated", "reconciled", "ignored"]);
+    if (!allowedStatuses.has(reviewStatus)) {
+      return res.status(400).json({ error: "Invalid review_status" });
+    }
+
+    if (
+      reconciledOffTripMiles != null &&
+      (!Number.isFinite(reconciledOffTripMiles) || reconciledOffTripMiles < 0)
+    ) {
+      return res.status(400).json({ error: "Invalid reconciled_off_trip_miles" });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        `
+          SELECT value
+          FROM app_settings
+          WHERE key = 'metrics.off_trip_audit_reviews'
+          FOR UPDATE
+        `
+      );
+
+      const currentValue =
+        rows[0]?.value && typeof rows[0].value === "object" && !Array.isArray(rows[0].value)
+          ? { ...rows[0].value }
+          : {};
+
+      if (!reviewStatus && !reviewReason && reconciledOffTripMiles == null) {
+        delete currentValue[auditKey];
+      } else {
+        currentValue[auditKey] = {
+          review_status: reviewStatus || null,
+          review_reason: reviewReason || null,
+          reconciled_off_trip_miles: reconciledOffTripMiles,
+          reviewed_at: new Date().toISOString(),
+        };
+      }
+
+      const upsertResult = await client.query(
+        `
+          INSERT INTO app_settings (key, value, updated_at)
+          VALUES ('metrics.off_trip_audit_reviews', $1::jsonb, NOW())
+          ON CONFLICT (key)
+          DO UPDATE SET
+            value = EXCLUDED.value,
+            updated_at = NOW()
+          RETURNING value, updated_at
+        `,
+        [JSON.stringify(currentValue)]
+      );
+
+      await client.query("COMMIT");
+
+      return res.json({
+        ok: true,
+        audit_key: auditKey,
+        review: currentValue[auditKey] || null,
+        updated_at: upsertResult.rows[0]?.updated_at || null,
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error("PUT /api/metrics/off-trip-audit/review failed:", err);
+    return res.status(500).json({ error: "Failed to save off-trip audit review" });
   }
 });
 

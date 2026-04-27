@@ -151,6 +151,7 @@ export default function VehicleComparisonRow({
   formatCurrency,
   formatCurrencyCompact,
   formatNumber,
+  formatValueTrend,
   calendarDays,
 }) {
   const netProfit = Number(vehicle?.net_profit ?? 0);
@@ -179,6 +180,11 @@ export default function VehicleComparisonRow({
   const projectedPayoffStatus = getProjectedStatusLabel(
     vehicle?.projected_payoff_status
   );
+  const fmvEstimateMid = Number(vehicle?.fmv_estimate_mid ?? 0);
+  const fmvChange = Number(vehicle?.fmv_change ?? 0);
+  const hasFmvEstimate = Number.isFinite(fmvEstimateMid) && fmvEstimateMid > 0;
+  const fmvChangeTone =
+    fmvChange > 0 ? "positive" : fmvChange < 0 ? "negative" : "warning";
 
   return (
     <div className={`vehicle-compare ${isExpanded ? "is-expanded" : ""}`}>
@@ -211,6 +217,21 @@ export default function VehicleComparisonRow({
         <div className="vehicle-compare__cell">
           <div className="vehicle-compare__value">
             {formatCurrency(vehicle?.trip_income)}
+          </div>
+        </div>
+
+        <div className="vehicle-compare__cell">
+          <div
+            className={`vehicle-compare__value ${
+              hasFmvEstimate ? "" : "vehicle-compare__value--muted"
+            }`}
+          >
+            {hasFmvEstimate ? formatCurrency(fmvEstimateMid) : "No estimate"}
+          </div>
+          <div
+            className={`vehicle-compare__label vehicle-compare__label--${fmvChangeTone}`}
+          >
+            {hasFmvEstimate ? formatValueTrend(fmvChange) : "Awaiting run"}
           </div>
         </div>
 
@@ -258,6 +279,29 @@ export default function VehicleComparisonRow({
           <div className="vehicle-compare__details-group">
             <div className="vehicle-compare__details-group-title">Financial</div>
             <div className="vehicle-compare__details">
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Value</div>
+                <div className="vehicle-compare__detail-value">
+                  {hasFmvEstimate ? formatCurrency(fmvEstimateMid) : "No estimate"}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Value Change</div>
+                <div
+                  className={`vehicle-compare__detail-value vehicle-compare__detail-value--${fmvChangeTone}`}
+                >
+                  {hasFmvEstimate ? formatValueTrend(fmvChange) : "Awaiting prior estimate"}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Valued</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatShortDate(vehicle?.fmv_estimated_at)}
+                </div>
+              </div>
+
               <div className="vehicle-compare__detail-stat">
                 <div className="vehicle-compare__detail-label">Expenses</div>
                 <div className="vehicle-compare__detail-value">

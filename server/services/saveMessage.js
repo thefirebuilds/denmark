@@ -420,6 +420,61 @@ function parseMoney(value) {
   return Number.isNaN(n) ? null : n;
 }
 
+function extractTollAmountFromText(normalizedTextBody) {
+  const text = String(normalizedTextBody || "");
+  const match = text.match(/tolls?\s*-\s*\$([0-9,]+(?:\.\d{2})?)/i);
+  return match ? parseMoney(match[1]) : null;
+}
+
+function reimbursementLooksLikeTollInvoice(normalizedTextBody) {
+  return /tolls?\s*-\s*\$[0-9]/i.test(String(normalizedTextBody || ""));
+}
+
+async function applyTripCloseoutSignalsFromMessage({
+  tripId,
+  messageType,
+  normalizedTextBody,
+}) {
+  if (!tripId) {
+    return;
+  }
+
+  if (messageType !== "reimbursement_invoice") {
+    return;
+  }
+
+  const tollAmount = extractTollAmountFromText(normalizedTextBody);
+  const tollInvoice = reimbursementLooksLikeTollInvoice(normalizedTextBody);
+
+  await pool.query(
+    `
+      UPDATE trips
+      SET
+        expense_status = CASE
+          WHEN COALESCE(expense_status, '') IN ('', 'pending', 'needs_review')
+            THEN 'resolved'
+          ELSE expense_status
+        END,
+        has_tolls = CASE
+          WHEN $2::boolean THEN TRUE
+          ELSE has_tolls
+        END,
+        toll_total = CASE
+          WHEN $2::boolean AND $3::numeric IS NOT NULL
+            THEN COALESCE($3::numeric, toll_total)
+          ELSE toll_total
+        END,
+        toll_review_status = CASE
+          WHEN $2::boolean OR COALESCE(has_tolls, false) = TRUE THEN 'billed'
+          ELSE toll_review_status
+        END,
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+    [tripId, tollInvoice, tollAmount]
+  );
+}
+
 function extractTripChangedFields(normalizedTextBody, subject = "", htmlBody = "") {
   const base = baseExtractFields(normalizedTextBody, subject, htmlBody);
   const text = normalizedTextBody || "";
@@ -469,6 +524,7 @@ function extractTripBookedFields(normalizedTextBody, subject = "", htmlBody = ""
 
 function extractTripCanceledFields(normalizedTextBody, subject = "", htmlBody = "") {
   const base = baseExtractFields(normalizedTextBody, subject, htmlBody);
+  const text = String(normalizedTextBody || "");
 
   const cancellationReason =
     extractMatch(
@@ -483,9 +539,29 @@ function extractTripCanceledFields(normalizedTextBody, subject = "", htmlBody = 
     ) ||
     extractMatch(normalizedTextBody, /because .+/i, 0);
 
+  let cancellationPayoutAmount;
+
+  if (
+    /you won['’`]?t receive any payment/i.test(text) ||
+    /won['’`]?t be charged,\s*and you won['’`]?t receive any payment/i.test(text)
+  ) {
+    cancellationPayoutAmount = 0;
+  } else {
+    const payoutRaw =
+      extractMatch(text, /you['’`]?ll receive payment of \$([0-9,]+(?:\.\d{2})?)/i) ||
+      extractMatch(text, /you['’`]?ll receive \$([0-9,]+(?:\.\d{2})?)/i) ||
+      extractMatch(text, /updated earnings[:\s]+\$([0-9,]+(?:\.\d{2})?)/i) ||
+      extractMatch(text, /new earnings[:\s]+\$([0-9,]+(?:\.\d{2})?)/i);
+
+    if (payoutRaw) {
+      cancellationPayoutAmount = parseMoney(payoutRaw);
+    }
+  }
+
   return {
     ...base,
     cancellationReason: cancellationReason ? cancellationReason.trim() : null,
+    cancellationPayoutAmount,
   };
 }
 
@@ -594,6 +670,11 @@ async function saveMessage(message) {
     cleanedHtmlBody
   );
 
+  const effectiveAmount =
+    extracted?.cancellationPayoutAmount !== undefined
+      ? extracted.cancellationPayoutAmount
+      : amount;
+
   const query = `
     INSERT INTO messages (
       message_id,
@@ -676,7 +757,7 @@ async function saveMessage(message) {
     cleanedRawHeaders,
     message.rawSource || null,
     "unread",
-    amount,
+    effectiveAmount,
     messageType,
     extracted.guestName,
     extracted.guestPhone,
@@ -765,6 +846,12 @@ async function saveMessage(message) {
       `UPDATE messages SET trip_id = $1 WHERE id = $2`,
       [trip.id, savedMessage.id]
     );
+
+    await applyTripCloseoutSignalsFromMessage({
+      tripId: trip.id,
+      messageType,
+      normalizedTextBody,
+    });
   }
 
   return savedMessage;

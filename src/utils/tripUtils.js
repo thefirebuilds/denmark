@@ -86,16 +86,19 @@ export function getTripDays(start, end) {
   return (endMs - startMs) / (1000 * 60 * 60 * 24);
 }
 
-function isClosedTrip(trip) {
+export function isClosedTrip(trip) {
   const status = String(trip?.status || "").toLowerCase();
   const stage = String(trip?.workflow_stage || "").toLowerCase();
 
   return (
+    status === "complete" ||
     status === "completed" ||
     status === "closed" ||
     status === "finished" ||
+    stage === "complete" ||
     stage === "completed" ||
-    stage === "closed"
+    stage === "closed" ||
+    trip?.closed_out === true
   );
 }
 
@@ -260,6 +263,7 @@ export function deriveTripVehicleLine(trip) {
 export function deriveCardStatus(trip) {
   if (isCanceledTrip(trip)) return "canceled";
   if (isOverdueTrip(trip)) return "risk";
+  if (isClosedTrip(trip)) return "active";
 
   const now = Date.now();
   const startMs = getTripStartMs(trip);
@@ -359,6 +363,7 @@ export function deriveStatusLabel(trip) {
   const tollReviewStatus = String(trip?.toll_review_status || "").toLowerCase();
 
   const tripEnded = Number.isFinite(endMs) && endMs < now;
+  const isClosed = isClosedTrip(trip);
 
   const isReadyForCustomer =
     stage === "ready_for_handoff" || stage === "in_progress";
@@ -372,6 +377,7 @@ export function deriveStatusLabel(trip) {
 
   if (isCanceledTrip(trip)) return "Canceled";
   if (isOverdueTrip(trip)) return "Overdue";
+  if (isClosed) return "Complete";
 
   if (isSameLocalDay(startMs, now) && !isReadyForCustomer) {
     return "Not ready for pickup";
@@ -413,11 +419,19 @@ export function deriveMeta4(trip) {
 
   const tripEnded = Number.isFinite(endMs) && endMs < now;
   const tripStarted = Number.isFinite(startMs) && startMs <= now;
+  const isClosed = isClosedTrip(trip);
 
   if (isCanceledTrip(trip)) {
     return {
       label: "Trip state",
       value: "Canceled",
+    };
+  }
+
+  if (isClosed) {
+    return {
+      label: "Trip state",
+      value: "Closed out",
     };
   }
 

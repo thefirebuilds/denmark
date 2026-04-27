@@ -9,6 +9,12 @@ const {
   getCombinedVehicleStatusFeed,
   getVehicleStatusFeed,
 } = require("../services/vehicles/statusFeed");
+const {
+  generateFleetFmvEstimates,
+  generateVehicleFmvEstimate,
+  getLatestVehicleFmvEstimates,
+  getVehicleFmvEstimateHistory,
+} = require("../services/vehicles/fmvEstimateService");
 
 const router = express.Router();
 
@@ -125,6 +131,36 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/fmv-estimates/latest", async (req, res) => {
+  try {
+    const estimates = await getLatestVehicleFmvEstimates();
+    res.json({ estimates });
+  } catch (err) {
+    console.error("GET /api/vehicles/fmv-estimates/latest failed:", err);
+    res.status(500).json({ error: "Failed to load FMV estimates" });
+  }
+});
+
+router.post("/fmv-estimates/run", async (req, res) => {
+  try {
+    const selector =
+      typeof req.body?.selector === "string" ? req.body.selector.trim() : "";
+
+    if (selector) {
+      const estimate = await generateVehicleFmvEstimate(selector);
+      return res.json({ ok: true, mode: "single", estimate });
+    }
+
+    const results = await generateFleetFmvEstimates();
+    return res.json({ ok: true, mode: "fleet", results });
+  } catch (err) {
+    console.error("POST /api/vehicles/fmv-estimates/run failed:", err);
+    res
+      .status(err.statusCode || 500)
+      .json({ error: err.message || "Failed to generate FMV estimate" });
+  }
+});
+
 router.post("/", async (req, res) => {
   try {
     const nickname = toNullableText(req.body.nickname);
@@ -216,6 +252,18 @@ router.get("/:selector", async (req, res) => {
   } catch (err) {
     console.error("GET /api/vehicle/:selector failed:", err);
     res.status(500).json({ error: "Failed to fetch vehicle" });
+  }
+});
+
+router.get("/:selector/fmv-estimates", async (req, res) => {
+  try {
+    const payload = await getVehicleFmvEstimateHistory(req.params.selector);
+    res.json(payload);
+  } catch (err) {
+    console.error("GET /api/vehicles/:selector/fmv-estimates failed:", err);
+    res
+      .status(err.statusCode || 500)
+      .json({ error: err.message || "Failed to load vehicle FMV history" });
   }
 });
 

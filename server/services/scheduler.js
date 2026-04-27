@@ -27,6 +27,7 @@ const syncTolls = require("./tolls/syncTolls");
 
 // Google Calendar
 const { reconcileTripsToGoogle } = require("./googleCalendar/googleTripSync");
+const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
 
 let tellerSyncInProgress = false;
 let tellerSyncIntervalHandle = null;
@@ -46,12 +47,16 @@ let dimoIntervalHandle = null;
 let googleCalendarInProgress = false;
 let googleCalendarIntervalHandle = null;
 
+let fmvInProgress = false;
+let fmvIntervalHandle = null;
+
 const STARTUP_TASKS = [
   "teller",
   "tolls",
   "imap",
   "bouncie",
   "dimo",
+  "fmv",
   "publicAvailability",
   "googleCalendar",
 ];
@@ -290,12 +295,46 @@ async function runGoogleCalendarReconcile(reason = "interval") {
   }
 }
 
+async function runFleetFmvRefresh(reason = "interval") {
+  if (fmvInProgress) {
+    console.log(`[scheduler] fmv skipped | reason=${reason} alreadyRunning=true`);
+    return;
+  }
+
+  fmvInProgress = true;
+  const startedAt = Date.now();
+
+  try {
+    console.log(`[scheduler] fmv check start | reason=${reason}`);
+    const result = await refreshFleetFmvIfStale({ maxAgeDays: 7 });
+
+    if (!result.ran) {
+      console.log(
+        `[scheduler] fmv check done | reason=${reason} action=skip stale=${result.stale} latest=${result.latest_estimated_at || "none"} durationMs=${Date.now() - startedAt}`
+      );
+      return;
+    }
+
+    const succeeded = (result.results || []).filter((item) => item.ok).length;
+    const failed = (result.results || []).filter((item) => !item.ok).length;
+
+    console.log(
+      `[scheduler] fmv refresh done | reason=${reason} action=run trigger=${result.reason} succeeded=${succeeded} failed=${failed} durationMs=${Date.now() - startedAt}`
+    );
+  } catch (err) {
+    console.error(`[scheduler] fmv failed | reason=${reason} error=${err.message || err}`);
+  } finally {
+    fmvInProgress = false;
+  }
+}
+
 function startScheduler() {
   console.log("[scheduler] started");
 
   const everyEightHoursMs = 8 * 60 * 60 * 1000;
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
   const everyFiveMinutesMs = 5 * 60 * 1000;
+  const everyTwentyFourHoursMs = 24 * 60 * 60 * 1000;
 
   resetStartupStatus();
 
@@ -313,6 +352,9 @@ function startScheduler() {
 
   // DIMO immediately
   void runStartupTask("dimo", () => runDimo("startup"));
+
+  // FMV check immediately (only refreshes if stale or missing)
+  void runStartupTask("fmv", () => runFleetFmvRefresh("startup"));
 
   // Public availability push immediately
   void runStartupTask("publicAvailability", () =>
@@ -349,6 +391,11 @@ function startScheduler() {
     void runDimo("interval");
   }, everyFiveMinutesMs);
 
+  // FMV freshness check daily; actual estimates run only if older than a week
+  fmvIntervalHandle = setInterval(() => {
+    void runFleetFmvRefresh("interval");
+  }, everyTwentyFourHoursMs);
+
   // Google Calendar reconcile every 8 hours
   googleCalendarIntervalHandle = setInterval(() => {
     void runGoogleCalendarReconcile("interval");
@@ -384,6 +431,11 @@ function stopScheduler() {
   if (googleCalendarIntervalHandle) {
     clearInterval(googleCalendarIntervalHandle);
     googleCalendarIntervalHandle = null;
+  }
+
+  if (fmvIntervalHandle) {
+    clearInterval(fmvIntervalHandle);
+    fmvIntervalHandle = null;
   }
 
   console.log("[scheduler] stopped");

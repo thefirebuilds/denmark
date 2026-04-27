@@ -28,6 +28,9 @@ const {
   router: notificationRoutes,
   ensureNotificationEventsTable,
 } = require("./routes/notificationRoutes");
+const {
+  ensureVehicleFmvEstimatesTable,
+} = require("./services/vehicles/fmvEstimateService");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -112,7 +115,10 @@ app.get("/__whoami", (req, res) => {
   });
 });
 
-ensureNotificationEventsTable()
+Promise.all([
+  ensureNotificationEventsTable(),
+  ensureVehicleFmvEstimatesTable(),
+])
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[server] listening on http://localhost:${PORT}`);
@@ -120,6 +126,6 @@ ensureNotificationEventsTable()
     });
   })
   .catch((err) => {
-    console.error("[server] failed to initialize notification events:", err);
+    console.error("[server] failed to initialize startup tables:", err);
     process.exit(1);
   });

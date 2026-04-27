@@ -57,6 +57,12 @@ function formatPercent(value, digits = 0) {
   return `${num.toFixed(digits)}%`;
 }
 
+function formatValueTrend(value) {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount) || amount === 0) return "Flat";
+  return `${amount > 0 ? "▲" : "▼"} ${formatCurrencyCompact(Math.abs(amount))}`;
+}
+
 function getVehicleTollRiskScore(vehicle) {
   const paid = Number(vehicle?.tolls_paid ?? 0);
   const recovered = Number(vehicle?.tolls_recovered ?? 0);
@@ -223,6 +229,112 @@ export default function MetricsPanel() {
     };
   }, [offTripAuditOpen, selectedRange]);
 
+  async function handleSaveOffTripReview(payload) {
+    const response = await fetch(`${API_BASE}/api/metrics/off-trip-audit/review`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : null;
+
+    if (!response.ok) {
+      throw new Error(data?.error || "Failed to save off-trip audit review");
+    }
+
+    const review = data?.review || null;
+
+    setOffTripAudit((prev) => {
+      if (!prev) return prev;
+
+      function applyReview(items = []) {
+        return items.map((item) =>
+          item.audit_key === payload.audit_key
+            ? {
+                ...item,
+                review_status: review?.review_status || null,
+                review_reason: review?.review_reason || null,
+                reconciled_off_trip_miles:
+                  review?.reconciled_off_trip_miles == null
+                    ? null
+                    : Number(review.reconciled_off_trip_miles),
+                reviewed_at: review?.reviewed_at || null,
+                raw_off_trip_miles:
+                  item.raw_off_trip_miles == null
+                    ? Number(item.off_trip_miles ?? 0)
+                    : item.raw_off_trip_miles,
+                off_trip_miles:
+                  review?.reconciled_off_trip_miles == null
+                    ? item.raw_off_trip_miles == null
+                      ? Number(item.off_trip_miles ?? 0)
+                      : item.raw_off_trip_miles
+                    : Number(review.reconciled_off_trip_miles),
+                is_reviewed: Boolean(review?.review_status),
+              }
+            : item
+        );
+      }
+
+      const segments = applyReview(prev.segments || []);
+      const skippedTrips = applyReview(prev.skipped_trips || []);
+      const reviewedCount =
+        segments.filter((item) => item.is_reviewed).length +
+        skippedTrips.filter((item) => item.is_reviewed).length;
+      const vehicleTotals = new Map();
+      for (const item of segments) {
+        vehicleTotals.set(
+          String(item.vehicle_id),
+          (vehicleTotals.get(String(item.vehicle_id)) || 0) +
+            Number(item.off_trip_miles ?? 0)
+        );
+      }
+
+      segments.sort((a, b) => {
+        if (Boolean(a.is_reviewed) !== Boolean(b.is_reviewed)) {
+          return a.is_reviewed ? 1 : -1;
+        }
+        const milesDiff = Number(b?.off_trip_miles ?? 0) - Number(a?.off_trip_miles ?? 0);
+        if (milesDiff !== 0) return milesDiff;
+        const aStart = a.next_trip_start ? new Date(a.next_trip_start).getTime() : 0;
+        const bStart = b.next_trip_start ? new Date(b.next_trip_start).getTime() : 0;
+        return bStart - aStart;
+      });
+
+      skippedTrips.sort((a, b) => {
+        if (Boolean(a.is_reviewed) !== Boolean(b.is_reviewed)) {
+          return a.is_reviewed ? 1 : -1;
+        }
+        const aStart = a.trip_start ? new Date(a.trip_start).getTime() : 0;
+        const bStart = b.trip_start ? new Date(b.trip_start).getTime() : 0;
+        return bStart - aStart;
+      });
+
+      return {
+        ...prev,
+        summary: {
+          ...(prev.summary || {}),
+          reviewed_count: reviewedCount,
+          total_off_trip_miles: segments.reduce(
+            (sum, item) => sum + Number(item.off_trip_miles ?? 0),
+            0
+          ),
+        },
+        vehicles: (prev.vehicles || []).map((vehicle) => ({
+          ...vehicle,
+          off_trip_miles: vehicleTotals.get(String(vehicle.vehicle_id)) || 0,
+        })),
+        segments,
+        skipped_trips: skippedTrips,
+      };
+    });
+
+    return data;
+  }
+
   const avgVehiclesBookedPerDay = useMemo(() => {
     if (!summary) return 0;
     const booked = Number(summary.booked_vehicle_days ?? 0);
@@ -277,6 +389,8 @@ export default function MetricsPanel() {
       const bRevDay = Number(b?.income_per_booked_day ?? 0);
       const aTrips = Number(a?.trip_count_overlapping ?? 0);
       const bTrips = Number(b?.trip_count_overlapping ?? 0);
+      const aValue = Number(a?.fmv_estimate_mid ?? 0);
+      const bValue = Number(b?.fmv_estimate_mid ?? 0);
 
       const calendarDays = Number(summary?.calendar_days ?? 0);
       const aOccupancy =
@@ -316,6 +430,8 @@ export default function MetricsPanel() {
           return bRevDay - aRevDay;
         case "trips_desc":
           return bTrips - aTrips;
+        case "value_desc":
+          return bValue - aValue;
         case "toll_risk_desc":
           return bTollRisk - aTollRisk || bProfit - aProfit;
         case "recovery_desc":
@@ -415,6 +531,19 @@ const mileageStats = useMemo(() => {
             />
 
             <MetricCard
+              label="Fleet Value"
+              value={formatCurrency(summary.fleet_value)}
+              subtitle={formatValueTrend(summary.fleet_value_change)}
+              tone={
+                Number(summary.fleet_value_change ?? 0) > 0
+                  ? "positive"
+                  : Number(summary.fleet_value_change ?? 0) < 0
+                  ? "negative"
+                  : undefined
+              }
+            />
+
+            <MetricCard
               label="Rev / Calendar Day"
               value={formatCurrencyCompact(summary.revenue_per_calendar_day)}
             />
@@ -498,13 +627,14 @@ const mileageStats = useMemo(() => {
             />
           </section>
 
-          <OffTripMilesDrawer
-            open={offTripAuditOpen}
-            loading={offTripAuditLoading}
-            error={offTripAuditError}
-            audit={offTripAudit}
-            onClose={() => setOffTripAuditOpen(false)}
-          />
+      <OffTripMilesDrawer
+        open={offTripAuditOpen}
+        loading={offTripAuditLoading}
+        error={offTripAuditError}
+        audit={offTripAudit}
+        onSaveReview={handleSaveOffTripReview}
+        onClose={() => setOffTripAuditOpen(false)}
+      />
 
           <section className="toll-panel">
             <div className="toll-panel__header">
@@ -589,6 +719,7 @@ const mileageStats = useMemo(() => {
                   <option value="profit_desc">Profit ↓</option>
                   <option value="profit_asc">Profit ↑</option>
                   <option value="revenue_desc">Revenue ↓</option>
+                  <option value="value_desc">Value ↓</option>
                   <option value="occupancy_desc">Occupancy ↓</option>
                   <option value="rev_day_desc">Rev / Day ↓</option>
                   <option value="trips_desc">Trips ↓</option>
@@ -629,6 +760,7 @@ const mileageStats = useMemo(() => {
               </div>
               <div className="vehicle-compare-header__cell">Profit</div>
               <div className="vehicle-compare-header__cell">Revenue</div>
+              <div className="vehicle-compare-header__cell">Value</div>
               <div className="vehicle-compare-header__cell">Occupancy</div>
               <div className="vehicle-compare-header__cell">Rev / Day</div>
               <div className="vehicle-compare-header__cell">Trips</div>
@@ -654,6 +786,7 @@ const mileageStats = useMemo(() => {
                     formatCurrency={formatCurrency}
                     formatCurrencyCompact={formatCurrencyCompact}
                     formatNumber={formatNumber}
+                    formatValueTrend={formatValueTrend}
                     calendarDays={summary.calendar_days}
                   />
                 );

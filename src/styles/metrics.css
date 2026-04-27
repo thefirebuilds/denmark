@@ -268,6 +268,38 @@
   gap: 10px 12px;
 }
 
+.metrics-audit-review-row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) 120px 88px;
+  gap: 10px;
+  margin: 12px 0 14px;
+}
+
+.metrics-audit-review-select,
+.metrics-audit-review-input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.6);
+  color: #eef4ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.metrics-audit-review-save {
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  background: rgba(37, 99, 235, 0.18);
+  color: #dbeafe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.metrics-audit-review-save:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .metrics-audit-field {
   min-width: 0;
 }
@@ -584,6 +616,10 @@
   .metrics-audit-segment-grid {
     grid-template-columns: 1fr;
   }
+
+  .metrics-audit-review-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* --------------------------------------------------------------
@@ -671,6 +707,10 @@
   color: #ffd0d0;
 }
 
+.vehicle-compare__value--muted {
+  color: #8fa6ca;
+}
+
 .vehicle-compare__label {
   margin-top: 3px;
   color: #8fa6ca;
@@ -679,6 +719,18 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   line-height: 1;
+}
+
+.vehicle-compare__label--positive {
+  color: #baf7db;
+}
+
+.vehicle-compare__label--warning {
+  color: #fde7a7;
+}
+
+.vehicle-compare__label--negative {
+  color: #ffd0d0;
 }
 
 .vehicle-compare__chevron {
@@ -733,12 +785,12 @@
   .vehicle-compare__summary {
     grid-template-columns:
       minmax(180px, 1.5fr)
-      repeat(4, minmax(88px, 1fr))
+      repeat(5, minmax(88px, 1fr))
       28px;
   }
 
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(6),
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(7) {
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(7),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(8) {
     display: none;
   }
 }
@@ -767,7 +819,7 @@
   display: grid;
   grid-template-columns:
     minmax(180px, 1.6fr)
-    repeat(6, minmax(82px, 1fr))
+    repeat(7, minmax(82px, 1fr))
     28px;
   gap: 8px;
   align-items: center;
@@ -889,7 +941,7 @@
   display: grid;
   grid-template-columns:
     minmax(180px, 1.6fr)
-    repeat(6, minmax(82px, 1fr))
+    repeat(7, minmax(82px, 1fr))
     28px;
   gap: 8px;
   align-items: center;
@@ -960,14 +1012,14 @@
   .vehicle-compare__summary {
     grid-template-columns:
       minmax(180px, 1.5fr)
-      repeat(4, minmax(88px, 1fr))
+      repeat(5, minmax(88px, 1fr))
       28px;
   }
 
-  .vehicle-compare-header .vehicle-compare-header__cell:nth-child(6),
   .vehicle-compare-header .vehicle-compare-header__cell:nth-child(7),
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(6),
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(7) {
+  .vehicle-compare-header .vehicle-compare-header__cell:nth-child(8),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(7),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(8) {
     display: none;
   }
 }

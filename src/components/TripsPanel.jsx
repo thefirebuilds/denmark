@@ -14,6 +14,7 @@ import {
   deriveCardStatus,
   deriveEtaLabel,
   deriveEtaText,
+  isClosedTrip,
   deriveMeta4,
   deriveOperationalUrgency,
   deriveStatusLabel,
@@ -31,6 +32,8 @@ import {
 } from "../utils/tripUtils";
 
 // Trip helper functions are now provided by ../utils/tripUtils
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 const DEFAULT_DISPATCH_SETTINGS = {
   openTripsSort: "priority",
@@ -284,8 +287,8 @@ export default function TripsPanel({
       setError("");
 
       const [tripsRes, vehiclesRes] = await Promise.all([
-        fetch("http://localhost:5000/api/trips?scope=all"),
-        fetch("http://localhost:5000/api/vehicles/live-status"),
+        fetch(`${API_BASE}/api/trips?scope=all`),
+        fetch(`${API_BASE}/api/vehicles/live-status`),
       ]);
 
       if (!tripsRes.ok) {
@@ -432,7 +435,10 @@ if (urgency.dependencyNote) {
 
   const activeTrips = sortTripsWithSettings(
     mappedTrips.filter(
-      (trip) => !trip.canceled && isBucketVisible(trip, normalizedDispatchSettings)
+      (trip) =>
+        !trip.canceled &&
+        !isClosedTrip(trip) &&
+        isBucketVisible(trip, normalizedDispatchSettings)
     ),
     normalizedDispatchSettings
   );

@@ -25,6 +25,9 @@ const {
 const {
   getCapitalMetricsByVehicle,
 } = require("./capitalMetricsService");
+const {
+  getLatestVehicleFmvEstimates,
+} = require("../vehicles/fmvEstimateService");
 
 async function fetchActiveVehicles(client) {
   const { rows } = await client.query(
@@ -74,7 +77,10 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
       FROM trips
       WHERE trip_start <= $2
         AND trip_end >= COALESCE($1, trip_start)
-        AND canceled_at IS NULL
+        AND (
+          canceled_at IS NULL
+          OR COALESCE(amount, 0) > 0
+        )
     `,
     [startDate, endDate]
   );
@@ -182,6 +188,24 @@ async function fetchVehicleOdometerAnchors(client, startDate, endDate) {
   );
 
   return rows;
+}
+
+async function fetchOffTripAuditReviews(client) {
+  const { rows } = await client.query(
+    `
+      SELECT value
+      FROM app_settings
+      WHERE key = 'metrics.off_trip_audit_reviews'
+      LIMIT 1
+    `
+  );
+
+  const value = rows[0]?.value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value;
 }
 
 function isTripActiveAtRangeEnd(trip, endDate) {
@@ -362,6 +386,7 @@ function calculateTripOffTripAudit(trips) {
     });
 
   const segments = [];
+  const skippedTrips = [];
   let lastKnownOdometer = null;
   let lastClosedTrip = null;
 
@@ -412,10 +437,38 @@ function calculateTripOffTripAudit(trips) {
     }
 
     if (endOdometer < startOdometer) {
+      skippedTrips.push({
+        trip_id: trip?.id ?? null,
+        reservation_id: trip?.reservation_id ?? null,
+        guest_name: trip?.guest_name ?? null,
+        trip_start: trip?.trip_start ?? null,
+        trip_end: trip?.trip_end ?? null,
+        starting_odometer: startOdometer,
+        ending_odometer: endOdometer,
+        reason: "ending odometer before starting odometer",
+        anchor_previous_reservation_id: lastClosedTrip?.reservation_id ?? null,
+        anchor_previous_guest_name: lastClosedTrip?.guest_name ?? null,
+        anchor_previous_trip_end: lastClosedTrip?.trip_end ?? null,
+        anchor_previous_ending_odometer: lastKnownOdometer,
+      });
       continue;
     }
 
     if (lastKnownOdometer != null && endOdometer < lastKnownOdometer) {
+      skippedTrips.push({
+        trip_id: trip?.id ?? null,
+        reservation_id: trip?.reservation_id ?? null,
+        guest_name: trip?.guest_name ?? null,
+        trip_start: trip?.trip_start ?? null,
+        trip_end: trip?.trip_end ?? null,
+        starting_odometer: startOdometer,
+        ending_odometer: endOdometer,
+        reason: "trip odometer regressed below prior known vehicle odometer",
+        anchor_previous_reservation_id: lastClosedTrip?.reservation_id ?? null,
+        anchor_previous_guest_name: lastClosedTrip?.guest_name ?? null,
+        anchor_previous_trip_end: lastClosedTrip?.trip_end ?? null,
+        anchor_previous_ending_odometer: lastKnownOdometer,
+      });
       continue;
     }
 
@@ -423,7 +476,86 @@ function calculateTripOffTripAudit(trips) {
     lastClosedTrip = trip;
   }
 
-  return segments;
+  return {
+    segments,
+    skippedTrips,
+  };
+}
+
+function buildSegmentAuditKey(segment) {
+  return [
+    "segment",
+    segment.vehicle_id,
+    segment.previous_trip_id ?? "start",
+    segment.next_trip_id ?? "next",
+  ].join(":");
+}
+
+function buildSkippedTripAuditKey(skippedTrip) {
+  return [
+    "skipped",
+    skippedTrip.vehicle_id,
+    skippedTrip.trip_id ?? skippedTrip.reservation_id ?? "trip",
+  ].join(":");
+}
+
+function normalizeAuditReview(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      review_status: null,
+      review_reason: null,
+      reconciled_off_trip_miles: null,
+      reviewed_at: null,
+    };
+  }
+
+  const reviewStatus =
+    typeof value.review_status === "string" && value.review_status.trim() !== ""
+      ? value.review_status.trim().toLowerCase()
+      : null;
+
+  const reviewReason =
+    typeof value.review_reason === "string" && value.review_reason.trim() !== ""
+      ? value.review_reason.trim()
+      : null;
+
+  const reviewedAt =
+    typeof value.reviewed_at === "string" && value.reviewed_at.trim() !== ""
+      ? value.reviewed_at
+      : null;
+
+  const reconciledOffTripMiles =
+    value.reconciled_off_trip_miles === "" ||
+    value.reconciled_off_trip_miles == null
+      ? null
+      : toNumber(value.reconciled_off_trip_miles, null);
+
+  return {
+    review_status: reviewStatus,
+    review_reason: reviewReason,
+    reconciled_off_trip_miles: reconciledOffTripMiles,
+    reviewed_at: reviewedAt,
+  };
+}
+
+function applyAuditReview(row, reviewMap, keyBuilder) {
+  const auditKey = keyBuilder(row);
+  const review = normalizeAuditReview(reviewMap?.[auditKey]);
+  const rawOffTripMiles =
+    row?.off_trip_miles == null ? null : Number(row.off_trip_miles);
+  const effectiveOffTripMiles =
+    review.reconciled_off_trip_miles != null
+      ? review.reconciled_off_trip_miles
+      : rawOffTripMiles;
+
+  return {
+    ...row,
+    audit_key: auditKey,
+    raw_off_trip_miles: rawOffTripMiles,
+    off_trip_miles: effectiveOffTripMiles,
+    ...review,
+    is_reviewed: Boolean(review.review_status),
+  };
 }
 
 function resolveAnchorStart(anchor) {
@@ -579,12 +711,18 @@ async function getVehicleMetrics(rangeKey = "30d") {
       endDate
     );
     const capitalMetricsRows = await getCapitalMetricsByVehicle(client);
+    const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
 
     const odometerMap = toMapBy(odometerAnchors, (row) =>
       String(row.vehicle_id)
     );
     const capitalMetricsMap = toMapBy(capitalMetricsRows, (row) =>
       String(row.vehicle_id)
+    );
+    const latestFmvMap = new Map(
+      latestFmvEstimates
+        .map((row) => [String(row?.vehicle?.vin || row?.vehicle_vin || ""), row])
+        .filter(([key]) => key)
     );
 
     const tripIdToVehicleId = new Map();
@@ -671,6 +809,14 @@ async function getVehicleMetrics(rangeKey = "30d") {
         tolls_attributed_outstanding: 0,
         tolls_unattributed: 0,
         tolls_paid: 0,
+        fmv_estimate_low: null,
+        fmv_estimate_mid: null,
+        fmv_estimate_high: null,
+        fmv_estimated_at: null,
+        fmv_confidence: null,
+        fmv_previous_mid: null,
+        fmv_previous_estimated_at: null,
+        fmv_change: null,
       });
     }
 
@@ -690,6 +836,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
     for (const vehicle of vehicles) {
       const vehicleId = String(vehicle.id);
       const metrics = vehicleMetrics.get(vehicleId);
+      const latestFmv = latestFmvMap.get(String(vehicle.vin || ""));
       const tripsForVehicle = vehicleTrips.get(vehicleId) || [];
       const closedTripMileage = calculateTripOffTripMiles(tripsForVehicle);
       
@@ -966,6 +1113,31 @@ async function getVehicleMetrics(rangeKey = "30d") {
       metrics.projected_payoff_status =
         payoffProjection.projected_payoff_status;
 
+      metrics.fmv_estimate_low =
+        latestFmv?.estimate_low == null
+          ? null
+          : roundMoney(latestFmv.estimate_low);
+      metrics.fmv_estimate_mid =
+        latestFmv?.estimate_mid == null
+          ? null
+          : roundMoney(latestFmv.estimate_mid);
+      metrics.fmv_estimate_high =
+        latestFmv?.estimate_high == null
+          ? null
+          : roundMoney(latestFmv.estimate_high);
+      metrics.fmv_estimated_at = latestFmv?.estimated_at || null;
+      metrics.fmv_confidence = latestFmv?.confidence || null;
+      metrics.fmv_previous_mid =
+        latestFmv?.previous_estimate_mid == null
+          ? null
+          : roundMoney(latestFmv.previous_estimate_mid);
+      metrics.fmv_previous_estimated_at =
+        latestFmv?.previous_estimated_at || null;
+      metrics.fmv_change =
+        latestFmv?.estimate_change == null
+          ? null
+          : roundMoney(latestFmv.estimate_change);
+
       responseVehicles.push(metrics);
     }
 
@@ -992,6 +1164,7 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
       fetchActiveVehicles(client),
       fetchTripsForVehicles(client, startDate, endDate),
     ]);
+    const reviewMap = await fetchOffTripAuditReviews(client);
 
     const maps = buildTripVehicleKeyMaps(vehicles);
     const vehicleTrips = new Map();
@@ -1008,12 +1181,15 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
     }
 
     const rows = [];
+    const rowsSkipped = [];
     const vehiclesWithSegments = [];
 
     for (const vehicle of vehicles) {
       const vehicleId = String(vehicle.id);
       const tripsForVehicle = vehicleTrips.get(vehicleId) || [];
-      const segments = calculateTripOffTripAudit(tripsForVehicle);
+      const audit = calculateTripOffTripAudit(tripsForVehicle);
+      const segments = audit.segments;
+      const skippedTrips = audit.skippedTrips;
       const totalMiles = segments.reduce(
         (sum, segment) => sum + Number(segment?.off_trip_miles ?? 0),
         0
@@ -1031,6 +1207,7 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
         nickname: vehicle.nickname,
         label: vehicleLabel || vehicle.nickname || vehicle.vin,
         segment_count: segments.length,
+        skipped_trip_count: skippedTrips.length,
         off_trip_miles: roundNumber(totalMiles, 1),
       });
 
@@ -1043,15 +1220,48 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
           ...segment,
         });
       }
+
+      for (const skippedTrip of skippedTrips) {
+        rowsSkipped.push({
+          vehicle_id: vehicle.id,
+          vin: vehicle.vin,
+          nickname: vehicle.nickname,
+          vehicle_label: vehicleLabel || vehicle.nickname || vehicle.vin,
+          ...skippedTrip,
+        });
+      }
     }
 
-    rows.sort((a, b) => {
+    const reviewedRows = rows.map((row) =>
+      applyAuditReview(row, reviewMap, buildSegmentAuditKey)
+    );
+    const reviewedSkippedRows = rowsSkipped.map((row) =>
+      applyAuditReview(row, reviewMap, buildSkippedTripAuditKey)
+    );
+
+    reviewedRows.sort((a, b) => {
+      if (Boolean(a.is_reviewed) !== Boolean(b.is_reviewed)) {
+        return a.is_reviewed ? 1 : -1;
+      }
+
       const milesDiff =
         Number(b?.off_trip_miles ?? 0) - Number(a?.off_trip_miles ?? 0);
       if (milesDiff !== 0) return milesDiff;
 
       const aStart = a.next_trip_start ? new Date(a.next_trip_start).getTime() : 0;
       const bStart = b.next_trip_start ? new Date(b.next_trip_start).getTime() : 0;
+      if (aStart !== bStart) return bStart - aStart;
+
+      return String(a.nickname || "").localeCompare(String(b.nickname || ""));
+    });
+
+    reviewedSkippedRows.sort((a, b) => {
+      if (Boolean(a.is_reviewed) !== Boolean(b.is_reviewed)) {
+        return a.is_reviewed ? 1 : -1;
+      }
+
+      const aStart = a.trip_start ? new Date(a.trip_start).getTime() : 0;
+      const bStart = b.trip_start ? new Date(b.trip_start).getTime() : 0;
       if (aStart !== bStart) return bStart - aStart;
 
       return String(a.nickname || "").localeCompare(String(b.nickname || ""));
@@ -1064,19 +1274,49 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
       return String(a.nickname || "").localeCompare(String(b.nickname || ""));
     });
 
+    const reviewedTotalsByVehicle = new Map();
+    for (const row of reviewedRows) {
+      const vehicleId = String(row.vehicle_id);
+      reviewedTotalsByVehicle.set(
+        vehicleId,
+        (reviewedTotalsByVehicle.get(vehicleId) || 0) +
+          Number(row.off_trip_miles ?? 0)
+      );
+    }
+
+    const reviewedVehicles = vehiclesWithSegments
+      .map((vehicle) => ({
+        ...vehicle,
+        off_trip_miles: roundNumber(
+          reviewedTotalsByVehicle.get(String(vehicle.vehicle_id)) || 0,
+          1
+        ),
+      }))
+      .sort((a, b) => {
+        if (b.off_trip_miles !== a.off_trip_miles) {
+          return b.off_trip_miles - a.off_trip_miles;
+        }
+        return String(a.nickname || "").localeCompare(String(b.nickname || ""));
+      });
+
     return {
       range: key,
       generated_at: new Date().toISOString(),
       summary: {
         total_off_trip_miles: roundNumber(
-          rows.reduce((sum, row) => sum + Number(row?.off_trip_miles ?? 0), 0),
+          reviewedRows.reduce((sum, row) => sum + Number(row?.off_trip_miles ?? 0), 0),
           1
         ),
-        segment_count: rows.length,
+        segment_count: reviewedRows.length,
+        skipped_trip_count: reviewedSkippedRows.length,
+        reviewed_count:
+          reviewedRows.filter((row) => row.is_reviewed).length +
+          reviewedSkippedRows.filter((row) => row.is_reviewed).length,
         vehicle_count: vehiclesWithSegments.length,
       },
-      vehicles: vehiclesWithSegments,
-      segments: rows,
+      vehicles: reviewedVehicles,
+      segments: reviewedRows,
+      skipped_trips: reviewedSkippedRows,
     };
   } finally {
     client.release();

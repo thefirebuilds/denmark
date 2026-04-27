@@ -47,7 +47,10 @@ async function fetchTripsInRange(client, startDate, endDate) {
       FROM trips
       WHERE trip_start <= $2
         AND trip_end >= COALESCE($1, trip_start)
-        AND canceled_at IS NULL
+        AND (
+          canceled_at IS NULL
+          OR COALESCE(amount, 0) > 0
+        )
     `,
     [startDate, endDate]
   );

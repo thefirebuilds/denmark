@@ -19,6 +19,9 @@ const {
   safeDivide,
   tripOverlapsRange,
 } = require("./metricHelpers");
+const {
+  getLatestVehicleFmvEstimates,
+} = require("../vehicles/fmvEstimateService");
 
 async function fetchTripsInRange(client, startDate, endDate) {
   const { rows } = await client.query(
@@ -41,7 +44,10 @@ async function fetchTripsInRange(client, startDate, endDate) {
       FROM trips
       WHERE trip_start <= $2
         AND trip_end >= COALESCE($1, trip_start)
-        AND canceled_at IS NULL
+        AND (
+          canceled_at IS NULL
+          OR COALESCE(amount, 0) > 0
+        )
     `,
     [startDate, endDate]
   );
@@ -105,9 +111,10 @@ async function getSummaryMetrics(rangeKey = "30d") {
   const client = await pool.connect();
 
   try {
-    const [trips, expenses] = await Promise.all([
+    const [trips, expenses, latestFmvEstimates] = await Promise.all([
       fetchTripsInRange(client, startDate, endDate),
       fetchExpensesInRange(client, startDate, endDate),
+      getLatestVehicleFmvEstimates(client),
     ]);
 
     const tripIncome = trips.reduce(
@@ -191,6 +198,15 @@ const tollsUnattributed = Math.max(
     const otherIncome = 0;
     const revenue = tripIncome + otherIncome;
     const netProfit = revenue - expensesTotal;
+    const fleetValue = latestFmvEstimates.reduce(
+      (sum, estimate) => sum + Number(estimate?.estimate_mid ?? 0),
+      0
+    );
+    const previousFleetValue = latestFmvEstimates.reduce(
+      (sum, estimate) => sum + Number(estimate?.previous_estimate_mid ?? estimate?.estimate_mid ?? 0),
+      0
+    );
+    const fleetValueChange = fleetValue - previousFleetValue;
 
     return {
       range: key,
@@ -199,6 +215,9 @@ const tollsUnattributed = Math.max(
       other_income: roundMoney(otherIncome),
       expenses: roundMoney(expensesTotal),
       net_profit: roundMoney(netProfit),
+      fleet_value: roundMoney(fleetValue),
+      fleet_value_previous: roundMoney(previousFleetValue),
+      fleet_value_change: roundMoney(fleetValueChange),
 
       trip_count_overlapping: tripCountOverlapping,
       trip_count_prorated: roundNumber(tripCountProrated, 2),

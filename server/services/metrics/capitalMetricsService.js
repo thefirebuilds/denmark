@@ -37,7 +37,10 @@ async function getCapitalMetricsByVehicle(client = null) {
       FROM vehicles v
       LEFT JOIN trips t
         ON CAST(t.turo_vehicle_id AS text) = CAST(v.turo_vehicle_id AS text)
-       AND t.canceled_at IS NULL
+       AND (
+         t.canceled_at IS NULL
+         OR COALESCE(t.amount, 0) > 0
+       )
       GROUP BY v.id
     )
     SELECT
