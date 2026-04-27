@@ -7,6 +7,7 @@ import MetricCard from "./metrics/MetricCard";
 import OffTripMilesDrawer from "./metrics/OffTripMilesDrawer";
 import TollStat from "./metrics/TollStat";
 import VehicleComparisonRow from "./metrics/VehicleComparisonRow";
+import VehicleFinancialDrawer from "./metrics/VehicleFinancialDrawer";
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
@@ -63,6 +64,17 @@ function formatValueTrend(value) {
   return `${amount > 0 ? "▲" : "▼"} ${formatCurrencyCompact(Math.abs(amount))}`;
 }
 
+function formatUpdatedLabel(value) {
+  if (!value) return "Updated: --";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Updated: --";
+  return `Updated: ${date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+}
+
 function getVehicleTollRiskScore(vehicle) {
   const paid = Number(vehicle?.tolls_paid ?? 0);
   const recovered = Number(vehicle?.tolls_recovered ?? 0);
@@ -109,6 +121,8 @@ export default function MetricsPanel() {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [fmvRefreshing, setFmvRefreshing] = useState(false);
+  const [fmvRefreshStatus, setFmvRefreshStatus] = useState("");
 
   const [expandedVehicleId, setExpandedVehicleId] = useState(null);
   const [sortBy, setSortBy] = useState("profit_desc");
@@ -117,55 +131,71 @@ export default function MetricsPanel() {
   const [offTripAudit, setOffTripAudit] = useState(null);
   const [offTripAuditLoading, setOffTripAuditLoading] = useState(false);
   const [offTripAuditError, setOffTripAuditError] = useState(null);
+  const [financialDetailOpen, setFinancialDetailOpen] = useState(false);
+  const [financialDetailVehicle, setFinancialDetailVehicle] = useState(null);
+  const [financialDetailFocus, setFinancialDetailFocus] = useState("expenses");
+  const [financialDetail, setFinancialDetail] = useState(null);
+  const [financialDetailLoading, setFinancialDetailLoading] = useState(false);
+  const [financialDetailError, setFinancialDetailError] = useState(null);
+
+  async function loadMetrics(
+    range,
+    { resetExpanded = true, showPageLoading = true } = {}
+  ) {
+    if (showPageLoading) {
+      setLoading(true);
+    }
+    setError(null);
+
+    const params = new URLSearchParams({ range });
+
+    const [summaryRes, vehiclesRes] = await Promise.all([
+      fetch(`${API_BASE}/api/metrics/summary?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+      }),
+      fetch(`${API_BASE}/api/metrics/vehicles?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+      }),
+    ]);
+
+    const summaryText = await summaryRes.text();
+    const vehiclesText = await vehiclesRes.text();
+
+    if (!summaryRes.ok) {
+      throw new Error(
+        `Summary request failed: ${summaryRes.status} ${summaryText}`
+      );
+    }
+
+    if (!vehiclesRes.ok) {
+      throw new Error(
+        `Vehicles request failed: ${vehiclesRes.status} ${vehiclesText}`
+      );
+    }
+
+    const summaryData = JSON.parse(summaryText);
+    const vehiclesData = JSON.parse(vehiclesText);
+
+    setSummary(summaryData);
+    setVehicles(
+      Array.isArray(vehiclesData)
+        ? vehiclesData
+        : Array.isArray(vehiclesData?.vehicles)
+        ? vehiclesData.vehicles
+        : []
+    );
+
+    if (resetExpanded) {
+      setExpandedVehicleId(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        setLoading(true);
-        setError(null);
-
-        const params = new URLSearchParams({ range: selectedRange });
-
-        const [summaryRes, vehiclesRes] = await Promise.all([
-          fetch(`${API_BASE}/api/metrics/summary?${params.toString()}`, {
-            headers: { Accept: "application/json" },
-          }),
-          fetch(`${API_BASE}/api/metrics/vehicles?${params.toString()}`, {
-            headers: { Accept: "application/json" },
-          }),
-        ]);
-
-        const summaryText = await summaryRes.text();
-        const vehiclesText = await vehiclesRes.text();
-
-        if (!summaryRes.ok) {
-          throw new Error(
-            `Summary request failed: ${summaryRes.status} ${summaryText}`
-          );
-        }
-
-        if (!vehiclesRes.ok) {
-          throw new Error(
-            `Vehicles request failed: ${vehiclesRes.status} ${vehiclesText}`
-          );
-        }
-
-        const summaryData = JSON.parse(summaryText);
-        const vehiclesData = JSON.parse(vehiclesText);
-
-        if (!cancelled) {
-          setSummary(summaryData);
-          setVehicles(
-            Array.isArray(vehiclesData)
-              ? vehiclesData
-              : Array.isArray(vehiclesData?.vehicles)
-              ? vehiclesData.vehicles
-              : []
-          );
-          setExpandedVehicleId(null);
-        }
+        await loadMetrics(selectedRange, { showPageLoading: true });
       } catch (err) {
         if (!cancelled) {
           setError(err.message || "Unknown error");
@@ -183,6 +213,47 @@ export default function MetricsPanel() {
       cancelled = true;
     };
   }, [selectedRange]);
+
+  async function handleRefreshFmvNow() {
+    try {
+      setFmvRefreshing(true);
+      setFmvRefreshStatus("");
+
+      const response = await fetch(`${API_BASE}/api/vehicles/fmv-estimates/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to refresh fleet values");
+      }
+
+      await loadMetrics(selectedRange, {
+        resetExpanded: false,
+        showPageLoading: false,
+      });
+
+      const results = Array.isArray(data?.results) ? data.results : [];
+      const succeeded = results.filter((item) => item?.ok).length;
+      const failed = results.filter((item) => !item?.ok).length;
+      setFmvRefreshStatus(
+        results.length
+          ? `Refreshed ${succeeded} vehicle${succeeded === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}.`
+          : "Fleet values refreshed."
+      );
+    } catch (err) {
+      setFmvRefreshStatus(err.message || "Failed to refresh fleet values.");
+    } finally {
+      setFmvRefreshing(false);
+    }
+  }
 
   useEffect(() => {
     if (!offTripAuditOpen) return undefined;
@@ -228,6 +299,68 @@ export default function MetricsPanel() {
       cancelled = true;
     };
   }, [offTripAuditOpen, selectedRange]);
+
+  useEffect(() => {
+    if (!financialDetailOpen || !financialDetailVehicle?.vehicle_id) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadFinancialDetail() {
+      try {
+        setFinancialDetailLoading(true);
+        setFinancialDetailError(null);
+        const params = new URLSearchParams({ range: selectedRange });
+        const response = await fetch(
+          `${API_BASE}/api/metrics/vehicles/${financialDetailVehicle.vehicle_id}/financial-detail?${params.toString()}`,
+          {
+            headers: { Accept: "application/json" },
+          }
+        );
+
+        const text = await response.text();
+        if (!response.ok) {
+          throw new Error(`Financial detail request failed: ${response.status} ${text}`);
+        }
+
+        const data = JSON.parse(text);
+        if (!cancelled) {
+          setFinancialDetail(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setFinancialDetailError(err.message || "Failed to load financial detail");
+        }
+      } finally {
+        if (!cancelled) {
+          setFinancialDetailLoading(false);
+        }
+      }
+    }
+
+    loadFinancialDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [financialDetailOpen, financialDetailVehicle, selectedRange]);
+
+  function openFinancialDetail(vehicle, focus = "expenses") {
+    setFinancialDetailVehicle(vehicle);
+    setFinancialDetailFocus(focus);
+    setFinancialDetail(null);
+    setFinancialDetailError(null);
+    setFinancialDetailOpen(true);
+  }
+
+  function closeFinancialDetail() {
+    setFinancialDetailOpen(false);
+    setFinancialDetailVehicle(null);
+    setFinancialDetail(null);
+    setFinancialDetailError(null);
+    setFinancialDetailLoading(false);
+  }
 
   async function handleSaveOffTripReview(payload) {
     const response = await fetch(`${API_BASE}/api/metrics/off-trip-audit/review`, {
@@ -383,8 +516,8 @@ export default function MetricsPanel() {
     next.sort((a, b) => {
       const aProfit = Number(a?.net_profit ?? 0);
       const bProfit = Number(b?.net_profit ?? 0);
-      const aRevenue = Number(a?.trip_income ?? 0);
-      const bRevenue = Number(b?.trip_income ?? 0);
+      const aRevenue = Number(a?.revenue_total ?? a?.trip_income ?? 0);
+      const bRevenue = Number(b?.revenue_total ?? b?.trip_income ?? 0);
       const aRevDay = Number(a?.income_per_booked_day ?? 0);
       const bRevDay = Number(b?.income_per_booked_day ?? 0);
       const aTrips = Number(a?.trip_count_overlapping ?? 0);
@@ -511,6 +644,19 @@ const mileageStats = useMemo(() => {
                 ))}
               </div>
             </div>
+            <div className="metrics-topbar__group metrics-topbar__group--actions">
+              {fmvRefreshStatus ? (
+                <div className="metrics-topbar__status">{fmvRefreshStatus}</div>
+              ) : null}
+              <button
+                type="button"
+                className="metrics-topbar__button"
+                onClick={handleRefreshFmvNow}
+                disabled={fmvRefreshing}
+              >
+                {fmvRefreshing ? "Refreshing values..." : "Refresh values now"}
+              </button>
+            </div>
           </div>
 
           <div className="metrics-summary-row">
@@ -533,7 +679,12 @@ const mileageStats = useMemo(() => {
             <MetricCard
               label="Fleet Value"
               value={formatCurrency(summary.fleet_value)}
-              subtitle={formatValueTrend(summary.fleet_value_change)}
+              subtitle={
+                <>
+                  <div>{formatValueTrend(summary.fleet_value_change)}</div>
+                  <div>{formatUpdatedLabel(summary.fleet_value_updated_at)}</div>
+                </>
+              }
               tone={
                 Number(summary.fleet_value_change ?? 0) > 0
                   ? "positive"
@@ -783,6 +934,7 @@ const mileageStats = useMemo(() => {
                         prev === vehicleKey ? null : vehicleKey
                       )
                     }
+                    onOpenFinancialDetail={openFinancialDetail}
                     formatCurrency={formatCurrency}
                     formatCurrencyCompact={formatCurrencyCompact}
                     formatNumber={formatNumber}
@@ -793,6 +945,15 @@ const mileageStats = useMemo(() => {
               })}
             </div>
           </section>
+
+          <VehicleFinancialDrawer
+            open={financialDetailOpen}
+            loading={financialDetailLoading}
+            error={financialDetailError}
+            detail={financialDetail}
+            focus={financialDetailFocus}
+            onClose={closeFinancialDetail}
+          />
         </>
       )}
     </div>

@@ -160,6 +160,123 @@
   width: min(640px, 100%);
 }
 
+.metrics-financial-drawer {
+  width: min(680px, 100%);
+}
+
+.metrics-financial-drawer-body {
+  gap: 18px;
+}
+
+.metrics-financial-empty {
+  color: #cbd5e1;
+  font-size: 0.92rem;
+}
+
+.metrics-financial-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metrics-financial-summary-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(42, 57, 93, 0.85);
+  border-radius: 8px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.015)
+  );
+}
+
+.metrics-financial-label {
+  color: #8fa6ca;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metrics-financial-value {
+  margin-top: 6px;
+  color: #eef4ff;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.metrics-financial-section {
+  display: grid;
+  gap: 10px;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(42, 57, 93, 0.85);
+}
+
+.metrics-financial-section.is-focused {
+  padding-top: 12px;
+}
+
+.metrics-financial-section-title {
+  color: #eef4ff;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.metrics-financial-breakdown,
+.metrics-financial-list {
+  display: grid;
+  gap: 8px;
+}
+
+.metrics-financial-breakdown-row,
+.metrics-financial-line-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #cbd5e1;
+  font-size: 0.76rem;
+}
+
+.metrics-financial-breakdown-row strong,
+.metrics-financial-line-amount {
+  color: #eef4ff;
+  font-weight: 800;
+}
+
+.metrics-financial-line-item {
+  border: 1px solid rgba(42, 57, 93, 0.85);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.015)
+  );
+  display: grid;
+  gap: 6px;
+}
+
+.metrics-financial-line-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metrics-financial-line-title {
+  color: #eef4ff;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.metrics-financial-line-meta {
+  margin-top: 3px;
+  color: #7489ae;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
 .metrics-audit-drawer-body {
   gap: 18px;
 }
@@ -268,6 +385,10 @@
   gap: 10px 12px;
 }
 
+.metrics-audit-segment-grid--paired {
+  align-items: start;
+}
+
 .metrics-audit-review-row {
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr) 120px 88px;
@@ -302,6 +423,34 @@
 
 .metrics-audit-field {
   min-width: 0;
+}
+
+.metrics-audit-trip-card {
+  padding: 9px 10px;
+  border: 1px solid rgba(42, 57, 93, 0.65);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 5px;
+}
+
+.metrics-audit-trip-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #8fa6ca;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.metrics-audit-gap-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
 }
 
 .metrics-audit-value {
@@ -781,6 +930,22 @@
   text-overflow: ellipsis;
 }
 
+.vehicle-compare__detail-action {
+  margin-top: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8fa6ca;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vehicle-compare__detail-action:hover {
+  color: #cfe0ff;
+}
+
 @media (max-width: 1100px) {
   .vehicle-compare__summary {
     grid-template-columns:
@@ -1071,12 +1236,39 @@
   flex-wrap: wrap;
 }
 
+.metrics-topbar__group--actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
 .metrics-topbar__label {
   color: #8fa6ca;
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+.metrics-topbar__status {
+  color: #8fa6ca;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.metrics-topbar__button {
+  padding: 8px 12px;
+  border: 1px solid #35507f;
+  border-radius: 8px;
+  background: #16233f;
+  color: #eef4ff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.metrics-topbar__button:disabled {
+  opacity: 0.7;
+  cursor: wait;
 }
 
 .metrics-range-chips {

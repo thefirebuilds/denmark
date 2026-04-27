@@ -148,6 +148,7 @@ export default function VehicleComparisonRow({
   vehicle,
   isExpanded,
   onToggle,
+  onOpenFinancialDetail,
   formatCurrency,
   formatCurrencyCompact,
   formatNumber,
@@ -182,6 +183,7 @@ export default function VehicleComparisonRow({
   );
   const fmvEstimateMid = Number(vehicle?.fmv_estimate_mid ?? 0);
   const fmvChange = Number(vehicle?.fmv_change ?? 0);
+  const totalRevenue = Number(vehicle?.revenue_total ?? vehicle?.trip_income ?? 0);
   const hasFmvEstimate = Number.isFinite(fmvEstimateMid) && fmvEstimateMid > 0;
   const fmvChangeTone =
     fmvChange > 0 ? "positive" : fmvChange < 0 ? "negative" : "warning";
@@ -216,7 +218,7 @@ export default function VehicleComparisonRow({
 
         <div className="vehicle-compare__cell">
           <div className="vehicle-compare__value">
-            {formatCurrency(vehicle?.trip_income)}
+            {formatCurrency(totalRevenue)}
           </div>
         </div>
 
@@ -303,10 +305,31 @@ export default function VehicleComparisonRow({
               </div>
 
               <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Revenue</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatCurrency(totalRevenue)}
+                </div>
+                <button
+                  type="button"
+                  className="vehicle-compare__detail-action"
+                  onClick={() => onOpenFinancialDetail?.(vehicle, "revenue")}
+                >
+                  View detail
+                </button>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
                 <div className="vehicle-compare__detail-label">Expenses</div>
                 <div className="vehicle-compare__detail-value">
                   {formatCurrency(vehicle?.total_expenses)}
                 </div>
+                <button
+                  type="button"
+                  className="vehicle-compare__detail-action"
+                  onClick={() => onOpenFinancialDetail?.(vehicle, "expenses")}
+                >
+                  View detail
+                </button>
               </div>
 
               <div className="vehicle-compare__detail-stat">

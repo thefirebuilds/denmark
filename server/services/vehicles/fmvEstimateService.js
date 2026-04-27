@@ -5,6 +5,12 @@ const { getVehicleMaintenanceSummary } = require("../maintenance/getVehicleMaint
 const DEFAULT_OPENAI_MODEL = process.env.OPENAI_FMV_MODEL || "gpt-4.1-mini";
 const DEFAULT_MARKET_LABEL =
   process.env.OPENAI_FMV_MARKET_LABEL || "Austin, Texas, USA";
+const MARKETPLACE_MIN_USEFUL_PRICE = 2500;
+const MARKETPLACE_MAX_USEFUL_PRICE = 25000;
+const MARKETPLACE_MAX_USEFUL_MILES = 180000;
+const MARKETPLACE_MAX_SAMPLE_COMPS = 5;
+const MARKETPLACE_MIN_STRICT_COMPS = 4;
+const MARKETPLACE_MIN_BROAD_COMPS = 5;
 
 function normalizeSelector(value) {
   return String(value || "").trim().toLowerCase();
@@ -13,6 +19,301 @@ function normalizeSelector(value) {
 function toNumberOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasWholePhrase(text, phrase) {
+  const normalizedText = String(text || "").toLowerCase();
+  const normalizedPhrase = String(phrase || "").trim().toLowerCase();
+  if (!normalizedText || !normalizedPhrase) return false;
+  const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalizedPhrase)}([^a-z0-9]|$)`, "i");
+  return pattern.test(normalizedText);
+}
+
+function median(values) {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+function mean(values) {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function roundTo(value, digits = 2) {
+  const factor = 10 ** digits;
+  return Math.round(Number(value || 0) * factor) / factor;
+}
+
+function getMarketplaceCohortWeight(strategy, usableCount) {
+  const count = Number(usableCount || 0);
+  if (count <= 0) return 0;
+
+  let baseWeight;
+  if (count <= 2) baseWeight = 0.1;
+  else if (count >= 40) baseWeight = 1;
+  else baseWeight = 0.1 + ((count - 2) / 38) * 0.9;
+
+  const strategyFactor =
+    strategy === "exact_year_mileage_band"
+      ? 1
+      : strategy === "same_year_tighter_miles"
+      ? 0.92
+      : strategy === "near_year_near_miles"
+      ? 0.82
+      : 0.68;
+
+  return roundTo(Math.max(0.05, Math.min(1, baseWeight * strategyFactor)), 2);
+}
+
+function trimPriceOutliers(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { kept: [], dropped: [] };
+  }
+
+  if (items.length < 5) {
+    return { kept: [...items], dropped: [] };
+  }
+
+  const prices = items.map((item) => item.price).filter(Number.isFinite);
+  const rawMedian = median(prices);
+  if (!Number.isFinite(rawMedian) || rawMedian <= 0) {
+    return { kept: [...items], dropped: [] };
+  }
+
+  const lowFloor = rawMedian * 0.72;
+  const highCeiling = rawMedian * 1.38;
+
+  const filtered = items.filter(
+    (item) => item.price >= lowFloor && item.price <= highCeiling
+  );
+
+  if (filtered.length >= Math.max(3, Math.ceil(items.length * 0.6))) {
+    return {
+      kept: filtered,
+      dropped: items.filter((item) => !filtered.includes(item)),
+    };
+  }
+
+  const sorted = [...items].sort((a, b) => a.price - b.price);
+  const trimCount = items.length >= 10 ? 2 : items.length >= 6 ? 1 : 0;
+  if (trimCount <= 0 || sorted.length - trimCount * 2 < 3) {
+    return { kept: [...items], dropped: [] };
+  }
+
+  const kept = sorted.slice(trimCount, sorted.length - trimCount);
+  return {
+    kept,
+    dropped: sorted.filter((item) => !kept.includes(item)),
+  };
+}
+
+function inferListingYearFromText(item) {
+  const text = [item?.title, item?.raw_text_sample, item?.seller_description]
+    .filter(Boolean)
+    .join(" ");
+  const match = text.match(/\b(19\d{2}|20\d{2})\b/);
+  return match ? Number(match[1]) : null;
+}
+
+function buildMarketplaceListingText(item) {
+  return [item?.title, item?.raw_text_sample, item?.seller_description]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeNonComparablePricingText(item) {
+  const text = buildMarketplaceListingText(item).toLowerCase();
+  if (!text) return false;
+
+  return [
+    /\bdown payment\b/,
+    /\benganche\b/,
+    /\bmonthly payments?\b/,
+    /\bweekly payments?\b/,
+    /\bbi[-\s]?weekly\b/,
+    /\bper week\b/,
+    /\bper month\b/,
+    /\bfinancing\b/,
+    /\bfinance available\b/,
+    /\bowner finance\b/,
+    /\bcredito\b/,
+    /\bsalvage\b/,
+    /\bsalvaje\b/,
+    /\brebuilt\b/,
+    /\brebuild\b/,
+    /\breconstructed\b/,
+    /\btotal loss\b/,
+  ].some((pattern) => pattern.test(text));
+}
+
+async function fetchMarketplaceCohortSnapshot(client, vehicle) {
+  const make = String(vehicle?.make || "").trim();
+  const model = String(vehicle?.model || "").trim();
+  const year = Number(vehicle?.year);
+  const odometerMiles = toNumberOrNull(
+    vehicle?.current_odometer_miles ?? vehicle?.odometerMiles
+  );
+
+  if (!make || !model) return null;
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        id,
+        title,
+        price_numeric,
+        driven_miles,
+        listed_location,
+        raw_text_sample,
+        seller_description,
+        last_seen_at
+      FROM marketplace_listings
+      WHERE hidden = false
+        AND price_numeric IS NOT NULL
+        AND price_numeric >= $1
+        AND price_numeric <= $2
+        AND (driven_miles IS NULL OR driven_miles < $3)
+      ORDER BY last_seen_at DESC NULLS LAST, id DESC
+      LIMIT 5000
+    `,
+    [
+      MARKETPLACE_MIN_USEFUL_PRICE,
+      MARKETPLACE_MAX_USEFUL_PRICE,
+      MARKETPLACE_MAX_USEFUL_MILES,
+    ]
+  );
+
+  const matching = rows
+    .filter((item) => !looksLikeNonComparablePricingText(item))
+    .map((item) => {
+      const text = buildMarketplaceListingText(item);
+      if (!hasWholePhrase(text, make) || !hasWholePhrase(text, model)) return null;
+
+      const listingYear = inferListingYearFromText(item);
+      const listingMiles = toNumberOrNull(item?.driven_miles);
+      const price = toNumberOrNull(item?.price_numeric);
+      if (!Number.isFinite(price)) return null;
+
+      const yearDelta =
+        Number.isInteger(year) && Number.isInteger(listingYear)
+          ? Math.abs(listingYear - year)
+          : null;
+      const mileageDelta =
+        odometerMiles != null && listingMiles != null
+          ? Math.abs(listingMiles - odometerMiles)
+          : null;
+
+      if (yearDelta != null && yearDelta > 3) return null;
+      if (mileageDelta != null && mileageDelta > 50000) return null;
+
+      const score =
+        (yearDelta == null ? 2 : Math.max(0, 3 - yearDelta)) * 3 +
+        (mileageDelta == null ? 1 : Math.max(0, 3 - mileageDelta / 20000));
+
+      return {
+        id: item.id,
+        title: item.title || null,
+        price,
+        driven_miles: listingMiles,
+        listed_location: item.listed_location || null,
+        year: listingYear,
+        year_delta: yearDelta,
+        mileage_delta: mileageDelta,
+        score,
+      };
+    })
+    .filter(Boolean);
+
+  if (!matching.length) {
+    return {
+      available: false,
+      matched_count: 0,
+      strategy: "none",
+      samples: [],
+    };
+  }
+
+  const exactYearAndMiles = matching.filter(
+    (item) =>
+      (item.year_delta == null || item.year_delta <= 1) &&
+      (item.mileage_delta == null || item.mileage_delta <= 15000)
+  );
+  const sameYearTighterMiles = matching.filter(
+    (item) =>
+      (item.year_delta == null || item.year_delta <= 1) &&
+      (item.mileage_delta == null || item.mileage_delta <= 30000)
+  );
+  const nearYearNearMiles = matching.filter(
+    (item) =>
+      (item.year_delta == null || item.year_delta <= 2) &&
+      (item.mileage_delta == null || item.mileage_delta <= 45000)
+  );
+
+  let strategy = "make_model";
+  let initialCohort = matching;
+
+  if (exactYearAndMiles.length >= MARKETPLACE_MIN_STRICT_COMPS) {
+    strategy = "exact_year_mileage_band";
+    initialCohort = exactYearAndMiles;
+  } else if (sameYearTighterMiles.length >= MARKETPLACE_MIN_BROAD_COMPS) {
+    strategy = "same_year_tighter_miles";
+    initialCohort = sameYearTighterMiles;
+  } else if (nearYearNearMiles.length >= MARKETPLACE_MIN_BROAD_COMPS) {
+    strategy = "near_year_near_miles";
+    initialCohort = nearYearNearMiles;
+  }
+
+  const { kept: cohort, dropped: droppedOutliers } =
+    trimPriceOutliers(initialCohort);
+
+  const sortedByScore = [...cohort].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if ((a.mileage_delta ?? Number.POSITIVE_INFINITY) !== (b.mileage_delta ?? Number.POSITIVE_INFINITY)) {
+      return (a.mileage_delta ?? Number.POSITIVE_INFINITY) - (b.mileage_delta ?? Number.POSITIVE_INFINITY);
+    }
+    return Math.abs(a.price - (cohort[0]?.price ?? a.price)) - Math.abs(b.price - (cohort[0]?.price ?? b.price));
+  });
+
+  const prices = cohort.map((item) => item.price).filter(Number.isFinite);
+  const samplePrices = sortedByScore
+    .slice(0, MARKETPLACE_MAX_SAMPLE_COMPS)
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      year: item.year,
+      price: item.price,
+      driven_miles: item.driven_miles,
+      listed_location: item.listed_location,
+    }));
+  const cohortWeight = getMarketplaceCohortWeight(strategy, cohort.length);
+
+  return {
+    available: true,
+    strategy,
+    matched_count: matching.length,
+    cohort_count: initialCohort.length,
+    usable_cohort_count: cohort.length,
+    dropped_outlier_count: droppedOutliers.length,
+    price_low: Math.min(...prices),
+    price_median: median(prices),
+    price_average: mean(prices),
+    price_high: Math.max(...prices),
+    weight_recommendation_pct: roundTo(cohortWeight * 100, 0),
+    weight_recommendation_ratio: cohortWeight,
+    vehicle_year: Number.isInteger(year) ? year : null,
+    vehicle_odometer_miles: odometerMiles,
+    samples: samplePrices,
+  };
 }
 
 function buildSnapshotHash(snapshot) {
@@ -132,7 +433,7 @@ async function listActiveVehicleSelectors(client) {
   return rows.map((row) => row.vin).filter(Boolean);
 }
 
-function buildConditionSnapshot(summary) {
+async function buildConditionSnapshot(client, summary) {
   const overdueRules = [];
   const dueSoonRules = [];
   const failedInspectionRules = [];
@@ -143,6 +444,15 @@ function buildConditionSnapshot(summary) {
     if (rule?.status === "due_soon") dueSoonRules.push(title);
     if (rule?.lastEvent?.result === "fail") failedInspectionRules.push(title);
   }
+
+  const marketplaceCohort = await fetchMarketplaceCohortSnapshot(
+    client,
+    {
+      ...(summary.vehicle || {}),
+      current_odometer_miles: summary.currentOdometerMiles ?? null,
+      odometerMiles: summary.currentOdometerMiles ?? null,
+    }
+  );
 
   return {
     vehicle: {
@@ -184,6 +494,7 @@ function buildConditionSnapshot(summary) {
         severity: note.severity,
         description: note.description,
       })),
+    marketplaceCohort,
   };
 }
 
@@ -206,8 +517,14 @@ async function requestOpenAIFmvEstimate(snapshot, options = {}) {
             type: "input_text",
             text:
               "You estimate a rough private-party fair market value in USD for a used vehicle. " +
-              "Use the provided vehicle condition snapshot only. Be conservative, acknowledge uncertainty, " +
-              "and widen the range when condition data is sparse. Output only JSON matching the schema.",
+              "Use the provided vehicle condition snapshot and marketplace cohort context when available. " +
+              "Weight close marketplace comps meaningfully, but adjust for condition, mileage, and missing data. " +
+              "If marketplaceCohort includes weight_recommendation_pct / weight_recommendation_ratio, follow that guidance. " +
+              "A 2-car cohort should be treated as a weak signal and a sanity check, not a primary anchor. " +
+              "A large cohort around 40 good comps can anchor the estimate much more strongly. " +
+              "When cohort weight is low, rely more on vehicle condition, broader market intuition, and avoid overreacting to suspiciously cheap comps. " +
+              "Be conservative, acknowledge uncertainty, and widen the range when condition data is sparse. " +
+              "Output only JSON matching the schema.",
           },
         ],
       },
@@ -385,7 +702,7 @@ async function generateVehicleFmvEstimate(selector, options = {}) {
     }
 
     const summary = await getVehicleMaintenanceSummary(client, vehicle.vin);
-    const snapshot = buildConditionSnapshot({
+    const snapshot = await buildConditionSnapshot(client, {
       ...summary,
       vehicle: {
         ...summary.vehicle,

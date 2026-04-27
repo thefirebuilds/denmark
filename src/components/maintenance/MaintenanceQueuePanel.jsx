@@ -53,6 +53,7 @@ function buildFleetQueueItems(vehicleCard, summary, historyMap = {}) {
     vehicleVin: vehicleCard.vin,
     vehicleNickname: vehicleCard.nickname,
     vehicleLabel: `${vehicleCard.nickname} • ${vehicleCard.year} ${vehicleCard.make} ${vehicleCard.model}`,
+    currentOdometerMiles: vehicleCard.currentOdometerMiles,
     nextAvailableDate: vehicleCard.nextAvailableDate,
     nextOffTrip: vehicleCard.nextOffTrip,
   }));
@@ -194,6 +195,8 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
             year: vehicle.year || "—",
             make: vehicle.make || "",
             model: vehicle.model || "",
+            currentOdometerMiles:
+              vehicle.current_odometer_miles ?? vehicle.currentOdometerMiles ?? null,
             nextOffTrip: getEarliestAvailableLabel(trips),
             nextAvailableDate: getEarliestAvailableDate(trips),
           }))
@@ -457,7 +460,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
                   </div>
 
                   <div className="maintenance-queue-notes">
-                    {item.nextDueText || getNextIntervalDueText(item)}
+                    {getNextIntervalDueText(item, item.currentOdometerMiles)}
                   </div>
 
                   {item.notes ? (
@@ -511,7 +514,12 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
                 <div className="maintenance-queue-type">{item.type}</div>
 
                 <div className="maintenance-queue-notes">
-                  {item.nextDueText || getNextIntervalDueText(item)}
+                  {getNextIntervalDueText(
+                    item,
+                    selectedFleetVehicle?.current_odometer_miles ??
+                      selectedFleetVehicle?.currentOdometerMiles ??
+                      null
+                  )}
                 </div>
 
                 {item.notes ? (

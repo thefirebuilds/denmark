@@ -220,7 +220,26 @@ export function getActionableQueueRules(rules = [], now = new Date()) {
   return rules.filter((rule) => isRuleActionableForQueue(rule, now));
 }
 
-export function getNextIntervalDueText(item) {
+function formatMilesUntilDue(nextDueMiles, currentOdometerMiles) {
+  const dueMiles = Number(nextDueMiles);
+  const currentMiles = Number(currentOdometerMiles);
+
+  if (!Number.isFinite(dueMiles) || !Number.isFinite(currentMiles)) return null;
+
+  const milesRemaining = Math.round(dueMiles - currentMiles);
+
+  if (milesRemaining < 0) {
+    return `${Math.abs(milesRemaining).toLocaleString()} mi overdue`;
+  }
+
+  if (milesRemaining === 0) {
+    return "due now";
+  }
+
+  return `${milesRemaining.toLocaleString()} mi left`;
+}
+
+export function getNextIntervalDueText(item, currentOdometerMiles = null) {
   const nextDueMiles =
     item?.lastEvent?.nextDueMiles != null
       ? Number(item.lastEvent.nextDueMiles)
@@ -229,9 +248,10 @@ export function getNextIntervalDueText(item) {
       : null;
   const nextDueDate = item?.lastEvent?.nextDueDate || item?.nextDueDate || null;
   const parts = [];
+  const milesText = formatMilesUntilDue(nextDueMiles, currentOdometerMiles);
 
-  if (Number.isFinite(nextDueMiles)) {
-    parts.push(`${Math.round(nextDueMiles).toLocaleString()} mi`);
+  if (milesText) {
+    parts.push(milesText);
   }
 
   if (nextDueDate) {
@@ -292,17 +312,11 @@ export function mapRuleStatusToInspectionItem(rule, historyMap = {}) {
         : null;
 
     value = [odometerText, formattedDate].filter(Boolean).join(" • ");
-  } else if (rule?.nextDueMiles != null) {
-    value = `Next due at ${Number(rule.nextDueMiles).toLocaleString()} mi`;
-  } else if (rule?.nextDueDate) {
-    const nextDue = new Date(rule.nextDueDate);
-    value = Number.isNaN(nextDue.getTime())
-      ? rule.nextDueDate
-      : `Due ${nextDue.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}`;
+  } else if (rule?.nextDueMiles != null || rule?.nextDueDate) {
+    value = getNextIntervalDueText(
+      rule,
+      rule?.currentOdometerMiles ?? rule?.current_odometer_miles ?? null
+    ).replace(/^Next interval due:\s*/, "");
   } else if (rule?.ruleCode === "windshield_condition") {
     const chipCount = rule?.lastEvent?.data?.chip_count;
     const crackLength = rule?.lastEvent?.data?.crack_length_in;
@@ -578,6 +592,10 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
   const tasks = Array.isArray(summary?.tasks) ? summary.tasks : [];
   const rules = Array.isArray(summary?.ruleStatuses) ? summary.ruleStatuses : [];
   const actionableRules = getActionableQueueRules(summary?.ruleStatuses);
+  const currentOdometerMiles =
+    summary?.vehicle?.currentOdometerMiles ??
+    summary?.vehicle?.current_odometer_miles ??
+    null;
 
   const taskItems = tasks
     .filter((task) => String(task?.status || "").toLowerCase() === "open")
@@ -605,7 +623,7 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
         linkedRuleCodes,
         nextDueMiles: linkedRule?.nextDueMiles ?? null,
         nextDueDate: linkedRule?.nextDueDate ?? null,
-        nextDueText: getNextIntervalDueText(linkedRule),
+        nextDueText: getNextIntervalDueText(linkedRule, currentOdometerMiles),
         blocksRentalWhenOverdue: Boolean(task?.blocks_rental),
         blocksGuestExportWhenOverdue: Boolean(task?.blocks_guest_export),
       };
@@ -628,7 +646,7 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
     linkedRuleCodes: [rule.ruleCode].filter(Boolean),
     nextDueMiles: rule.nextDueMiles ?? null,
     nextDueDate: rule.nextDueDate ?? null,
-    nextDueText: getNextIntervalDueText(rule),
+    nextDueText: getNextIntervalDueText(rule, currentOdometerMiles),
     history: historyMap[rule.ruleCode] || [],
     blocksRentalWhenOverdue: Boolean(rule.blocksRentalWhenOverdue),
     blocksGuestExportWhenOverdue: Boolean(rule.blocksGuestExportWhenOverdue),

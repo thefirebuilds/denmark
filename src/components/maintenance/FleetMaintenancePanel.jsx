@@ -1646,7 +1646,10 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                               {it.notes || ""}
                             </div>
                             <div className="fleet-maintenance-card-ticker">
-                              {it.nextDueText || getNextIntervalDueText(it)}
+                              {getNextIntervalDueText(
+                                it,
+                                card.currentOdometerMiles
+                              )}
                             </div>
                           </button>
                         ))
@@ -2272,7 +2275,10 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                                 vehicle.currentOdometerMiles
                               )}
                             >
-                              {getNextIntervalDueText(item)}
+                              {getNextIntervalDueText(
+                                item,
+                                vehicle.currentOdometerMiles
+                              )}
                             </div>
 
                             <div className="fleet-maintenance-grid-status">

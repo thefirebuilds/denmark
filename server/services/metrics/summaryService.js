@@ -9,9 +9,11 @@ const {
   getDateRange,
   getExpenseTotal,
   getOverlapDays,
+  getTripFuelReimbursementValue,
   getTripProratedAmount,
   getTripProratedCount,
   getTripProratedValue,
+  getTripRecognizedTollRevenueValue,
   isCleaningExpense,
   isTollExpense,
   roundMoney,
@@ -33,6 +35,7 @@ async function fetchTripsInRange(client, startDate, endDate) {
         trip_start,
         trip_end,
         amount,
+        fuel_reimbursement_total,
         starting_odometer,
         ending_odometer,
         toll_total,
@@ -121,6 +124,16 @@ async function getSummaryMetrics(rangeKey = "30d") {
       (sum, trip) => sum + getTripProratedAmount(trip, startDate, endDate),
       0
     );
+    const fuelReimbursements = trips.reduce(
+      (sum, trip) =>
+        sum + getTripFuelReimbursementValue(trip, startDate, endDate),
+      0
+    );
+    const tollRevenue = trips.reduce(
+      (sum, trip) =>
+        sum + getTripRecognizedTollRevenueValue(trip, startDate, endDate),
+      0
+    );
 
     const tripCountOverlapping = trips.length;
 
@@ -195,7 +208,7 @@ const tollsUnattributed = Math.max(
   tollsPaid - tollsRecovered - tollsAttributedOutstanding
 );
 
-    const otherIncome = 0;
+    const otherIncome = fuelReimbursements + tollRevenue;
     const revenue = tripIncome + otherIncome;
     const netProfit = revenue - expensesTotal;
     const fleetValue = latestFmvEstimates.reduce(
@@ -207,17 +220,29 @@ const tollsUnattributed = Math.max(
       0
     );
     const fleetValueChange = fleetValue - previousFleetValue;
+    const fleetValueUpdatedAt =
+      latestFmvEstimates.reduce((latest, estimate) => {
+        const candidate = estimate?.estimated_at || null;
+        if (!candidate) return latest;
+        if (!latest) return candidate;
+        return new Date(candidate).getTime() > new Date(latest).getTime()
+          ? candidate
+          : latest;
+      }, null) || null;
 
     return {
       range: key,
       revenue: roundMoney(revenue),
       trip_income: roundMoney(tripIncome),
       other_income: roundMoney(otherIncome),
+      fuel_reimbursements: roundMoney(fuelReimbursements),
+      toll_revenue: roundMoney(tollRevenue),
       expenses: roundMoney(expensesTotal),
       net_profit: roundMoney(netProfit),
       fleet_value: roundMoney(fleetValue),
       fleet_value_previous: roundMoney(previousFleetValue),
       fleet_value_change: roundMoney(fleetValueChange),
+      fleet_value_updated_at: fleetValueUpdatedAt,
 
       trip_count_overlapping: tripCountOverlapping,
       trip_count_prorated: roundNumber(tripCountProrated, 2),

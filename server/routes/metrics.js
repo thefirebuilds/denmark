@@ -12,6 +12,7 @@ const {
 const {
   getVehicleMetrics,
   getOffTripMileageAudit,
+  getVehicleFinancialDetail,
 } = require("../services/metrics/vehicleMetricsService");
 const {
   getTrendMetrics,
@@ -46,6 +47,22 @@ router.get("/off-trip-audit", async (req, res) => {
   } catch (err) {
     console.error("GET /api/metrics/off-trip-audit failed:", err);
     return res.status(500).json({ error: "Failed to load off-trip mileage audit" });
+  }
+});
+
+router.get("/vehicles/:vehicleId/financial-detail", async (req, res) => {
+  try {
+    const data = await getVehicleFinancialDetail(
+      req.params.vehicleId,
+      req.query.range || "30d"
+    );
+    return res.json(data);
+  } catch (err) {
+    if (err?.statusCode === 404) {
+      return res.status(404).json({ error: err.message || "Vehicle not found" });
+    }
+    console.error("GET /api/metrics/vehicles/:vehicleId/financial-detail failed:", err);
+    return res.status(500).json({ error: "Failed to load vehicle financial detail" });
   }
 });
 

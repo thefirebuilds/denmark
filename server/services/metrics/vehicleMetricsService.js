@@ -9,10 +9,12 @@ const {
   getDateRange,
   getExpenseTotal,
   getOverlapDays,
+  getTripFuelReimbursementValue,
   getTripMiles,
   getTripProratedAmount,
   getTripProratedCount,
   getTripProratedValue,
+  getTripRecognizedTollRevenueValue,
   isTripTollAttributedOutstanding,
   isTripTollRecovered,
   roundMoney,
@@ -66,6 +68,7 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
         trip_start,
         trip_end,
         amount,
+        fuel_reimbursement_total,
         starting_odometer,
         ending_odometer,
         toll_total,
@@ -786,6 +789,8 @@ async function getVehicleMetrics(rangeKey = "30d") {
         payoff_confidence: "none",
 
         trip_income: 0,
+        fuel_reimbursement_income: 0,
+        toll_revenue_income: 0,
         other_income: 0,
         direct_expenses: 0,
         general_expenses: 0,
@@ -874,6 +879,27 @@ async function getVehicleMetrics(rangeKey = "30d") {
           (sum, trip) => sum + getTripProratedAmount(trip, startDate, endDate),
           0
         )
+      );
+
+      metrics.fuel_reimbursement_income = roundMoney(
+        tripsForVehicle.reduce(
+          (sum, trip) =>
+            sum + getTripFuelReimbursementValue(trip, startDate, endDate),
+          0
+        )
+      );
+
+      metrics.toll_revenue_income = roundMoney(
+        tripsForVehicle.reduce(
+          (sum, trip) =>
+            sum + getTripRecognizedTollRevenueValue(trip, startDate, endDate),
+          0
+        )
+      );
+
+      metrics.other_income = roundMoney(
+        toNumber(metrics.fuel_reimbursement_income) +
+          toNumber(metrics.toll_revenue_income)
       );
 
       metrics.booked_vehicle_days = tripsForVehicle.reduce(
@@ -1025,6 +1051,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
     for (const vehicle of vehicles) {
       const vehicleId = String(vehicle.id);
       const metrics = vehicleMetrics.get(vehicleId);
+      const latestFmv = latestFmvMap.get(String(vehicle.vin || ""));
 
       metrics.acquisition_cost = roundMoney(metrics.acquisition_cost);
       metrics.onboarding_expenses = roundMoney(metrics.onboarding_expenses);
@@ -1052,6 +1079,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
         toNumber(metrics.trip_income) +
           toNumber(metrics.other_income) -
           toNumber(metrics.total_expenses)
+      );
+      metrics.revenue_total = roundMoney(
+        toNumber(metrics.trip_income) + toNumber(metrics.other_income)
       );
 
       metrics.trip_count_prorated = roundNumber(metrics.trip_count_prorated, 2);
@@ -1323,7 +1353,191 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
   }
 }
 
+async function getVehicleFinancialDetail(vehicleIdInput, rangeKey = "30d") {
+  const targetVehicleId = String(vehicleIdInput || "").trim();
+  const { startDate, endDate, key } = getDateRange(rangeKey);
+  const client = await pool.connect();
+
+  try {
+    const [vehicles, trips, expenses, vehicleMetricsPayload] = await Promise.all([
+      fetchActiveVehicles(client),
+      fetchTripsForVehicles(client, startDate, endDate),
+      fetchExpensesForVehicles(client, startDate, endDate),
+      getVehicleMetrics(rangeKey),
+    ]);
+    const vehicleMetrics = Array.isArray(vehicleMetricsPayload?.vehicles)
+      ? vehicleMetricsPayload.vehicles
+      : [];
+
+    const vehicle = vehicles.find((item) => String(item.id) === targetVehicleId);
+    if (!vehicle) {
+      const err = new Error(`Vehicle ${targetVehicleId} not found`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const metric = vehicleMetrics.find(
+      (item) => String(item.vehicle_id) === targetVehicleId
+    );
+
+    const maps = buildTripVehicleKeyMaps(vehicles);
+    const tripIdToVehicleId = new Map();
+    const tripsForVehicle = [];
+
+    for (const trip of trips) {
+      const resolvedVehicleId = resolveTripVehicleId(trip, maps);
+      if (!resolvedVehicleId) continue;
+      tripIdToVehicleId.set(String(trip.id), resolvedVehicleId);
+      if (resolvedVehicleId === targetVehicleId) {
+        tripsForVehicle.push(trip);
+      }
+    }
+
+    const activeVehicleCount = Math.max(1, vehicles.length);
+    const totalFleetMiles = vehicleMetrics.reduce(
+      (sum, item) => sum + toNumber(item?.total_miles),
+      0
+    );
+    const totalFleetTripMiles = vehicleMetrics.reduce(
+      (sum, item) => sum + toNumber(item?.trip_miles),
+      0
+    );
+    const apportionedBase =
+      totalFleetMiles > 0 ? totalFleetMiles : totalFleetTripMiles;
+    const targetBasisMiles =
+      totalFleetMiles > 0
+        ? String(metric?.mileage_confidence || "").toLowerCase() === "high" ||
+          String(metric?.mileage_confidence || "").toLowerCase() === "medium"
+          ? toNumber(metric?.total_miles)
+          : 0
+        : toNumber(metric?.trip_miles);
+
+    const tripRows = tripsForVehicle
+      .map((trip) => {
+        const tripIncome = roundMoney(
+          getTripProratedAmount(trip, startDate, endDate)
+        );
+        const fuelIncome = roundMoney(
+          getTripFuelReimbursementValue(trip, startDate, endDate)
+        );
+        const tollIncome = roundMoney(
+          getTripRecognizedTollRevenueValue(trip, startDate, endDate)
+        );
+        const totalRevenue = roundMoney(
+          toNumber(tripIncome) + toNumber(fuelIncome) + toNumber(tollIncome)
+        );
+
+        return {
+          trip_id: trip.id,
+          reservation_id: trip.reservation_id || null,
+          guest_name: trip.guest_name || null,
+          trip_start: trip.trip_start || null,
+          trip_end: trip.trip_end || null,
+          trip_income: tripIncome,
+          fuel_reimbursement_income: fuelIncome,
+          toll_revenue_income: tollIncome,
+          total_revenue: totalRevenue,
+        };
+      })
+      .sort((a, b) => {
+        const aStart = a.trip_start ? new Date(a.trip_start).getTime() : 0;
+        const bStart = b.trip_start ? new Date(b.trip_start).getTime() : 0;
+        return bStart - aStart;
+      });
+
+    const expenseRows = expenses
+      .map((expense) => {
+        const totalAmount = getExpenseTotal(expense);
+        const scope = String(expense.expense_scope || "direct").toLowerCase();
+        let resolvedVehicleId =
+          expense.vehicle_id != null ? String(expense.vehicle_id) : null;
+
+        if (
+          !resolvedVehicleId &&
+          expense.trip_id &&
+          tripIdToVehicleId.has(String(expense.trip_id))
+        ) {
+          resolvedVehicleId = tripIdToVehicleId.get(String(expense.trip_id));
+        }
+
+        let allocatedAmount = 0;
+
+        if (scope === "direct") {
+          if (resolvedVehicleId !== targetVehicleId) return null;
+          allocatedAmount = totalAmount;
+        } else if (scope === "general" || scope === "shared") {
+          allocatedAmount = totalAmount / activeVehicleCount;
+        } else if (scope === "apportioned") {
+          const share =
+            apportionedBase > 0
+              ? safeDivide(targetBasisMiles, apportionedBase, 0)
+              : safeDivide(1, activeVehicleCount, 0);
+          allocatedAmount = totalAmount * share;
+        } else {
+          return null;
+        }
+
+        if (!(allocatedAmount > 0)) return null;
+
+        const trip = expense.trip_id
+          ? trips.find((item) => String(item.id) === String(expense.trip_id))
+          : null;
+
+        return {
+          expense_id: expense.id,
+          date: expense.date || null,
+          vendor: expense.vendor || null,
+          category: expense.category || null,
+          expense_scope: scope,
+          trip_id: expense.trip_id || null,
+          reservation_id: trip?.reservation_id || null,
+          guest_name: trip?.guest_name || null,
+          total_amount: roundMoney(totalAmount),
+          allocated_amount: roundMoney(allocatedAmount),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const aDate = a.date ? new Date(a.date).getTime() : 0;
+        const bDate = b.date ? new Date(b.date).getTime() : 0;
+        if (bDate !== aDate) return bDate - aDate;
+        return Number(b.allocated_amount) - Number(a.allocated_amount);
+      });
+
+    return {
+      range: key,
+      vehicle: {
+        vehicle_id: vehicle.id,
+        vin: vehicle.vin,
+        nickname: vehicle.nickname || null,
+        year: vehicle.year || null,
+        make: vehicle.make || null,
+        model: vehicle.model || null,
+      },
+      revenue: {
+        trip_income: roundMoney(metric?.trip_income),
+        fuel_reimbursement_income: roundMoney(metric?.fuel_reimbursement_income),
+        toll_revenue_income: roundMoney(metric?.toll_revenue_income),
+        other_income: roundMoney(metric?.other_income),
+        total_revenue: roundMoney(metric?.revenue_total),
+        trips: tripRows,
+      },
+      expenses: {
+        direct_expenses: roundMoney(metric?.direct_expenses),
+        general_expenses: roundMoney(metric?.general_expenses),
+        shared_expenses: roundMoney(metric?.shared_expenses),
+        apportioned_expenses: roundMoney(metric?.apportioned_expenses),
+        total_expenses: roundMoney(metric?.total_expenses),
+        line_items: expenseRows,
+      },
+    };
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getVehicleMetrics,
   getOffTripMileageAudit,
+  getVehicleFinancialDetail,
 };

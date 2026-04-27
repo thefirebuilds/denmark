@@ -23,6 +23,28 @@ function isTripTollAttributedOutstanding(trip) {
   return !isTripTollRecovered(trip);
 }
 
+function getTripFuelReimbursementValue(trip, rangeStart, rangeEnd) {
+  return getTripProratedValue(
+    trip?.fuel_reimbursement_total,
+    trip?.trip_start,
+    trip?.trip_end,
+    rangeStart,
+    rangeEnd
+  );
+}
+
+function getTripRecognizedTollRevenueValue(trip, rangeStart, rangeEnd) {
+  if (!isTripTollRecovered(trip)) return 0;
+
+  return getTripProratedValue(
+    trip?.toll_total,
+    trip?.trip_start,
+    trip?.trip_end,
+    rangeStart,
+    rangeEnd
+  );
+}
+
 function getTripTotalDays(tripStartInput, tripEndInput) {
   if (!tripStartInput || !tripEndInput) return 0;
 
@@ -283,6 +305,8 @@ module.exports = {
   getExpenseTotal,
   getOverlapDays,
   getTripMiles,
+  getTripFuelReimbursementValue,
+  getTripRecognizedTollRevenueValue,
   getTripProratedAmount,
   getTripProratedCount,
   getTripProratedValue,

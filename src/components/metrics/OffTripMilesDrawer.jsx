@@ -284,8 +284,8 @@ export default function OffTripMilesDrawer({
                         </button>
                       </div>
 
-                      <div className="metrics-audit-segment-grid">
-                        <div className="metrics-audit-field">
+                      <div className="metrics-audit-segment-grid metrics-audit-segment-grid--paired">
+                        <div className="metrics-audit-trip-card">
                           <div className="metrics-audit-label">Previous trip</div>
                           <div className="metrics-audit-value">
                             {formatTripReference(
@@ -294,23 +294,15 @@ export default function OffTripMilesDrawer({
                               "No closed prior trip"
                             )}
                           </div>
-                        </div>
-
-                        <div className="metrics-audit-field">
-                          <div className="metrics-audit-label">Prior trip end</div>
-                          <div className="metrics-audit-value">
-                            {formatDateTime(segment.previous_trip_end)}
+                          <div className="metrics-audit-trip-card-meta">
+                            <span>{formatDateTime(segment.previous_trip_end)}</span>
+                            <span>
+                              {formatNumber(segment.previous_ending_odometer)} mi
+                            </span>
                           </div>
                         </div>
 
-                        <div className="metrics-audit-field">
-                          <div className="metrics-audit-label">Prior odometer</div>
-                          <div className="metrics-audit-value">
-                            {formatNumber(segment.previous_ending_odometer)} mi
-                          </div>
-                        </div>
-
-                        <div className="metrics-audit-field">
+                        <div className="metrics-audit-trip-card">
                           <div className="metrics-audit-label">Next trip</div>
                           <div className="metrics-audit-value">
                             {formatTripReference(
@@ -319,29 +311,21 @@ export default function OffTripMilesDrawer({
                               "-"
                             )}
                           </div>
-                        </div>
-
-                        <div className="metrics-audit-field">
-                          <div className="metrics-audit-label">Next trip start</div>
-                          <div className="metrics-audit-value">
-                            {formatDateTime(segment.next_trip_start)}
+                          <div className="metrics-audit-trip-card-meta">
+                            <span>{formatDateTime(segment.next_trip_start)}</span>
+                            <span>
+                              {formatNumber(segment.next_starting_odometer)} mi
+                            </span>
                           </div>
                         </div>
 
-                        <div className="metrics-audit-field">
-                          <div className="metrics-audit-label">Next start odometer</div>
-                          <div className="metrics-audit-value">
-                            {formatNumber(segment.next_starting_odometer)} mi
-                          </div>
-                        </div>
-
-                        <div className="metrics-audit-field">
-                          <div className="metrics-audit-label">Gap days</div>
-                          <div className="metrics-audit-value">
+                        <div className="metrics-audit-gap-row">
+                          <span className="metrics-audit-label">Gap days</span>
+                          <span className="metrics-audit-value">
                             {segment.gap_days == null
                               ? "-"
                               : `${formatNumber(segment.gap_days, 2)} days`}
-                          </div>
+                          </span>
                         </div>
                       </div>
                     </article>
