@@ -582,6 +582,126 @@
     0 0 0 1px rgba(248, 113, 113, 0.05);
 }
 
+.toll-stat--interactive {
+  cursor: pointer;
+  text-align: left;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.toll-stat--interactive:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+.toll-stat--interactive:focus-visible {
+  outline: 2px solid rgba(148, 163, 184, 0.9);
+  outline-offset: 2px;
+}
+
+.toll-audit-drawer {
+  width: min(720px, calc(100vw - 24px));
+}
+
+.toll-audit-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.toll-audit-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(42, 57, 93, 0.85);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #121b31 0%, #0f1729 100%);
+}
+
+.toll-audit-section.is-focused {
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.16);
+}
+
+.toll-audit-section__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toll-audit-section__title {
+  color: #eef4ff;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.toll-audit-section__meta {
+  color: #8fa6ca;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.toll-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toll-audit-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(42, 57, 93, 0.85);
+  border-radius: 10px;
+  background: rgba(15, 23, 41, 0.65);
+}
+
+.toll-audit-item__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toll-audit-item__title {
+  color: #eef4ff;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.toll-audit-item__meta {
+  margin-top: 2px;
+  color: #8fa6ca;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.toll-audit-item__amount {
+  color: #eef4ff;
+  font-size: 0.88rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.toll-audit-item__details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: #b8c7e6;
+  font-size: 0.74rem;
+}
+
+.toll-audit-item__hint {
+  color: #fde7a7;
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
 /* --------------------------------------------------------------
    Vehicles section
 -------------------------------------------------------------- */

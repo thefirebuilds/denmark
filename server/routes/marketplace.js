@@ -5,22 +5,18 @@
 
 const express = require("express");
 const pool = require("../db");
-const fs = require("fs");
-const path = require("path");
-const { pathToFileURL } = require("url");
+const {
+  DEFAULT_MARKETPLACE_SCREENING_RULES,
+  attachMarketplaceCohortMeta: attachMarketplaceCohortMetaShared,
+  getMarketplaceCatalogModule,
+} = require("../services/marketplace/marketplaceCohort");
 
 const clients = new Set();
 const router = express.Router();
 const DEFAULT_IGNORE_KEYWORDS = ["nissan leaf"];
-const DEFAULT_MARKETPLACE_SCREENING_RULES = {
-  minUsefulPrice: 2500,
-  maxUsefulPrice: 25000,
-  minComparablePrice: 6000,
-  maxComparablePrice: 20000,
-  maxUsefulMiles: 130000,
-  minUsefulYear: 2014,
-  excludedFuelTypes: ["electric", "hybrid"],
-};
+DEFAULT_MARKETPLACE_SCREENING_RULES.minUsefulPrice = 2500;
+DEFAULT_MARKETPLACE_SCREENING_RULES.maxUsefulPrice = 25000;
+DEFAULT_MARKETPLACE_SCREENING_RULES.excludedFuelTypes = ["electric", "hybrid"];
 const DEFAULT_MARKETPLACE_INVALID_LISTING_TERMS = [
   "salvage",
   "salvaje",
@@ -47,22 +43,6 @@ const DEFAULT_MARKETPLACE_INVALID_LISTING_TERMS = [
   "crédito",
 ];
 let ensureMarketplacePreferencesTablePromise = null;
-let marketplaceCatalogModulePromise = null;
-let marketplaceCatalogModuleMtimeMs = null;
-
-async function getMarketplaceCatalogModule() {
-  const catalogPath = path.resolve(__dirname, "../../src/utils/marketplaceCatalog.js");
-  const stat = await fs.promises.stat(catalogPath);
-
-  if (!marketplaceCatalogModulePromise || marketplaceCatalogModuleMtimeMs !== stat.mtimeMs) {
-    const moduleUrl = pathToFileURL(catalogPath);
-    moduleUrl.search = `?mtime=${stat.mtimeMs}`;
-    marketplaceCatalogModulePromise = import(moduleUrl);
-    marketplaceCatalogModuleMtimeMs = stat.mtimeMs;
-  }
-
-  return marketplaceCatalogModulePromise;
-}
 
 function marketplaceTextSource(item) {
   return String(item?.title || item?.raw_text_sample || "")
@@ -237,132 +217,7 @@ function tokenOverlapScore(a, b) {
 }
 
 async function attachMarketplaceCohortMeta(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return rows;
-
-  const catalog = await getMarketplaceCatalogModule();
-  const inferVehicleFromDescription = catalog?.inferVehicleFromDescription;
-  if (typeof inferVehicleFromDescription !== "function") return rows;
-
-  const cohortSourceResult = await pool.query(
-    `
-    SELECT
-      id,
-      title,
-      raw_text_sample,
-      seller_description,
-      driven_miles,
-      price_numeric
-    FROM marketplace_listings
-    WHERE price_numeric IS NOT NULL
-      AND price_numeric >= $1
-      AND price_numeric <= $2
-      AND (driven_miles IS NULL OR driven_miles < $3)
-      AND COALESCE(
-            (substring(COALESCE(title, raw_text_sample, '') from '(19[0-9]{2}|20[0-9]{2})'))::int,
-            9999
-          ) >= $4
-    `,
-    [
-      DEFAULT_MARKETPLACE_SCREENING_RULES.minComparablePrice,
-      DEFAULT_MARKETPLACE_SCREENING_RULES.maxComparablePrice,
-      DEFAULT_MARKETPLACE_SCREENING_RULES.maxUsefulMiles,
-      DEFAULT_MARKETPLACE_SCREENING_RULES.minUsefulYear,
-    ]
-  );
-
-  const cohorts = new Map();
-
-  for (const item of cohortSourceResult.rows) {
-    if (looksLikeNonComparablePricingText(item)) continue;
-
-    const inferred = inferVehicleFromDescription(marketplaceTextSource(item));
-    const make = String(inferred?.make || "").trim().toLowerCase();
-    const model = String(inferred?.model || "").trim().toLowerCase();
-    const price = Number(item?.price_numeric);
-    if (!make || !model || !Number.isFinite(price)) continue;
-
-    const year = inferListingYearFromText(item);
-    const miles = Number(item?.driven_miles);
-    const keys = [
-      `strict::${make}::${model}::${yearBucket(year)}::${mileageBucket(miles)}`,
-      `year::${make}::${model}::${yearBucket(year)}`,
-      `base::${make}::${model}`,
-    ];
-
-    for (const cohortKey of keys) {
-      const bucket = cohorts.get(cohortKey) || [];
-      bucket.push({ id: item.id, price });
-      cohorts.set(cohortKey, bucket);
-    }
-  }
-
-  const cohortStatsByKey = new Map();
-
-  for (const [cohortKey, bucket] of cohorts.entries()) {
-    if (bucket.length < minCohortSizeForKey(cohortKey)) continue;
-
-    const prices = bucket.map((entry) => entry.price);
-    const baselinePrice = median(prices);
-    const averagePrice = mean(prices);
-    const deviation = stdDev(prices, averagePrice);
-    if (!Number.isFinite(averagePrice) || averagePrice <= 0 || !Number.isFinite(baselinePrice) || baselinePrice <= 0) continue;
-
-    cohortStatsByKey.set(cohortKey, {
-      cohortKey,
-      cohortSize: bucket.length,
-      baselinePrice,
-      averagePrice,
-      deviation,
-    });
-  }
-
-  const cohortMetaById = new Map();
-
-  for (const item of rows) {
-    if (looksLikeNonComparablePricingText(item)) continue;
-
-    const inferred = inferVehicleFromDescription(marketplaceTextSource(item));
-    const make = String(inferred?.make || "").trim().toLowerCase();
-    const model = String(inferred?.model || "").trim().toLowerCase();
-    const price = Number(item?.price_numeric);
-    if (!make || !model || !Number.isFinite(price)) continue;
-
-    const year = inferListingYearFromText(item);
-    const miles = Number(item?.driven_miles);
-    const candidateKeys = [
-      `strict::${make}::${model}::${yearBucket(year)}::${mileageBucket(miles)}`,
-      `year::${make}::${model}::${yearBucket(year)}`,
-      `base::${make}::${model}`,
-    ];
-
-    const stats = candidateKeys.map((key) => cohortStatsByKey.get(key)).find(Boolean);
-    if (!stats) continue;
-
-    const delta = stats.baselinePrice - price;
-    const ratio = price / stats.baselinePrice;
-    const zScore = stats.deviation > 0 ? (stats.averagePrice - price) / stats.deviation : 0;
-    const overpricedDelta = price - stats.baselinePrice;
-    const overpricedRatio = price / stats.baselinePrice;
-    const isSuspicious = delta >= 3000 && ratio <= 0.45 && zScore >= 2;
-    const isOutlier = !isSuspicious && delta >= 1000 && ratio <= 0.82 && zScore >= 1.15;
-    const isAlert = !isSuspicious && overpricedDelta >= 1000 && overpricedRatio >= 1.2;
-
-    cohortMetaById.set(item.id, {
-      cohortKey: stats.cohortKey,
-      cohortSize: stats.cohortSize,
-      baselinePrice: Math.round(stats.baselinePrice),
-      averagePrice: Math.round(stats.averagePrice),
-      delta: Math.round(delta),
-      priceRatio: Math.round(ratio * 1000) / 1000,
-      zScore: Math.round(zScore * 100) / 100,
-      outlierLabel: isSuspicious ? "suspect" : isOutlier ? "outlier" : isAlert ? "alert" : null,
-    });
-  }
-
-  return rows.map((row) => ({
-    ...row,
-    cohort_meta: cohortMetaById.get(row.id) || null,
-  }));
+  return attachMarketplaceCohortMetaShared(pool, rows);
 }
 
 async function attachMarketplaceDuplicateMeta(rows) {

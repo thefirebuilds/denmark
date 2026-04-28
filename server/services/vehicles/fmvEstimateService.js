@@ -1,6 +1,11 @@
 const crypto = require("crypto");
 const pool = require("../../db");
 const { getVehicleMaintenanceSummary } = require("../maintenance/getVehicleMaintenanceSummary");
+const {
+  attachMarketplaceCohortMeta,
+  getMarketplaceCatalogModule,
+  inferListingYearFromText,
+} = require("../marketplace/marketplaceCohort");
 
 const DEFAULT_OPENAI_MODEL = process.env.OPENAI_FMV_MODEL || "gpt-4.1-mini";
 const DEFAULT_MARKET_LABEL =
@@ -11,7 +16,20 @@ const MARKETPLACE_MAX_USEFUL_MILES = 180000;
 const MARKETPLACE_MAX_SAMPLE_COMPS = 5;
 const MARKETPLACE_MIN_STRICT_COMPS = 4;
 const MARKETPLACE_MIN_BROAD_COMPS = 5;
-
+const TURO_MAX_ELIGIBLE_MILES = 130000;
+const TURO_MAX_ELIGIBLE_AGE_YEARS = 12;
+const TURO_MILEAGE_SOFT_BUFFER = 10000;
+const TURO_MILEAGE_GRACE_CAP = 155000;
+const ROUTINE_SERVICE_RULE_CODES = new Set([
+  "engine_air_filter",
+  "cabin_air_filter",
+  "tire_pressure_check",
+  "fluid_leak_check",
+  "oil_level_check",
+  "oil_change",
+  "cleaning",
+  "post_trip_condition_review",
+]);
 function normalizeSelector(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -73,6 +91,16 @@ function getMarketplaceCohortWeight(strategy, usableCount) {
   return roundTo(Math.max(0.05, Math.min(1, baseWeight * strategyFactor)), 2);
 }
 
+function isCloseYearMileageComparable(item) {
+  const yearDelta = Number(item?.year_delta);
+  const mileageDelta = Number(item?.mileage_delta);
+
+  return (
+    (Number.isFinite(yearDelta) ? yearDelta <= 0 : true) &&
+    (Number.isFinite(mileageDelta) ? mileageDelta <= 10000 : true)
+  );
+}
+
 function trimPriceOutliers(items) {
   if (!Array.isArray(items) || items.length === 0) {
     return { kept: [], dropped: [] };
@@ -91,9 +119,14 @@ function trimPriceOutliers(items) {
   const lowFloor = rawMedian * 0.72;
   const highCeiling = rawMedian * 1.38;
 
-  const filtered = items.filter(
-    (item) => item.price >= lowFloor && item.price <= highCeiling
+  const protectedIds = new Set(
+    items.filter(isCloseYearMileageComparable).map((item) => item.id)
   );
+
+  const filtered = items.filter((item) => {
+    if (protectedIds.has(item.id)) return true;
+    return item.price >= lowFloor && item.price <= highCeiling;
+  });
 
   if (filtered.length >= Math.max(3, Math.ceil(items.length * 0.6))) {
     return {
@@ -115,14 +148,6 @@ function trimPriceOutliers(items) {
   };
 }
 
-function inferListingYearFromText(item) {
-  const text = [item?.title, item?.raw_text_sample, item?.seller_description]
-    .filter(Boolean)
-    .join(" ");
-  const match = text.match(/\b(19\d{2}|20\d{2})\b/);
-  return match ? Number(match[1]) : null;
-}
-
 function buildMarketplaceListingText(item) {
   return [item?.title, item?.raw_text_sample, item?.seller_description]
     .filter(Boolean)
@@ -131,12 +156,96 @@ function buildMarketplaceListingText(item) {
     .trim();
 }
 
+function buildMarketplaceRouteText(item) {
+  return String(item?.title || item?.raw_text_sample || "")
+    .replace(/^\s*notifications?\b/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeListingFingerprintText(item) {
+  return buildMarketplaceListingText(item)
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function currentModelYear() {
+  return new Date().getFullYear();
+}
+
+function isLikelyTuroEligibleVehicle(year, miles) {
+  const vehicleYear = Number(year);
+  const odometerMiles = Number(miles);
+
+  if (!Number.isFinite(vehicleYear) || !Number.isFinite(odometerMiles)) return false;
+
+  return (
+    currentModelYear() - vehicleYear <= TURO_MAX_ELIGIBLE_AGE_YEARS &&
+    odometerMiles < TURO_MAX_ELIGIBLE_MILES
+  );
+}
+
+function getComparableMileageCapForSubject(year, miles) {
+  if (!isLikelyTuroEligibleVehicle(year, miles)) return null;
+
+  const odometerMiles = Number(miles);
+  if (!Number.isFinite(odometerMiles)) return TURO_MAX_ELIGIBLE_MILES;
+
+  if (odometerMiles < TURO_MAX_ELIGIBLE_MILES - TURO_MILEAGE_SOFT_BUFFER) {
+    return TURO_MAX_ELIGIBLE_MILES;
+  }
+
+  return Math.min(
+    TURO_MILEAGE_GRACE_CAP,
+    Math.max(TURO_MAX_ELIGIBLE_MILES, odometerMiles + 25000)
+  );
+}
+
+function dedupeMarketplaceListings(items) {
+  const seen = new Set();
+
+  return items.filter((item) => {
+    const fingerprint = [
+      item?.year ?? "",
+      item?.price ?? "",
+      item?.driven_miles ?? "",
+      normalizeListingFingerprintText(item),
+    ].join("|");
+
+    if (seen.has(fingerprint)) return false;
+    seen.add(fingerprint);
+    return true;
+  });
+}
+
+function isRoutineServiceRule(rule) {
+  const ruleCode = String(rule?.ruleCode || "").trim().toLowerCase();
+  const title = String(rule?.title || "").trim().toLowerCase();
+
+  if (ROUTINE_SERVICE_RULE_CODES.has(ruleCode)) return true;
+
+  return [
+    "air filter",
+    "tire pressure",
+    "fluid / leak inspection",
+    "fluid leak inspection",
+    "oil level",
+    "oil change",
+    "cleaning",
+    "condition review",
+  ].some((snippet) => title.includes(snippet));
+}
+
 function looksLikeNonComparablePricingText(item) {
   const text = buildMarketplaceListingText(item).toLowerCase();
   if (!text) return false;
 
   return [
     /\bdown payment\b/,
+    /\bdownpayment\b/,
+    /\bsuggested down ?payment\b/,
     /\benganche\b/,
     /\bmonthly payments?\b/,
     /\bweekly payments?\b/,
@@ -153,7 +262,187 @@ function looksLikeNonComparablePricingText(item) {
     /\brebuild\b/,
     /\breconstructed\b/,
     /\btotal loss\b/,
+    /\bblown turbo\b/,
+    /\bbad turbo\b/,
+    /\bneeds turbo\b/,
+    /\bneeds engine\b/,
+    /\bneeds transmission\b/,
+    /\bmechanic special\b/,
+    /\bparts car\b/,
+    /\bnot running\b/,
+    /\binop\b/,
+    /\bdoesn'?t run\b/,
+    /\bwon'?t start\b/,
+    /\btow away\b/,
   ].some((pattern) => pattern.test(text));
+}
+
+function hasMarketplaceSoldMarker(item) {
+  const samples = [item?.title, item?.raw_text_sample]
+    .filter(Boolean)
+    .map((value) => String(value).replace(/\s+/g, " ").trim());
+
+  return samples.some((text) => {
+    if (!text) return false;
+
+    return (
+      /^sold\b/i.test(text) ||
+      /^sold\b[\s:|-]+\$?\d/i.test(text) ||
+      /^sold\b[\s:|-]+(?:just listed|listed\b)/i.test(text)
+    );
+  });
+}
+
+function hasMarketplaceUnavailableMarker(item) {
+  const text = [item?.title, item?.raw_text_sample]
+    .filter(Boolean)
+    .map((value) => String(value).replace(/\s+/g, " ").trim().toLowerCase())
+    .join(" ");
+
+  if (!text) return false;
+
+  return (
+    text.includes("this listing isn't available anymore") ||
+    text.includes("this listing isnt available anymore") ||
+    text.includes("it may have been sold or expired")
+  );
+}
+
+async function fetchMarketplaceListingAnchor(client, vehicle) {
+  const make = String(vehicle?.make || "").trim();
+  const model = String(vehicle?.model || "").trim();
+  const year = Number(vehicle?.year);
+  const odometerMiles = toNumberOrNull(
+    vehicle?.current_odometer_miles ?? vehicle?.odometerMiles
+  );
+
+  if (!make || !model) return null;
+
+  const catalog = await getMarketplaceCatalogModule().catch(() => null);
+  const inferVehicleFromDescription = catalog?.inferVehicleFromDescription;
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        id,
+        url,
+        title,
+        raw_text_sample,
+        seller_description,
+        price_numeric,
+        driven_miles,
+        listed_location,
+        last_seen_at,
+        updated_at
+      FROM marketplace_listings
+      WHERE hidden = false
+        AND ignored_at IS NULL
+        AND price_numeric IS NOT NULL
+      ORDER BY updated_at DESC NULLS LAST, id DESC
+    `
+  );
+
+  const comparableRows = (await attachMarketplaceCohortMeta(client, rows))
+    .filter((item) => !looksLikeNonComparablePricingText(item))
+    .filter((item) => !hasMarketplaceSoldMarker(item))
+    .filter((item) => !hasMarketplaceUnavailableMarker(item))
+    .map((item) => {
+      const text = [buildMarketplaceRouteText(item), item?.seller_description]
+        .filter(Boolean)
+        .join(" ");
+      const inferred =
+        typeof inferVehicleFromDescription === "function"
+          ? inferVehicleFromDescription(text)
+          : null;
+      const inferredMake = String(inferred?.make || "").trim().toLowerCase();
+      const inferredModel = String(inferred?.model || "").trim().toLowerCase();
+      const targetMake = make.toLowerCase();
+      const targetModel = model.toLowerCase();
+
+      if (inferredMake && inferredModel) {
+        if (inferredMake !== targetMake || inferredModel !== targetModel) {
+          return null;
+        }
+      } else if (!hasWholePhrase(text, make) || !hasWholePhrase(text, model)) {
+        return null;
+      }
+
+      const listingYear = inferListingYearFromText(item);
+      const listingMiles = toNumberOrNull(item?.driven_miles);
+      const price = toNumberOrNull(item?.price_numeric);
+      if (!Number.isFinite(price)) return null;
+      if (!item?.cohort_meta?.baselinePrice || !item?.cohort_meta?.cohortSize) return null;
+
+      return {
+        ...item,
+        year: listingYear,
+        price,
+        driven_miles: listingMiles,
+        mileage_delta:
+          odometerMiles != null && listingMiles != null
+            ? Math.abs(listingMiles - odometerMiles)
+            : Number.POSITIVE_INFINITY,
+        year_delta:
+          Number.isInteger(year) && Number.isInteger(listingYear)
+            ? Math.abs(listingYear - year)
+            : Number.POSITIVE_INFINITY,
+      };
+    })
+    .filter(Boolean);
+
+  if (!comparableRows.length) return null;
+
+  const bestListing = [...comparableRows].sort((a, b) => {
+    if (a.year_delta !== b.year_delta) return a.year_delta - b.year_delta;
+    if (a.mileage_delta !== b.mileage_delta) return a.mileage_delta - b.mileage_delta;
+    return Math.abs((a.price ?? 0) - (b.price ?? 0));
+  })[0];
+
+  if (!bestListing) return null;
+  const anchorGroup = comparableRows
+    .filter(
+      (item) =>
+        item?.cohort_meta?.cohortKey === bestListing?.cohort_meta?.cohortKey
+    );
+  if (!anchorGroup.length) return null;
+
+  const stats = {
+    cohortKey: bestListing.cohort_meta.cohortKey,
+    cohortSize: Number(bestListing.cohort_meta.cohortSize),
+    baselinePrice: Number(bestListing.cohort_meta.baselinePrice),
+    averagePrice: Number(bestListing.cohort_meta.averagePrice),
+  };
+
+  const sampleRows = [...anchorGroup]
+    .sort((a, b) => {
+      const aDelta = Math.abs(a.price - stats.baselinePrice);
+      const bDelta = Math.abs(b.price - stats.baselinePrice);
+      if (aDelta !== bDelta) return aDelta - bDelta;
+      if (a.year_delta !== b.year_delta) return a.year_delta - b.year_delta;
+      return a.mileage_delta - b.mileage_delta;
+    })
+    .slice(0, MARKETPLACE_MAX_SAMPLE_COMPS)
+    .map((item) => ({
+      id: item.id,
+      title: item.title || null,
+      year: item.year,
+      price: item.price,
+      driven_miles: item.driven_miles,
+      listed_location: item.listed_location || null,
+      url: item.url || null,
+    }));
+
+  return {
+    listing_id: bestListing.id,
+    listing_price: bestListing.price,
+    listing_url: bestListing.url || null,
+    cohort_key: stats.cohortKey,
+    cohort_count: stats.cohortSize,
+    cohort_baseline_price: Math.round(stats.baselinePrice),
+    cohort_average_price: Math.round(stats.averagePrice),
+    sample_count: sampleRows.length,
+    samples: sampleRows,
+  };
 }
 
 async function fetchMarketplaceCohortSnapshot(client, vehicle) {
@@ -165,6 +454,39 @@ async function fetchMarketplaceCohortSnapshot(client, vehicle) {
   );
 
   if (!make || !model) return null;
+
+  const marketplaceListingAnchor = await fetchMarketplaceListingAnchor(client, vehicle);
+
+  if (marketplaceListingAnchor) {
+    const prices = marketplaceListingAnchor.samples
+      .map((item) => Number(item.price))
+      .filter(Number.isFinite);
+    const sampleCount = Number(marketplaceListingAnchor.sample_count || marketplaceListingAnchor.cohort_count || 0);
+    const cohortWeight = getMarketplaceCohortWeight("marketplace_anchor", sampleCount);
+
+    return {
+      available: true,
+      strategy: "marketplace_listing_anchor",
+      matched_count: sampleCount,
+      comparable_pool_count: sampleCount,
+      cohort_count: marketplaceListingAnchor.cohort_count,
+      usable_cohort_count: sampleCount,
+      dropped_outlier_count: 0,
+      turo_eligible_subject: isLikelyTuroEligibleVehicle(year, odometerMiles),
+      comparable_mileage_cap: getComparableMileageCapForSubject(year, odometerMiles),
+      turo_mileage_filtered_count: sampleCount,
+      price_low: prices.length ? Math.min(...prices) : marketplaceListingAnchor.cohort_baseline_price,
+      price_median: marketplaceListingAnchor.cohort_baseline_price,
+      price_average: marketplaceListingAnchor.cohort_average_price,
+      price_high: prices.length ? Math.max(...prices) : marketplaceListingAnchor.cohort_baseline_price,
+      weight_recommendation_pct: roundTo(Math.max(cohortWeight, 0.35) * 100, 0),
+      weight_recommendation_ratio: Math.max(cohortWeight, 0.35),
+      vehicle_year: Number.isInteger(year) ? year : null,
+      vehicle_odometer_miles: odometerMiles,
+      listing_anchor: marketplaceListingAnchor,
+      samples: marketplaceListingAnchor.samples,
+    };
+  }
 
   const { rows } = await client.query(
     `
@@ -179,6 +501,7 @@ async function fetchMarketplaceCohortSnapshot(client, vehicle) {
         last_seen_at
       FROM marketplace_listings
       WHERE hidden = false
+        AND ignored_at IS NULL
         AND price_numeric IS NOT NULL
         AND price_numeric >= $1
         AND price_numeric <= $2
@@ -193,7 +516,8 @@ async function fetchMarketplaceCohortSnapshot(client, vehicle) {
     ]
   );
 
-  const matching = rows
+  const matching = dedupeMarketplaceListings(
+    rows
     .filter((item) => !looksLikeNonComparablePricingText(item))
     .map((item) => {
       const text = buildMarketplaceListingText(item);
@@ -232,9 +556,28 @@ async function fetchMarketplaceCohortSnapshot(client, vehicle) {
         score,
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+  );
 
-  if (!matching.length) {
+  const turoEligibleSubject = isLikelyTuroEligibleVehicle(year, odometerMiles);
+  const comparableMileageCap = getComparableMileageCapForSubject(
+    year,
+    odometerMiles
+  );
+  const turoMileageFiltered = turoEligibleSubject
+    ? matching.filter(
+        (item) =>
+          item.driven_miles == null ||
+          item.driven_miles <= (comparableMileageCap ?? TURO_MAX_ELIGIBLE_MILES)
+      )
+    : matching;
+
+  const comparablePool =
+    turoEligibleSubject && turoMileageFiltered.length >= 2
+      ? turoMileageFiltered
+      : matching;
+
+  if (!comparablePool.length) {
     return {
       available: false,
       matched_count: 0,
@@ -243,24 +586,24 @@ async function fetchMarketplaceCohortSnapshot(client, vehicle) {
     };
   }
 
-  const exactYearAndMiles = matching.filter(
+  const exactYearAndMiles = comparablePool.filter(
     (item) =>
       (item.year_delta == null || item.year_delta <= 1) &&
       (item.mileage_delta == null || item.mileage_delta <= 15000)
   );
-  const sameYearTighterMiles = matching.filter(
+  const sameYearTighterMiles = comparablePool.filter(
     (item) =>
       (item.year_delta == null || item.year_delta <= 1) &&
       (item.mileage_delta == null || item.mileage_delta <= 30000)
   );
-  const nearYearNearMiles = matching.filter(
+  const nearYearNearMiles = comparablePool.filter(
     (item) =>
       (item.year_delta == null || item.year_delta <= 2) &&
       (item.mileage_delta == null || item.mileage_delta <= 45000)
   );
 
   let strategy = "make_model";
-  let initialCohort = matching;
+  let initialCohort = comparablePool;
 
   if (exactYearAndMiles.length >= MARKETPLACE_MIN_STRICT_COMPS) {
     strategy = "exact_year_mileage_band";
@@ -301,9 +644,14 @@ async function fetchMarketplaceCohortSnapshot(client, vehicle) {
     available: true,
     strategy,
     matched_count: matching.length,
+    comparable_pool_count: comparablePool.length,
     cohort_count: initialCohort.length,
     usable_cohort_count: cohort.length,
     dropped_outlier_count: droppedOutliers.length,
+    turo_eligible_subject: turoEligibleSubject,
+    comparable_mileage_cap: comparableMileageCap,
+    turo_mileage_filtered_count:
+      turoEligibleSubject ? turoMileageFiltered.length : comparablePool.length,
     price_low: Math.min(...prices),
     price_median: median(prices),
     price_average: mean(prices),
@@ -437,12 +785,28 @@ async function buildConditionSnapshot(client, summary) {
   const overdueRules = [];
   const dueSoonRules = [];
   const failedInspectionRules = [];
+  const routineServiceDue = [];
+  const defectFlags = [];
 
   for (const rule of summary.ruleStatuses || []) {
     const title = rule?.title || rule?.ruleCode || "Unknown rule";
-    if (rule?.status === "overdue") overdueRules.push(title);
-    if (rule?.status === "due_soon") dueSoonRules.push(title);
-    if (rule?.lastEvent?.result === "fail") failedInspectionRules.push(title);
+    const routine = isRoutineServiceRule(rule);
+
+    if (rule?.status === "overdue") {
+      overdueRules.push(title);
+      if (routine) routineServiceDue.push(title);
+      else defectFlags.push(title);
+    }
+
+    if (rule?.status === "due_soon") {
+      dueSoonRules.push(title);
+      if (routine) routineServiceDue.push(title);
+    }
+
+    if (rule?.lastEvent?.result === "fail") {
+      failedInspectionRules.push(title);
+      defectFlags.push(title);
+    }
   }
 
   const marketplaceCohort = await fetchMarketplaceCohortSnapshot(
@@ -477,6 +841,8 @@ async function buildConditionSnapshot(client, summary) {
       blocksRental: Boolean(summary.blocksRental),
       overdueRules,
       dueSoonRules,
+      routineServiceDue: [...new Set(routineServiceDue)],
+      defectFlags: [...new Set(defectFlags)],
       failedInspectionRules,
       topOpenTasks: (summary.tasks || [])
         .slice(0, 8)
@@ -488,6 +854,12 @@ async function buildConditionSnapshot(client, summary) {
     },
     conditionNotes: (summary.guestVisibleConditionNotes || [])
       .slice(0, 12)
+      .filter((note) => {
+        const text = String(
+          note?.description || note?.title || ""
+        ).toLowerCase();
+        return !text.includes("lockbox code:");
+      })
       .map((note) => ({
         title: note.title,
         area: note.area,
@@ -519,9 +891,15 @@ async function requestOpenAIFmvEstimate(snapshot, options = {}) {
               "You estimate a rough private-party fair market value in USD for a used vehicle. " +
               "Use the provided vehicle condition snapshot and marketplace cohort context when available. " +
               "Weight close marketplace comps meaningfully, but adjust for condition, mileage, and missing data. " +
+              "If marketplaceCohort.strategy is marketplace_listing_anchor and listing_anchor is present, treat listing_anchor.cohort_baseline_price as the primary market anchor. " +
+              "Do not discard a strong listing anchor just because a few cheaper comps exist nearby. " +
               "If marketplaceCohort includes weight_recommendation_pct / weight_recommendation_ratio, follow that guidance. " +
               "A 2-car cohort should be treated as a weak signal and a sanity check, not a primary anchor. " +
               "A large cohort around 40 good comps can anchor the estimate much more strongly. " +
+              "If usable_cohort_count is under 3, do not anchor the estimate to the observed median; treat the cohort as a weak floor/sanity check only. " +
+              "If the subject vehicle is still Turo-eligible but many comps are not, avoid letting non-eligible high-mileage comps drag the estimate down too aggressively. " +
+              "Do not treat routine maintenance due items like air filters, tire pressure checks, oil service, or basic fluid inspections as major FMV defects by themselves. " +
+              "Give meaningful negative weight only to actual failed inspections, explicit defect flags, severe condition notes, or evidence of major mechanical/body issues. " +
               "When cohort weight is low, rely more on vehicle condition, broader market intuition, and avoid overreacting to suspiciously cheap comps. " +
               "Be conservative, acknowledge uncertainty, and widen the range when condition data is sparse. " +
               "Output only JSON matching the schema.",

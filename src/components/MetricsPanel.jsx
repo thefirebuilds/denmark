@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import MetricCard from "./metrics/MetricCard";
 import OffTripMilesDrawer from "./metrics/OffTripMilesDrawer";
 import TollStat from "./metrics/TollStat";
+import TollAuditDrawer from "./metrics/TollAuditDrawer";
 import VehicleComparisonRow from "./metrics/VehicleComparisonRow";
 import VehicleFinancialDrawer from "./metrics/VehicleFinancialDrawer";
 
@@ -131,6 +132,11 @@ export default function MetricsPanel() {
   const [offTripAudit, setOffTripAudit] = useState(null);
   const [offTripAuditLoading, setOffTripAuditLoading] = useState(false);
   const [offTripAuditError, setOffTripAuditError] = useState(null);
+  const [tollAuditOpen, setTollAuditOpen] = useState(false);
+  const [tollAuditFocus, setTollAuditFocus] = useState("unattributed");
+  const [tollAudit, setTollAudit] = useState(null);
+  const [tollAuditLoading, setTollAuditLoading] = useState(false);
+  const [tollAuditError, setTollAuditError] = useState(null);
   const [financialDetailOpen, setFinancialDetailOpen] = useState(false);
   const [financialDetailVehicle, setFinancialDetailVehicle] = useState(null);
   const [financialDetailFocus, setFinancialDetailFocus] = useState("expenses");
@@ -301,6 +307,51 @@ export default function MetricsPanel() {
   }, [offTripAuditOpen, selectedRange]);
 
   useEffect(() => {
+    if (!tollAuditOpen) return undefined;
+
+    let cancelled = false;
+
+    async function loadTollAudit() {
+      try {
+        setTollAuditLoading(true);
+        setTollAuditError(null);
+
+        const params = new URLSearchParams({ range: selectedRange });
+        const response = await fetch(
+          `${API_BASE}/api/metrics/tolls/detail?${params.toString()}`,
+          {
+            headers: { Accept: "application/json" },
+          }
+        );
+
+        const text = await response.text();
+        if (!response.ok) {
+          throw new Error(`Toll detail request failed: ${response.status} ${text}`);
+        }
+
+        const data = JSON.parse(text);
+        if (!cancelled) {
+          setTollAudit(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setTollAuditError(err.message || "Failed to load toll detail");
+        }
+      } finally {
+        if (!cancelled) {
+          setTollAuditLoading(false);
+        }
+      }
+    }
+
+    loadTollAudit();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tollAuditOpen, selectedRange]);
+
+  useEffect(() => {
     if (!financialDetailOpen || !financialDetailVehicle?.vehicle_id) {
       return undefined;
     }
@@ -360,6 +411,12 @@ export default function MetricsPanel() {
     setFinancialDetail(null);
     setFinancialDetailError(null);
     setFinancialDetailLoading(false);
+  }
+
+  function openTollAudit(focus = "unattributed") {
+    setTollAuditFocus(focus);
+    setTollAuditOpen(true);
+    setTollAuditError(null);
   }
 
   async function handleSaveOffTripReview(payload) {
@@ -787,6 +844,15 @@ const mileageStats = useMemo(() => {
         onClose={() => setOffTripAuditOpen(false)}
       />
 
+      <TollAuditDrawer
+        open={tollAuditOpen}
+        loading={tollAuditLoading}
+        error={tollAuditError}
+        detail={tollAudit}
+        focus={tollAuditFocus}
+        onClose={() => setTollAuditOpen(false)}
+      />
+
           <section className="toll-panel">
             <div className="toll-panel__header">
               <div className="toll-panel__title">Tolls</div>
@@ -811,6 +877,7 @@ const mileageStats = useMemo(() => {
                 label="Outstanding"
                 value={formatCurrencyCompact(summary.tolls_attributed_outstanding)}
                 tone="warning"
+                onClick={() => openTollAudit("outstanding")}
               />
 
               <TollStat
@@ -818,6 +885,7 @@ const mileageStats = useMemo(() => {
                 value={formatCurrencyCompact(summary.tolls_unattributed)}
                 tone="negative"
                 emphasis="strong"
+                onClick={() => openTollAudit("unattributed")}
               />
             </div>
 

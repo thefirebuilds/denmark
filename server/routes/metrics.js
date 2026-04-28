@@ -8,6 +8,7 @@ const express = require("express");
 const pool = require("../db");
 const {
   getSummaryMetrics,
+  getTollMetricsDetail,
 } = require("../services/metrics/summaryService");
 const {
   getVehicleMetrics,
@@ -47,6 +48,16 @@ router.get("/off-trip-audit", async (req, res) => {
   } catch (err) {
     console.error("GET /api/metrics/off-trip-audit failed:", err);
     return res.status(500).json({ error: "Failed to load off-trip mileage audit" });
+  }
+});
+
+router.get("/tolls/detail", async (req, res) => {
+  try {
+    const data = await getTollMetricsDetail(req.query.range || "30d");
+    return res.json(data);
+  } catch (err) {
+    console.error("GET /api/metrics/tolls/detail failed:", err);
+    return res.status(500).json({ error: "Failed to load toll detail" });
   }
 });
 
