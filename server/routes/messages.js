@@ -135,6 +135,7 @@ function isActionableBookingMessage(row) {
 function messageQueueRank(item) {
   if (item.type === "handoff_ready_required") return -1;
   if (item.status === "unread") return 0;
+  if (item.type === "trip_overlap_detected") return 1;
   if (item.type === "closeout_required") return 1;
   if (item.type === "inspection_export_required") return 2;
   if (item.type === "trip_booked" && item.is_booking_confirmation_task) return 2;
@@ -182,6 +183,15 @@ function compareQueueItems(a, b) {
     const safeBSortAt = Number.isFinite(bSortAt) ? bSortAt : 0;
 
     if (safeASortAt !== safeBSortAt) return safeBSortAt - safeASortAt;
+  }
+
+  if (a.type === "trip_overlap_detected" && b.type === "trip_overlap_detected") {
+    const aSortAt = new Date(a.overlap_sort_at || a.trip_start || 0).getTime();
+    const bSortAt = new Date(b.overlap_sort_at || b.trip_start || 0).getTime();
+    const safeASortAt = Number.isFinite(aSortAt) ? aSortAt : Number.MAX_SAFE_INTEGER;
+    const safeBSortAt = Number.isFinite(bSortAt) ? bSortAt : Number.MAX_SAFE_INTEGER;
+
+    if (safeASortAt !== safeBSortAt) return safeASortAt - safeBSortAt;
   }
 
   const aTime = new Date(a.timestamp || a.created_at || 0).getTime();
@@ -393,6 +403,50 @@ function mapMaintenanceNoticeRow(row) {
     maintenance_task_count: Number(row.open_task_count || 0),
     maintenance_tasks: tasks,
     created_at: row.latest_task_created_at,
+  };
+}
+
+function mapTripOverlapNoticeRow(row) {
+  const vehicleName =
+    row.vehicle_nickname ||
+    row.primary_vehicle_name ||
+    row.secondary_vehicle_name ||
+    "vehicle";
+  const primaryGuest = row.primary_guest_name || "guest";
+  const secondaryGuest = row.secondary_guest_name || "guest";
+
+  return {
+    id: `trip-overlap:${row.primary_trip_id}:${row.secondary_trip_id}`,
+    messageId: `trip-overlap:${row.primary_trip_id}:${row.secondary_trip_id}`,
+    subject: `${vehicleName} has overlapping trips`,
+    status: "read",
+    timestamp: row.overlap_start || row.primary_trip_start,
+    notification_created_at: row.overlap_start || row.primary_trip_start,
+    type: "trip_overlap_detected",
+    guest_name: `${primaryGuest} / ${secondaryGuest}`,
+    vehicle_name: row.primary_vehicle_name || row.secondary_vehicle_name,
+    vehicle_nickname: row.vehicle_nickname,
+    reservation_id: row.primary_reservation_id,
+    trip_id: row.primary_trip_id,
+    trip_start: row.primary_trip_start,
+    trip_end: row.primary_trip_end,
+    trip_workflow_stage: row.primary_workflow_stage,
+    trip_status: row.primary_trip_status,
+    overlap_sort_at: row.overlap_start || row.primary_trip_start,
+    overlap_start: row.overlap_start,
+    overlap_end: row.overlap_end,
+    overlapping_trip_id: row.secondary_trip_id,
+    overlapping_reservation_id: row.secondary_reservation_id,
+    overlapping_guest_name: row.secondary_guest_name,
+    overlapping_trip_start: row.secondary_trip_start,
+    overlapping_trip_end: row.secondary_trip_end,
+    primary_guest_name: row.primary_guest_name,
+    primary_reservation_id: row.primary_reservation_id,
+    primary_trip_start: row.primary_trip_start,
+    primary_trip_end: row.primary_trip_end,
+    primary_vehicle_name: row.primary_vehicle_name,
+    secondary_vehicle_name: row.secondary_vehicle_name,
+    created_at: row.overlap_start || row.primary_trip_start,
   };
 }
 
@@ -798,16 +852,82 @@ router.get("/", async (req, res) => {
       LIMIT 25
     `;
 
+    const overlapSql = `
+      WITH candidate_trips AS (
+        SELECT
+          t.id,
+          t.reservation_id,
+          t.guest_name,
+          t.vehicle_name,
+          t.trip_start,
+          t.trip_end,
+          t.workflow_stage,
+          t.status,
+          t.turo_vehicle_id,
+          COALESCE(v.nickname, t.vehicle_name) AS vehicle_nickname,
+          COALESCE(
+            NULLIF(CAST(t.turo_vehicle_id AS text), ''),
+            LOWER(NULLIF(COALESCE(v.nickname, t.vehicle_name), ''))
+          ) AS vehicle_key
+        FROM trips t
+        LEFT JOIN vehicles v
+          ON (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+        WHERE t.trip_start IS NOT NULL
+          AND t.trip_end IS NOT NULL
+          AND COALESCE(t.workflow_stage, '') <> 'canceled'
+          AND COALESCE(t.status, '') <> 'canceled'
+          AND t.trip_end >= NOW() - INTERVAL '60 days'
+      )
+      SELECT
+        earlier.id AS primary_trip_id,
+        earlier.reservation_id AS primary_reservation_id,
+        earlier.guest_name AS primary_guest_name,
+        earlier.vehicle_name AS primary_vehicle_name,
+        earlier.vehicle_nickname,
+        earlier.trip_start AS primary_trip_start,
+        earlier.trip_end AS primary_trip_end,
+        earlier.workflow_stage AS primary_workflow_stage,
+        earlier.status AS primary_trip_status,
+        later.id AS secondary_trip_id,
+        later.reservation_id AS secondary_reservation_id,
+        later.guest_name AS secondary_guest_name,
+        later.vehicle_name AS secondary_vehicle_name,
+        later.trip_start AS secondary_trip_start,
+        later.trip_end AS secondary_trip_end,
+        GREATEST(earlier.trip_start, later.trip_start) AS overlap_start,
+        LEAST(earlier.trip_end, later.trip_end) AS overlap_end
+      FROM candidate_trips earlier
+      JOIN candidate_trips later
+        ON later.vehicle_key = earlier.vehicle_key
+        AND later.id > earlier.id
+        AND earlier.trip_start < later.trip_end
+        AND later.trip_start < earlier.trip_end
+      ORDER BY
+        GREATEST(earlier.trip_start, later.trip_start) ASC,
+        earlier.id ASC,
+        later.id ASC
+      LIMIT 25
+    `;
+
     const [
       handoffResult,
       inspectionExportResult,
       closeoutResult,
+      overlapResult,
       messagesResult,
       maintenanceResult,
     ] = await Promise.all([
       db.query(handoffSql),
       db.query(inspectionExportSql),
       db.query(closeoutSql),
+      db.query(overlapSql),
       db.query(messagesSql, [candidateLimit]),
       db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES]),
     ]);
@@ -816,6 +936,7 @@ router.get("/", async (req, res) => {
       ...handoffResult.rows.map(mapHandoffNoticeRow),
       ...inspectionExportResult.rows.map(mapInspectionExportNoticeRow),
       ...closeoutResult.rows.map(mapCloseoutNoticeRow),
+      ...overlapResult.rows.map(mapTripOverlapNoticeRow),
       ...messagesResult.rows.map(mapMessageRow),
       ...maintenanceResult.rows.map(mapMaintenanceNoticeRow),
     ]

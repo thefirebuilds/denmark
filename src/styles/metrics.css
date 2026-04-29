@@ -775,6 +775,35 @@
   gap: 8px;
 }
 
+.toll-audit-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(42, 57, 93, 0.72);
+  border-radius: 10px;
+  background: rgba(10, 16, 28, 0.42);
+}
+
+.toll-audit-group__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toll-audit-group__title {
+  color: #dbeafe;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.toll-audit-group__meta {
+  color: #8fa6ca;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .toll-audit-item {
   display: flex;
   flex-direction: column;

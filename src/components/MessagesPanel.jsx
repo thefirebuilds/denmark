@@ -78,6 +78,14 @@ function formatTripTime(value) {
   });
 }
 
+function formatTripWindow(start, end) {
+  const startLabel = formatTripTime(start);
+  const endLabel = formatTripTime(end);
+
+  if (startLabel && endLabel) return `${startLabel} -> ${endLabel}`;
+  return startLabel || endLabel || "";
+}
+
 function formatHandoffCountdown(value, nowMs = Date.now()) {
   if (!value) return "Pickup time unknown";
 
@@ -363,6 +371,19 @@ function buildMessageBody(message) {
     return `Trip ended${end ? ` ${end}` : ""}. ${reasonText}`;
   }
 
+  if (type === "trip_overlap_detected") {
+    const primaryGuest = message?.primary_guest_name || message?.guest_name || "Guest";
+    const secondaryGuest = message?.overlapping_guest_name || "Guest";
+    const overlapWindow = formatTripWindow(
+      message?.overlap_start,
+      message?.overlap_end
+    );
+
+    return `${primaryGuest} and ${secondaryGuest} are booked on the same vehicle at the same time${
+      overlapWindow ? ` (${overlapWindow})` : ""
+    }. Check the trip dates and correct the bad reservation window.`;
+  }
+
   if (type === "maintenance_required") {
     const count = Number(message?.maintenance_task_count || 0);
     const copy = getMaintenanceNoticeCopy(message);
@@ -431,6 +452,11 @@ function formatTimeAgo(timestamp) {
 }
 
 function buildMessageTitle(message) {
+  const type = message?.type || message?.message_type;
+  if (type === "trip_overlap_detected") {
+    return message?.vehicle_nickname || message?.vehicle_name || "Overlapping trips";
+  }
+
   const guest = message?.guest_name || message?.parsed?.guest;
   const vehicle =
     message?.vehicle_nickname || message?.vehicle_name || message?.parsed?.vehicle;
@@ -447,6 +473,7 @@ function buildMessageSub(message) {
   if (type === "handoff_ready_required") return "Handoff prep required";
   if (type === "inspection_export_required") return "Guest inspection export";
   if (type === "closeout_required") return "Trip closeout needed";
+  if (type === "trip_overlap_detected") return "Trip overlap detected";
   if (type === "guest_message") return "Guest message";
   if (type === "trip_booked") return "Trip booked";
   if (type === "maintenance_required") return "Maintenance required";
@@ -523,6 +550,11 @@ function isInspectionExportTask(message) {
 function isCloseoutTask(message) {
   const type = message?.type || message?.message_type;
   return type === "closeout_required" && message?.trip_id;
+}
+
+function isTripOverlapTask(message) {
+  const type = message?.type || message?.message_type;
+  return type === "trip_overlap_detected" && message?.trip_id;
 }
 
 function isCompletableSyntheticTask(message) {
@@ -1380,6 +1412,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canAdvanceHandoff = isHandoffReadyTask(message);
             const canExportInspection = isInspectionExportTask(message);
             const canCloseoutTrip = isCloseoutTask(message);
+            const canReviewOverlap = isTripOverlapTask(message);
             const canConfirmBooking = isBookingConfirmationTask(message);
             const canShowMaintenance = isMaintenanceNotice(message);
             const canCompleteSyntheticTask = isCompletableSyntheticTask(message);
@@ -1388,6 +1421,7 @@ async function handleExportGuestInspectionSheet(message) {
               (canAdvanceHandoff ||
                 canExportInspection ||
                 canCloseoutTrip ||
+                canReviewOverlap ||
                 canConfirmBooking ||
                 canShowMaintenance) &&
               Boolean(message.trip_id);
@@ -1532,6 +1566,62 @@ async function handleExportGuestInspectionSheet(message) {
                   </div>
                 )}
 
+                {canReviewOverlap && (
+                  <div className="message-booking-task">
+                    <div className="message-booking-title">
+                      Trip dates overlap
+                      <span>
+                        {message.primary_guest_name || "Guest"} vs{" "}
+                        {message.overlapping_guest_name || "guest"}
+                      </span>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Overlap window</span>
+                      <strong>
+                        {formatTripWindow(
+                          message.overlap_start,
+                          message.overlap_end
+                        ) || "Check both reservations"}
+                      </strong>
+                    </div>
+                    <div className="message-booking-compare">
+                      <div className="message-booking-compare-head">
+                        <span>Trip</span>
+                        <span>Reservation</span>
+                        <span>Window</span>
+                      </div>
+                      <div className="message-booking-compare-row mismatch">
+                        <span>{message.primary_guest_name || "Primary trip"}</span>
+                        <strong>
+                          {message.primary_reservation_id
+                            ? `#${message.primary_reservation_id}`
+                            : "Missing"}
+                        </strong>
+                        <strong>
+                          {formatTripWindow(
+                            message.primary_trip_start,
+                            message.primary_trip_end
+                          ) || "Missing"}
+                        </strong>
+                      </div>
+                      <div className="message-booking-compare-row mismatch">
+                        <span>{message.overlapping_guest_name || "Overlapping trip"}</span>
+                        <strong>
+                          {message.overlapping_reservation_id
+                            ? `#${message.overlapping_reservation_id}`
+                            : "Missing"}
+                        </strong>
+                        <strong>
+                          {formatTripWindow(
+                            message.overlapping_trip_start,
+                            message.overlapping_trip_end
+                          ) || "Missing"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {canExportInspection && (
                   <div className="message-booking-task">
                     <div className="message-booking-title">
@@ -1615,6 +1705,8 @@ async function handleExportGuestInspectionSheet(message) {
                           ? "Loading..."
                           : canCloseoutTrip
                           ? "Close out trip"
+                          : canReviewOverlap
+                          ? "Review overlap"
                           : canShowMaintenance || canAdvanceHandoff || canExportInspection
                           ? "View trip"
                           : "Verify details"}

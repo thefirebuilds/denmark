@@ -32,29 +32,35 @@ async function fetchTripsInRange(client, startDate, endDate) {
   const { rows } = await client.query(
     `
       SELECT
-        id,
-        reservation_id,
-        guest_name,
-        turo_vehicle_id,
-        trip_start,
-        trip_end,
-        amount,
-        fuel_reimbursement_total,
-        starting_odometer,
-        ending_odometer,
-        toll_total,
-        toll_charged_total,
-        toll_review_status,
-        workflow_stage,
-        expense_status,
-        completed_at,
-        canceled_at
-      FROM trips
-      WHERE trip_start <= $2
-        AND trip_end >= COALESCE($1, trip_start)
+        t.id,
+        t.reservation_id,
+        t.guest_name,
+        t.turo_vehicle_id,
+        t.vehicle_name,
+        v.nickname AS vehicle_nickname,
+        v.license_plate AS vehicle_plate,
+        t.trip_start,
+        t.trip_end,
+        t.amount,
+        t.fuel_reimbursement_total,
+        t.starting_odometer,
+        t.ending_odometer,
+        t.toll_total,
+        t.toll_charged_total,
+        t.toll_review_status,
+        t.workflow_stage,
+        t.expense_status,
+        t.completed_at,
+        t.canceled_at
+      FROM trips t
+      LEFT JOIN vehicles v
+        ON t.turo_vehicle_id IS NOT NULL
+        AND v.turo_vehicle_id = t.turo_vehicle_id
+      WHERE t.trip_start <= $2
+        AND t.trip_end >= COALESCE($1, t.trip_start)
         AND (
-          canceled_at IS NULL
-          OR COALESCE(amount, 0) > 0
+          t.canceled_at IS NULL
+          OR COALESCE(t.amount, 0) > 0
         )
     `,
     [startDate, endDate]
@@ -397,6 +403,9 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           reservation_id: trip.reservation_id || null,
           guest_name: trip.guest_name || null,
           turo_vehicle_id: trip.turo_vehicle_id || null,
+          vehicle_name: trip.vehicle_name || null,
+          vehicle_nickname: trip.vehicle_nickname || null,
+          vehicle_plate: trip.vehicle_plate || null,
           trip_start: trip.trip_start || null,
           trip_end: trip.trip_end || null,
           toll_total: roundMoney(trip.toll_total),
@@ -445,6 +454,9 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           reservation_id: trip.reservation_id || null,
           guest_name: trip.guest_name || null,
           turo_vehicle_id: trip.turo_vehicle_id || null,
+          vehicle_name: trip.vehicle_name || null,
+          vehicle_nickname: trip.vehicle_nickname || null,
+          vehicle_plate: trip.vehicle_plate || null,
           trip_start: trip.trip_start || null,
           trip_end: trip.trip_end || null,
           charged_toll_amount: chargedTollAmount,

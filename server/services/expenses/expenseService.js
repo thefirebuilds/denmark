@@ -21,7 +21,14 @@ const ALLOWED_SORT_DIRECTIONS = new Set(["asc", "desc"]);
 const CANONICAL_VENDOR_MAP = new Map([
   ["amazon", "Amazon"],
   ["ebay", "eBay"],
+  ["91280 - austin-bergstr austin tx", "ABIA"],
 ]);
+
+function titleCaseWords(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase());
+}
 
 function toNumberOrNull(value) {
   if (value === "" || value == null) return null;
@@ -43,10 +50,62 @@ function cleanString(value) {
   return s || null;
 }
 
+function parseSearchNumber(value) {
+  const cleaned = cleanString(value);
+  if (!cleaned) return null;
+  const normalized = cleaned.replace(/[$,]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
 function canonicalizeVendor(value) {
   const cleaned = cleanString(value);
   if (!cleaned) return null;
-  return CANONICAL_VENDOR_MAP.get(cleaned.toLowerCase()) || cleaned;
+  const canonical = CANONICAL_VENDOR_MAP.get(cleaned.toLowerCase());
+  if (canonical) return canonical;
+  if (cleaned === cleaned.toUpperCase()) {
+    return titleCaseWords(cleaned);
+  }
+  return cleaned;
+}
+
+function getSuggestionDedupKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function choosePreferredSuggestionLabel(current, candidate) {
+  if (!current) return candidate;
+  if (!candidate) return current;
+
+  const currentLooksShouty = current === current.toUpperCase();
+  const candidateLooksShouty = candidate === candidate.toUpperCase();
+
+  if (currentLooksShouty && !candidateLooksShouty) return candidate;
+  if (!currentLooksShouty && candidateLooksShouty) return current;
+
+  return String(candidate).length < String(current).length ? candidate : current;
+}
+
+function dedupeDisplayValues(values = []) {
+  const merged = new Map();
+
+  for (const rawValue of values) {
+    const value = cleanString(rawValue);
+    if (!value) continue;
+
+    const normalized = canonicalizeVendor(value) || value;
+    const key = getSuggestionDedupKey(normalized);
+    const existing = merged.get(key);
+    merged.set(key, choosePreferredSuggestionLabel(existing, normalized));
+  }
+
+  return Array.from(merged.values()).sort((a, b) =>
+    String(a).localeCompare(String(b))
+  );
 }
 
 function mergeVendorSummaryRows(rows = []) {
@@ -175,6 +234,7 @@ function normalizeListFilters(raw = {}) {
     trip_id: toNumberOrNull(raw.trip_id),
     category: cleanString(raw.category),
     vendor: cleanString(raw.vendor),
+    amount: cleanString(raw.amount),
     expense_scope: cleanString(raw.expense_scope)?.toLowerCase() || null,
     is_capitalized: toBooleanOrNull(raw.is_capitalized),
     date_from: normalizeDate(raw.date_from, "date_from"),
@@ -247,6 +307,26 @@ function buildWhereClause(filters) {
     clauses.push(
       `(e.vendor ILIKE $${values.length - 2} OR e.category ILIKE $${values.length - 1} OR e.notes ILIKE $${values.length})`
     );
+  }
+
+  if (filters.amount) {
+    const numericAmount = parseSearchNumber(filters.amount);
+    if (numericAmount == null) {
+      const err = new Error("amount filter must be a valid number or integer id");
+      err.status = 400;
+      throw err;
+    }
+
+    values.push(numericAmount);
+    let numericClause = `(ROUND(COALESCE(e.price, 0)::numeric, 2) = ROUND($${values.length}::numeric, 2) OR ROUND(COALESCE(e.tax, 0)::numeric, 2) = ROUND($${values.length}::numeric, 2) OR ROUND((COALESCE(e.price, 0) + COALESCE(e.tax, 0))::numeric, 2) = ROUND($${values.length}::numeric, 2)`;
+
+    if (Number.isInteger(numericAmount)) {
+      values.push(numericAmount);
+      numericClause += ` OR e.id = $${values.length}::int`;
+    }
+
+    numericClause += `)`;
+    clauses.push(numericClause);
   }
 
   const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -403,13 +483,9 @@ async function getExpenseSuggestions() {
   `);
 
   return {
-    vendors: Array.from(
-      new Set(
-        vendorsResult.rows
-          .map((row) => canonicalizeVendor(row.value))
-          .filter(Boolean)
-      )
-    ).sort((a, b) => String(a).localeCompare(String(b))),
+    vendors: dedupeDisplayValues(
+      vendorsResult.rows.map((row) => row.value)
+    ),
     categories: categoriesResult.rows.map((row) => row.value),
   };
 }
@@ -735,12 +811,15 @@ async function getExpenseSummary(rawFilters = {}) {
     ),
   ]);
 
+  const vendorSummaryRows = mergeVendorSummaryRows(byVendor.rows);
+
   return {
     totals: result.rows[0] || null,
     by_category: byCategory.rows,
     by_vehicle: byVehicle.rows,
     by_scope: byScope.rows,
-    by_vendor: mergeVendorSummaryRows(byVendor.rows),
+    by_vendor: vendorSummaryRows,
+    vendor_count: vendorSummaryRows.length,
   };
 }
 

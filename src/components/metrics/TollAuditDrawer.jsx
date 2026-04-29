@@ -33,10 +33,43 @@ function formatTripLabel(item) {
 }
 
 function formatVehicleLabel(item) {
-  const nickname = item?.vehicle_nickname || item?.matched_vehicle_nickname;
-  const plate = item?.license_plate || item?.matched_vehicle_plate;
+  const nickname =
+    item?.vehicle_nickname ||
+    item?.matched_vehicle_nickname ||
+    item?.vehicle_name;
+  const plate =
+    item?.vehicle_plate || item?.license_plate || item?.matched_vehicle_plate;
   if (nickname && plate) return `${nickname} - ${plate}`;
   return nickname || plate || "Unknown vehicle";
+}
+
+function groupTripsByVehicle(trips) {
+  const groups = new Map();
+
+  for (const trip of trips || []) {
+    const label = formatVehicleLabel(trip);
+    const key = String(label || "Unknown vehicle").trim().toLowerCase();
+    const current = groups.get(key) || {
+      key,
+      vehicle_label: label || "Unknown vehicle",
+      trips: [],
+      total_delta: 0,
+    };
+
+    current.trips.push(trip);
+    current.total_delta += Math.abs(Number(trip?.toll_delta || 0));
+    groups.set(key, current);
+  }
+
+  return [...groups.values()].sort((a, b) => {
+    if (a.vehicle_label === "Unknown vehicle" && b.vehicle_label !== "Unknown vehicle") {
+      return 1;
+    }
+    if (b.vehicle_label === "Unknown vehicle" && a.vehicle_label !== "Unknown vehicle") {
+      return -1;
+    }
+    return Number(b.total_delta || 0) - Number(a.total_delta || 0);
+  });
 }
 
 export default function TollAuditDrawer({
@@ -81,6 +114,7 @@ export default function TollAuditDrawer({
   const unattributed = detail?.unattributed || {};
   const outstanding = detail?.outstanding || {};
   const discrepancies = detail?.discrepancies || {};
+  const discrepancyGroups = groupTripsByVehicle(discrepancies.trips || []);
 
   return (
     <>
@@ -169,27 +203,41 @@ export default function TollAuditDrawer({
                 </div>
 
                 <div className="toll-audit-list">
-                  {(discrepancies.trips || []).map((trip) => (
-                    <article key={`discrepancy-${trip.trip_id}`} className="toll-audit-item">
-                      <div className="toll-audit-item__top">
-                        <div>
-                          <div className="toll-audit-item__title">
-                            {formatTripLabel(trip)}
-                          </div>
-                          <div className="toll-audit-item__meta">
-                            {formatDateTime(trip.trip_start)} - {formatDateTime(trip.trip_end)}
-                          </div>
-                        </div>
-                        <div className="toll-audit-item__amount">
-                          {formatCurrency(trip.toll_delta)}
+                  {discrepancyGroups.map((group) => (
+                    <section key={group.key} className="toll-audit-group">
+                      <div className="toll-audit-group__header">
+                        <div className="toll-audit-group__title">{group.vehicle_label}</div>
+                        <div className="toll-audit-group__meta">
+                          {formatCurrency(group.total_delta)} across {group.trips.length} trip
+                          {group.trips.length === 1 ? "" : "s"}
                         </div>
                       </div>
-                      <div className="toll-audit-item__details toll-audit-item__details--financial">
-                        <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>
-                        <span>Attributed: {formatCurrency(trip.attributed_toll_amount ?? 0)}</span>
-                        <span>Status: {trip.toll_review_status || "pending"}</span>
-                      </div>
-                    </article>
+                      {group.trips.map((trip) => (
+                        <article key={`discrepancy-${trip.trip_id}`} className="toll-audit-item">
+                          <div className="toll-audit-item__top">
+                            <div>
+                              <div className="toll-audit-item__title">
+                                {formatTripLabel(trip)}
+                              </div>
+                              <div className="toll-audit-item__meta">
+                                {formatDateTime(trip.trip_start)} - {formatDateTime(trip.trip_end)}
+                              </div>
+                            </div>
+                            <div className="toll-audit-item__amount">
+                              {formatCurrency(trip.toll_delta)}
+                            </div>
+                          </div>
+                          <div className="toll-audit-item__details">
+                            <span>Vehicle: {formatVehicleLabel(trip)}</span>
+                            <span>Status: {trip.toll_review_status || "pending"}</span>
+                          </div>
+                          <div className="toll-audit-item__details toll-audit-item__details--financial">
+                            <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>
+                            <span>Attributed: {formatCurrency(trip.attributed_toll_amount ?? 0)}</span>
+                          </div>
+                        </article>
+                      ))}
+                    </section>
                   ))}
                   {!discrepancies.trips?.length ? (
                     <div className="metrics-financial-empty">No toll charge mismatches in this range.</div>

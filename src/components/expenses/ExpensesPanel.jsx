@@ -7,6 +7,7 @@ const EXPENSES_UPDATED_EVENT = "denmark:expenses-updated";
 
 const DEFAULT_FILTERS = {
   q: "",
+  amount: "",
   category: "",
   vendor: "",
   expense_scope: "",
@@ -319,16 +320,9 @@ export default function ExpensesPanel({ selectedVehicleId }) {
 
           <input
             className="chip expenses-filter-input"
-            value={filters.vendor}
-            onChange={(e) => updateFilter("vendor", e.target.value)}
-            placeholder="Vendor"
-          />
-
-          <input
-            className="chip expenses-filter-input"
-            value={filters.category}
-            onChange={(e) => updateFilter("category", e.target.value)}
-            placeholder="Category"
+            value={filters.amount}
+            onChange={(e) => updateFilter("amount", e.target.value)}
+            placeholder="Amount or ID"
           />
 
           <select

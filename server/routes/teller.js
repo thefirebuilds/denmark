@@ -14,6 +14,7 @@ const {
   ignoreTellerTransaction,
   createTellerIgnoreRule,
   getCategorySuggestionsForTransaction,
+  detectRefundSignal,
 } = require("../services/teller/tellerMatchService");
 
 const router = express.Router();
@@ -147,12 +148,16 @@ router.get("/:id/expense-draft", async (req, res) => {
     }
 
     const amount = Math.abs(Number(tx.amount || 0));
+    const refundSignal = detectRefundSignal(
+      tx.counterparty_name,
+      tx.description
+    );
     const categoryOptions = await getCategorySuggestionsForTransaction(tx);
 
     const draft = {
       vehicle_id: null,
       vendor: tx.counterparty_name || tx.description || null,
-      price: amount,
+      price: refundSignal.detected ? -amount : amount,
       tax: 0,
       is_capitalized: false,
       category: categoryOptions[0]?.category || null,
@@ -162,6 +167,8 @@ router.get("/:id/expense-draft", async (req, res) => {
       trip_id: null,
       category_options: categoryOptions,
       category_confidence: categoryOptions[0]?.confidence || 0,
+      refund_signal_detected: refundSignal.detected,
+      refund_signal_reason: refundSignal.reason || null,
     };
 
     res.json(draft);

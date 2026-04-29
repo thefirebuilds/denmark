@@ -104,6 +104,16 @@ These are worth knowing before you trust the repo blindly.
 - The schema repave file is intentionally destructive.
 - Some workflows depend on real provider credentials and real local `.env` values.
 
+### Authentication and access control
+- Denmark currently has no real user authentication or role-based access control.
+- If the frontend or backend is reachable, a user on that network can interact with the app and its operational data unless another layer is protecting it.
+- This is acceptable only for tightly controlled local use and is not acceptable for broader LAN, cloud, or internet exposure.
+- Before treating Denmark as a multi-user or remotely reachable system, it needs:
+  - real login/session enforcement
+  - route-level authorization
+  - protection for sensitive integration credentials and operational data
+  - a deliberate trust model for who is allowed to view, edit, or trigger workflows
+
 ### Frontend build/runtime caveats
 - Vite wants Node `20.19+` or `22.12+`.
 - Running with Node `22.9.0` may still work in some places, but it produces warnings and can trip local build behavior.
@@ -345,6 +355,7 @@ These are the most obvious next improvements based on the current project shape.
 - document subsystem-specific setup and recovery flows
 - tighten startup/runtime verification for local environments
 - introduce clearer migration application guidance
+- add real authentication and authorization before wider deployment
 - continue breaking out reusable API base/config helpers on the frontend where old `localhost` assumptions still linger
 
 ## Design philosophy

@@ -257,6 +257,7 @@ async function matchTrip(client, tollChargeId) {
         AND $2::timestamptz >= (t.trip_start - INTERVAL '2 hours')
         AND $2::timestamptz <= (t.trip_end + INTERVAL '12 hours')
       ORDER BY
+        ABS(EXTRACT(EPOCH FROM (t.trip_end - $2::timestamptz))) ASC,
         ABS(EXTRACT(EPOCH FROM ($2::timestamptz - t.trip_start))) ASC,
         t.trip_start DESC
       LIMIT 1

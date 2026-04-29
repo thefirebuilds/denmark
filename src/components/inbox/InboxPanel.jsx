@@ -672,17 +672,24 @@ function ExpenseDraftModal({
 
   return (
     <div className="inbox-draft-overlay">
-      <div className="inbox-draft-modal">
-        <div className="panel-header">
-          <h2>Create Expense</h2>
-        </div>
+        <div className="inbox-draft-modal">
+          <div className="panel-header">
+            <h2>Create Expense</h2>
+          </div>
 
-        <div className="inbox-draft-form">
-          <label className="inbox-draft-field">
-            <span>Vendor</span>
-            <input
-              type="text"
-              value={draft.vendor || ""}
+          <div className="inbox-draft-form">
+            {draft.refund_signal_detected ? (
+              <div className="inbox-draft-suggestion-summary">
+                Refund signal detected. This draft defaults to a negative amount
+                so the credit reduces expense instead of adding a second cost.
+              </div>
+            ) : null}
+
+            <label className="inbox-draft-field">
+              <span>Vendor</span>
+              <input
+                type="text"
+                value={draft.vendor || ""}
               onChange={(e) => onChange("vendor", e.target.value)}
             />
           </label>

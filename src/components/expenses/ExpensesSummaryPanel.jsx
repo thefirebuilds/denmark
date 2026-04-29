@@ -374,7 +374,7 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
           ) : null}
 
           <CompactRowsBox
-            title="Vendors"
+            title={`Vendors (${Number(summary?.vendor_count ?? vendorRows.length)})`}
             rows={vendorRows}
             emptyText="No vendor data."
             onRowClick={openExpenseVendorReview}

@@ -16,12 +16,40 @@
 const pool = require("../../db");
 const { createExpense } = require("../expenses/expenseService");
 
+const REFUND_SIGNAL_PATTERNS = [
+  /\brefund\b/i,
+  /\brefunded\b/i,
+  /\breturn\b/i,
+  /\breturned\b/i,
+  /\bcredit\b/i,
+  /\breimbursement\b/i,
+  /\breimbursed\b/i,
+  /\bauth(?:orization)? refund\b/i,
+];
+
 function normalizeText(value = "") {
   return String(value)
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function detectRefundSignal(...values) {
+  const haystack = values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" ");
+
+  if (!haystack) {
+    return { detected: false, reason: "" };
+  }
+
+  const match = REFUND_SIGNAL_PATTERNS.find((pattern) => pattern.test(haystack));
+  return {
+    detected: Boolean(match),
+    reason: match ? `Matched refund signal: ${match}` : "",
+  };
 }
 
 function getKeywordCandidates(value = "") {
@@ -511,12 +539,32 @@ async function createExpenseFromTeller(id, payload = {}) {
 
   const amount = Number(tx.amount || 0);
   const absoluteAmount = Math.abs(amount);
+  const refundSignal = detectRefundSignal(
+    payload.vendor,
+    payload.notes,
+    tx.counterparty_name,
+    tx.description
+  );
+  const requestedPrice =
+    payload.price == null || payload.price === ""
+      ? absoluteAmount
+      : Number(payload.price);
+  const finalPrice =
+    refundSignal.detected && Number.isFinite(requestedPrice) && requestedPrice > 0
+      ? -Math.abs(requestedPrice)
+      : requestedPrice;
+  const requestedTax =
+    payload.tax == null || payload.tax === "" ? 0 : Number(payload.tax);
+  const finalTax =
+    refundSignal.detected && Number.isFinite(requestedTax) && requestedTax > 0
+      ? -Math.abs(requestedTax)
+      : requestedTax;
 
   const expensePayload = {
     vehicle_id: payload.vehicle_id ?? null,
     vendor: payload.vendor ?? tx.counterparty_name ?? null,
-    price: payload.price ?? absoluteAmount,
-    tax: payload.tax ?? 0,
+    price: finalPrice,
+    tax: finalTax,
     is_capitalized: payload.is_capitalized ?? false,
     category: payload.category ?? null,
     notes: payload.notes ?? tx.description ?? null,
@@ -565,4 +613,5 @@ module.exports = {
   createTellerIgnoreRule,
   getCategorySuggestionsForTransaction,
   scoreSuggestion,
+  detectRefundSignal,
 };
