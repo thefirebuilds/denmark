@@ -36,8 +36,11 @@ function getTripFuelReimbursementValue(trip, rangeStart, rangeEnd) {
 function getTripRecognizedTollRevenueValue(trip, rangeStart, rangeEnd) {
   if (!isTripTollRecovered(trip)) return 0;
 
+  const chargedTollTotal =
+    trip?.toll_charged_total != null ? trip.toll_charged_total : trip?.toll_total;
+
   return getTripProratedValue(
-    trip?.toll_total,
+    chargedTollTotal,
     trip?.trip_start,
     trip?.trip_end,
     rangeStart,

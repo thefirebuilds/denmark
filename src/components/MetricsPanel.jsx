@@ -3,6 +3,7 @@
 //----------------------------------------------
 
 import { useEffect, useMemo, useState } from "react";
+import ExpenseModal from "./expenses/ExpenseModal";
 import MetricCard from "./metrics/MetricCard";
 import OffTripMilesDrawer from "./metrics/OffTripMilesDrawer";
 import TollStat from "./metrics/TollStat";
@@ -19,6 +20,7 @@ const RANGE_OPTIONS = [
   { value: "ytd", label: "YTD" },
   { value: "all", label: "All" },
 ];
+const TRIP_LEDGER_FOCUS_STORAGE_KEY = "denmark.tripLedgerFocus";
 
 function safeDivide(numerator, denominator) {
   const num = Number(numerator ?? 0);
@@ -76,6 +78,96 @@ function formatUpdatedLabel(value) {
   })}`;
 }
 
+function formatConfidenceLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) return "Confidence: --";
+  return `Confidence: ${text}`;
+}
+
+function formatInputValue(value) {
+  return value == null ? "" : String(value);
+}
+
+function normalizeDateInputValue(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  if (!text) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function buildYearMakeModel(profile) {
+  return [profile?.year, profile?.make, profile?.model].filter(Boolean).join(" ");
+}
+
+function normalizeVehicleProfileForForm(profile) {
+  return {
+    ...profile,
+    purchase_date: normalizeDateInputValue(profile?.purchase_date),
+    placed_in_service_date: normalizeDateInputValue(
+      profile?.placed_in_service_date
+    ),
+  };
+}
+
+function formatBusinessInputDate(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatFlagTitle(flag) {
+  const expenseVendor = String(flag?.expense_vendor || "").trim();
+  const expenseCategory = String(flag?.expense_category || "").trim();
+  const guestName = String(flag?.guest_name || "").trim();
+  const vehicleName = String(flag?.vehicle_name || "").trim();
+  const reservationId = flag?.reservation_id;
+
+  if (expenseVendor && flag?.expense_id) {
+    return `${expenseVendor} · Expense #${flag.expense_id}`;
+  }
+  if (expenseCategory && flag?.expense_id) {
+    return `${expenseCategory} · Expense #${flag.expense_id}`;
+  }
+  if (guestName && vehicleName) {
+    return `${guestName} · ${vehicleName}`;
+  }
+  if (guestName && reservationId) {
+    return `${guestName} · Reservation #${reservationId}`;
+  }
+  if (vehicleName && reservationId) {
+    return `${vehicleName} · Reservation #${reservationId}`;
+  }
+  if (reservationId) {
+    return `Reservation #${reservationId}`;
+  }
+  return String(flag?.flag_code || "")
+    .replaceAll("_", " ")
+    .trim();
+}
+
+function formatFlagMeta(flag) {
+  const parts = [];
+  if (flag?.expense_id) {
+    parts.push(`Expense #${flag.expense_id}`);
+  }
+  if (flag?.reservation_id) {
+    parts.push(`Reservation #${flag.reservation_id}`);
+  }
+  if (Array.isArray(flag?.missing_fields) && flag.missing_fields.length) {
+    parts.push(`Missing ${flag.missing_fields.join(" + ")}`);
+  }
+  return parts.join(" · ");
+}
+
 function getVehicleTollRiskScore(vehicle) {
   const paid = Number(vehicle?.tolls_paid ?? 0);
   const recovered = Number(vehicle?.tolls_recovered ?? 0);
@@ -119,6 +211,7 @@ function getCapitalRecoveryPct(vehicle) {
 export default function MetricsPanel() {
   const [selectedRange, setSelectedRange] = useState("30d");
   const [summary, setSummary] = useState(null);
+  const [businessMetrics, setBusinessMetrics] = useState(null);
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -137,12 +230,26 @@ export default function MetricsPanel() {
   const [tollAudit, setTollAudit] = useState(null);
   const [tollAuditLoading, setTollAuditLoading] = useState(false);
   const [tollAuditError, setTollAuditError] = useState(null);
+  const [assigningTollChargeId, setAssigningTollChargeId] = useState(null);
   const [financialDetailOpen, setFinancialDetailOpen] = useState(false);
   const [financialDetailVehicle, setFinancialDetailVehicle] = useState(null);
   const [financialDetailFocus, setFinancialDetailFocus] = useState("expenses");
   const [financialDetail, setFinancialDetail] = useState(null);
   const [financialDetailLoading, setFinancialDetailLoading] = useState(false);
   const [financialDetailError, setFinancialDetailError] = useState(null);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [loadingExpenseId, setLoadingExpenseId] = useState(null);
+  const [businessSettings, setBusinessSettings] = useState(null);
+  const [vehicleProfiles, setVehicleProfiles] = useState([]);
+  const [businessInputsLoading, setBusinessInputsLoading] = useState(true);
+  const [businessInputsError, setBusinessInputsError] = useState("");
+  const [businessInputsStatus, setBusinessInputsStatus] = useState("");
+  const [savingBusinessSettings, setSavingBusinessSettings] = useState(false);
+  const [savingVehicleId, setSavingVehicleId] = useState(null);
+  const [businessInputsSectionOpen, setBusinessInputsSectionOpen] = useState(false);
+  const [businessSettingsOpen, setBusinessSettingsOpen] = useState(false);
+  const [expandedBusinessProfiles, setExpandedBusinessProfiles] = useState({});
 
   async function loadMetrics(
     range,
@@ -155,17 +262,21 @@ export default function MetricsPanel() {
 
     const params = new URLSearchParams({ range });
 
-    const [summaryRes, vehiclesRes] = await Promise.all([
+    const [summaryRes, vehiclesRes, businessRes] = await Promise.all([
       fetch(`${API_BASE}/api/metrics/summary?${params.toString()}`, {
         headers: { Accept: "application/json" },
       }),
       fetch(`${API_BASE}/api/metrics/vehicles?${params.toString()}`, {
         headers: { Accept: "application/json" },
       }),
+      fetch(`${API_BASE}/api/metrics/business/current?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+      }),
     ]);
 
     const summaryText = await summaryRes.text();
     const vehiclesText = await vehiclesRes.text();
+    const businessText = await businessRes.text();
 
     if (!summaryRes.ok) {
       throw new Error(
@@ -181,8 +292,10 @@ export default function MetricsPanel() {
 
     const summaryData = JSON.parse(summaryText);
     const vehiclesData = JSON.parse(vehiclesText);
+    const businessData = businessRes.ok ? JSON.parse(businessText) : null;
 
     setSummary(summaryData);
+    setBusinessMetrics(businessData);
     setVehicles(
       Array.isArray(vehiclesData)
         ? vehiclesData
@@ -194,6 +307,13 @@ export default function MetricsPanel() {
     if (resetExpanded) {
       setExpandedVehicleId(null);
     }
+  }
+
+  function toggleBusinessProfile(vehicleId) {
+    setExpandedBusinessProfiles((current) => ({
+      ...current,
+      [vehicleId]: !current[vehicleId],
+    }));
   }
 
   useEffect(() => {
@@ -219,6 +339,72 @@ export default function MetricsPanel() {
       cancelled = true;
     };
   }, [selectedRange]);
+
+  async function loadBusinessInputs() {
+    setBusinessInputsLoading(true);
+    setBusinessInputsError("");
+
+    try {
+      const [settingsRes, profilesRes] = await Promise.all([
+        fetch(`${API_BASE}/api/metrics/business/settings`, {
+          headers: { Accept: "application/json" },
+        }),
+        fetch(`${API_BASE}/api/metrics/business/vehicle-profiles`, {
+          headers: { Accept: "application/json" },
+        }),
+      ]);
+
+      const settingsText = await settingsRes.text();
+      const profilesText = await profilesRes.text();
+
+      if (!settingsRes.ok) {
+        throw new Error(
+          `Business settings request failed: ${settingsRes.status} ${settingsText}`
+        );
+      }
+
+      if (!profilesRes.ok) {
+        throw new Error(
+          `Vehicle profiles request failed: ${profilesRes.status} ${profilesText}`
+        );
+      }
+
+      const settingsData = settingsText ? JSON.parse(settingsText) : {};
+      const profilesData = profilesText ? JSON.parse(profilesText) : {};
+
+      setBusinessSettings(settingsData || {});
+      setVehicleProfiles(
+        Array.isArray(profilesData?.profiles)
+          ? profilesData.profiles.map(normalizeVehicleProfileForForm)
+          : []
+      );
+    } finally {
+      setBusinessInputsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInputs() {
+      try {
+        await loadBusinessInputs();
+      } catch (err) {
+        if (!cancelled) {
+          setBusinessInputsError(
+            err.message || "Failed to load business input settings"
+          );
+          setBusinessInputsLoading(false);
+        }
+      }
+    }
+
+    loadInputs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleRefreshFmvNow() {
     try {
@@ -350,6 +536,67 @@ export default function MetricsPanel() {
       cancelled = true;
     };
   }, [tollAuditOpen, selectedRange]);
+
+  async function reloadTollAuditDetail(range = selectedRange) {
+    const params = new URLSearchParams({ range });
+    const response = await fetch(
+      `${API_BASE}/api/metrics/tolls/detail?${params.toString()}`,
+      {
+        headers: { Accept: "application/json" },
+      }
+    );
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`Toll detail request failed: ${response.status} ${text}`);
+    }
+
+    const data = JSON.parse(text);
+    setTollAudit(data);
+    return data;
+  }
+
+  async function handleAssignTollTrip(tollChargeId, selectedValue) {
+    try {
+      setAssigningTollChargeId(tollChargeId);
+      setTollAuditError(null);
+
+      const isOffTrip = selectedValue === "__off_trip__";
+      const body = isOffTrip
+        ? { disposition: "off_trip", trip_id: "__off_trip__" }
+        : { trip_id: Number(selectedValue) };
+
+      const response = await fetch(
+        `${API_BASE}/api/metrics/tolls/charges/${tollChargeId}/assign-trip`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(body),
+        }
+      );
+
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to assign toll charge");
+      }
+
+      await Promise.all([
+        loadMetrics(selectedRange, {
+          resetExpanded: false,
+          showPageLoading: false,
+        }),
+        reloadTollAuditDetail(selectedRange),
+      ]);
+    } catch (err) {
+      setTollAuditError(err.message || "Failed to assign toll charge");
+    } finally {
+      setAssigningTollChargeId(null);
+    }
+  }
 
   useEffect(() => {
     if (!financialDetailOpen || !financialDetailVehicle?.vehicle_id) {
@@ -541,7 +788,9 @@ export default function MetricsPanel() {
     const next = [...vehicles].filter((vehicle) => {
       const profit = Number(vehicle?.net_profit ?? 0);
       const bookedDays = Number(vehicle?.booked_vehicle_days ?? 0);
-      const calendarDays = Number(summary?.calendar_days ?? 0);
+      const calendarDays = Number(
+        vehicle?.calendar_days_available ?? summary?.calendar_days ?? 0
+      );
       const occupancy = calendarDays > 0 ? bookedDays / calendarDays : 0;
       const tollRisk = getVehicleTollRiskScore(vehicle);
 
@@ -582,14 +831,15 @@ export default function MetricsPanel() {
       const aValue = Number(a?.fmv_estimate_mid ?? 0);
       const bValue = Number(b?.fmv_estimate_mid ?? 0);
 
-      const calendarDays = Number(summary?.calendar_days ?? 0);
       const aOccupancy =
-        calendarDays > 0
-          ? Number(a?.booked_vehicle_days ?? 0) / calendarDays
+        Number(a?.calendar_days_available ?? summary?.calendar_days ?? 0) > 0
+          ? Number(a?.booked_vehicle_days ?? 0) /
+            Number(a?.calendar_days_available ?? summary?.calendar_days ?? 0)
           : 0;
       const bOccupancy =
-        calendarDays > 0
-          ? Number(b?.booked_vehicle_days ?? 0) / calendarDays
+        Number(b?.calendar_days_available ?? summary?.calendar_days ?? 0) > 0
+          ? Number(b?.booked_vehicle_days ?? 0) /
+            Number(b?.calendar_days_available ?? summary?.calendar_days ?? 0)
           : 0;
 
       const aTollRisk = getVehicleTollRiskScore(a);
@@ -676,6 +926,191 @@ const mileageStats = useMemo(() => {
   };
 }, [vehicles, summary]);
 
+  const businessFlagPreview = useMemo(() => {
+    const flags = Array.isArray(businessMetrics?.flags) ? businessMetrics.flags : [];
+    return flags.slice(0, 4);
+  }, [businessMetrics]);
+
+  const derivedStartupTaxTotal = useMemo(
+    () =>
+      vehicleProfiles.reduce(
+        (sum, profile) => sum + Number(profile?.derived_startup_tax_total ?? 0),
+        0
+      ),
+    [vehicleProfiles]
+  );
+
+  function handleOpenTripFlag(flag) {
+    if (typeof window === "undefined" || !flag?.reservation_id) return;
+
+    const payload = {
+      tripId: flag?.trip_id ?? null,
+      reservationId: String(flag.reservation_id),
+    };
+
+    window.sessionStorage.setItem(
+      TRIP_LEDGER_FOCUS_STORAGE_KEY,
+      JSON.stringify(payload)
+    );
+    window.dispatchEvent(
+      new CustomEvent("denmark:open-trip-ledger", { detail: payload })
+    );
+  }
+
+  async function handleOpenExpenseFlag(flag) {
+    if (!flag?.expense_id) return;
+
+    try {
+      setLoadingExpenseId(Number(flag.expense_id));
+
+      const response = await fetch(`${API_BASE}/api/expenses/${flag.expense_id}`, {
+        headers: { Accept: "application/json" },
+      });
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to load expense");
+      }
+
+      setEditingExpense(data);
+      setExpenseModalOpen(true);
+    } catch (err) {
+      window.alert(err.message || "Failed to load expense");
+    } finally {
+      setLoadingExpenseId(null);
+    }
+  }
+
+  function closeExpenseModal() {
+    setExpenseModalOpen(false);
+    setEditingExpense(null);
+  }
+
+  async function handleExpenseSaved() {
+    await loadMetrics(selectedRange, {
+      resetExpanded: false,
+      showPageLoading: false,
+    });
+  }
+
+  function updateBusinessSetting(key, value) {
+    setBusinessSettings((current) => ({
+      ...(current || {}),
+      [key]: value,
+    }));
+  }
+
+  function updateVehicleProfile(vehicleId, key, value) {
+    setVehicleProfiles((current) =>
+      current.map((profile) =>
+        Number(profile.vehicle_id) === Number(vehicleId)
+          ? {
+              ...profile,
+              [key]: value,
+            }
+          : profile
+      )
+    );
+  }
+
+  async function handleSaveBusinessSettings() {
+    try {
+      setSavingBusinessSettings(true);
+      setBusinessInputsError("");
+
+      const response = await fetch(`${API_BASE}/api/metrics/business/settings`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(businessSettings || {}),
+      });
+
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to save business settings");
+      }
+
+      setBusinessSettings(data || {});
+      setBusinessInputsStatus("Business settings saved.");
+      await loadMetrics(selectedRange, {
+        resetExpanded: false,
+        showPageLoading: false,
+      });
+    } catch (err) {
+      setBusinessInputsError(err.message || "Failed to save business settings");
+    } finally {
+      setSavingBusinessSettings(false);
+    }
+  }
+
+  async function handleSaveVehicleProfile(profile) {
+    try {
+      setSavingVehicleId(Number(profile.vehicle_id));
+      setBusinessInputsError("");
+
+      const payload = {
+        purchase_price: profile.purchase_price,
+        purchase_date: profile.purchase_date,
+        placed_in_service_date: profile.placed_in_service_date,
+        mileage_at_purchase: profile.mileage_at_purchase,
+        loan_balance: profile.loan_balance,
+        monthly_payment: profile.monthly_payment,
+        interest_rate: profile.interest_rate,
+        insurance_monthly: profile.insurance_monthly,
+        tracker_monthly: profile.tracker_monthly,
+        registration_annual: profile.registration_annual,
+        inspection_annual: profile.inspection_annual,
+        target_min_daily_rate: profile.target_min_daily_rate,
+        target_utilization: profile.target_utilization,
+        owner_hourly_rate_override: profile.owner_hourly_rate_override,
+        notes: profile.notes,
+      };
+
+      const response = await fetch(
+        `${API_BASE}/api/metrics/business/vehicle-profiles/${profile.vehicle_id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to save vehicle profile");
+      }
+
+      setVehicleProfiles((current) =>
+        current.map((item) =>
+          Number(item.vehicle_id) === Number(profile.vehicle_id)
+            ? {
+                ...item,
+                ...normalizeVehicleProfileForForm(data),
+              }
+            : item
+        )
+      );
+
+      setBusinessInputsStatus(`Saved ${profile.vehicle_name || "vehicle"} profile.`);
+      await loadMetrics(selectedRange, {
+        resetExpanded: false,
+        showPageLoading: false,
+      });
+    } catch (err) {
+      setBusinessInputsError(err.message || "Failed to save vehicle profile");
+    } finally {
+      setSavingVehicleId(null);
+    }
+  }
+
   return (
     <div className="metrics-panel">
       {loading && <div>Loading metrics…</div>}
@@ -761,6 +1196,659 @@ const mileageStats = useMemo(() => {
               value={formatCurrencyCompact(summary.revenue_per_booked_day)}
             />
           </div>
+
+          {businessMetrics?.fleet_summary ? (
+            <section className="metrics-ops-row">
+              <MetricCard
+                label="Owner Cash In"
+                value={
+                  Number(
+                    businessMetrics.fleet_summary?.owner_cash_invested ??
+                      businessMetrics?.settings?.owner_cash_invested ??
+                      0
+                  ) > 0
+                    ? formatCurrency(
+                        businessMetrics.fleet_summary?.owner_cash_invested ??
+                          businessMetrics?.settings?.owner_cash_invested
+                      )
+                    : "--"
+                }
+              />
+
+              <MetricCard
+                label="Cash Back"
+                value={formatCurrency(
+                  businessMetrics.fleet_summary.total_cash_returned
+                )}
+                subtitle={
+                  businessMetrics.fleet_summary.cash_recovered_pct != null
+                    ? `${formatPercent(
+                        businessMetrics.fleet_summary.cash_recovered_pct,
+                        0
+                      )} recovered`
+                    : "Set owner cash in for recovery %"
+                }
+                tone="positive"
+              />
+
+              <MetricCard
+                label="Unrecovered Cash"
+                value={formatCurrency(
+                  businessMetrics.fleet_summary.unrecovered_owner_cash
+                )}
+                subtitle="Owner cash in minus cash back"
+                tone={
+                  Number(
+                    businessMetrics.fleet_summary.unrecovered_owner_cash ?? 0
+                  ) <= 0
+                    ? "positive"
+                    : "warning"
+                }
+              />
+
+              <MetricCard
+                label="Fleet Market Value"
+                value={formatCurrency(
+                  businessMetrics.fleet_summary.current_fleet_market_value
+                )}
+                subtitle={formatConfidenceLabel(
+                  businessMetrics.fleet_summary.data_confidence
+                )}
+              />
+
+              <MetricCard
+                label="Capital Coverage"
+                value={
+                  businessMetrics.fleet_summary.owner_capital_coverage_pct != null
+                    ? formatPercent(
+                        businessMetrics.fleet_summary.owner_capital_coverage_pct,
+                        0
+                      )
+                    : "--"
+                }
+                subtitle="Cash back plus fleet equity vs owner cash in"
+                tone={
+                  Number(
+                    businessMetrics.fleet_summary.owner_capital_coverage_pct ?? 0
+                  ) >= 1
+                    ? "positive"
+                    : "warning"
+                }
+              />
+            </section>
+          ) : null}
+
+          {businessMetrics?.fleet_summary ? (
+            <section className="metrics-ops-row">
+              <MetricCard
+                label="Operating Profit"
+                value={formatCurrency(businessMetrics.fleet_summary.net_operating_profit)}
+                subtitle={formatConfidenceLabel(businessMetrics.fleet_summary.data_confidence)}
+                tone={
+                  Number(businessMetrics.fleet_summary.net_operating_profit ?? 0) >= 0
+                    ? "positive"
+                    : "negative"
+                }
+              />
+
+              <MetricCard
+                label="After Debt Service"
+                value={formatCurrency(
+                  businessMetrics.fleet_summary.net_profit_after_debt_service
+                )}
+                tone={
+                  Number(
+                    businessMetrics.fleet_summary.net_profit_after_debt_service ?? 0
+                  ) >= 0
+                    ? "positive"
+                    : "negative"
+                }
+              />
+
+              <MetricCard
+                label="After Owner Labor"
+                value={formatCurrency(
+                  businessMetrics.fleet_summary.net_profit_after_owner_labor
+                )}
+                subtitle={`${formatNumber(
+                  businessMetrics.fleet_summary.estimated_owner_hours,
+                  1
+                )} owner hrs`}
+                tone={
+                  Number(
+                    businessMetrics.fleet_summary.net_profit_after_owner_labor ?? 0
+                  ) >= 0
+                    ? "positive"
+                    : "negative"
+                }
+              />
+
+              <MetricCard
+                label="Fleet Equity"
+                value={formatCurrency(
+                  businessMetrics.fleet_summary.current_fleet_equity
+                )}
+              />
+
+              <MetricCard
+                label="Profit / Owner Hour"
+                value={formatCurrencyCompact(
+                  businessMetrics.fleet_summary.avg_profit_per_owner_hour
+                )}
+              />
+
+              <MetricCard
+                label="Data Flags"
+                value={`${formatNumber(
+                  Number(businessMetrics.fleet_summary.flag_counts?.high ?? 0) +
+                    Number(businessMetrics.fleet_summary.flag_counts?.medium ?? 0) +
+                    Number(businessMetrics.fleet_summary.flag_counts?.low ?? 0)
+                )} flags`}
+                subtitle={`High ${formatNumber(
+                  businessMetrics.fleet_summary.flag_counts?.high ?? 0
+                )} · Med ${formatNumber(
+                  businessMetrics.fleet_summary.flag_counts?.medium ?? 0
+                )}`}
+                tone={
+                  Number(businessMetrics.fleet_summary.flag_counts?.high ?? 0) > 0
+                    ? "negative"
+                    : Number(businessMetrics.fleet_summary.flag_counts?.medium ?? 0) > 0
+                    ? "warning"
+                    : "positive"
+                }
+              />
+            </section>
+          ) : null}
+
+          {businessFlagPreview.length ? (
+            <section className="toll-panel">
+              <div className="toll-panel__header">
+                <div className="toll-panel__title">Business Watchlist</div>
+                <div className="toll-panel__subtitle">
+                  Highest-signal gaps still lowering confidence in profit and scale decisions
+                </div>
+              </div>
+              <div className="metrics-financial-list">
+                {businessFlagPreview.map((flag) => (
+                  <article
+                    key={`${flag.entity_type}:${flag.entity_id}:${flag.flag_code}`}
+                    className="metrics-financial-line-item"
+                  >
+                    <div className="metrics-financial-line-top">
+                      <div>
+                        <div className="metrics-financial-line-title">
+                          {formatFlagTitle(flag)}
+                        </div>
+                        <div className="metrics-financial-line-meta">
+                          {formatFlagMeta(flag) || `${flag.entity_type} #${flag.entity_id}`}
+                        </div>
+                      </div>
+                      <div className="metrics-financial-line-amount">
+                        {String(flag.severity || "").toUpperCase()}
+                      </div>
+                    </div>
+                    <div className="metrics-financial-line-split">
+                      <span>{flag.note}</span>
+                    </div>
+                    {flag.mapping_reason ? (
+                      <div className="metrics-financial-line-split">
+                        <span>Why: {flag.mapping_reason}</span>
+                      </div>
+                    ) : null}
+                    {flag.suggested_action ? (
+                      <div className="metrics-financial-line-split">
+                        <span>Next: {flag.suggested_action}</span>
+                      </div>
+                    ) : null}
+                    {flag.suggested_vehicle_name ? (
+                      <div className="metrics-financial-line-split">
+                        <span>Likely vehicle: {flag.suggested_vehicle_name}</span>
+                      </div>
+                    ) : null}
+                    {flag.entity_type === "trip" && flag.reservation_id ? (
+                      <div className="metrics-financial-line-actions">
+                        <button
+                          type="button"
+                          className="metrics-inline-button"
+                          onClick={() => handleOpenTripFlag(flag)}
+                        >
+                          Open trip
+                        </button>
+                      </div>
+                    ) : flag.entity_type === "expense" && flag.expense_id ? (
+                      <div className="metrics-financial-line-actions">
+                        <button
+                          type="button"
+                          className="metrics-inline-button"
+                          onClick={() => handleOpenExpenseFlag(flag)}
+                          disabled={loadingExpenseId === Number(flag.expense_id)}
+                        >
+                          {loadingExpenseId === Number(flag.expense_id)
+                            ? "Opening..."
+                            : "Edit expense"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {false ? (
+          <section className="toll-panel">
+            <div className="toll-panel__header">
+              <div className="toll-panel__title">Business Inputs</div>
+              <div className="toll-panel__subtitle">
+                Fill in the real business assumptions so profit after debt, labor, and equity means something
+              </div>
+            </div>
+
+            {businessInputsLoading ? (
+              <div className="message-empty">Loading business inputs…</div>
+            ) : businessInputsError ? (
+              <div className="expenses-error-state">{businessInputsError}</div>
+            ) : (
+              <div className="metrics-business-inputs">
+                {businessInputsStatus ? (
+                  <div className="detail-sub">{businessInputsStatus}</div>
+                ) : null}
+                <div className="metrics-business-card">
+                  <div className="metrics-business-card__header">
+                    <div>
+                      <div className="metrics-business-card__title">Business Settings</div>
+                      <div className="metrics-business-profile__meta">
+                        Owner cash {formatCurrencyCompact(businessSettings?.owner_cash_invested)} · 401k{" "}
+                        {formatCurrencyCompact(businessSettings?.loan_401k_amount)} · startup tax{" "}
+                        {formatCurrencyCompact(derivedStartupTaxTotal)} · hourly{" "}
+                        {formatCurrencyCompact(
+                          businessSettings?.target_owner_hourly_rate
+                        )}
+                      </div>
+                    </div>
+                    <div className="metrics-business-card__actions">
+                      <button
+                        type="button"
+                        className="metrics-inline-button"
+                        onClick={() => setBusinessSettingsOpen((open) => !open)}
+                      >
+                        {businessSettingsOpen ? "Collapse" : "Edit"}
+                      </button>
+                      <button
+                        type="button"
+                        className="metrics-inline-button"
+                        onClick={handleSaveBusinessSettings}
+                        disabled={savingBusinessSettings}
+                      >
+                        {savingBusinessSettings ? "Saving..." : "Save settings"}
+                      </button>
+                    </div>
+                  </div>
+                  {businessSettingsOpen ? (
+                  <div className="metrics-business-grid">
+                    <label className="metrics-business-field">
+                      <span>Owner Cash Invested</span>
+                      <input
+                        value={formatInputValue(businessSettings?.owner_cash_invested)}
+                        onChange={(e) =>
+                          updateBusinessSetting("owner_cash_invested", e.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="metrics-business-field">
+                      <span>401k Loan Used</span>
+                      <input
+                        value={formatInputValue(businessSettings?.loan_401k_amount)}
+                        onChange={(e) =>
+                          updateBusinessSetting("loan_401k_amount", e.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="metrics-business-field">
+                      <span>Other Business Loan</span>
+                      <input
+                        value={formatInputValue(
+                          businessSettings?.other_business_loan_amount
+                        )}
+                        onChange={(e) =>
+                          updateBusinessSetting(
+                            "other_business_loan_amount",
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="metrics-business-field">
+                      <span>Owner Hourly Rate</span>
+                      <input
+                        value={formatInputValue(
+                          businessSettings?.target_owner_hourly_rate
+                        )}
+                        onChange={(e) =>
+                          updateBusinessSetting(
+                            "target_owner_hourly_rate",
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="metrics-business-field">
+                      <span>Target Profit / Car / Month</span>
+                      <input
+                        value={formatInputValue(
+                          businessSettings?.target_minimum_monthly_profit_per_car
+                        )}
+                        onChange={(e) =>
+                          updateBusinessSetting(
+                            "target_minimum_monthly_profit_per_car",
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="metrics-business-field">
+                      <span>Target Cash-on-Cash Return</span>
+                      <input
+                        value={formatInputValue(
+                          businessSettings?.target_cash_on_cash_return
+                        )}
+                        onChange={(e) =>
+                          updateBusinessSetting(
+                            "target_cash_on_cash_return",
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="metrics-business-field">
+                      <span>Target Payback Months</span>
+                      <input
+                        value={formatInputValue(
+                          businessSettings?.target_payback_period_months
+                        )}
+                        onChange={(e) =>
+                          updateBusinessSetting(
+                            "target_payback_period_months",
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+                  ) : null}
+                </div>
+
+                <div className="metrics-business-card">
+                  <div className="metrics-business-card__header">
+                    <div className="metrics-business-card__title">Vehicle Financial Profiles</div>
+                  </div>
+                  <div className="metrics-business-profile-list">
+                    {vehicleProfiles.map((profile) => (
+                      <article
+                        key={profile.vehicle_id}
+                        className="metrics-business-profile"
+                      >
+                        <div className="metrics-business-profile__header">
+                          <div>
+                            <div className="metrics-business-profile__title">
+                              {profile.vehicle_name}
+                            </div>
+                            <div className="metrics-business-profile__meta">
+                              {buildYearMakeModel(profile) || "Vehicle"} · Turo ID{" "}
+                              {profile.turo_vehicle_id || "--"} · Odo{" "}
+                              {formatNumber(profile.current_odometer_miles ?? 0)}
+                            </div>
+                            <div className="metrics-business-profile__summary">
+                              Cash layout {formatCurrencyCompact(
+                                profile.derived_startup_total ?? profile.purchase_price
+                              )} · Tax{" "}
+                              {formatCurrencyCompact(profile.derived_startup_tax_total)} · Loan{" "}
+                              {formatCurrencyCompact(profile.loan_balance)} · Insurance{" "}
+                              {formatCurrencyCompact(profile.insurance_monthly)}/mo · Service{" "}
+                              {formatBusinessInputDate(profile.placed_in_service_date)}
+                            </div>
+                          </div>
+                          <div className="metrics-business-card__actions">
+                            <button
+                              type="button"
+                              className="metrics-inline-button"
+                              onClick={() => toggleBusinessProfile(profile.vehicle_id)}
+                            >
+                              {expandedBusinessProfiles[profile.vehicle_id]
+                                ? "Collapse"
+                                : "Edit"}
+                            </button>
+                            <button
+                              type="button"
+                              className="metrics-inline-button"
+                              onClick={() => handleSaveVehicleProfile(profile)}
+                              disabled={savingVehicleId === Number(profile.vehicle_id)}
+                            >
+                              {savingVehicleId === Number(profile.vehicle_id)
+                                ? "Saving..."
+                                : "Save vehicle"}
+                            </button>
+                          </div>
+                        </div>
+                        {expandedBusinessProfiles[profile.vehicle_id] ? (
+                        <div className="metrics-business-grid">
+                          <label className="metrics-business-field">
+                            <span>Cash Layout From Expenses</span>
+                            <input
+                              value={formatInputValue(
+                                formatCurrencyCompact(
+                                  profile.derived_startup_total ?? profile.purchase_price
+                                )
+                              )}
+                              readOnly
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Onboard Tax From Expenses</span>
+                            <input
+                              value={formatInputValue(
+                                formatCurrencyCompact(profile.derived_startup_tax_total)
+                              )}
+                              readOnly
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Purchase Date</span>
+                            <input
+                              type="date"
+                              value={formatInputValue(profile.purchase_date)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "purchase_date",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Placed In Service</span>
+                            <input
+                              type="date"
+                              value={formatInputValue(profile.placed_in_service_date)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "placed_in_service_date",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Miles At Purchase</span>
+                            <input
+                              value={formatInputValue(profile.mileage_at_purchase)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "mileage_at_purchase",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Loan Balance</span>
+                            <input
+                              value={formatInputValue(profile.loan_balance)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "loan_balance",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Monthly Payment</span>
+                            <input
+                              value={formatInputValue(profile.monthly_payment)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "monthly_payment",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Interest Rate</span>
+                            <input
+                              value={formatInputValue(profile.interest_rate)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "interest_rate",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Insurance / Month</span>
+                            <input
+                              value={formatInputValue(profile.insurance_monthly)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "insurance_monthly",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Tracker / Month</span>
+                            <input
+                              value={formatInputValue(profile.tracker_monthly)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "tracker_monthly",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Registration / Year</span>
+                            <input
+                              value={formatInputValue(profile.registration_annual)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "registration_annual",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Inspection / Year</span>
+                            <input
+                              value={formatInputValue(profile.inspection_annual)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "inspection_annual",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Target Min Daily Rate</span>
+                            <input
+                              value={formatInputValue(profile.target_min_daily_rate)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "target_min_daily_rate",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Target Utilization</span>
+                            <input
+                              value={formatInputValue(profile.target_utilization)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "target_utilization",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Owner Hourly Override</span>
+                            <input
+                              value={formatInputValue(
+                                profile.owner_hourly_rate_override
+                              )}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "owner_hourly_rate_override",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field metrics-business-field--full">
+                            <span>Notes</span>
+                            <textarea
+                              rows={2}
+                              value={formatInputValue(profile.notes)}
+                              onChange={(e) =>
+                                updateVehicleProfile(
+                                  profile.vehicle_id,
+                                  "notes",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+          ) : null}
 
           <div className="metrics-ops-row">
             <MetricCard
@@ -850,6 +1938,8 @@ const mileageStats = useMemo(() => {
         error={tollAuditError}
         detail={tollAudit}
         focus={tollAuditFocus}
+        assigningChargeId={assigningTollChargeId}
+        onAssignTrip={handleAssignTollTrip}
         onClose={() => setTollAuditOpen(false)}
       />
 
@@ -1012,6 +2102,430 @@ const mileageStats = useMemo(() => {
                 );
               })}
             </div>
+
+            <div className="metrics-business-card">
+              <div className="metrics-business-card__header">
+                <div>
+                  <div className="metrics-business-card__title">Vehicle Economics Inputs</div>
+                  <div className="metrics-business-profile__meta">
+                    Cash layout, tax, financing, insurance, and service dates alongside the cars they belong to
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="metrics-inline-button"
+                  onClick={() => setBusinessInputsSectionOpen((open) => !open)}
+                >
+                  {businessInputsSectionOpen ? "Collapse" : "Expand"}
+                </button>
+              </div>
+
+              {businessInputsSectionOpen ? (
+                businessInputsLoading ? (
+                  <div className="message-empty">Loading business inputsâ€¦</div>
+                ) : businessInputsError ? (
+                  <div className="expenses-error-state">{businessInputsError}</div>
+                ) : (
+                  <div className="metrics-business-inputs">
+                    {businessInputsStatus ? (
+                      <div className="detail-sub">{businessInputsStatus}</div>
+                    ) : null}
+                    <div className="metrics-business-card">
+                      <div className="metrics-business-card__header">
+                        <div>
+                          <div className="metrics-business-card__title">Business Settings</div>
+                          <div className="metrics-business-profile__meta">
+                            Owner cash {formatCurrencyCompact(businessSettings?.owner_cash_invested)} · 401k{" "}
+                            {formatCurrencyCompact(businessSettings?.loan_401k_amount)} · startup tax{" "}
+                            {formatCurrencyCompact(derivedStartupTaxTotal)} · hourly{" "}
+                            {formatCurrencyCompact(
+                              businessSettings?.target_owner_hourly_rate
+                            )}
+                          </div>
+                        </div>
+                        <div className="metrics-business-card__actions">
+                          <button
+                            type="button"
+                            className="metrics-inline-button"
+                            onClick={() => setBusinessSettingsOpen((open) => !open)}
+                          >
+                            {businessSettingsOpen ? "Collapse" : "Edit"}
+                          </button>
+                          <button
+                            type="button"
+                            className="metrics-inline-button"
+                            onClick={handleSaveBusinessSettings}
+                            disabled={savingBusinessSettings}
+                          >
+                            {savingBusinessSettings ? "Saving..." : "Save settings"}
+                          </button>
+                        </div>
+                      </div>
+                      {businessSettingsOpen ? (
+                        <div className="metrics-business-grid">
+                          <label className="metrics-business-field">
+                            <span>Owner Cash Invested</span>
+                            <input
+                              value={formatInputValue(businessSettings?.owner_cash_invested)}
+                              onChange={(e) =>
+                                updateBusinessSetting("owner_cash_invested", e.target.value)
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>401k Loan Used</span>
+                            <input
+                              value={formatInputValue(businessSettings?.loan_401k_amount)}
+                              onChange={(e) =>
+                                updateBusinessSetting("loan_401k_amount", e.target.value)
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Other Business Loan</span>
+                            <input
+                              value={formatInputValue(
+                                businessSettings?.other_business_loan_amount
+                              )}
+                              onChange={(e) =>
+                                updateBusinessSetting(
+                                  "other_business_loan_amount",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Owner Hourly Rate</span>
+                            <input
+                              value={formatInputValue(
+                                businessSettings?.target_owner_hourly_rate
+                              )}
+                              onChange={(e) =>
+                                updateBusinessSetting(
+                                  "target_owner_hourly_rate",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Target Profit / Car / Month</span>
+                            <input
+                              value={formatInputValue(
+                                businessSettings?.target_minimum_monthly_profit_per_car
+                              )}
+                              onChange={(e) =>
+                                updateBusinessSetting(
+                                  "target_minimum_monthly_profit_per_car",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Target Cash-on-Cash Return</span>
+                            <input
+                              value={formatInputValue(
+                                businessSettings?.target_cash_on_cash_return
+                              )}
+                              onChange={(e) =>
+                                updateBusinessSetting(
+                                  "target_cash_on_cash_return",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                          <label className="metrics-business-field">
+                            <span>Target Payback Months</span>
+                            <input
+                              value={formatInputValue(
+                                businessSettings?.target_payback_period_months
+                              )}
+                              onChange={(e) =>
+                                updateBusinessSetting(
+                                  "target_payback_period_months",
+                                  e.target.value
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="metrics-business-card">
+                      <div className="metrics-business-card__header">
+                        <div className="metrics-business-card__title">Vehicle Financial Profiles</div>
+                      </div>
+                      <div className="metrics-business-profile-list">
+                        {vehicleProfiles.map((profile) => (
+                          <article
+                            key={profile.vehicle_id}
+                            className="metrics-business-profile"
+                          >
+                            <div className="metrics-business-profile__header">
+                              <div>
+                                <div className="metrics-business-profile__title">
+                                  {profile.vehicle_name}
+                                </div>
+                                <div className="metrics-business-profile__meta">
+                                  {buildYearMakeModel(profile) || "Vehicle"} · Turo ID{" "}
+                                  {profile.turo_vehicle_id || "--"} · Odo{" "}
+                                  {formatNumber(profile.current_odometer_miles ?? 0)}
+                                </div>
+                                <div className="metrics-business-profile__summary">
+                                  Cash layout {formatCurrencyCompact(
+                                    profile.derived_startup_total ?? profile.purchase_price
+                                  )} · Tax{" "}
+                                  {formatCurrencyCompact(profile.derived_startup_tax_total)} · Loan{" "}
+                                  {formatCurrencyCompact(profile.loan_balance)} · Insurance{" "}
+                                  {formatCurrencyCompact(profile.insurance_monthly)}/mo · Service{" "}
+                                  {formatBusinessInputDate(profile.placed_in_service_date)}
+                                </div>
+                              </div>
+                              <div className="metrics-business-card__actions">
+                                <button
+                                  type="button"
+                                  className="metrics-inline-button"
+                                  onClick={() => toggleBusinessProfile(profile.vehicle_id)}
+                                >
+                                  {expandedBusinessProfiles[profile.vehicle_id]
+                                    ? "Collapse"
+                                    : "Edit"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="metrics-inline-button"
+                                  onClick={() => handleSaveVehicleProfile(profile)}
+                                  disabled={savingVehicleId === Number(profile.vehicle_id)}
+                                >
+                                  {savingVehicleId === Number(profile.vehicle_id)
+                                    ? "Saving..."
+                                    : "Save vehicle"}
+                                </button>
+                              </div>
+                            </div>
+                            {expandedBusinessProfiles[profile.vehicle_id] ? (
+                              <div className="metrics-business-grid">
+                                <label className="metrics-business-field">
+                                  <span>Cash Layout From Expenses</span>
+                                  <input
+                                    value={formatInputValue(
+                                      formatCurrencyCompact(
+                                        profile.derived_startup_total ?? profile.purchase_price
+                                      )
+                                    )}
+                                    readOnly
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Onboard Tax From Expenses</span>
+                                  <input
+                                    value={formatInputValue(
+                                      formatCurrencyCompact(profile.derived_startup_tax_total)
+                                    )}
+                                    readOnly
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Purchase Date</span>
+                                  <input
+                                    type="date"
+                                    value={formatInputValue(profile.purchase_date)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "purchase_date",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Placed In Service</span>
+                                  <input
+                                    type="date"
+                                    value={formatInputValue(profile.placed_in_service_date)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "placed_in_service_date",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Miles At Purchase</span>
+                                  <input
+                                    value={formatInputValue(profile.mileage_at_purchase)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "mileage_at_purchase",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Loan Balance</span>
+                                  <input
+                                    value={formatInputValue(profile.loan_balance)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "loan_balance",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Monthly Payment</span>
+                                  <input
+                                    value={formatInputValue(profile.monthly_payment)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "monthly_payment",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Interest Rate</span>
+                                  <input
+                                    value={formatInputValue(profile.interest_rate)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "interest_rate",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Insurance / Month</span>
+                                  <input
+                                    value={formatInputValue(profile.insurance_monthly)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "insurance_monthly",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Tracker / Month</span>
+                                  <input
+                                    value={formatInputValue(profile.tracker_monthly)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "tracker_monthly",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Registration / Year</span>
+                                  <input
+                                    value={formatInputValue(profile.registration_annual)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "registration_annual",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Inspection / Year</span>
+                                  <input
+                                    value={formatInputValue(profile.inspection_annual)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "inspection_annual",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Target Min Daily Rate</span>
+                                  <input
+                                    value={formatInputValue(profile.target_min_daily_rate)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "target_min_daily_rate",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Target Utilization</span>
+                                  <input
+                                    value={formatInputValue(profile.target_utilization)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "target_utilization",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field">
+                                  <span>Owner Hourly Override</span>
+                                  <input
+                                    value={formatInputValue(
+                                      profile.owner_hourly_rate_override
+                                    )}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "owner_hourly_rate_override",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="metrics-business-field metrics-business-field--full">
+                                  <span>Notes</span>
+                                  <textarea
+                                    rows={2}
+                                    value={formatInputValue(profile.notes)}
+                                    onChange={(e) =>
+                                      updateVehicleProfile(
+                                        profile.vehicle_id,
+                                        "notes",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </label>
+                              </div>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )
+              ) : null}
+            </div>
           </section>
 
           <VehicleFinancialDrawer
@@ -1021,6 +2535,14 @@ const mileageStats = useMemo(() => {
             detail={financialDetail}
             focus={financialDetailFocus}
             onClose={closeFinancialDetail}
+          />
+
+          <ExpenseModal
+            open={expenseModalOpen}
+            expense={editingExpense}
+            selectedVehicleId={editingExpense?.vehicle_id ?? null}
+            onClose={closeExpenseModal}
+            onSaved={handleExpenseSaved}
           />
         </>
       )}

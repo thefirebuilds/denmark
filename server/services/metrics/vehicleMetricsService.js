@@ -6,6 +6,7 @@
 const pool = require("../../db");
 const {
   clampNonNegative,
+  getCalendarDaysInRange,
   getDateRange,
   getExpenseTotal,
   getOverlapDays,
@@ -72,6 +73,7 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
         starting_odometer,
         ending_odometer,
         toll_total,
+        toll_charged_total,
         toll_review_status,
         workflow_stage,
         expense_status,
@@ -89,6 +91,40 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
   );
 
   return rows.filter((trip) => tripOverlapsRange(trip, startDate, endDate));
+}
+
+function getVehicleAvailabilityDays({
+  tripsForVehicle,
+  onboardingDate,
+  rangeStart,
+  rangeEnd,
+}) {
+  const end = rangeEnd ? new Date(rangeEnd) : null;
+  if (!end || Number.isNaN(end.getTime())) return 0;
+
+  const tripStarts = (tripsForVehicle || [])
+    .map((trip) => (trip?.trip_start ? new Date(trip.trip_start) : null))
+    .filter((date) => date && !Number.isNaN(date.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  let availabilityStart = tripStarts[0] || null;
+
+  if (!availabilityStart && onboardingDate) {
+    const onboarding = new Date(onboardingDate);
+    if (!Number.isNaN(onboarding.getTime())) {
+      availabilityStart = onboarding;
+    }
+  }
+
+  if (!availabilityStart) return 0;
+
+  const effectiveStart =
+    rangeStart && !Number.isNaN(new Date(rangeStart).getTime())
+      ? new Date(Math.max(new Date(rangeStart).getTime(), availabilityStart.getTime()))
+      : availabilityStart;
+
+  if (effectiveStart.getTime() > end.getTime()) return 0;
+  return getCalendarDaysInRange(effectiveStart, end);
 }
 
 async function fetchExpensesForVehicles(client, startDate, endDate) {
@@ -801,6 +837,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
         trip_count_overlapping: 0,
         trip_count_prorated: 0,
         booked_vehicle_days: 0,
+        calendar_days_available: 0,
         income_per_overlapping_trip: 0,
         income_per_prorated_trip: 0,
         income_per_booked_day: 0,
@@ -909,6 +946,13 @@ async function getVehicleMetrics(rangeKey = "30d") {
         0
       );
 
+      metrics.calendar_days_available = getVehicleAvailabilityDays({
+        tripsForVehicle,
+        onboardingDate: metrics.onboarding_date,
+        rangeStart: startDate,
+        rangeEnd: endDate,
+      });
+
       metrics.trip_miles = tripsForVehicle.reduce(
         (sum, trip) => sum + getTripMiles(trip),
         0
@@ -935,16 +979,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
         tripsForVehicle.reduce((sum, trip) => {
           if (!isTripTollAttributedOutstanding(trip)) return sum;
 
-          return (
-            sum +
-            getTripProratedValue(
-              trip.toll_total,
-              trip.trip_start,
-              trip.trip_end,
-              startDate,
-              endDate
-            )
-          );
+          return sum + toNumber(trip.toll_total);
         }, 0)
       );
 

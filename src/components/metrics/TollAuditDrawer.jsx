@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 function formatCurrency(value) {
   const num = Number(value ?? 0);
@@ -45,8 +45,12 @@ export default function TollAuditDrawer({
   error = null,
   detail = null,
   focus = "unattributed",
+  assigningChargeId = null,
+  onAssignTrip = null,
   onClose,
 }) {
+  const [selectedTripByCharge, setSelectedTripByCharge] = useState({});
+
   useEffect(() => {
     if (!open) return undefined;
 
@@ -60,8 +64,23 @@ export default function TollAuditDrawer({
 
   if (!open) return null;
 
+  function updateSelectedTrip(chargeId, tripId) {
+    setSelectedTripByCharge((prev) => ({
+      ...prev,
+      [chargeId]: tripId,
+    }));
+  }
+
+  async function handleAssignTrip(charge) {
+    if (!onAssignTrip) return;
+    const selectedValue = selectedTripByCharge[charge.toll_charge_id] || "";
+    if (!selectedValue) return;
+    await onAssignTrip(charge.toll_charge_id, selectedValue);
+  }
+
   const unattributed = detail?.unattributed || {};
   const outstanding = detail?.outstanding || {};
+  const discrepancies = detail?.discrepancies || {};
 
   return (
     <>
@@ -126,10 +145,54 @@ export default function TollAuditDrawer({
                         <span>Stage: {trip.workflow_stage || "--"}</span>
                         <span>Expenses: {trip.expense_status || "--"}</span>
                       </div>
+                      <div className="toll-audit-item__details toll-audit-item__details--financial">
+                        <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>
+                        <span>Attributed: {formatCurrency(trip.attributed_toll_amount ?? trip.toll_total ?? 0)}</span>
+                        <span>Delta: {trip.toll_delta == null ? "--" : formatCurrency(trip.toll_delta)}</span>
+                      </div>
                     </article>
                   ))}
                   {!outstanding.trips?.length ? (
                     <div className="metrics-financial-empty">No outstanding toll trips in this range.</div>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="toll-audit-section">
+                <div className="toll-audit-section__header">
+                  <div className="toll-audit-section__title">Charge Discrepancies</div>
+                  <div className="toll-audit-section__meta">
+                    {formatCurrency(discrepancies.total_delta)} across{" "}
+                    {Number(discrepancies.count ?? 0)} trip
+                    {Number(discrepancies.count ?? 0) === 1 ? "" : "s"}
+                  </div>
+                </div>
+
+                <div className="toll-audit-list">
+                  {(discrepancies.trips || []).map((trip) => (
+                    <article key={`discrepancy-${trip.trip_id}`} className="toll-audit-item">
+                      <div className="toll-audit-item__top">
+                        <div>
+                          <div className="toll-audit-item__title">
+                            {formatTripLabel(trip)}
+                          </div>
+                          <div className="toll-audit-item__meta">
+                            {formatDateTime(trip.trip_start)} - {formatDateTime(trip.trip_end)}
+                          </div>
+                        </div>
+                        <div className="toll-audit-item__amount">
+                          {formatCurrency(trip.toll_delta)}
+                        </div>
+                      </div>
+                      <div className="toll-audit-item__details toll-audit-item__details--financial">
+                        <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>
+                        <span>Attributed: {formatCurrency(trip.attributed_toll_amount ?? 0)}</span>
+                        <span>Status: {trip.toll_review_status || "pending"}</span>
+                      </div>
+                    </article>
+                  ))}
+                  {!discrepancies.trips?.length ? (
+                    <div className="metrics-financial-empty">No toll charge mismatches in this range.</div>
                   ) : null}
                 </div>
               </section>
@@ -181,6 +244,40 @@ export default function TollAuditDrawer({
                           {formatDateTime(charge.candidate_trip.trip_end)})
                         </div>
                       ) : null}
+                      <div className="toll-audit-assign">
+                        <label className="toll-audit-assign__label">
+                          Likely trip
+                          <select
+                            className="toll-audit-assign__select"
+                            value={selectedTripByCharge[charge.toll_charge_id] || ""}
+                            onChange={(event) =>
+                              updateSelectedTrip(charge.toll_charge_id, event.target.value)
+                            }
+                            disabled={assigningChargeId === charge.toll_charge_id}
+                          >
+                            <option value="">Select trip</option>
+                            <option value="__off_trip__">Off trip / host use</option>
+                            {(charge.candidate_trips || []).map((trip) => (
+                              <option key={trip.trip_id} value={trip.trip_id}>
+                                {formatTripLabel(trip)} - {formatDateTime(trip.trip_start)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className="toll-audit-assign__button"
+                          onClick={() => handleAssignTrip(charge)}
+                          disabled={
+                            assigningChargeId === charge.toll_charge_id ||
+                            !selectedTripByCharge[charge.toll_charge_id]
+                          }
+                        >
+                          {assigningChargeId === charge.toll_charge_id
+                            ? "Assigning..."
+                            : "Assign"}
+                        </button>
+                      </div>
                     </article>
                   ))}
                   {!unattributed.charges?.length ? (

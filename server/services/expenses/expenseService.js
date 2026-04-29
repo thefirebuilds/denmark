@@ -18,6 +18,10 @@ const ALLOWED_SORT_FIELDS = new Set([
   "id",
 ]);
 const ALLOWED_SORT_DIRECTIONS = new Set(["asc", "desc"]);
+const CANONICAL_VENDOR_MAP = new Map([
+  ["amazon", "Amazon"],
+  ["ebay", "eBay"],
+]);
 
 function toNumberOrNull(value) {
   if (value === "" || value == null) return null;
@@ -37,6 +41,36 @@ function cleanString(value) {
   if (value == null) return null;
   const s = String(value).trim();
   return s || null;
+}
+
+function canonicalizeVendor(value) {
+  const cleaned = cleanString(value);
+  if (!cleaned) return null;
+  return CANONICAL_VENDOR_MAP.get(cleaned.toLowerCase()) || cleaned;
+}
+
+function mergeVendorSummaryRows(rows = []) {
+  const merged = new Map();
+
+  for (const row of rows) {
+    const vendor = canonicalizeVendor(row?.vendor) || "Unknown vendor";
+    const existing = merged.get(vendor) || {
+      vendor,
+      row_count: 0,
+      total: 0,
+    };
+
+    existing.row_count += Number(row?.row_count || 0);
+    existing.total += Number(row?.total || 0);
+    merged.set(vendor, existing);
+  }
+
+  return Array.from(merged.values())
+    .sort((a, b) => b.total - a.total || String(a.vendor).localeCompare(String(b.vendor)))
+    .map((row) => ({
+      ...row,
+      total: Number(row.total).toFixed(2),
+    }));
 }
 
 function normalizeScope(value, fallback = "direct") {
@@ -71,7 +105,7 @@ function normalizeExpenseInput(input, { partial = false } = {}) {
   }
 
   if (!partial || Object.prototype.hasOwnProperty.call(input, "vendor")) {
-    normalized.vendor = cleanString(input.vendor);
+    normalized.vendor = canonicalizeVendor(input.vendor);
   }
 
   if (!partial || Object.prototype.hasOwnProperty.call(input, "price")) {
@@ -176,7 +210,11 @@ function buildWhereClause(filters) {
   }
 
   if (filters.vendor) {
-    addClause("LOWER(e.vendor) = LOWER(?)", filters.vendor);
+    if (filters.vendor === "__unknown__") {
+      clauses.push(`(e.vendor IS NULL OR TRIM(e.vendor) = '')`);
+    } else {
+      addClause("LOWER(e.vendor) = LOWER(?)", filters.vendor);
+    }
   }
 
   if (filters.expense_scope) {
@@ -303,7 +341,7 @@ async function getCapitalBasisBreakdown({
         id: row.id,
         vehicle_id: row.vehicle_id,
         date: row.date,
-        vendor: row.vendor,
+        vendor: canonicalizeVendor(row.vendor),
         category: row.category,
         price: Number(row.price ?? 0),
         tax: Number(row.tax ?? 0),
@@ -365,7 +403,13 @@ async function getExpenseSuggestions() {
   `);
 
   return {
-    vendors: vendorsResult.rows.map((row) => row.value),
+    vendors: Array.from(
+      new Set(
+        vendorsResult.rows
+          .map((row) => canonicalizeVendor(row.value))
+          .filter(Boolean)
+      )
+    ).sort((a, b) => String(a).localeCompare(String(b))),
     categories: categoriesResult.rows.map((row) => row.value),
   };
 }
@@ -427,7 +471,10 @@ async function listExpenses(rawFilters = {}) {
   ]);
 
   return {
-    data: listResult.rows,
+    data: listResult.rows.map((row) => ({
+      ...row,
+      vendor: canonicalizeVendor(row.vendor),
+    })),
     pagination: {
       page: filters.page,
       limit: filters.limit,
@@ -478,7 +525,11 @@ async function getExpenseById(id) {
     [expenseId]
   );
 
-  return result.rows[0] || null;
+  if (!result.rows[0]) return null;
+  return {
+    ...result.rows[0],
+    vendor: canonicalizeVendor(result.rows[0].vendor),
+  };
 }
 
 async function createExpense(input) {
@@ -521,7 +572,7 @@ async function createExpense(input) {
     ]
   );
 
-  return result.rows[0];
+  return result.rows[0] ? { ...result.rows[0], vendor: canonicalizeVendor(result.rows[0].vendor) } : null;
 }
 
 async function updateExpense(id, input) {
@@ -580,7 +631,9 @@ async function updateExpense(id, input) {
     values
   );
 
-  return result.rows[0] || null;
+  return result.rows[0]
+    ? { ...result.rows[0], vendor: canonicalizeVendor(result.rows[0].vendor) }
+    : null;
 }
 
 async function deleteExpense(id) {
@@ -607,7 +660,7 @@ async function getExpenseSummary(rawFilters = {}) {
   const filters = normalizeListFilters(rawFilters);
   const { whereSql, values } = buildWhereClause(filters);
 
-  const [result, byCategory, byVehicle, byScope] = await Promise.all([
+  const [result, byCategory, byVehicle, byScope, byVendor] = await Promise.all([
     pool.query(
       `
         SELECT
@@ -667,6 +720,19 @@ async function getExpenseSummary(rawFilters = {}) {
       `,
       values
     ),
+    pool.query(
+      `
+        SELECT
+          COALESCE(NULLIF(TRIM(e.vendor), ''), 'Unknown vendor') AS vendor,
+          COUNT(*)::int AS row_count,
+          COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS total
+        FROM expenses e
+        ${whereSql}
+        GROUP BY COALESCE(NULLIF(TRIM(e.vendor), ''), 'Unknown vendor')
+        ORDER BY total DESC, vendor ASC
+      `,
+      values
+    ),
   ]);
 
   return {
@@ -674,6 +740,7 @@ async function getExpenseSummary(rawFilters = {}) {
     by_category: byCategory.rows,
     by_vehicle: byVehicle.rows,
     by_scope: byScope.rows,
+    by_vendor: mergeVendorSummaryRows(byVendor.rows),
   };
 }
 

@@ -6,6 +6,7 @@
 
 const express = require("express");
 const pool = require("../db");
+const { refreshTripTollCaches } = require("../services/tolls/syncTolls");
 const {
   getSummaryMetrics,
   getTollMetricsDetail,
@@ -58,6 +59,137 @@ router.get("/tolls/detail", async (req, res) => {
   } catch (err) {
     console.error("GET /api/metrics/tolls/detail failed:", err);
     return res.status(500).json({ error: "Failed to load toll detail" });
+  }
+});
+
+router.put("/tolls/charges/:tollChargeId/assign-trip", async (req, res) => {
+  const tollChargeId = Number(req.params.tollChargeId);
+  const rawTripId = req.body?.trip_id;
+  const disposition =
+    typeof req.body?.disposition === "string"
+      ? req.body.disposition.trim().toLowerCase()
+      : "";
+  const isOffTrip = disposition === "off_trip" || rawTripId === "__off_trip__";
+  const tripId = isOffTrip ? null : Number(rawTripId);
+
+  if (!Number.isInteger(tollChargeId) || tollChargeId <= 0) {
+    return res.status(400).json({ error: "Invalid toll charge id" });
+  }
+
+  if (!isOffTrip && (!Number.isInteger(tripId) || tripId <= 0)) {
+    return res.status(400).json({ error: "trip_id is required" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const tollResult = await client.query(
+      `
+        SELECT
+          tc.id,
+          tc.trxn_at,
+          tc.matched_vehicle_id,
+          v.turo_vehicle_id AS matched_vehicle_turo_id
+        FROM toll_charges tc
+        LEFT JOIN vehicles v
+          ON v.id = tc.matched_vehicle_id
+        WHERE tc.id = $1
+        FOR UPDATE OF tc
+      `,
+      [tollChargeId]
+    );
+
+    const tollCharge = tollResult.rows[0];
+    let trip = null;
+
+    if (!isOffTrip) {
+      const tripResult = await client.query(
+        `
+          SELECT
+            t.id,
+            t.turo_vehicle_id
+          FROM trips t
+          WHERE t.id = $1
+          LIMIT 1
+        `,
+        [tripId]
+      );
+      trip = tripResult.rows[0];
+    }
+
+    if (!tollCharge) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Toll charge not found" });
+    }
+
+    if (!isOffTrip && !trip) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    if (
+      !isOffTrip &&
+      tollCharge.matched_vehicle_turo_id &&
+      trip.turo_vehicle_id &&
+      String(tollCharge.matched_vehicle_turo_id) !== String(trip.turo_vehicle_id)
+    ) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: "Selected trip does not match the toll charge vehicle",
+      });
+    }
+
+    if (isOffTrip) {
+      await client.query(
+        `
+          UPDATE toll_charges
+          SET
+            matched_trip_id = NULL,
+            match_status = CASE
+              WHEN matched_vehicle_id IS NOT NULL THEN 'vehicle_matched'
+              ELSE 'unmatched'
+            END,
+            review_status = 'dismissed',
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [tollChargeId]
+      );
+    } else {
+      await client.query(
+        `
+          UPDATE toll_charges
+          SET
+            matched_trip_id = $2,
+            match_status = 'trip_matched',
+            review_status = CASE
+              WHEN review_status IN ('pending', 'matched') THEN 'matched'
+              ELSE review_status
+            END,
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [tollChargeId, tripId]
+      );
+    }
+
+    await refreshTripTollCaches(client);
+    await client.query("COMMIT");
+
+    return res.json({
+      ok: true,
+      toll_charge_id: tollChargeId,
+      trip_id: tripId,
+      disposition: isOffTrip ? "off_trip" : "trip_matched",
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("PUT /api/metrics/tolls/charges/:tollChargeId/assign-trip failed:", err);
+    return res.status(500).json({ error: "Failed to assign toll charge to trip" });
+  } finally {
+    client.release();
   }
 });
 

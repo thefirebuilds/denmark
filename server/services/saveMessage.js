@@ -47,6 +47,10 @@ function classifyMessageType(subject) {
     return "trip_canceled";
   }
 
+  if (/^turo has cancelled .+ trip with your .+$/i.test(s)) {
+    return "trip_canceled";
+  }
+
   if (/^.+ has changed their trip with your .+ \(\d+\)$/i.test(s)) {
     return "trip_changed";
   }
@@ -459,10 +463,10 @@ async function applyTripCloseoutSignalsFromMessage({
           WHEN $2::boolean THEN TRUE
           ELSE has_tolls
         END,
-        toll_total = CASE
+        toll_charged_total = CASE
           WHEN $2::boolean AND $3::numeric IS NOT NULL
-            THEN COALESCE($3::numeric, toll_total)
-          ELSE toll_total
+            THEN COALESCE($3::numeric, toll_charged_total)
+          ELSE toll_charged_total
         END,
         toll_review_status = CASE
           WHEN $2::boolean OR COALESCE(has_tolls, false) = TRUE THEN 'billed'
@@ -525,6 +529,7 @@ function extractTripBookedFields(normalizedTextBody, subject = "", htmlBody = ""
 function extractTripCanceledFields(normalizedTextBody, subject = "", htmlBody = "") {
   const base = baseExtractFields(normalizedTextBody, subject, htmlBody);
   const text = String(normalizedTextBody || "");
+  const subjectText = String(subject || "");
 
   const cancellationReason =
     extractMatch(
@@ -555,6 +560,11 @@ function extractTripCanceledFields(normalizedTextBody, subject = "", htmlBody = 
 
     if (payoutRaw) {
       cancellationPayoutAmount = parseMoney(payoutRaw);
+    } else if (
+      /^turo has cancelled .+ trip with your /i.test(subjectText) ||
+      /turo cancelled .+ trip/i.test(text)
+    ) {
+      cancellationPayoutAmount = 0;
     }
   }
 

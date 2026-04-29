@@ -22,6 +22,26 @@ import {
 } from "../utils/tripUtils";
 
 const API_BASE = "http://localhost:5000";
+const TRIP_LEDGER_FOCUS_STORAGE_KEY = "denmark.tripLedgerFocus";
+
+function readStoredTripLedgerFocus() {
+  if (typeof window === "undefined") return null;
+
+  const raw = window.sessionStorage.getItem(TRIP_LEDGER_FOCUS_STORAGE_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.reservationId ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredTripLedgerFocus() {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(TRIP_LEDGER_FOCUS_STORAGE_KEY);
+}
 
 function hasOpenTollBilling(trip) {
   const tollTotal = Number(trip?.toll_total ?? 0);
@@ -65,6 +85,9 @@ export default function TripSummary() {
     search: "",
     tripHealth: "all",
   });
+  const [pendingLedgerFocus, setPendingLedgerFocus] = useState(
+    readStoredTripLedgerFocus
+  );
 
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -138,6 +161,34 @@ export default function TripSummary() {
   }, []);
 
   useEffect(() => {
+    function handleOpenTripLedger(event) {
+      const detail = event?.detail || readStoredTripLedgerFocus();
+      if (!detail?.reservationId) return;
+
+      setPendingLedgerFocus(detail);
+      setFilters((current) => ({
+        ...current,
+        search: String(detail.reservationId),
+        tripHealth: "all",
+      }));
+    }
+
+    window.addEventListener("denmark:open-trip-ledger", handleOpenTripLedger);
+
+    if (pendingLedgerFocus?.reservationId) {
+      setFilters((current) => ({
+        ...current,
+        search: String(pendingLedgerFocus.reservationId),
+        tripHealth: "all",
+      }));
+    }
+
+    return () => {
+      window.removeEventListener("denmark:open-trip-ledger", handleOpenTripLedger);
+    };
+  }, [pendingLedgerFocus]);
+
+  useEffect(() => {
     let ignore = false;
 
     async function loadTrips() {
@@ -199,6 +250,39 @@ export default function TripSummary() {
     filters.search,
     selectedTrip?.id,
   ]);
+
+  useEffect(() => {
+    if (!pendingLedgerFocus?.reservationId || loading) return;
+
+    const match = trips.find((trip) => {
+      if (
+        pendingLedgerFocus.tripId != null &&
+        String(trip?.id ?? "") === String(pendingLedgerFocus.tripId)
+      ) {
+        return true;
+      }
+
+      return (
+        String(trip?.reservation_id ?? "") ===
+        String(pendingLedgerFocus.reservationId)
+      );
+    });
+
+    if (match) {
+      handleSelectTrip(match);
+      clearStoredTripLedgerFocus();
+      setPendingLedgerFocus(null);
+      return;
+    }
+
+    if (
+      filters.search &&
+      String(filters.search) === String(pendingLedgerFocus.reservationId)
+    ) {
+      clearStoredTripLedgerFocus();
+      setPendingLedgerFocus(null);
+    }
+  }, [pendingLedgerFocus, loading, trips, filters.search]);
 
 const displayTrips = useMemo(() => {
   return trips.filter((trip) => {

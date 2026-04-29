@@ -19,6 +19,7 @@ const tollRoutes = require("./routes/tolls");
 const expensesRouter = require("./routes/expenses");
 const tellerRoutes = require("./routes/teller");
 const metricsRouter = require("./routes/metrics");
+const businessMetricsRouter = require("./routes/businessMetrics");
 const marketplaceRoutes = require("./routes/marketplace");
 const publicAvailabilityRouter = require("./routes/publicAvailability");
 const settingsRouter = require("./routes/settings");
@@ -31,6 +32,9 @@ const {
 const {
   ensureVehicleFmvEstimatesTable,
 } = require("./services/vehicles/fmvEstimateService");
+const {
+  ensureBusinessMetricsTables,
+} = require("./services/metrics/businessMetricsService");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -99,6 +103,7 @@ app.use("/api/tolls", defaultCors, tollRoutes);
 app.use("/api/expenses", defaultCors, expensesRouter);
 app.use("/api/teller", defaultCors, tellerRoutes);
 app.use("/api/metrics", defaultCors, metricsRouter);
+app.use("/api/metrics/business", defaultCors, businessMetricsRouter);
 app.use("/api/marketplace", marketplaceCors, marketplaceRoutes);
 app.use("/api/settings", defaultCors, settingsRouter);
 app.use("/api/database", defaultCors, databaseRouter);
@@ -118,6 +123,7 @@ app.get("/__whoami", (req, res) => {
 Promise.all([
   ensureNotificationEventsTable(),
   ensureVehicleFmvEstimatesTable(),
+  ensureBusinessMetricsTables(),
 ])
   .then(() => {
     app.listen(PORT, () => {

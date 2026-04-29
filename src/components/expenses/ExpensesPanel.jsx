@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ExpenseModal from "./ExpenseModal";
 
 const API_BASE = "http://localhost:5000";
+const EXPENSE_LEDGER_FOCUS_STORAGE_KEY = "denmark.expenseLedgerFocus";
+const EXPENSES_UPDATED_EVENT = "denmark:expenses-updated";
 
 const DEFAULT_FILTERS = {
   q: "",
@@ -16,6 +18,10 @@ const DEFAULT_FILTERS = {
   page: 1,
   limit: 50,
 };
+
+function getDefaultFilters() {
+  return { ...DEFAULT_FILTERS };
+}
 
 function money(value) {
   const n = Number(value || 0);
@@ -41,6 +47,41 @@ function buildQuery(params) {
   return search.toString();
 }
 
+function readStoredExpenseLedgerFocus() {
+  if (typeof window === "undefined") return null;
+
+  const raw = window.sessionStorage.getItem(EXPENSE_LEDGER_FOCUS_STORAGE_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && (parsed.expenseId || parsed.filters) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredExpenseLedgerFocus() {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(EXPENSE_LEDGER_FOCUS_STORAGE_KEY);
+}
+
+function notifyExpensesUpdated() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(EXPENSES_UPDATED_EVENT));
+}
+
+async function fetchExpenseById(expenseId) {
+  const res = await fetch(`${API_BASE}/api/expenses/${expenseId}`);
+  const json = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(json?.error || "Failed to load expense");
+  }
+
+  return json;
+}
+
 function ExpenseMetricCard({ label, value, sub }) {
   return (
     <div className="detail-card">
@@ -56,6 +97,11 @@ function getScopePillClass(scope) {
   if (scope === "apportioned") return "warning";
   if (scope === "shared") return "parked";
   return "parked";
+}
+
+function getVendorFilterValue(vendor) {
+  const cleaned = String(vendor || "").trim();
+  return cleaned ? cleaned : "__unknown__";
 }
 
 export default function ExpensesPanel({ selectedVehicleId }) {
@@ -74,6 +120,9 @@ export default function ExpensesPanel({ selectedVehicleId }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [pendingExpenseFocus, setPendingExpenseFocus] = useState(
+    readStoredExpenseLedgerFocus
+  );
 
   const scopedFilters = useMemo(() => {
     return {
@@ -120,6 +169,68 @@ export default function ExpensesPanel({ selectedVehicleId }) {
     setFilters((prev) => ({ ...prev, page: 1 }));
   }, [selectedVehicleId]);
 
+  useEffect(() => {
+    function handleOpenExpenseLedger(event) {
+      const detail = event?.detail || readStoredExpenseLedgerFocus();
+      if (!detail?.expenseId && !detail?.filters) return;
+
+      setPendingExpenseFocus(detail);
+    }
+
+    window.addEventListener("denmark:open-expense-ledger", handleOpenExpenseLedger);
+
+    return () => {
+      window.removeEventListener(
+        "denmark:open-expense-ledger",
+        handleOpenExpenseLedger
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingExpenseFocus?.expenseId) return;
+
+    let ignore = false;
+
+    async function loadFocusedExpense() {
+      try {
+        const expense = await fetchExpenseById(pendingExpenseFocus.expenseId);
+        if (ignore) return;
+
+        setEditingExpense(expense);
+        setModalOpen(true);
+      } catch (err) {
+        if (!ignore) {
+          window.alert(err.message || "Failed to load expense");
+        }
+      } finally {
+        if (!ignore) {
+          clearStoredExpenseLedgerFocus();
+          setPendingExpenseFocus(null);
+        }
+      }
+    }
+
+    loadFocusedExpense();
+
+    return () => {
+      ignore = true;
+    };
+  }, [pendingExpenseFocus]);
+
+  useEffect(() => {
+    if (!pendingExpenseFocus?.filters || pendingExpenseFocus?.expenseId) return;
+
+    setFilters((prev) => ({
+      ...prev,
+      ...pendingExpenseFocus.filters,
+      page: 1,
+    }));
+
+    clearStoredExpenseLedgerFocus();
+    setPendingExpenseFocus(null);
+  }, [pendingExpenseFocus]);
+
   function updateFilter(key, value) {
     setFilters((prev) => ({
       ...prev,
@@ -136,6 +247,10 @@ export default function ExpensesPanel({ selectedVehicleId }) {
   function handleOpenEdit(expense) {
     setEditingExpense(expense);
     setModalOpen(true);
+  }
+
+  function handleVendorFilter(vendor) {
+    updateFilter("vendor", getVendorFilterValue(vendor));
   }
 
   async function handleDelete(expense) {
@@ -157,6 +272,7 @@ export default function ExpensesPanel({ selectedVehicleId }) {
       }
 
       setRefreshToken((x) => x + 1);
+      notifyExpensesUpdated();
     } catch (err) {
       window.alert(err.message || "Failed to delete expense");
     } finally {
@@ -278,7 +394,7 @@ export default function ExpensesPanel({ selectedVehicleId }) {
           <button
             type="button"
             className="message-action"
-            onClick={() => setFilters(DEFAULT_FILTERS)}
+            onClick={() => setFilters(getDefaultFilters())}
           >
             Reset
           </button>
@@ -321,7 +437,13 @@ export default function ExpensesPanel({ selectedVehicleId }) {
                   <div className="trip-top">
                     <div>
                       <div className="trip-title">
-                        {expense.vendor || "Unknown vendor"}
+                        <button
+                          type="button"
+                          className="expenses-vendor-link"
+                          onClick={() => handleVendorFilter(expense.vendor)}
+                        >
+                          {expense.vendor || "Unknown vendor"}
+                        </button>
                       </div>
                       <div className="trip-sub">
                         {expense.vehicle_nickname || "No vehicle"} · {fmtDate(expense.date)}
@@ -439,7 +561,10 @@ export default function ExpensesPanel({ selectedVehicleId }) {
         expense={editingExpense}
         selectedVehicleId={selectedVehicleId}
         onClose={() => setModalOpen(false)}
-        onSaved={() => setRefreshToken((x) => x + 1)}
+        onSaved={() => {
+          setRefreshToken((x) => x + 1);
+          notifyExpensesUpdated();
+        }}
       />
     </>
   );

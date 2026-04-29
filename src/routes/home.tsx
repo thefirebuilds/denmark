@@ -43,6 +43,8 @@ const LOCAL_API_ORIGINS = new Set([
   "http://localhost:5000",
   "http://127.0.0.1:5000",
 ]);
+const TRIP_LEDGER_FOCUS_STORAGE_KEY = "denmark.tripLedgerFocus";
+const EXPENSE_LEDGER_FOCUS_STORAGE_KEY = "denmark.expenseLedgerFocus";
 
 const DEFAULT_DISPATCH_SETTINGS = {
   openTripsSort: "priority",
@@ -239,6 +241,39 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    function handleOpenExpenseLedger(event: Event) {
+      const customEvent = event as CustomEvent;
+      const detail = customEvent?.detail || null;
+      if (detail && typeof window !== "undefined") {
+        window.sessionStorage.setItem(
+          EXPENSE_LEDGER_FOCUS_STORAGE_KEY,
+          JSON.stringify(detail)
+        );
+      }
+
+      if (detail?.vehicleId != null) {
+        setSelectedExpenseVehicleId(Number(detail.vehicleId));
+      } else {
+        setSelectedExpenseVehicleId(null);
+      }
+
+      setActiveView("expenses");
+    }
+
+    window.addEventListener(
+      "denmark:open-expense-ledger",
+      handleOpenExpenseLedger as EventListener
+    );
+
+    return () => {
+      window.removeEventListener(
+        "denmark:open-expense-ledger",
+        handleOpenExpenseLedger as EventListener
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     function handleBackendUnavailable() {
       returnToStartup("Waiting for backend");
     }
@@ -252,6 +287,32 @@ export default function Home() {
       window.removeEventListener(
         "denmark:backend-unavailable",
         handleBackendUnavailable
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleOpenTripLedger(event: Event) {
+      const customEvent = event as CustomEvent;
+      const detail = customEvent?.detail || null;
+      if (detail && typeof window !== "undefined") {
+        window.sessionStorage.setItem(
+          TRIP_LEDGER_FOCUS_STORAGE_KEY,
+          JSON.stringify(detail)
+        );
+      }
+      setActiveView("ledger");
+    }
+
+    window.addEventListener(
+      "denmark:open-trip-ledger",
+      handleOpenTripLedger as EventListener
+    );
+
+    return () => {
+      window.removeEventListener(
+        "denmark:open-trip-ledger",
+        handleOpenTripLedger as EventListener
       );
     };
   }, []);

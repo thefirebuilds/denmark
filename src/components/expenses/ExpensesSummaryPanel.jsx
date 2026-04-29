@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 const API_BASE = "http://localhost:5000";
+const EXPENSE_LEDGER_FOCUS_STORAGE_KEY = "denmark.expenseLedgerFocus";
 
 const RANGE_OPTIONS = [
   { key: "30d", label: "30 Days" },
@@ -108,7 +109,12 @@ function CompactStatBox({ rows }) {
   );
 }
 
-function CompactRowsBox({ title, rows, emptyText = "No data." }) {
+function CompactRowsBox({
+  title,
+  rows,
+  emptyText = "No data.",
+  onRowClick = null,
+}) {
   return (
     <div className="expenses-summary-box">
       <div className="expenses-summary-box-header">{title}</div>
@@ -118,13 +124,21 @@ function CompactRowsBox({ title, rows, emptyText = "No data." }) {
       ) : (
         <div className="expenses-summary-rows">
           {rows.map((row) => (
-            <div key={row.key} className="expenses-summary-row">
+            <button
+              key={row.key}
+              type="button"
+              className={`expenses-summary-row ${
+                onRowClick ? "is-clickable" : ""
+              }`}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              disabled={!onRowClick}
+            >
               <div className="expenses-summary-row-name" title={row.title}>
                 {row.title}
               </div>
               <div className="expenses-summary-row-count">{row.sub}</div>
               <div className="expenses-summary-row-amount">{row.total}</div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -137,6 +151,7 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [rangeKey, setRangeKey] = useState("30d");
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const range = useMemo(() => getRangeDates(rangeKey), [rangeKey]);
 
@@ -182,7 +197,22 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
     return () => {
       ignore = true;
     };
-  }, [query]);
+  }, [query, refreshToken]);
+
+  useEffect(() => {
+    function handleExpensesUpdated() {
+      setRefreshToken((x) => x + 1);
+    }
+
+    window.addEventListener("denmark:expenses-updated", handleExpensesUpdated);
+
+    return () => {
+      window.removeEventListener(
+        "denmark:expenses-updated",
+        handleExpensesUpdated
+      );
+    };
+  }, []);
 
   const statRows = useMemo(() => {
     return [
@@ -245,6 +275,38 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
       total: money(row.total),
     }));
   }, [summary]);
+
+  const vendorRows = useMemo(() => {
+    return (summary?.by_vendor || []).map((row) => ({
+      key: row.vendor || "unknown_vendor",
+      title: row.vendor || "Unknown vendor",
+      sub: `${row.row_count || 0} item${Number(row.row_count) === 1 ? "" : "s"}`,
+      total: money(row.total),
+      vendorFilter:
+        String(row.vendor || "").trim().toLowerCase() === "unknown vendor"
+          ? "__unknown__"
+          : row.vendor || "",
+    }));
+  }, [summary]);
+
+  function openExpenseVendorReview(row) {
+    if (typeof window === "undefined") return;
+
+    const detail = {
+      vehicleId: selectedVehicleId ?? null,
+      filters: {
+        vendor: row?.vendorFilter || "",
+      },
+    };
+
+    window.sessionStorage.setItem(
+      EXPENSE_LEDGER_FOCUS_STORAGE_KEY,
+      JSON.stringify(detail)
+    );
+    window.dispatchEvent(
+      new CustomEvent("denmark:open-expense-ledger", { detail })
+    );
+  }
 
   return (
     <section className="panel expenses-summary-panel">
@@ -310,6 +372,13 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
               emptyText="No vehicle data."
             />
           ) : null}
+
+          <CompactRowsBox
+            title="Vendors"
+            rows={vendorRows}
+            emptyText="No vendor data."
+            onRowClick={openExpenseVendorReview}
+          />
         </div>
       )}
     </section>

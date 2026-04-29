@@ -15,7 +15,7 @@ const EMPTY_FORM = {
   category: "",
   notes: "",
   date: new Date().toISOString().slice(0, 10),
-  expense_scope: "direct",
+  expense_scope: "general",
   trip_id: "",
   tax_locked: false,
 };
@@ -31,6 +31,7 @@ function getInitialForm(expense, selectedVehicleId) {
     return {
       ...EMPTY_FORM,
       vehicle_id: selectedVehicleId ?? "",
+      expense_scope: selectedVehicleId ? "direct" : "general",
     };
   }
 
@@ -137,6 +138,16 @@ export default function ExpenseModal({
       ...prev,
       tax: value,
       tax_locked: value !== "",
+    }));
+  }
+
+  function handleVehicleChange(e) {
+    const nextVehicleId = e.target.value;
+
+    setForm((prev) => ({
+      ...prev,
+      vehicle_id: nextVehicleId,
+      expense_scope: nextVehicleId ? "direct" : "general",
     }));
   }
 
@@ -271,9 +282,7 @@ export default function ExpenseModal({
               <span>Vehicle</span>
               <select
                 value={form.vehicle_id}
-                onChange={(e) =>
-                  setForm((prev) => ({ ...prev, vehicle_id: e.target.value }))
-                }
+                onChange={handleVehicleChange}
               >
                 <option value="">No vehicle</option>
                 {vehicles.map((vehicle) => (

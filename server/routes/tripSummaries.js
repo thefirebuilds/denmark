@@ -200,6 +200,7 @@ const TRIP_SUMMARY_SELECT = `
     t.has_tolls,
     t.toll_count,
     t.toll_total,
+    t.toll_charged_total,
     t.toll_review_status,
     t.fuel_reimbursement_total,
     t.max_engine_rpm,

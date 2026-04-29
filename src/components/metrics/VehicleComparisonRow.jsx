@@ -157,7 +157,8 @@ export default function VehicleComparisonRow({
 }) {
   const netProfit = Number(vehicle?.net_profit ?? 0);
   const bookedDays = Number(vehicle?.booked_vehicle_days ?? 0);
-  const occupancy = calendarDays > 0 ? bookedDays / calendarDays : 0;
+  const availableDays = Number(vehicle?.calendar_days_available ?? calendarDays ?? 0);
+  const occupancy = availableDays > 0 ? bookedDays / availableDays : 0;
   const tollRisk = getTollRisk(vehicle);
   const mileageConfidence = String(vehicle?.mileage_confidence || "unknown");
   const mileageConfidenceTone = getMileageConfidenceTone(mileageConfidence);
@@ -424,11 +425,17 @@ export default function VehicleComparisonRow({
             <div className="vehicle-compare__details-group-title">Operations</div>
             <div className="vehicle-compare__details">
               <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Booked Days</div>
-                <div className="vehicle-compare__detail-value">
-                  {formatNumber(vehicle?.booked_vehicle_days)}
+                  <div className="vehicle-compare__detail-label">Booked Days</div>
+                  <div className="vehicle-compare__detail-value">
+                    {formatNumber(vehicle?.booked_vehicle_days)}
+                  </div>
                 </div>
-              </div>
+                <div>
+                  <div className="vehicle-compare__detail-label">Available Days</div>
+                  <div className="vehicle-compare__detail-value">
+                    {formatNumber(vehicle?.calendar_days_available ?? 0)}
+                  </div>
+                </div>
 
               <div className="vehicle-compare__detail-stat">
                 <div className="vehicle-compare__detail-label">Trips</div>

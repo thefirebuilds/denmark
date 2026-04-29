@@ -292,6 +292,12 @@
   min-width: 0;
   padding: 7px 10px;
   border-top: 1px solid rgba(42, 57, 93, 0.45);
+  width: 100%;
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  text-align: left;
 }
 
 .expenses-summary-row:first-child {
@@ -330,6 +336,30 @@
 
 .expenses-summary-row:hover {
   background: rgba(255, 255, 255, 0.025);
+}
+
+.expenses-summary-row.is-clickable {
+  cursor: pointer;
+}
+
+.expenses-vendor-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.expenses-vendor-link:hover,
+.expenses-vendor-link:focus-visible {
+  color: #cfe0ff;
+  text-decoration: underline;
 }
 
 /* --------------------------------------------------------------

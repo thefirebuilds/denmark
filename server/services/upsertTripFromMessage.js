@@ -101,13 +101,17 @@ async function upsertTripFromMessage(savedMessage) {
       needs_review,
       created_at,
       updated_at,
-      stage_updated_at,
-      canceled_at
+        stage_updated_at,
+      canceled_at,
+      closed_out,
+      closed_out_at
     )
     VALUES (
       $1, $2, $3, $4, $5,
       $6, $7, $8, $9, $10,
       $11, $12, $13, $14, $15, NOW(), NOW(), NOW(),
+      CASE WHEN $16 THEN NOW() ELSE NULL END,
+      CASE WHEN $16 THEN TRUE ELSE FALSE END,
       CASE WHEN $16 THEN NOW() ELSE NULL END
     )
     ON CONFLICT (reservation_id)
@@ -154,6 +158,16 @@ async function upsertTripFromMessage(savedMessage) {
       canceled_at = CASE
         WHEN EXCLUDED.status = 'canceled' AND trips.canceled_at IS NULL THEN NOW()
         ELSE trips.canceled_at
+      END,
+
+      closed_out = CASE
+        WHEN EXCLUDED.status = 'canceled' THEN TRUE
+        ELSE trips.closed_out
+      END,
+
+      closed_out_at = CASE
+        WHEN EXCLUDED.status = 'canceled' AND trips.closed_out_at IS NULL THEN NOW()
+        ELSE trips.closed_out_at
       END,
 
       updated_at = NOW()

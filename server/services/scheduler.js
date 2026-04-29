@@ -28,6 +28,7 @@ const syncTolls = require("./tolls/syncTolls");
 // Google Calendar
 const { reconcileTripsToGoogle } = require("./googleCalendar/googleTripSync");
 const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
+const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
 
 let tellerSyncInProgress = false;
 let tellerSyncIntervalHandle = null;
@@ -49,6 +50,8 @@ let googleCalendarIntervalHandle = null;
 
 let fmvInProgress = false;
 let fmvIntervalHandle = null;
+let businessMetricsInProgress = false;
+let businessMetricsIntervalHandle = null;
 
 const STARTUP_TASKS = [
   "teller",
@@ -57,6 +60,7 @@ const STARTUP_TASKS = [
   "bouncie",
   "dimo",
   "fmv",
+  "businessMetrics",
   "publicAvailability",
   "googleCalendar",
 ];
@@ -328,6 +332,30 @@ async function runFleetFmvRefresh(reason = "interval") {
   }
 }
 
+async function runBusinessMetricsSnapshot(reason = "interval") {
+  if (businessMetricsInProgress) {
+    console.log(`[scheduler] businessMetrics skipped | reason=${reason} alreadyRunning=true`);
+    return;
+  }
+
+  businessMetricsInProgress = true;
+  const startedAt = Date.now();
+
+  try {
+    console.log(`[scheduler] businessMetrics start | reason=${reason}`);
+    const snapshot = await createBusinessMetricSnapshot("quarterly");
+    console.log(
+      `[scheduler] businessMetrics done | reason=${reason} period=${snapshot.period_key} vehicles=${snapshot.vehicles.length} durationMs=${Date.now() - startedAt}`
+    );
+  } catch (err) {
+    console.error(
+      `[scheduler] businessMetrics failed | reason=${reason} error=${err.message || err}`
+    );
+  } finally {
+    businessMetricsInProgress = false;
+  }
+}
+
 function startScheduler() {
   console.log("[scheduler] started");
 
@@ -355,6 +383,11 @@ function startScheduler() {
 
   // FMV check immediately (only refreshes if stale or missing)
   void runStartupTask("fmv", () => runFleetFmvRefresh("startup"));
+
+  // Business metrics snapshot immediately
+  void runStartupTask("businessMetrics", () =>
+    runBusinessMetricsSnapshot("startup")
+  );
 
   // Public availability push immediately
   void runStartupTask("publicAvailability", () =>
@@ -394,6 +427,11 @@ function startScheduler() {
   // FMV freshness check daily; actual estimates run only if older than a week
   fmvIntervalHandle = setInterval(() => {
     void runFleetFmvRefresh("interval");
+  }, everyTwentyFourHoursMs);
+
+  // Business metrics snapshot daily
+  businessMetricsIntervalHandle = setInterval(() => {
+    void runBusinessMetricsSnapshot("interval");
   }, everyTwentyFourHoursMs);
 
   // Google Calendar reconcile every 8 hours
@@ -436,6 +474,11 @@ function stopScheduler() {
   if (fmvIntervalHandle) {
     clearInterval(fmvIntervalHandle);
     fmvIntervalHandle = null;
+  }
+
+  if (businessMetricsIntervalHandle) {
+    clearInterval(businessMetricsIntervalHandle);
+    businessMetricsIntervalHandle = null;
   }
 
   console.log("[scheduler] stopped");
