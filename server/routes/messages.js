@@ -219,19 +219,23 @@ function mapMessageRow(row) {
     guest_message: row.guest_message,
     guest_name: row.guest_name,
     vehicle_name: row.vehicle_name,
+    vehicle_nickname: row.vehicle_nickname,
     trip_start: row.trip_start,
     trip_end: row.trip_end,
     new_trip_end: row.trip_end,
     reservation_id: row.reservation_id,
+    mileage_included: row.mileage_included,
     trip_id: row.trip_id,
     trip_workflow_stage: row.trip_workflow_stage,
     trip_needs_review: row.trip_needs_review,
     trip_status: row.trip_status,
     trip_record_guest_name: row.trip_record_guest_name,
     trip_record_vehicle_name: row.trip_record_vehicle_name,
+    trip_record_vehicle_nickname: row.trip_record_vehicle_nickname,
     trip_record_start: row.trip_record_start,
     trip_record_end: row.trip_record_end,
     trip_record_amount: row.trip_record_amount,
+    trip_record_mileage_included: row.trip_record_mileage_included,
     trip_record_reservation_id: row.trip_record_reservation_id,
     is_booking_confirmation_task: isBookingTask,
     reply_url: row.reply_url,
@@ -507,8 +511,10 @@ router.get("/", async (req, res) => {
         message_type,
         guest_name,
         vehicle_name,
+        vehicle_nickname,
         trip_start,
         trip_end,
+        mileage_included,
         reservation_id,
         trip_id,
         trip_workflow_stage,
@@ -516,9 +522,11 @@ router.get("/", async (req, res) => {
         trip_status,
         trip_record_guest_name,
         trip_record_vehicle_name,
+        trip_record_vehicle_nickname,
         trip_record_start,
         trip_record_end,
         trip_record_amount,
+        trip_record_mileage_included,
         trip_record_reservation_id,
         reply_url,
         trip_details_url
@@ -536,8 +544,10 @@ router.get("/", async (req, res) => {
           m.message_type,
           m.guest_name,
           m.vehicle_name,
+          COALESCE(v.nickname, t.vehicle_name, m.vehicle_name) AS vehicle_nickname,
           m.trip_start,
           m.trip_end,
+          m.mileage_included,
           m.reservation_id,
           COALESCE(m.trip_id, t.id) AS trip_id,
           t.workflow_stage AS trip_workflow_stage,
@@ -545,9 +555,11 @@ router.get("/", async (req, res) => {
           t.status AS trip_status,
           t.guest_name AS trip_record_guest_name,
           t.vehicle_name AS trip_record_vehicle_name,
+          COALESCE(v.nickname, t.vehicle_name) AS trip_record_vehicle_nickname,
           t.trip_start AS trip_record_start,
           t.trip_end AS trip_record_end,
           t.amount AS trip_record_amount,
+          t.mileage_included AS trip_record_mileage_included,
           t.reservation_id AS trip_record_reservation_id,
           m.reply_url,
           m.trip_details_url
@@ -558,6 +570,15 @@ router.get("/", async (req, res) => {
             m.reservation_id IS NOT NULL
             AND t.reservation_id IS NOT NULL
             AND m.reservation_id = t.reservation_id
+          )
+        LEFT JOIN vehicles v
+          ON (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
           )
         WHERE
           m.status = 'unread'

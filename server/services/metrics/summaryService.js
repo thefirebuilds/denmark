@@ -234,6 +234,37 @@ async function fetchTollChargesInRange(client, startDate, endDate) {
   return rows;
 }
 
+async function fetchTollChargesForTripIds(client, tripIds) {
+  const validTripIds = Array.from(
+    new Set(
+      (tripIds || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  );
+
+  if (!validTripIds.length) return [];
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        tc.id,
+        tc.trxn_at,
+        tc.posted_at,
+        tc.amount,
+        tc.review_status,
+        tc.match_status,
+        tc.matched_trip_id
+      FROM toll_charges tc
+      WHERE tc.matched_trip_id = ANY($1::bigint[])
+      ORDER BY tc.trxn_at DESC, tc.id DESC
+    `,
+    [validTripIds]
+  );
+
+  return rows;
+}
+
 async function fetchTollInvoiceMessages(client, tripIds, reservationIds) {
   const validTripIds = Array.from(
     new Set((tripIds || []).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))
@@ -344,6 +375,11 @@ async function getTollMetricsDetail(rangeKey = "30d") {
       fetchTollChargesInRange(client, startDate, endDate),
     ]);
 
+    const allMatchedTripCharges = await fetchTollChargesForTripIds(
+      client,
+      trips.map((trip) => trip.id)
+    );
+
     const tollInvoiceMessages = await fetchTollInvoiceMessages(
       client,
       trips.map((trip) => trip.id),
@@ -372,7 +408,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
     }
 
     const attributedTollTotalsByTripId = new Map();
-    for (const charge of tollCharges) {
+    for (const charge of allMatchedTripCharges) {
       if (!charge?.matched_trip_id) continue;
       const tripId = Number(charge.matched_trip_id);
       const current = Number(attributedTollTotalsByTripId.get(tripId) || 0);

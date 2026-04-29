@@ -115,6 +115,12 @@ function formatMoney(value) {
   return `$${n.toFixed(2)}`;
 }
 
+function formatMileageIncluded(value) {
+  const miles = Number(value);
+  if (!Number.isFinite(miles) || miles <= 0) return "";
+  return `${miles.toLocaleString()} mi allowed`;
+}
+
 function formatMaintenancePlanDate(value) {
   if (!value) return "Available now";
 
@@ -667,6 +673,14 @@ function buildBookingComparisonRows(message) {
       matches:
         normalizeCompareValue(message.vehicle_name) ===
         normalizeCompareValue(message.trip_record_vehicle_name),
+    },
+    {
+      label: "Allowed mileage",
+      emailValue: formatMileageIncluded(message.mileage_included),
+      tripValue: formatMileageIncluded(message.trip_record_mileage_included),
+      matches:
+        Number(message.mileage_included || 0) ===
+        Number(message.trip_record_mileage_included || 0),
     },
     {
       label: "Start",
@@ -1440,6 +1454,16 @@ async function handleExportGuestInspectionSheet(message) {
             const bookingComparisonRows = canConfirmBooking
               ? buildBookingComparisonRows(message)
               : [];
+            const bookingVehicleNickname =
+              message.trip_record_vehicle_nickname ||
+              message.vehicle_nickname ||
+              message.trip_record_vehicle_name ||
+              message.vehicle_name ||
+              "Vehicle";
+            const bookingAllowedMileage =
+              formatMileageIncluded(message.trip_record_mileage_included) ||
+              formatMileageIncluded(message.mileage_included) ||
+              "Missing";
             const closeoutActionItems = canCloseoutTrip
               ? buildCloseoutActionItems(message)
               : [];
@@ -1503,6 +1527,36 @@ async function handleExportGuestInspectionSheet(message) {
                       Confirm this booking
                       <span>Email vs trip record</span>
                     </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Vehicle nickname</span>
+                      <strong>{bookingVehicleNickname}</strong>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Allowed mileage</span>
+                      <strong>{bookingAllowedMileage}</strong>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Pickup</span>
+                      <strong>{formatTripTime(message.trip_start) || "Unknown"}</strong>
+                    </div>
+                    <div className="message-handoff-countdown">
+                      {formatHandoffCountdown(message.trip_start, countdownNow)}
+                    </div>
+                    {canFocusTrip && (
+                      <div className="message-inline-actions">
+                        <button
+                          type="button"
+                          className="message-action"
+                          disabled={focusingMessageId === message.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleFocusTrip(message);
+                          }}
+                        >
+                          {focusingMessageId === message.id ? "Loading..." : "Open trip"}
+                        </button>
+                      </div>
+                    )}
                     <div className="message-booking-compare">
                       <div className="message-booking-compare-head">
                         <span>Field</span>

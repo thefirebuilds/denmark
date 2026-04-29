@@ -806,6 +806,11 @@ body {
   text-align: center;
 }
 
+.message-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .message-maintenance-item {
   border-top: 1px solid rgba(143, 162, 191, 0.14);
   padding-top: 7px;
