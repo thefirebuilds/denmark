@@ -163,6 +163,12 @@ function getIsCompactViewport() {
 }
 
 export default function Home() {
+  const [authInfo, setAuthInfo] = useState<{
+    authEnforced: boolean;
+    displayName: string | null;
+    role: string | null;
+  } | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [trips, setTrips] = useState([]);
   const [startupVehicles, setStartupVehicles] = useState([]);
@@ -341,6 +347,36 @@ export default function Home() {
     async function loadStartup() {
       for (;;) {
         try {
+          const meRes = await fetch(`${API_BASE}/api/me`, {
+            headers: { Accept: "application/json" },
+          });
+
+          if (meRes.status === 401) {
+            if (cancelled) return;
+            setAuthRequired(true);
+            setStartup({
+              ready: false,
+              label: "Sign in required",
+              error: "",
+            });
+            setMessageStatsLoading(false);
+            return;
+          }
+
+          if (!meRes.ok) {
+            throw new Error(`Auth request failed: ${meRes.status}`);
+          }
+
+          const meData = await meRes.json();
+
+          if (cancelled) return;
+          setAuthRequired(false);
+          setAuthInfo({
+            authEnforced: meData?.auth_enforced !== false,
+            displayName: meData?.display_name ?? null,
+            role: meData?.role ?? null,
+          });
+
           setStartup({
             ready: false,
             label: "Waiting for startup jobs",
@@ -459,6 +495,7 @@ export default function Home() {
             label: "Ready",
             error: "",
           });
+          setAuthRequired(false);
           return;
         } catch (err) {
           console.warn("Startup load failed, retrying:", err);
@@ -702,6 +739,16 @@ export default function Home() {
             >
               Try again
             </button>
+          ) : authRequired ? (
+            <button
+              type="button"
+              className="startup-action"
+              onClick={() => {
+                window.location.assign("/api/login");
+              }}
+            >
+              Sign in
+            </button>
           ) : (
             <div className="startup-progress" aria-label="Loading">
               <span />
@@ -720,6 +767,7 @@ export default function Home() {
         stats={messageStats}
         loading={messageStatsLoading}
         refreshing={messageStatsRefreshing}
+        authInfo={authInfo}
         layoutMode={layoutMode}
         effectiveLayoutMode={effectiveLayoutMode}
         onChangeLayoutMode={setLayoutMode}

@@ -105,14 +105,54 @@ These are worth knowing before you trust the repo blindly.
 - Some workflows depend on real provider credentials and real local `.env` values.
 
 ### Authentication and access control
-- Denmark currently has no real user authentication or role-based access control.
-- If the frontend or backend is reachable, a user on that network can interact with the app and its operational data unless another layer is protecting it.
-- This is acceptable only for tightly controlled local use and is not acceptable for broader LAN, cloud, or internet exposure.
-- Before treating Denmark as a multi-user or remotely reachable system, it needs:
-  - real login/session enforcement
-  - route-level authorization
-  - protection for sensitive integration credentials and operational data
-  - a deliberate trust model for who is allowed to view, edit, or trigger workflows
+- Denmark now includes an authentication and authorization layer, but you need to decide whether it is actually enforced in your environment.
+- Local development can run with:
+  - `AUTH_ENFORCED=false`
+  - this bypasses real login and treats the app as trusted local development
+- Real login/session enforcement starts when:
+  - `AUTH_ENFORCED=true`
+  - and valid OIDC provider settings are present
+- If the frontend or backend is reachable beyond your own tightly controlled machine, real auth should be enforced.
+
+#### Simple practice setup: Google as the login provider
+
+If you want the easiest human-login path to practice with, use Google.
+
+1. In Google Cloud Console, create or reuse a project.
+2. Configure the OAuth consent screen.
+3. Create an `OAuth client ID` of type `Web application`.
+4. Add this authorized redirect URI:
+
+```text
+http://localhost:5000/api/auth/callback
+```
+
+5. Put these values in `.env`:
+
+```dotenv
+AUTH_ENFORCED=true
+AUTH_COOKIE_SECURE=false
+AUTH_OWNER_EMAILS=you@example.com
+
+OIDC_ENABLED=true
+OIDC_PROVIDER_NAME=google
+OIDC_ISSUER_URL=https://accounts.google.com
+OIDC_REDIRECT_URI=http://localhost:5000/api/auth/callback
+OIDC_SCOPES=openid profile email
+```
+
+If you already use Google Calendar sync in Denmark, you can reuse the same Google OAuth client:
+- leave `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as-is
+- omit `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`
+- Denmark will fall back to the `GOOGLE_*` values automatically for auth
+
+6. Restart the backend.
+7. Open Denmark and use `Sign in`.
+
+Notes:
+- `AUTH_ENFORCED=false` means no real login is happening, even if OIDC values are present.
+- The existing `GOOGLE_*` settings for Calendar sync are separate from these `OIDC_*` settings, even if they come from the same Google project.
+- For local testing, `AUTH_COOKIE_SECURE=false` is expected on plain `http://localhost`.
 
 ### Frontend build/runtime caveats
 - Vite wants Node `20.19+` or `22.12+`.

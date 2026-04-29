@@ -6,6 +6,7 @@ require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
 const express = require("express");
 const session = require("express-session");
+const authRoutes = require("./routes/auth");
 const startScheduler = require("./services/scheduler");
 
 const messagesRoute = require("./routes/messages");
@@ -35,6 +36,15 @@ const {
 const {
   ensureBusinessMetricsTables,
 } = require("./services/metrics/businessMetricsService");
+const { isAuthEnforced } = require("./auth/config");
+const { getOidcConfig } = require("./auth/oidcProvider");
+const { ensureAuthTables } = require("./auth/store");
+const {
+  authenticateServiceToken,
+  loadRequestAuth,
+  requirePermission,
+  requireMethodPermissions,
+} = require("./auth/middleware");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -63,20 +73,29 @@ const marketplaceCors = cors({
   optionsSuccessStatus: 204,
 });
 
+const cookieSecure =
+  String(process.env.AUTH_COOKIE_SECURE || "").trim() !== ""
+    ? String(process.env.AUTH_COOKIE_SECURE).trim().toLowerCase() === "true"
+    : process.env.NODE_ENV === "production";
+
+app.set("trust proxy", 1);
+
 app.use(
   session({
+    name: "denmark.sid",
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: false, // set true only when using HTTPS in production
+      secure: cookieSecure,
     },
   })
 );
 
 app.use(express.json({ limit: "500mb" }));
+app.use(loadRequestAuth);
 app.use((err, req, res, next) => {
   if (err && err.type === "entity.parse.failed") {
     return res.status(400).json({ ok: false, error: "Invalid JSON payload" });
@@ -88,26 +107,104 @@ app.use((err, req, res, next) => {
 // Explicit preflight handling for marketplace routes
 app.options(/^\/api\/marketplace\/.*$/, marketplaceCors);
 
-app.get("/api/startup/status", defaultCors, (req, res) => {
+app.get("/api/startup/status", defaultCors, requirePermission("settings.read"), (req, res) => {
   res.json(startScheduler.getStartupStatus());
 });
 
-app.use("/api/messages", defaultCors, messagesRoute);
-app.use("/api/trips", defaultCors, tripsRoutes);
-app.use("/api/trip-summaries", defaultCors, tripSummariesRouter);
-app.use("/api/bouncie", defaultCors, bouncieRoutes);
-app.use("/api/dimo", defaultCors, dimoRoutes);
-app.use("/api/vehicles", defaultCors, vehiclesRoutes);
-app.use("/api", defaultCors, maintenanceRoutes);
-app.use("/api/tolls", defaultCors, tollRoutes);
-app.use("/api/expenses", defaultCors, expensesRouter);
-app.use("/api/teller", defaultCors, tellerRoutes);
-app.use("/api/metrics", defaultCors, metricsRouter);
-app.use("/api/metrics/business", defaultCors, businessMetricsRouter);
-app.use("/api/marketplace", marketplaceCors, marketplaceRoutes);
-app.use("/api/settings", defaultCors, settingsRouter);
-app.use("/api/database", defaultCors, databaseRouter);
-app.use("/api/integrations/google-calendar", defaultCors, googleCalendarRoutes);
+app.use("/api", defaultCors, authRoutes);
+app.use(
+  "/api/messages",
+  defaultCors,
+  requireMethodPermissions({ GET: "messages.read", PATCH: "messages.write" }),
+  messagesRoute
+);
+app.use(
+  "/api/trips",
+  defaultCors,
+  requireMethodPermissions({ GET: "trips.read", PATCH: "trips.write" }),
+  tripsRoutes
+);
+app.use(
+  "/api/trip-summaries",
+  defaultCors,
+  requireMethodPermissions({
+    GET: "trip_summaries.read",
+    POST: "trip_summaries.write",
+    PATCH: "trip_summaries.write",
+    DELETE: "trip_summaries.write",
+  }),
+  tripSummariesRouter
+);
+app.use("/api/bouncie", defaultCors, requirePermission("telemetry.read"), bouncieRoutes);
+app.use("/api/dimo", defaultCors, requirePermission("telemetry.read"), dimoRoutes);
+app.use(
+  "/api/vehicles",
+  defaultCors,
+  requireMethodPermissions({ GET: "vehicles.read", POST: "vehicles.write", PATCH: "vehicles.write" }),
+  vehiclesRoutes
+);
+app.use(
+  "/api",
+  defaultCors,
+  requireMethodPermissions({ GET: "maintenance.read", POST: "maintenance.write", DELETE: "maintenance.write" }),
+  maintenanceRoutes
+);
+app.use(
+  "/api/tolls",
+  defaultCors,
+  authenticateServiceToken({ optional: true }),
+  requireMethodPermissions({ POST: "tolls.sync", GET: "tolls.read" }),
+  tollRoutes
+);
+app.use(
+  "/api/expenses",
+  defaultCors,
+  requireMethodPermissions({
+    GET: "expenses.read",
+    POST: "expenses.write",
+    PUT: "expenses.write",
+    DELETE: "expenses.write",
+  }),
+  expensesRouter
+);
+app.use(
+  "/api/teller",
+  defaultCors,
+  requireMethodPermissions({ GET: "expenses.read", POST: "expenses.write" }),
+  tellerRoutes
+);
+app.use(
+  "/api/metrics/business",
+  defaultCors,
+  requireMethodPermissions({ GET: "business.read", PUT: "business.write", POST: "business.write" }),
+  businessMetricsRouter
+);
+app.use(
+  "/api/metrics",
+  defaultCors,
+  requireMethodPermissions({ GET: "metrics.read", PUT: "metrics.write", POST: "metrics.write" }),
+  metricsRouter
+);
+app.use(
+  "/api/marketplace",
+  marketplaceCors,
+  requireMethodPermissions({ GET: "marketplace.read", POST: "marketplace.write", PUT: "marketplace.write", PATCH: "marketplace.write" }),
+  marketplaceRoutes
+);
+app.use(
+  "/api/settings",
+  defaultCors,
+  requireMethodPermissions({ GET: "settings.read", PUT: "settings.write" }),
+  settingsRouter
+);
+app.use("/api/database", defaultCors, requirePermission("database.admin"), databaseRouter);
+app.use(
+  "/api/integrations/google-calendar",
+  defaultCors,
+  authenticateServiceToken({ optional: true }),
+  requirePermission("calendar.write"),
+  googleCalendarRoutes
+);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api", publicAvailabilityRouter);
 
@@ -124,10 +221,21 @@ Promise.all([
   ensureNotificationEventsTable(),
   ensureVehicleFmvEstimatesTable(),
   ensureBusinessMetricsTables(),
+  ensureAuthTables(),
 ])
   .then(() => {
     app.listen(PORT, () => {
+      const authEnforced = isAuthEnforced();
+      const oidcConfig = getOidcConfig();
       console.log(`[server] listening on http://localhost:${PORT}`);
+      console.log(
+        `[server] auth enforcement: ${authEnforced ? "ENABLED" : "DISABLED"}`
+      );
+      console.log(
+        `[server] auth provider: ${oidcConfig.providerName || "oidc"} | issuer: ${
+          oidcConfig.issuerUrl || "(not set)"
+        } | redirect: ${oidcConfig.redirectUri || "(not set)"}`
+      );
       startScheduler();
     });
   })

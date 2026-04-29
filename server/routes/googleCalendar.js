@@ -18,6 +18,10 @@ const {
 
 const router = express.Router();
 
+function getRouteUserId(req) {
+  return req?.auth?.kind === "user" ? req.auth.userId : null;
+}
+
 router.post("/sync-trip/:tripId", async (req, res, next) => {
   try {
     const tripId = Number(req.params.tripId);
@@ -26,7 +30,7 @@ router.post("/sync-trip/:tripId", async (req, res, next) => {
       return res.status(400).json({ error: "Invalid tripId" });
     }
 
-    const result = await syncTripToGoogle(tripId, null);
+    const result = await syncTripToGoogle(tripId, getRouteUserId(req));
     return res.json({ ok: true, ...result });
   } catch (err) {
     next(err);
@@ -36,7 +40,7 @@ router.post("/sync-trip/:tripId", async (req, res, next) => {
 router.post("/reconcile-trips", async (req, res, next) => {
   try {
     const limit = Number(req.body?.limit || 500);
-    const result = await reconcileTripsToGoogle({ userId: null, limit });
+    const result = await reconcileTripsToGoogle({ userId: getRouteUserId(req), limit });
     return res.json(result);
   } catch (err) {
     next(err);
@@ -49,7 +53,7 @@ router.get("/ping", (req, res) => {
 
 router.post("/test-event", async (req, res, next) => {
   try {
-    const userId = null;
+    const userId = getRouteUserId(req);
     const connection = await getGoogleCalendarConnection(userId);
 
     if (!connection) {
@@ -137,8 +141,7 @@ router.get("/callback", async (req, res, next) => {
       primary: !!c.primary,
     }));
 
-    // If you have real auth, replace null with req.user.id or equivalent
-    const userId = null;
+    const userId = getRouteUserId(req);
 
     await upsertGoogleCalendarConnection({
       userId,
@@ -161,7 +164,7 @@ router.get("/callback", async (req, res, next) => {
 
 router.get("/calendars", async (req, res, next) => {
   try {
-    const userId = null;
+    const userId = getRouteUserId(req);
     const connection = await getGoogleCalendarConnection(userId);
 
     if (!connection) {
@@ -198,7 +201,7 @@ router.post("/select-calendar", async (req, res, next) => {
       return res.status(400).json({ error: "calendarId is required" });
     }
 
-    const userId = null;
+    const userId = getRouteUserId(req);
 
     const updated = await saveSelectedCalendar({
       userId,

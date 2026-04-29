@@ -27,6 +27,7 @@ export default function TopBanner({
   stats,
   loading = false,
   refreshing = false,
+  authInfo = null,
   layoutMode = "auto",
   effectiveLayoutMode = "desktop",
   onChangeLayoutMode,
@@ -66,6 +67,18 @@ export default function TopBanner({
         </div>
 
         <div className="top-banner-status">
+          {authInfo?.authEnforced === false && (
+            <span className="top-banner-auth top-banner-auth--bypass">
+              Auth bypassed (local dev)
+            </span>
+          )}
+
+          {authInfo?.authEnforced === true && authInfo?.displayName && (
+            <span className="top-banner-auth">
+              {authInfo.displayName} · {authInfo.role}
+            </span>
+          )}
+
           <span
             className={`top-banner-sync ${refreshing ? "is-refreshing" : ""}`}
             aria-hidden="true"

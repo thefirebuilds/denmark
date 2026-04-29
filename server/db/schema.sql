@@ -2465,6 +2465,80 @@ CREATE TRIGGER trg_vehicles_updated_at BEFORE UPDATE ON public.vehicles FOR EACH
 
 
 --
+-- Name: app_users; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_users (
+    id bigint NOT NULL GENERATED ALWAYS AS IDENTITY,
+    provider text NOT NULL,
+    provider_subject text NOT NULL,
+    email text NOT NULL,
+    display_name text,
+    role text DEFAULT 'viewer'::text NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_users_email_unique UNIQUE (email),
+    CONSTRAINT app_users_provider_subject_unique UNIQUE (provider, provider_subject),
+    CONSTRAINT app_users_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'operator'::text, 'viewer'::text, 'family'::text, 'service'::text])))
+);
+
+
+--
+-- Name: auth_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.auth_audit_log (
+    id bigint NOT NULL GENERATED ALWAYS AS IDENTITY,
+    user_id bigint,
+    event_type text NOT NULL,
+    ip_address text,
+    user_agent text,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: service_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.service_tokens (
+    id bigint NOT NULL GENERATED ALWAYS AS IDENTITY,
+    name text NOT NULL,
+    token_hash text NOT NULL,
+    role text DEFAULT 'service'::text NOT NULL,
+    last_used_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    revoked_at timestamp with time zone,
+    CONSTRAINT service_tokens_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'operator'::text, 'viewer'::text, 'family'::text, 'service'::text]))),
+    CONSTRAINT service_tokens_token_hash_unique UNIQUE (token_hash)
+);
+
+
+--
+-- Name: auth_audit_log_event_type_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX auth_audit_log_event_type_idx ON public.auth_audit_log USING btree (event_type, created_at DESC);
+
+
+--
+-- Name: auth_audit_log_user_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX auth_audit_log_user_id_idx ON public.auth_audit_log USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: service_tokens_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX service_tokens_active_idx ON public.service_tokens USING btree (revoked_at, expires_at);
+
+
+--
 -- Name: expenses expenses_vehicle_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2590,6 +2664,21 @@ ALTER TABLE ONLY public.vehicle_odometer_history
 
 ALTER TABLE ONLY public.vehicle_telemetry_signal_values
     ADD CONSTRAINT vehicle_telemetry_signal_values_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.vehicle_telemetry_snapshots(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_users trg_app_users_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_app_users_updated_at BEFORE UPDATE ON public.app_users FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: auth_audit_log auth_audit_log_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.auth_audit_log
+    ADD CONSTRAINT auth_audit_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_users(id) ON DELETE SET NULL;
 
 
 --
