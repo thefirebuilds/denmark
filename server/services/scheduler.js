@@ -27,6 +27,9 @@ const syncTolls = require("./tolls/syncTolls");
 
 // Google Calendar
 const { reconcileTripsToGoogle } = require("./googleCalendar/googleTripSync");
+const {
+  listGoogleCalendarSyncTargets,
+} = require("./googleCalendar/googleCalendarStore");
 const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
 const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
 
@@ -285,10 +288,37 @@ async function runGoogleCalendarReconcile(reason = "interval") {
 
   try {
     console.log(`[scheduler] googleCalendar start | reason=${reason}`);
-    const result = await reconcileTripsToGoogle({ userId: null, limit: 500 });
+    const targets = await listGoogleCalendarSyncTargets();
+
+    if (!targets.length) {
+      console.log(`[scheduler] googleCalendar skipped | reason=${reason} noSelectedCalendar=true`);
+      return;
+    }
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const target of targets) {
+      const result = await reconcileTripsToGoogle({
+        userId: target.user_id,
+        limit: 500,
+      });
+      const targetFailed = (result.results || []).filter((item) => !item.ok).length;
+
+      processed += result.processed;
+      failed += targetFailed;
+
+      console.log(
+        `[scheduler] googleCalendar target done | reason=${reason} userId=${target.user_id ?? "legacy"} calendar="${target.calendar_summary || target.calendar_id}" processed=${result.processed} failed=${targetFailed}`
+      );
+    }
+
+    if (failed > 0) {
+      throw new Error(`Google Calendar reconcile completed with ${failed} failed trip syncs`);
+    }
 
     console.log(
-      `[scheduler] googleCalendar done | reason=${reason} processed=${result.processed} durationMs=${Date.now() - startedAt}`
+      `[scheduler] googleCalendar done | reason=${reason} targets=${targets.length} processed=${processed} durationMs=${Date.now() - startedAt}`
     );
   } catch (err) {
     console.error(

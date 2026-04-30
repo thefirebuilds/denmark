@@ -26,14 +26,23 @@ function coalesceStage(trip) {
   return trip.workflow_stage || trip.status || "unknown";
 }
 
+function getVehicleCalendarName(trip) {
+  return trip.vehicle_nickname || trip.vehicle_name || "Car";
+}
+
 function baseDescriptionLines(trip) {
+  const vehicleName = getVehicleCalendarName(trip);
   const lines = [
     `Guest: ${trip.guest_name || "Unknown"}`,
-    `Vehicle: ${trip.vehicle_name || "Unknown"}`,
+    `Vehicle: ${vehicleName}`,
     `Trip start: ${formatDateTime(trip.trip_start)}`,
     `Trip end: ${formatDateTime(trip.trip_end)}`,
     `Workflow stage: ${coalesceStage(trip)}`,
   ];
+
+  if (trip.vehicle_nickname && trip.vehicle_name && trip.vehicle_nickname !== trip.vehicle_name) {
+    lines.push(`Turo vehicle: ${trip.vehicle_name}`);
+  }
 
   const tripDays = getTripLengthDays(trip.trip_start, trip.trip_end);
   if (tripDays !== null) {
@@ -57,11 +66,12 @@ function baseDescriptionLines(trip) {
 
 function buildUnconfirmedEvent(trip) {
   const startAt = trip.trip_start || trip.created_at || new Date().toISOString();
+  const vehicleName = getVehicleCalendarName(trip);
 
   return {
     eventType: "unconfirmed",
     payload: {
-      summary: `Turo unconfirmed: ${trip.vehicle_name || "Car"} / ${trip.guest_name || "Guest"}`,
+      summary: `Turo unconfirmed: ${vehicleName} / ${trip.guest_name || "Guest"}`,
       description: [
         "Action: review and confirm incoming trip",
         ...baseDescriptionLines(trip),
@@ -86,10 +96,12 @@ function buildUnconfirmedEvent(trip) {
 }
 
 function buildPickupEvent(trip) {
+  const vehicleName = getVehicleCalendarName(trip);
+
   return {
     eventType: "pickup",
     payload: {
-      summary: `Turo pickup: ${trip.vehicle_name || "Car"} / ${trip.guest_name || "Guest"}`,
+      summary: `Turo pickup: ${vehicleName} / ${trip.guest_name || "Guest"}`,
       description: [
         "Action: pickup / handoff",
         ...baseDescriptionLines(trip),
@@ -114,10 +126,12 @@ function buildPickupEvent(trip) {
 }
 
 function buildReturnEvent(trip) {
+  const vehicleName = getVehicleCalendarName(trip);
+
   return {
     eventType: "return",
     payload: {
-      summary: `Turo return: ${trip.vehicle_name || "Car"} / ${trip.guest_name || "Guest"}`,
+      summary: `Turo return: ${vehicleName} / ${trip.guest_name || "Guest"}`,
       description: [
         "Action: receive car, check condition, photos, mileage, fuel",
         ...baseDescriptionLines(trip),
@@ -164,6 +178,7 @@ function getExpenseCloseoutStart(trip) {
 
 function buildExpenseCloseoutEvent(trip) {
   const startAt = getExpenseCloseoutStart(trip);
+  const vehicleName = getVehicleCalendarName(trip);
 
   const extra = [];
   if (trip.toll_count != null) extra.push(`Toll count: ${trip.toll_count}`);
@@ -176,7 +191,7 @@ function buildExpenseCloseoutEvent(trip) {
   return {
     eventType: "expense_closeout",
     payload: {
-      summary: `Turo closeout: ${trip.vehicle_name || "Car"} / ${trip.guest_name || "Guest"}`,
+      summary: `Turo closeout: ${vehicleName} / ${trip.guest_name || "Guest"}`,
       description: [
         "Action: close out expenses",
         ...baseDescriptionLines(trip),
