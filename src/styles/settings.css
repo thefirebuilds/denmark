@@ -227,6 +227,56 @@
   flex-wrap: wrap;
 }
 
+.settings-inline-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.settings-inline-add input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #2b3a4d;
+  background: #0d1520;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.settings-category-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-category-row {
+  border: 1px solid #2a395d;
+  background: #10182c;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settings-category-row span {
+  color: #dbe7f8;
+  font-weight: 800;
+}
+
+.settings-category-remove {
+  border: 1px solid #6b3a3a;
+  background: #2a1515;
+  color: #f0d6d6;
+  border-radius: 8px;
+  padding: 6px 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .settings-message {
   color: #b8c4d8;
   font-size: 0.9rem;
@@ -265,5 +315,12 @@
   .settings-bucket-controls {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .settings-inline-add,
+  .settings-category-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
   }
 }

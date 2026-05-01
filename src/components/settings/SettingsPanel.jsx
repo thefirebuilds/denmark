@@ -36,6 +36,23 @@ const SORT_OPTIONS = [
   { value: "guest_name", label: "Guest name" },
   { value: "status_bucket", label: "Status bucket" },
 ];
+const DEFAULT_EXPENSE_CATEGORIES = [
+  "Vehicle Onboard",
+  "Operating Expense",
+  "Maintenance",
+  "Insurance",
+  "Cleaning",
+  "Interest",
+  "Fuel",
+  "Tools",
+  "Tolls",
+  "Tires",
+  "Hospitality",
+  "Parking",
+  "Research / Travel",
+  "Delivery",
+  "Marketing",
+];
 
 const BUCKET_LABELS = {
   needs_closeout: "Needs closeout",
@@ -134,6 +151,7 @@ function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
+    { key: "expenses", title: "Expenses", sub: "Categories and imports" },
     { key: "database", title: "Database", sub: "Backup and restore" },
     { key: "telemetry", title: "Telemetry", sub: "Coming next" },
     { key: "maintenance", title: "Maintenance", sub: "Template defaults" },
@@ -770,12 +788,167 @@ function DatabaseSettingsPanel() {
   );
 }
 
+function normalizeCategories(value) {
+  const categories = Array.isArray(value)
+    ? value
+    : Array.isArray(value?.categories)
+      ? value.categories
+      : DEFAULT_EXPENSE_CATEGORIES;
+
+  return Array.from(
+    new Set(
+      categories
+        .map((category) => String(category || "").trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+function ExpenseSettingsPanel() {
+  const [categories, setCategories] = useState(DEFAULT_EXPENSE_CATEGORIES);
+  const [newCategory, setNewCategory] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadCategories() {
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/settings/expenses.categories`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load expense categories");
+      }
+
+      setCategories(normalizeCategories(json.value));
+    } catch (err) {
+      setMessage(err.message || "Failed to load categories");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadCategories();
+  }, []);
+
+  async function saveCategories(nextCategories) {
+    try {
+      setSaving(true);
+      setMessage("Saving...");
+
+      const payload = normalizeCategories(nextCategories);
+      const res = await fetch(`${API_BASE}/api/settings/expenses.categories`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: { categories: payload } }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save categories");
+      }
+
+      setCategories(normalizeCategories(json.value));
+      setMessage("Saved");
+    } catch (err) {
+      setMessage(err.message || "Failed to save categories");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function addCategory() {
+    const category = newCategory.trim();
+    if (!category) return;
+    setNewCategory("");
+    void saveCategories([...categories, category]);
+  }
+
+  function removeCategory(category) {
+    void saveCategories(categories.filter((item) => item !== category));
+  }
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Expenses</h2>
+          <span>import category options</span>
+        </div>
+        <div className="settings-autosave-state">
+          {loading ? "Loading..." : saving ? "Saving..." : message || "Ready"}
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Expense categories</div>
+          <div className="settings-empty-state">
+            These categories populate the imported transaction expense form.
+            Existing expense history is still used for suggestions.
+          </div>
+
+          <div className="settings-inline-add">
+            <input
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addCategory();
+                }
+              }}
+              placeholder="New category"
+              disabled={loading || saving}
+            />
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={loading || saving || !newCategory.trim()}
+              onClick={addCategory}
+            >
+              Add Category
+            </button>
+          </div>
+
+          <div className="settings-category-list">
+            {categories.map((category) => (
+              <div key={category} className="settings-category-row">
+                <span>{category}</span>
+                <button
+                  type="button"
+                  className="settings-category-remove"
+                  disabled={saving}
+                  onClick={() => removeCategory(category)}
+                  title={`Remove ${category}`}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {message && message !== "Saved" ? (
+            <span className="settings-message">{message}</span>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
   const [connections, setConnections] = useState(null);
+  const [mercuryConfig, setMercuryConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncingMercury, setSyncingMercury] = useState(false);
   const [message, setMessage] = useState("");
 
   async function loadTellerState() {
@@ -783,13 +956,15 @@ function IntegrationsSettingsPanel() {
       setLoading(true);
       setMessage("");
 
-      const [configRes, connectionsRes] = await Promise.all([
+      const [configRes, connectionsRes, mercuryConfigRes] = await Promise.all([
         fetch(`${API_BASE}/api/teller/connect/config`),
         fetch(`${API_BASE}/api/teller/connections`),
+        fetch(`${API_BASE}/api/teller/mercury/config`),
       ]);
 
       const configJson = await configRes.json().catch(() => ({}));
       const connectionsJson = await connectionsRes.json().catch(() => ({}));
+      const mercuryConfigJson = await mercuryConfigRes.json().catch(() => ({}));
 
       if (!configRes.ok) {
         throw new Error(configJson?.error || "Failed to load Teller config");
@@ -801,8 +976,15 @@ function IntegrationsSettingsPanel() {
         );
       }
 
+      if (!mercuryConfigRes.ok) {
+        throw new Error(
+          mercuryConfigJson?.error || "Failed to load Mercury config"
+        );
+      }
+
       setConfig(configJson);
       setConnections(connectionsJson);
+      setMercuryConfig(mercuryConfigJson);
     } catch (err) {
       setMessage(err.message || "Failed to load integrations");
     } finally {
@@ -898,15 +1080,42 @@ function IntegrationsSettingsPanel() {
       }
 
       setMessage(
-        `Synced ${json.processed || 0} transactions across ${
-          json.accounts || 0
-        } account${Number(json.accounts || 0) === 1 ? "" : "s"}.`
+        `Synced ${json.processed || 0} bank transaction${
+          Number(json.processed || 0) === 1 ? "" : "s"
+        }.`
       );
       await loadTellerState();
     } catch (err) {
       setMessage(err.message || "Failed to sync Teller");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function syncMercury() {
+    try {
+      setSyncingMercury(true);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/teller/mercury/sync`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to sync Mercury");
+      }
+
+      setMessage(
+        `Synced ${json.processed || 0} Mercury transaction${
+          Number(json.processed || 0) === 1 ? "" : "s"
+        }.`
+      );
+      await loadTellerState();
+    } catch (err) {
+      setMessage(err.message || "Failed to sync Mercury");
+    } finally {
+      setSyncingMercury(false);
     }
   }
 
@@ -972,6 +1181,38 @@ function IntegrationsSettingsPanel() {
             {message ? <span className="settings-message">{message}</span> : null}
           </div>
         </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Mercury</div>
+          <div className="settings-empty-state">
+            Mercury uses its direct API token and imports into the same Inbox
+            review flow as Teller card transactions.
+          </div>
+
+          <div className="settings-vehicle-list">
+            <div className="settings-vehicle-row">
+              <strong>API key</strong>
+              <span>
+                {loading
+                  ? "Loading..."
+                  : mercuryConfig?.configured
+                    ? `Configured (${mercuryConfig.envKey || "MERCURY_API_KEY"})`
+                    : "Missing MERCURY_API_KEY"}
+              </span>
+            </div>
+          </div>
+
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={loading || syncingMercury || !mercuryConfig?.configured}
+              onClick={syncMercury}
+            >
+              {syncingMercury ? "Syncing..." : "Sync Mercury"}
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -1003,11 +1244,19 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
+    if (activeSection === "expenses") {
+      return {
+        title: "Expense setup",
+        body:
+          "These categories feed the imported transaction expense form. Saved expense history still contributes smart suggestions.",
+      };
+    }
+
     if (activeSection === "integrations") {
       return {
-        title: "Teller setup",
+        title: "Banking setup",
         body:
-          "Teller Connect creates an access token for each bank enrollment. The server stores each token and syncs transactions across every connected account.",
+          "Teller uses bank enrollments, while Mercury uses its direct API token. Both land in the same Inbox review and expense matching flow.",
       };
     }
 
@@ -1048,6 +1297,8 @@ export default function SettingsPanel({
         />
       ) : activeSection === "fleet" ? (
         <FleetSettingsPanel />
+      ) : activeSection === "expenses" ? (
+        <ExpenseSettingsPanel />
       ) : activeSection === "database" ? (
         <DatabaseSettingsPanel />
       ) : activeSection === "integrations" ? (

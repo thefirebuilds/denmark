@@ -15,8 +15,11 @@ const {
   createTellerIgnoreRule,
   getCategorySuggestionsForTransaction,
   detectRefundSignal,
+  getIncomeDraftForTeller,
+  createIncomeFromTeller,
 } = require("../services/teller/tellerMatchService");
 const syncTellerTransactions = require("../services/teller/teller");
+const syncMercuryTransactions = require("../services/mercury/mercury");
 
 const router = express.Router();
 
@@ -109,6 +112,35 @@ router.get("/connect/config", async (req, res) => {
   }
 });
 
+router.get("/mercury/config", async (req, res) => {
+  try {
+    res.json(syncMercuryTransactions.getConfigSummary());
+  } catch (err) {
+    console.error("Failed to load Mercury config:", err);
+    sendRouteError(res, err, "Failed to load Mercury config");
+  }
+});
+
+router.get("/mercury/balance", async (req, res) => {
+  try {
+    const result = await syncMercuryTransactions.getBalanceSummary();
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to load Mercury balance:", err);
+    sendRouteError(res, err, "Failed to load Mercury balance");
+  }
+});
+
+router.post("/mercury/sync", async (req, res) => {
+  try {
+    const result = await syncMercuryTransactions();
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to sync Mercury transactions:", err);
+    sendRouteError(res, err, "Failed to sync Mercury transactions");
+  }
+});
+
 router.get("/connections", async (req, res) => {
   try {
     const summary = await syncTellerTransactions.getTokenSummary();
@@ -134,12 +166,48 @@ router.post("/connections", async (req, res) => {
 });
 
 router.post("/sync", async (req, res) => {
+  const result = {
+    processed: 0,
+    accounts: 0,
+    teller: null,
+    mercury: null,
+    errors: [],
+  };
+
   try {
-    const result = await syncTellerTransactions();
+    try {
+      result.teller = await syncTellerTransactions();
+      result.processed += Number(result.teller?.processed || 0);
+      result.accounts += Number(result.teller?.accounts || 0);
+    } catch (err) {
+      result.errors.push({
+        source: "teller",
+        error: err.message || "Failed to sync Teller transactions",
+      });
+    }
+
+    try {
+      result.mercury = await syncMercuryTransactions();
+      result.processed += Number(result.mercury?.processed || 0);
+    } catch (err) {
+      if (err.status === 400) {
+        result.mercury = { configured: false, processed: 0 };
+      } else {
+        result.errors.push({
+          source: "mercury",
+          error: err.message || "Failed to sync Mercury transactions",
+        });
+      }
+    }
+
+    if (result.errors.length && !result.processed) {
+      return res.status(502).json(result);
+    }
+
     res.json(result);
   } catch (err) {
-    console.error("Failed to sync Teller transactions:", err);
-    sendRouteError(res, err, "Failed to sync Teller transactions");
+    console.error("Failed to sync bank transactions:", err);
+    sendRouteError(res, err, "Failed to sync bank transactions");
   }
 });
 
@@ -230,6 +298,32 @@ router.get("/:id/expense-draft", async (req, res) => {
   } catch (err) {
     console.error("Failed to build expense draft:", err);
     sendRouteError(res, err, "Failed to build expense draft");
+  }
+});
+
+router.get("/:id/income-draft", async (req, res) => {
+  try {
+    const txId = getValidatedTransactionId(req, res);
+    if (!txId) return;
+
+    const draft = await getIncomeDraftForTeller(txId);
+    res.json(draft);
+  } catch (err) {
+    console.error("Failed to build income draft:", err);
+    sendRouteError(res, err, "Failed to build income draft");
+  }
+});
+
+router.post("/:id/create-income", async (req, res) => {
+  try {
+    const txId = getValidatedTransactionId(req, res);
+    if (!txId) return;
+
+    const result = await createIncomeFromTeller(txId, req.body || {});
+    res.status(201).json(result);
+  } catch (err) {
+    console.error("Failed to create income from Teller transaction:", err);
+    sendRouteError(res, err, "Failed to create income");
   }
 });
 

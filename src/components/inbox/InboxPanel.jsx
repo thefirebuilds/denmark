@@ -9,24 +9,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 const API_BASE = "http://localhost:5000";
 const VEHICLES_API = `${API_BASE}/api/vehicles`;
 
-const EXPENSE_CATEGORIES = [
-  "Vehicle Onboard",
-  "Operating Expense",
-  "Maintenance",
-  "Insurance",
-  "Cleaning",
-  "Interest",
-  "Fuel",
-  "Tools",
-  "Tolls",
-  "Tires",
-  "Hospitality",
-  "Parking",
-  "Research / Travel",
-  "Delivery",
-  "Marketing",
-];
-
 function money(value) {
   const n = Number(value || 0);
   return n.toLocaleString("en-US", {
@@ -164,6 +146,19 @@ function formatMatchLabel(score, suggestionCount = 0) {
   }
 
   return parts.join(" · ");
+}
+
+function getTransactionSourceLabel(txn) {
+  const source = txn?.transaction_source_label || "Imported";
+  const account = txn?.source_account_label;
+
+  if (!account || account === source) return source;
+  return `${source} / ${account}`;
+}
+
+function isTuroIncomeTransaction(txn) {
+  const text = `${txn?.counterparty_name || ""} ${txn?.description || ""}`.toLowerCase();
+  return text.includes("turo") && Number(txn?.amount || 0) > 0;
 }
 
 function ExpenseProcessingBucketPanel({ summary, activeBucket, onChange }) {
@@ -322,6 +317,7 @@ function ExpenseProcessingListPanel({
 
                 <div className="inbox-transaction-meta">
                   <span>{txn.counterparty_name || "Unknown merchant"}</span>
+                  <span>{getTransactionSourceLabel(txn)}</span>
                   <span>{txn.category || "uncategorized"}</span>
                   {hasLikelyMatch ? (
                     <span
@@ -427,6 +423,7 @@ function ExpenseProcessingDetailPanel({
   onIgnore,
   onIgnoreSimilar,
   onCreateExpense,
+  onCreateIncome,
   onNext,
   onPrevious,
   canGoNext,
@@ -436,6 +433,7 @@ function ExpenseProcessingDetailPanel({
   draftLoading,
 }) {
   const actionLocked = acting !== "" || draftLoading;
+  const showIncomeAction = isTuroIncomeTransaction(transaction);
 
   return (
     <div className="panel inbox-detail-panel">
@@ -485,6 +483,17 @@ function ExpenseProcessingDetailPanel({
           >
             {draftLoading ? "Loading Draft…" : acting === "create" ? "Adding…" : "Add Expense"}
           </button>
+
+          {showIncomeAction ? (
+            <button
+              type="button"
+              className="inbox-action-btn"
+              onClick={() => onCreateIncome(transaction.id)}
+              disabled={actionLocked}
+            >
+              {draftLoading ? "Loading Draftâ€¦" : acting === "income" ? "Addingâ€¦" : "Add Income"}
+            </button>
+          ) : null}
 
           <button
             type="button"
@@ -602,6 +611,14 @@ function ExpenseProcessingDetailPanel({
                   <strong>{transaction.counterparty_name || "—"}</strong>
                 </div>
                 <div>
+                  <span>Source</span>
+                  <strong>{transaction.transaction_source_label || "Imported"}</strong>
+                </div>
+                <div>
+                  <span>Account</span>
+                  <strong>{transaction.source_account_label || "N/A"}</strong>
+                </div>
+                <div>
                   <span>Type</span>
                   <strong>{transaction.transaction_type || "—"}</strong>
                 </div>
@@ -658,12 +675,15 @@ function ExpenseProcessingDetailPanel({
 function ExpenseDraftModal({
   open,
   draft,
+  categories = [],
   vehicles = [],
   vehiclesLoading = false,
   vehiclesError = "",
+  categoryMessage = "",
   saving,
   onClose,
   onChange,
+  onAddCategory,
   onSubmit,
 }) {
   if (!open || !draft) return null;
@@ -720,13 +740,30 @@ function ExpenseDraftModal({
               onChange={(e) => onChange("category", e.target.value)}
             >
               <option value="">Select category</option>
-              {EXPENSE_CATEGORIES.map((category) => (
+              {categories.map((category) => (
                 <option key={category} value={category}>
                   {category}
                 </option>
               ))}
             </select>
           </label>
+
+          <div className="inbox-draft-inline-add">
+            <input
+              type="text"
+              value={draft.new_category || ""}
+              onChange={(e) => onChange("new_category", e.target.value)}
+              placeholder="New category"
+            />
+            <button
+              type="button"
+              className="inbox-action-btn"
+              onClick={() => onAddCategory?.(draft.new_category)}
+              disabled={!String(draft.new_category || "").trim()}
+            >
+              Add Category
+            </button>
+          </div>
 
           <label className="inbox-draft-field">
             <span>Vehicle</span>
@@ -761,6 +798,10 @@ function ExpenseDraftModal({
 
           {vehiclesError ? (
             <div className="inbox-inline-error">{vehiclesError}</div>
+          ) : null}
+
+          {categoryMessage ? (
+            <div className="inbox-draft-suggestion-summary">{categoryMessage}</div>
           ) : null}
 
           {draft.category_options?.length ? (
@@ -832,6 +873,86 @@ function ExpenseDraftModal({
   );
 }
 
+function IncomeDraftModal({
+  open,
+  draft,
+  saving,
+  onClose,
+  onChange,
+  onSubmit,
+}) {
+  if (!open || !draft) return null;
+
+  return (
+    <div className="inbox-draft-overlay">
+      <div className="inbox-draft-modal">
+        <div className="panel-header">
+          <h2>Add Income</h2>
+        </div>
+
+        <div className="inbox-draft-form">
+          <label className="inbox-draft-field">
+            <span>Payer</span>
+            <input
+              type="text"
+              value={draft.payer || ""}
+              onChange={(e) => onChange("payer", e.target.value)}
+            />
+          </label>
+
+          <label className="inbox-draft-field">
+            <span>Amount</span>
+            <input
+              type="number"
+              step="0.01"
+              value={draft.amount ?? ""}
+              onChange={(e) => onChange("amount", e.target.value)}
+            />
+          </label>
+
+          <label className="inbox-draft-field">
+            <span>Date</span>
+            <input
+              type="date"
+              value={draft.income_date || ""}
+              onChange={(e) => onChange("income_date", e.target.value)}
+            />
+          </label>
+
+          <label className="inbox-draft-field">
+            <span>Notes</span>
+            <textarea
+              rows={4}
+              value={draft.notes || ""}
+              onChange={(e) => onChange("notes", e.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="inbox-draft-actions">
+          <button
+            type="button"
+            className="inbox-action-btn"
+            onClick={onClose}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            className="inbox-action-btn"
+            onClick={onSubmit}
+            disabled={saving}
+          >
+            {saving ? "Savingâ€¦" : "Save Income"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function InboxPanel() {
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
@@ -867,6 +988,11 @@ export default function InboxPanel() {
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftTransactionId, setDraftTransactionId] = useState(null);
+  const [incomeDraft, setIncomeDraft] = useState(null);
+  const [incomeDraftOpen, setIncomeDraftOpen] = useState(false);
+  const [incomeDraftTransactionId, setIncomeDraftTransactionId] = useState(null);
+  const [expenseCategories, setExpenseCategories] = useState([]);
+  const [categoryMessage, setCategoryMessage] = useState("");
   const [vehicles, setVehicles] = useState([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(false);
   const [vehiclesError, setVehiclesError] = useState("");
@@ -895,6 +1021,21 @@ export default function InboxPanel() {
         setSummaryError(err.message || "Failed to load summary.");
         setSummary({});
       }
+    }
+  }, []);
+
+  const loadExpenseCategories = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/expenses/suggestions`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load expense categories");
+      }
+
+      setExpenseCategories(Array.isArray(json.categories) ? json.categories : []);
+    } catch (err) {
+      setCategoryMessage(err.message || "Failed to load expense categories");
     }
   }, []);
 
@@ -1131,6 +1272,10 @@ export default function InboxPanel() {
   }, [loadSummary]);
 
   useEffect(() => {
+    loadExpenseCategories();
+  }, [loadExpenseCategories]);
+
+  useEffect(() => {
     let cancelled = false;
     loadTransactions(() => cancelled);
     return () => {
@@ -1183,6 +1328,13 @@ export default function InboxPanel() {
     setDraftTransactionId(null);
   }
 
+  function closeIncomeDraftModal() {
+    if (draftLoading || acting === "income") return;
+    setIncomeDraftOpen(false);
+    setIncomeDraft(null);
+    setIncomeDraftTransactionId(null);
+  }
+
   async function handleOpenExpenseDraft(transactionId) {
     if (!transactionId) return;
 
@@ -1223,6 +1375,89 @@ export default function InboxPanel() {
         [field]: value,
       };
     });
+  }
+
+  async function handleAddExpenseCategory(rawCategory) {
+    const category = String(rawCategory || "").trim();
+    if (!category) return;
+
+    const nextCategories = Array.from(
+      new Set([...expenseCategories, category])
+    ).sort((a, b) => a.localeCompare(b));
+
+    try {
+      setCategoryMessage("Saving category...");
+
+      const res = await fetch(`${API_BASE}/api/settings/expenses.categories`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: { categories: nextCategories } }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save category");
+      }
+
+      const savedCategories = Array.isArray(json.value?.categories)
+        ? json.value.categories
+        : nextCategories;
+      setExpenseCategories(savedCategories);
+      setCategoryMessage("Category saved");
+      setExpenseDraft((current) =>
+        current
+          ? {
+              ...current,
+              category,
+              new_category: "",
+            }
+          : current
+      );
+    } catch (err) {
+      setCategoryMessage(err.message || "Failed to save category");
+    }
+  }
+
+  function handleIncomeDraftChange(field, value) {
+    setIncomeDraft((current) => {
+      if (!current) return current;
+
+      return {
+        ...current,
+        [field]: value,
+      };
+    });
+  }
+
+  async function handleOpenIncomeDraft(transactionId) {
+    if (!transactionId) return;
+
+    try {
+      setActionError("");
+      setDraftLoading(true);
+      setIncomeDraftTransactionId(transactionId);
+
+      const res = await fetch(`${API_BASE}/api/teller/${transactionId}/income-draft`);
+      if (!res.ok) {
+        let message = `Income draft request failed: ${res.status}`;
+        try {
+          const errData = await res.json();
+          message = errData?.error || errData?.message || message;
+        } catch {
+          // ignore parse failure
+        }
+        throw new Error(message);
+      }
+
+      const draft = await res.json();
+      setIncomeDraft(draft);
+      setIncomeDraftOpen(true);
+    } catch (err) {
+      setActionError(err.message || "Failed to load income draft.");
+      setIncomeDraftTransactionId(null);
+    } finally {
+      setDraftLoading(false);
+    }
   }
 
   async function handleIgnoreSimilar(group) {
@@ -1433,6 +1668,7 @@ export default function InboxPanel() {
 
       const payload = {
         ...expenseDraft,
+        new_category: undefined,
         vehicle_id:
           expenseDraft.vehicle_id === "" || expenseDraft.vehicle_id == null
             ? null
@@ -1473,6 +1709,54 @@ export default function InboxPanel() {
       await refreshAfterAction(indexHint);
     } catch (err) {
       setActionError(err.message || "Failed to create expense.");
+    } finally {
+      setActing("");
+    }
+  }
+
+  async function handleCreateIncome() {
+    if (!incomeDraftTransactionId || !incomeDraft) return;
+
+    try {
+      setActionError("");
+      setActing("income");
+
+      const indexHint = selectedIndex;
+      const payload = {
+        ...incomeDraft,
+        trip_id: null,
+        amount:
+          incomeDraft.amount === "" || incomeDraft.amount == null
+            ? null
+            : Number(incomeDraft.amount),
+      };
+
+      const res = await fetch(`${API_BASE}/api/teller/${incomeDraftTransactionId}/create-income`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        let message = `Create income request failed: ${res.status}`;
+        try {
+          const errData = await res.json();
+          message = errData?.error || errData?.message || message;
+        } catch {
+          // ignore parse failure
+        }
+        throw new Error(message);
+      }
+
+      setIncomeDraftOpen(false);
+      setIncomeDraft(null);
+      setIncomeDraftTransactionId(null);
+
+      await refreshAfterAction(indexHint);
+    } catch (err) {
+      setActionError(err.message || "Failed to create income.");
     } finally {
       setActing("");
     }
@@ -1519,6 +1803,7 @@ export default function InboxPanel() {
         onIgnore={handleIgnore}
         onIgnoreSimilar={handleIgnoreSimilar}
         onCreateExpense={handleOpenExpenseDraft}
+        onCreateIncome={handleOpenIncomeDraft}
         onNext={handleNext}
         onPrevious={handlePrevious}
         canGoNext={canGoNext}
@@ -1531,13 +1816,25 @@ export default function InboxPanel() {
       <ExpenseDraftModal
         open={draftOpen}
         draft={expenseDraft}
+        categories={expenseCategories}
         vehicles={vehicles}
         vehiclesLoading={vehiclesLoading}
         vehiclesError={vehiclesError}
+        categoryMessage={categoryMessage}
         saving={acting === "create"}
         onClose={closeDraftModal}
         onChange={handleDraftChange}
+        onAddCategory={handleAddExpenseCategory}
         onSubmit={handleCreateExpense}
+      />
+
+      <IncomeDraftModal
+        open={incomeDraftOpen}
+        draft={incomeDraft}
+        saving={acting === "income"}
+        onClose={closeIncomeDraftModal}
+        onChange={handleIncomeDraftChange}
+        onSubmit={handleCreateIncome}
       />
     </>
   );

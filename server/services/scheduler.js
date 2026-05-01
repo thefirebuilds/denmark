@@ -15,6 +15,7 @@ const { pushPublicAvailabilitySnapshotSafe } = require("./pushPublicAvailability
 
 // bank transX
 const syncTellerTransactions = require("./teller/teller");
+const syncMercuryTransactions = require("./mercury/mercury");
 
 // email connectivity
 const pollImap = require("./imapPoller");
@@ -32,6 +33,7 @@ const {
 } = require("./googleCalendar/googleCalendarStore");
 const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
 const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
+const pool = require("../db");
 
 let tellerSyncInProgress = false;
 let tellerSyncIntervalHandle = null;
@@ -67,6 +69,8 @@ const STARTUP_TASKS = [
   "publicAvailability",
   "googleCalendar",
 ];
+const STARTUP_RUN_SETTING_KEY = "scheduler.lastStartupRun";
+const STARTUP_RUN_COOLDOWN_MS = 15 * 60 * 1000;
 
 let startupStatus = {
   startedAt: null,
@@ -148,6 +152,74 @@ async function runStartupTask(name, taskFn) {
   }
 }
 
+async function getLastStartupRunAt() {
+  const result = await pool.query(
+    `
+    SELECT value
+    FROM app_settings
+    WHERE key = $1
+    LIMIT 1
+    `,
+    [STARTUP_RUN_SETTING_KEY]
+  );
+  const value = result.rows[0]?.value;
+  const rawTimestamp =
+    typeof value === "string" ? value : value?.last_run_at || value?.lastRunAt;
+
+  if (!rawTimestamp) return null;
+
+  const timestamp = new Date(rawTimestamp);
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp;
+}
+
+async function markStartupRunAt(date = new Date()) {
+  await pool.query(
+    `
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES ($1, $2::jsonb, NOW())
+    ON CONFLICT (key)
+    DO UPDATE SET
+      value = EXCLUDED.value,
+      updated_at = NOW()
+    `,
+    [
+      STARTUP_RUN_SETTING_KEY,
+      JSON.stringify({
+        last_run_at: date.toISOString(),
+      }),
+    ]
+  );
+}
+
+function skipAllStartupTasks(reason) {
+  const now = new Date().toISOString();
+
+  for (const taskName of STARTUP_TASKS) {
+    updateStartupTask(taskName, {
+      state: "skipped",
+      startedAt: now,
+      completedAt: now,
+      error: reason,
+    });
+  }
+}
+
+async function shouldRunStartupTasks() {
+  const lastRunAt = await getLastStartupRunAt();
+
+  if (!lastRunAt) {
+    return { run: true, lastRunAt: null, ageMs: null };
+  }
+
+  const ageMs = Date.now() - lastRunAt.getTime();
+
+  return {
+    run: ageMs >= STARTUP_RUN_COOLDOWN_MS,
+    lastRunAt,
+    ageMs,
+  };
+}
+
 function getStartupStatus() {
   const tasks = Object.values(startupStatus.tasks);
 
@@ -158,6 +230,7 @@ function getStartupStatus() {
     pending: tasks.filter((task) => task.state === "pending").map((task) => task.name),
     failed: tasks.filter((task) => task.state === "failed").map((task) => task.name),
     completed: Boolean(startupStatus.completedAt),
+    startupCooldownMinutes: STARTUP_RUN_COOLDOWN_MS / 60000,
     tasks,
   };
 }
@@ -173,10 +246,32 @@ async function runTellerSync(reason = "interval") {
 
   try {
     console.log(`[scheduler] teller start | reason=${reason}`);
-    const result = await syncTellerTransactions();
+    let processed = 0;
+
+    try {
+      const result = await syncTellerTransactions();
+      processed += Number(result.processed || 0);
+    } catch (err) {
+      console.error(
+        `[scheduler] teller source failed | reason=${reason} error=${err.message || err}`
+      );
+    }
+
+    try {
+      const result = await syncMercuryTransactions();
+      processed += Number(result.processed || 0);
+    } catch (err) {
+      if (err.status === 400) {
+        console.log(`[scheduler] mercury skipped | reason=${reason} configured=false`);
+      } else {
+        console.error(
+          `[scheduler] mercury source failed | reason=${reason} error=${err.message || err}`
+        );
+      }
+    }
 
     console.log(
-      `[scheduler] teller done | reason=${reason} processed=${result.processed} durationMs=${Date.now() - startedAt}`
+      `[scheduler] teller done | reason=${reason} processed=${processed} durationMs=${Date.now() - startedAt}`
     );
   } catch (err) {
     console.error(`[scheduler] teller failed | reason=${reason} error=${err.message || err}`);
@@ -396,38 +491,64 @@ function startScheduler() {
 
   resetStartupStatus();
 
-  // Teller sync immediately
-  void runStartupTask("teller", () => runTellerSync("startup"));
+  void (async () => {
+    try {
+      const startupDecision = await shouldRunStartupTasks();
 
-  // Toll sync immediately
-  void runStartupTask("tolls", () => runTollSync("startup"));
+      if (!startupDecision.run) {
+        const ageMinutes = Math.max(
+          0,
+          Math.round((startupDecision.ageMs || 0) / 60000)
+        );
+        const reason = `Startup tasks skipped; last startup run was ${ageMinutes} minute${
+          ageMinutes === 1 ? "" : "s"
+        } ago.`;
 
-  // IMAP immediately
-  void runStartupTask("imap", () => runPoll("startup"));
+        console.log(`[scheduler] startup tasks skipped | ageMinutes=${ageMinutes}`);
+        skipAllStartupTasks(reason);
+        return;
+      }
 
-  // Bouncie immediately
-  void runStartupTask("bouncie", () => runBouncie("startup"));
+      await markStartupRunAt();
 
-  // DIMO immediately
-  void runStartupTask("dimo", () => runDimo("startup"));
+      // Teller sync immediately
+      void runStartupTask("teller", () => runTellerSync("startup"));
 
-  // FMV check immediately (only refreshes if stale or missing)
-  void runStartupTask("fmv", () => runFleetFmvRefresh("startup"));
+      // Toll sync immediately
+      void runStartupTask("tolls", () => runTollSync("startup"));
 
-  // Business metrics snapshot immediately
-  void runStartupTask("businessMetrics", () =>
-    runBusinessMetricsSnapshot("startup")
-  );
+      // IMAP immediately
+      void runStartupTask("imap", () => runPoll("startup"));
 
-  // Public availability push immediately
-  void runStartupTask("publicAvailability", () =>
-    pushPublicAvailabilitySnapshotSafe("server startup")
-  );
+      // Bouncie immediately
+      void runStartupTask("bouncie", () => runBouncie("startup"));
 
-  // Google Calendar reconcile immediately
-  void runStartupTask("googleCalendar", () =>
-    runGoogleCalendarReconcile("startup")
-  );
+      // DIMO immediately
+      void runStartupTask("dimo", () => runDimo("startup"));
+
+      // FMV check immediately (only refreshes if stale or missing)
+      void runStartupTask("fmv", () => runFleetFmvRefresh("startup"));
+
+      // Business metrics snapshot immediately
+      void runStartupTask("businessMetrics", () =>
+        runBusinessMetricsSnapshot("startup")
+      );
+
+      // Public availability push immediately
+      void runStartupTask("publicAvailability", () =>
+        pushPublicAvailabilitySnapshotSafe("server startup")
+      );
+
+      // Google Calendar reconcile immediately
+      void runStartupTask("googleCalendar", () =>
+        runGoogleCalendarReconcile("startup")
+      );
+    } catch (err) {
+      const message = `Startup task guard failed: ${err.message || err}`;
+      console.error(`[scheduler] startup guard failed | error=${err.message || err}`);
+      skipAllStartupTasks(message);
+    }
+  })();
 
   // Teller sync every 2 hours
   tellerSyncIntervalHandle = setInterval(() => {

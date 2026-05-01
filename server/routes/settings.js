@@ -8,6 +8,24 @@ const pool = require("../db");
 
 const router = express.Router();
 
+const DEFAULT_EXPENSE_CATEGORIES = [
+  "Vehicle Onboard",
+  "Operating Expense",
+  "Maintenance",
+  "Insurance",
+  "Cleaning",
+  "Interest",
+  "Fuel",
+  "Tools",
+  "Tolls",
+  "Tires",
+  "Hospitality",
+  "Parking",
+  "Research / Travel",
+  "Delivery",
+  "Marketing",
+];
+
 const DEFAULT_SETTINGS = {
   "ui.dispatch": {
     openTripsSort: "priority",
@@ -29,6 +47,9 @@ const DEFAULT_SETTINGS = {
       "canceled",
       "closed",
     ],
+  },
+  "expenses.categories": {
+    categories: DEFAULT_EXPENSE_CATEGORIES,
   },
 };
 
@@ -62,6 +83,25 @@ function mergeSettings(key, value) {
     }
 
     merged.showCanceled = Boolean(merged.visibleBuckets.canceled);
+  }
+
+  if (key === "expenses.categories") {
+    const incoming = Array.isArray(value.categories)
+      ? value.categories
+      : Array.isArray(value)
+        ? value
+        : [];
+    const categories = Array.from(
+      new Set(
+        incoming
+          .map((category) => String(category || "").trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    return {
+      categories: categories.length ? categories : DEFAULT_EXPENSE_CATEGORIES,
+    };
   }
 
   return merged;

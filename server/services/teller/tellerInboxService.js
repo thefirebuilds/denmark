@@ -21,6 +21,86 @@ function parseBooleanFilter(value) {
   return null;
 }
 
+function parseLastFourFromText(value) {
+  const match = String(value || "").match(/(?:^|[^0-9])([0-9]{4})(?:[^0-9]|$)/);
+  return match?.[1] || null;
+}
+
+async function loadTellerAccountMetadataMap() {
+  const result = await pool.query(`
+    SELECT DISTINCT ON (raw_json->'account'->>'id')
+      raw_json->'account' AS account
+    FROM teller_transactions
+    WHERE raw_json->>'source' = 'teller'
+      AND raw_json->'account'->>'id' IS NOT NULL
+    ORDER BY raw_json->'account'->>'id', updated_at DESC
+  `);
+
+  return new Map(
+    result.rows
+      .map((row) => row.account)
+      .filter((account) => account?.id)
+      .map((account) => [String(account.id), account])
+  );
+}
+
+function getTransactionSourceFields(row, accountById = new Map()) {
+  const raw = row?.raw_json && typeof row.raw_json === "object" ? row.raw_json : {};
+  const txId = String(row?.teller_transaction_id || "");
+  const accountId = String(row?.teller_account_id || "");
+  const rawSource = String(raw.source || "").trim().toLowerCase();
+  const account =
+    raw.account || raw.source_account || accountById.get(accountId) || {};
+  const institution =
+    account.institution?.name ||
+    account.institution_name ||
+    raw.institution?.name ||
+    raw.institution_name ||
+    null;
+  const accountName = account.name || raw.account_name || null;
+  const lastFour =
+    account.last_four ||
+    account.last4 ||
+    account.mask ||
+    raw.last_four ||
+    raw.last4 ||
+    parseLastFourFromText(accountName);
+
+  if (txId.startsWith("mercury:") || accountId.startsWith("mercury:") || rawSource === "mercury") {
+    return {
+      transaction_source: "mercury",
+      transaction_source_label: "Mercury",
+      source_account_label: lastFour ? `Mercury ****${lastFour}` : "Mercury",
+      source_account_last_four: lastFour || null,
+    };
+  }
+
+  const sourceLabel = institution || (rawSource === "teller" ? "Teller" : "Teller");
+  const accountLabel = accountName
+    ? lastFour
+      ? `${accountName.replace(/\s+-\s+[0-9]{4}\s*$/, "")} ****${lastFour}`
+      : accountName
+    : lastFour
+      ? `${sourceLabel} ****${lastFour}`
+      : sourceLabel;
+
+  return {
+    transaction_source: "teller",
+    transaction_source_label: sourceLabel,
+    source_account_label: accountLabel,
+    source_account_last_four: lastFour || null,
+  };
+}
+
+function hydrateTransactionRow(row, accountById = new Map()) {
+  if (!row) return row;
+
+  return {
+    ...row,
+    ...getTransactionSourceFields(row, accountById),
+  };
+}
+
 async function listIgnoredVendorGroups(filters = {}) {
   const limit = parsePositiveInt(filters.limit, 25);
   const page = parsePositiveInt(filters.page, 1);
@@ -143,9 +223,11 @@ async function getIgnoredVendorGroupDetails(vendorKey, filters = {}) {
     [vendorKey, limit]
   );
 
+  const accountById = await loadTellerAccountMetadataMap();
+
   return {
     vendor_key: vendorKey,
-    transactions: result.rows,
+    transactions: result.rows.map((row) => hydrateTransactionRow(row, accountById)),
   };
 }
 
@@ -236,7 +318,8 @@ async function listTellerTransactions(filters = {}) {
     pool.query(countSql, values),
   ]);
 
-  const rows = rowsResult.rows;
+  const accountById = await loadTellerAccountMetadataMap();
+  const rows = rowsResult.rows.map((row) => hydrateTransactionRow(row, accountById));
 
   if (!rows.length) {
     return {
@@ -274,7 +357,7 @@ async function listTellerTransactions(filters = {}) {
     JOIN expenses e
       ON e.date BETWEEN (tt.transaction_date::date - INTERVAL '3 days')
                     AND (tt.transaction_date::date + INTERVAL '3 days')
-     AND ABS((COALESCE(e.price, 0) + COALESCE(e.tax, 0)) - tt.amount::numeric) <= 1.00
+     AND ABS((COALESCE(e.price, 0) + COALESCE(e.tax, 0)) - ABS(tt.amount::numeric)) <= 1.00
     LEFT JOIN vehicles v
       ON v.id = e.vehicle_id
     WHERE tt.id = ANY($1::int[])
@@ -372,7 +455,8 @@ async function getTellerTransactionById(id) {
     [id]
   );
 
-  return result.rows[0] || null;
+  const accountById = await loadTellerAccountMetadataMap();
+  return hydrateTransactionRow(result.rows[0] || null, accountById);
 }
 
 async function getTellerSummary() {

@@ -121,6 +121,12 @@ function toExpenseDate(value) {
   return d.toISOString().slice(0, 10);
 }
 
+function cleanOptionalText(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
 function amountDiff(a, b) {
   return Math.abs(Number(a || 0) - Number(b || 0));
 }
@@ -129,7 +135,7 @@ function scoreSuggestion(tx, expense) {
   let score = 0;
   const reasons = [];
 
-  const txAmount = Number(tx.amount || 0);
+  const txAmount = Math.abs(Number(tx.amount || 0));
   const expenseTotal = Number(expense.total_cost || 0);
 
   if (amountDiff(txAmount, expenseTotal) < 0.01) {
@@ -537,7 +543,7 @@ async function createExpenseFromTeller(id, payload = {}) {
     throw err;
   }
 
-  const amount = Number(tx.amount || 0);
+  const amount = Math.abs(Number(tx.amount || 0));
   const absoluteAmount = Math.abs(amount);
   const refundSignal = detectRefundSignal(
     payload.vendor,
@@ -604,6 +610,167 @@ async function createExpenseFromTeller(id, payload = {}) {
   };
 }
 
+async function getIncomeDraftForTeller(id) {
+  const tx = await getTellerTransactionRow(id);
+  if (!tx) {
+    const err = new Error("Teller transaction not found");
+    err.status = 404;
+    throw err;
+  }
+
+  const amount = Number(tx.amount || 0);
+  const txDate = toExpenseDate(tx.transaction_date);
+
+  return {
+    transaction_id: tx.id,
+    amount,
+    income_date: txDate,
+    payer: tx.counterparty_name || "Turo",
+    notes: tx.description || null,
+  };
+}
+
+async function createIncomeFromTeller(id, payload = {}) {
+  const tx = await getTellerTransactionRow(id);
+  if (!tx) {
+    const err = new Error("Teller transaction not found");
+    err.status = 404;
+    throw err;
+  }
+
+  const amount = Number(payload.amount ?? tx.amount ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const err = new Error("Income amount must be a positive number");
+    err.status = 400;
+    throw err;
+  }
+
+  const incomeDate = toExpenseDate(payload.income_date ?? tx.transaction_date);
+  if (!incomeDate) {
+    const err = new Error("Income date is required");
+    err.status = 400;
+    throw err;
+  }
+
+  const tripId =
+    payload.trip_id === "" || payload.trip_id == null ? null : Number(payload.trip_id);
+  if (tripId != null && (!Number.isInteger(tripId) || tripId <= 0)) {
+    const err = new Error("trip_id must be a valid trip id");
+    err.status = 400;
+    throw err;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    let expectedTripAmount = null;
+    if (tripId != null) {
+      const tripResult = await client.query(
+        `SELECT amount FROM trips WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+        [tripId]
+      );
+
+      if (!tripResult.rows[0]) {
+        const err = new Error("Trip not found");
+        err.status = 404;
+        throw err;
+      }
+
+      expectedTripAmount =
+        tripResult.rows[0].amount == null ? null : Number(tripResult.rows[0].amount);
+    }
+
+    const variance =
+      expectedTripAmount == null ? null : Number(amount) - Number(expectedTripAmount);
+
+    const incomeResult = await client.query(
+      `
+      INSERT INTO income_transactions (
+        teller_transaction_row_id,
+        trip_id,
+        source,
+        income_type,
+        payer,
+        amount,
+        income_date,
+        expected_trip_amount,
+        variance,
+        notes,
+        raw_json,
+        updated_at
+      )
+      VALUES (
+        $1, $2, 'bank_import', $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW()
+      )
+      ON CONFLICT (teller_transaction_row_id)
+      DO UPDATE SET
+        trip_id = EXCLUDED.trip_id,
+        income_type = EXCLUDED.income_type,
+        payer = EXCLUDED.payer,
+        amount = EXCLUDED.amount,
+        income_date = EXCLUDED.income_date,
+        expected_trip_amount = EXCLUDED.expected_trip_amount,
+        variance = EXCLUDED.variance,
+        notes = EXCLUDED.notes,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+      RETURNING *
+      `,
+      [
+        tx.id,
+        tripId,
+        cleanOptionalText(payload.income_type) || "turo_payout",
+        cleanOptionalText(payload.payer) || tx.counterparty_name || "Turo",
+        amount,
+        incomeDate,
+        expectedTripAmount,
+        variance,
+        cleanOptionalText(payload.notes) || tx.description || null,
+        JSON.stringify({
+          teller_transaction: tx,
+          payload,
+        }),
+      ]
+    );
+
+    const txResult = await client.query(
+      `
+      UPDATE teller_transactions
+      SET
+        review_status = 'created',
+        matched_expense_id = NULL,
+        match_confidence = 100,
+        match_method = 'created_income',
+        reviewed_at = NOW(),
+        review_notes = $2,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [
+        id,
+        tripId
+          ? `Created income transaction linked to trip ${tripId}`
+          : "Created income transaction",
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      income: incomeResult.rows[0],
+      teller_transaction: txResult.rows[0],
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getTellerSuggestions,
   matchTellerTransaction,
@@ -612,6 +779,8 @@ module.exports = {
   ignoreTellerTransaction,
   createTellerIgnoreRule,
   getCategorySuggestionsForTransaction,
+  getIncomeDraftForTeller,
+  createIncomeFromTeller,
   scoreSuggestion,
   detectRefundSignal,
 };

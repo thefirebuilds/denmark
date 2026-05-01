@@ -36,6 +36,7 @@ const {
 const {
   ensureBusinessMetricsTables,
 } = require("./services/metrics/businessMetricsService");
+const { ensureIncomeTables } = require("./services/income/incomeService");
 const { isAuthEnforced } = require("./auth/config");
 const { getOidcConfig } = require("./auth/oidcProvider");
 const { ensureAuthTables } = require("./auth/store");
@@ -221,6 +222,7 @@ Promise.all([
   ensureNotificationEventsTable(),
   ensureVehicleFmvEstimatesTable(),
   ensureBusinessMetricsTables(),
+  ensureIncomeTables(),
   ensureAuthTables(),
 ])
   .then(() => {

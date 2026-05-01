@@ -23,8 +23,21 @@ function formatLastReceived(ts) {
   }).format(date);
 }
 
+function money(value) {
+  if (value == null || value === "") return "--";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "--";
+
+  return amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+}
+
 export default function TopBanner({
   stats,
+  mercuryBalance = null,
   loading = false,
   refreshing = false,
   authInfo = null,
@@ -89,6 +102,14 @@ export default function TopBanner({
               checking<span className="top-banner-ellipsis">...</span>
             </span>
           )}
+
+          <span className="top-banner-balance">
+            Mercury {mercuryBalance?.configured === false
+              ? "not configured"
+              : mercuryBalance?.loading
+                ? "loading"
+                : money(mercuryBalance?.availableBalance ?? mercuryBalance?.currentBalance)}
+          </span>
 
           <span>
             {loading

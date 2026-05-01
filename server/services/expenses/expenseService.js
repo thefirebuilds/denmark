@@ -23,6 +23,23 @@ const CANONICAL_VENDOR_MAP = new Map([
   ["ebay", "eBay"],
   ["91280 - austin-bergstr austin tx", "ABIA"],
 ]);
+const DEFAULT_EXPENSE_CATEGORIES = [
+  "Vehicle Onboard",
+  "Operating Expense",
+  "Maintenance",
+  "Insurance",
+  "Cleaning",
+  "Interest",
+  "Fuel",
+  "Tools",
+  "Tolls",
+  "Tires",
+  "Hospitality",
+  "Parking",
+  "Research / Travel",
+  "Delivery",
+  "Marketing",
+];
 
 function titleCaseWords(value) {
   return String(value || "")
@@ -466,27 +483,41 @@ async function getCapitalBasisBreakdown({
 
 
 async function getExpenseSuggestions() {
-  const vendorsResult = await pool.query(`
-    SELECT DISTINCT TRIM(vendor) AS value
-    FROM expenses
-    WHERE vendor IS NOT NULL
-      AND TRIM(vendor) <> ''
-    ORDER BY value ASC
-  `);
+  const [vendorsResult, categoriesResult, settingsResult] = await Promise.all([
+    pool.query(`
+      SELECT DISTINCT TRIM(vendor) AS value
+      FROM expenses
+      WHERE vendor IS NOT NULL
+        AND TRIM(vendor) <> ''
+      ORDER BY value ASC
+    `),
+    pool.query(`
+      SELECT DISTINCT TRIM(category) AS value
+      FROM expenses
+      WHERE category IS NOT NULL
+        AND TRIM(category) <> ''
+      ORDER BY value ASC
+    `),
+    pool.query(`
+      SELECT value
+      FROM app_settings
+      WHERE key = 'expenses.categories'
+      LIMIT 1
+    `),
+  ]);
 
-  const categoriesResult = await pool.query(`
-    SELECT DISTINCT TRIM(category) AS value
-    FROM expenses
-    WHERE category IS NOT NULL
-      AND TRIM(category) <> ''
-    ORDER BY value ASC
-  `);
+  const configuredCategories = Array.isArray(settingsResult.rows[0]?.value?.categories)
+    ? settingsResult.rows[0].value.categories
+    : DEFAULT_EXPENSE_CATEGORIES;
 
   return {
     vendors: dedupeDisplayValues(
       vendorsResult.rows.map((row) => row.value)
     ),
-    categories: categoriesResult.rows.map((row) => row.value),
+    categories: dedupeDisplayValues([
+      ...configuredCategories,
+      ...categoriesResult.rows.map((row) => row.value),
+    ]),
   };
 }
 

@@ -436,6 +436,24 @@
   min-height: 96px;
 }
 
+.inbox-draft-inline-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inbox-draft-inline-add input {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px solid #2b3a4d;
+  background: #0d1520;
+  color: #e7edf7;
+  padding: 10px 12px;
+  font: inherit;
+}
+
 .inbox-draft-field input:focus,
 .inbox-draft-field select:focus,
 .inbox-draft-field textarea:focus {
@@ -510,9 +528,14 @@
 
   .inbox-list-pagination,
   .inbox-detail-actions,
-  .inbox-draft-actions {
+  .inbox-draft-actions,
+  .inbox-draft-inline-add {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .inbox-draft-inline-add {
+    display: flex;
   }
 
   .inbox-pagination-status {

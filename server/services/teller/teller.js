@@ -114,6 +114,45 @@ async function getTransactions(token, accountId) {
   return res.data || [];
 }
 
+function normalizeAccount(account) {
+  if (!account) return null;
+
+  return {
+    id: account.id || null,
+    name: account.name || null,
+    type: account.type || null,
+    subtype: account.subtype || null,
+    institution: account.institution
+      ? {
+          id: account.institution.id || null,
+          name: account.institution.name || null,
+        }
+      : null,
+    last_four:
+      account.last_four ||
+      account.last4 ||
+      account.mask ||
+      account.number_last_four ||
+      null,
+  };
+}
+
+function getNormalizedAmount(tx, account = null) {
+  const amount = Number(tx.amount);
+  if (!Number.isFinite(amount)) return amount;
+
+  const isCreditCard =
+    account?.type === "credit" || account?.subtype === "credit_card";
+  const txType = String(tx.type || "").toLowerCase();
+  const isCharge = ["card_payment", "transaction"].includes(txType);
+
+  if (isCreditCard && isCharge && amount > 0) {
+    return -amount;
+  }
+
+  return amount;
+}
+
 async function getIgnoreRules() {
   const result = await pool.query(`
     SELECT match_type, match_value, reason
@@ -148,9 +187,14 @@ function getIgnoreMatch(description, rules) {
   return null;
 }
 
-async function saveTransaction(tx, ignoreRules) {
+async function saveTransaction(tx, ignoreRules, account = null) {
   const ignoreReason = getIgnoreMatch(tx.description, ignoreRules);
   const ignored = Boolean(ignoreReason);
+  const rawJson = {
+    source: "teller",
+    account: normalizeAccount(account),
+    ...tx,
+  };
 
   await pool.query(
     `
@@ -201,7 +245,7 @@ async function saveTransaction(tx, ignoreRules) {
       tx.account_id,
       tx.date,
       tx.description || null,
-      Number(tx.amount),
+      getNormalizedAmount(tx, account),
       tx.type || null,
       tx.status || null,
       tx.running_balance != null ? Number(tx.running_balance) : null,
@@ -210,18 +254,19 @@ async function saveTransaction(tx, ignoreRules) {
       tx.details?.category || null,
       tx.links?.account || null,
       tx.links?.self || null,
-      JSON.stringify(tx),
+      JSON.stringify(rawJson),
       ignored,
       ignoreReason,
     ]
   );
 }
 
-async function syncTransactionsForAccount(accountId, token, ignoreRules) {
+async function syncTransactionsForAccount(account, token, ignoreRules) {
+  const accountId = account?.id || account;
   const transactions = await getTransactions(token, accountId);
 
   for (const tx of transactions) {
-    await saveTransaction(tx, ignoreRules);
+    await saveTransaction(tx, ignoreRules, account);
   }
 
   return transactions.length;
@@ -253,7 +298,7 @@ async function syncTellerTransactions() {
     for (const account of accounts) {
       console.log(`[teller] syncing account=${account.id}`);
       const count = await syncTransactionsForAccount(
-        account.id,
+        account,
         tokenRow.access_token,
         ignoreRules
       );
