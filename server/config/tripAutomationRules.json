@@ -1,0 +1,32 @@
+{
+  "tripStageAutomations": [
+    {
+      "id": "return_to_highway_71_turnaround",
+      "enabled": true,
+      "description": "When an in-progress trip returns to the Highway 71 lot and shuts off, advance it to turnaround.",
+      "fromStage": "in_progress",
+      "toStage": "turnaround",
+      "changedBySuffix": "telemetry",
+      "tripTimeWindow": {
+        "field": "trip_end",
+        "startOffsetMinutes": -120,
+        "endOffsetMinutes": 2160
+      },
+      "conditions": [
+        {
+          "type": "engine_transition",
+          "from": true,
+          "to": false
+        },
+        {
+          "type": "location",
+          "label": "1520 Highway 71 E, Austin, TX 78742, USA",
+          "addressContains": ["1520 Highway 71 E", "Austin", "78742"],
+          "lat": 30.220392,
+          "lon": -97.675925,
+          "radiusMiles": 0.15
+        }
+      ]
+    }
+  ]
+}

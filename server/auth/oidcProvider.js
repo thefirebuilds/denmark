@@ -3,6 +3,10 @@ const axios = require("axios");
 
 let discoveryPromise = null;
 
+const oidcHttp = axios.create({
+  proxy: false,
+});
+
 function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/, "");
 }
@@ -52,7 +56,7 @@ async function getDiscoveryDocument() {
   if (!discoveryPromise) {
     const config = assertOidcConfigured();
     const discoveryUrl = `${config.issuerUrl}/.well-known/openid-configuration`;
-    discoveryPromise = axios
+    discoveryPromise = oidcHttp
       .get(discoveryUrl, {
         timeout: 10000,
         headers: { Accept: "application/json" },
@@ -124,7 +128,7 @@ async function exchangeCodeForTokens({ code, codeVerifier }) {
     code_verifier: codeVerifier,
   });
 
-  const response = await axios.post(discovery.token_endpoint, params.toString(), {
+  const response = await oidcHttp.post(discovery.token_endpoint, params.toString(), {
     timeout: 10000,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
   });
@@ -140,7 +144,7 @@ async function fetchUserInfo(accessToken) {
     throw error;
   }
 
-  const response = await axios.get(discovery.userinfo_endpoint, {
+  const response = await oidcHttp.get(discovery.userinfo_endpoint, {
     timeout: 10000,
     headers: {
       Authorization: `Bearer ${accessToken}`,

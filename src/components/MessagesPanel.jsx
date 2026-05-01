@@ -575,6 +575,41 @@ function boolOrReason(message, field, reason) {
   return reasons.includes(reason);
 }
 
+function formatFuelPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "Unknown";
+  return `${Math.round(n)}%`;
+}
+
+function buildFuelCloseoutDetail(message) {
+  const level = formatFuelPercent(message?.closeout_latest_fuel_level);
+  const source = message?.closeout_latest_fuel_source
+    ? ` via ${message.closeout_latest_fuel_source}`
+    : "";
+  const nextGuest = message?.closeout_next_guest_name
+    ? ` before ${message.closeout_next_guest_name} arrives`
+    : " before the next guest arrives";
+  const nextTrip = message?.closeout_next_trip_start
+    ? ` (${formatTripTime(message.closeout_next_trip_start)})`
+    : "";
+
+  return `Fuel is ${level}${source}; refill to full${nextGuest}${nextTrip}.`;
+}
+
+function buildTollCloseoutDetail(message) {
+  const count = Number(message?.closeout_toll_count ?? 0);
+  const total = Number(message?.closeout_toll_total ?? 0);
+  const status = message?.closeout_toll_review_status || "none";
+
+  if (count > 0 || total > 0) {
+    const tollLabel =
+      count > 0 ? `${count} toll${count === 1 ? "" : "s"}` : "Tolls";
+    return `${tollLabel} totaling ${formatMoney(total)} need Turo billing review. Current status: ${status}`;
+  }
+
+  return `Audit HCTRA tolls against Turo billing. Current status: ${status}`;
+}
+
 function buildCloseoutActionItems(message) {
   return [
     {
@@ -623,10 +658,19 @@ function buildCloseoutActionItems(message) {
       key: "tolls",
       label: "Turo toll billing",
       pending: boolOrReason(message, "closeout_tolls_pending", "toll billing"),
-      detail: `Audit HCTRA tolls against Turo billing. Current status: ${
-        message?.closeout_toll_review_status || "none"
-      }`,
+      detail: buildTollCloseoutDetail(message),
       where: "Main panel",
+    },
+    {
+      key: "fuel_before_next_guest",
+      label: "Fuel before next guest",
+      pending: boolOrReason(
+        message,
+        "closeout_fuel_low",
+        "fuel before next guest"
+      ),
+      detail: buildFuelCloseoutDetail(message),
+      where: "Before next pickup",
     },
     {
       key: "closed_out",

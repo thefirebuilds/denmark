@@ -648,6 +648,19 @@ function getDaysSinceOnboarding(onboardingDate) {
   return Math.max(1, Math.ceil((now - onboard) / msPerDay));
 }
 
+function getDaysActive(onboardingDate) {
+  if (!onboardingDate) return null;
+
+  const onboard = new Date(onboardingDate);
+  if (Number.isNaN(onboard.getTime())) return null;
+
+  const now = new Date();
+  if (onboard > now) return 0;
+
+  const msPerDay = 1000 * 60 * 60 * 24;
+  return Math.max(1, Math.ceil((now - onboard) / msPerDay));
+}
+
 function projectPayoff({
   capitalBasis,
   capitalRecovered,
@@ -675,6 +688,7 @@ function projectPayoff({
   if (toNumber(capitalBasis) <= 0) {
     return {
       capital_recovery_rate_monthly: 0,
+      projected_recovery_rate_monthly: 0,
       projected_payoff_days: null,
       projected_payoff_date: null,
       projected_payoff_status: "no_basis",
@@ -685,6 +699,7 @@ function projectPayoff({
   if (toNumber(capitalRemaining) <= 0) {
     return {
       capital_recovery_rate_monthly: 0,
+      projected_recovery_rate_monthly: 0,
       projected_payoff_days: 0,
       projected_payoff_date: null,
       projected_payoff_status: "paid_off",
@@ -707,6 +722,7 @@ function projectPayoff({
   if (chosenDailyRecovery <= 0) {
     return {
       capital_recovery_rate_monthly: 0,
+      projected_recovery_rate_monthly: 0,
       projected_payoff_days: null,
       projected_payoff_date: null,
       projected_payoff_status: "no_revenue",
@@ -728,7 +744,8 @@ function projectPayoff({
   if (projectedPayoffStatus === "projected_lifetime") payoffConfidence = "low";
 
   return {
-    capital_recovery_rate_monthly: roundMoney(chosenDailyRecovery * 30),
+    capital_recovery_rate_monthly: roundMoney(lifetimeDailyRecovery * 30),
+    projected_recovery_rate_monthly: roundMoney(chosenDailyRecovery * 30),
     projected_payoff_days: projectedDays,
     projected_payoff_date: anchor.toISOString(),
     projected_payoff_status: projectedPayoffStatus,
@@ -798,6 +815,8 @@ async function getVehicleMetrics(rangeKey = "30d") {
 
       const capital = capitalMetricsMap.get(vehicleId) || {};
 
+      const onboardingDate = capital.onboarding_date || vehicle.onboarding_date;
+
       vehicleMetrics.set(vehicleId, {
         vehicle_id: vehicleId,
         nickname: vehicle.nickname,
@@ -805,7 +824,8 @@ async function getVehicleMetrics(rangeKey = "30d") {
         turo_vehicle_id: vehicle.turo_vehicle_id,
         current_odometer: vehicle.current_odometer_miles,
 
-        onboarding_date: capital.onboarding_date || vehicle.onboarding_date,
+        onboarding_date: onboardingDate,
+        days_active: getDaysActive(onboardingDate),
         acquisition_cost: roundMoney(vehicle.acquisition_cost || 0),
 
         onboarding_expenses: roundMoney(toNumber(capital.onboarding_expenses)),
@@ -819,6 +839,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
         capital_status: String(capital.capital_status || "no_basis"),
 
         capital_recovery_rate_monthly: 0,
+        projected_recovery_rate_monthly: 0,
         projected_payoff_days: null,
         projected_payoff_date: null,
         projected_payoff_status: "no_basis",
@@ -841,6 +862,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
         income_per_overlapping_trip: 0,
         income_per_prorated_trip: 0,
         income_per_booked_day: 0,
+        revenue_per_booked_day: 0,
+        revenue_per_mile: 0,
+        revenue_per_mile_basis: "missing",
         trip_miles: 0,
         total_miles: totalMiles,
         off_trip_miles: 0,
@@ -1133,6 +1157,27 @@ async function getVehicleMetrics(rangeKey = "30d") {
         safeDivide(metrics.trip_income, metrics.booked_vehicle_days)
       );
 
+      metrics.revenue_per_booked_day = roundMoney(
+        safeDivide(metrics.revenue_total, metrics.booked_vehicle_days)
+      );
+
+      const revenueMiles =
+        toNumber(metrics.trip_miles) > 0
+          ? toNumber(metrics.trip_miles)
+          : toNumber(metrics.total_miles) > 0
+          ? toNumber(metrics.total_miles)
+          : 0;
+
+      metrics.revenue_per_mile = roundMoney(
+        safeDivide(metrics.revenue_total, revenueMiles)
+      );
+      metrics.revenue_per_mile_basis =
+        toNumber(metrics.trip_miles) > 0
+          ? "trip_miles"
+          : toNumber(metrics.total_miles) > 0
+          ? "total_miles"
+          : "missing";
+
       const residualMiles = clampNonNegative(
         toNumber(metrics.total_miles) - toNumber(metrics.trip_miles)
       );
@@ -1172,6 +1217,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
       metrics.payoff_confidence = payoffProjection.payoff_confidence;
       metrics.capital_recovery_rate_monthly = roundMoney(
         payoffProjection.capital_recovery_rate_monthly
+      );
+      metrics.projected_recovery_rate_monthly = roundMoney(
+        payoffProjection.projected_recovery_rate_monthly
       );
       metrics.projected_payoff_days = payoffProjection.projected_payoff_days;
       metrics.projected_payoff_date = payoffProjection.projected_payoff_date;

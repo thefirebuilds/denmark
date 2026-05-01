@@ -54,7 +54,10 @@ function normalizeOdometer(value) {
 }
 
 function shouldCaptureStartOdometer(currentStage, nextStage) {
-  return currentStage !== "in_progress" && nextStage === "in_progress";
+  return (
+    (currentStage === "confirmed" && nextStage === "ready_for_handoff") ||
+    (currentStage !== "in_progress" && nextStage === "in_progress")
+  );
 }
 
 function shouldCaptureEndOdometer(currentStage, nextStage) {
@@ -165,6 +168,124 @@ async function getVehicleCurrentOdometer(client, trip) {
   }
 
   return null;
+}
+
+function toIsoTimestamp(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toISOString();
+  return date.toISOString();
+}
+
+async function getVehicleTelemetryOdometerAt(client, trip, timestamp) {
+  const turoVehicleId =
+    trip?.turo_vehicle_id == null ? null : String(trip.turo_vehicle_id).trim();
+  const vehicleName = String(trip?.vehicle_name || "").trim();
+
+  if (!turoVehicleId && !vehicleName) {
+    return null;
+  }
+
+  const eventTimestamp = toIsoTimestamp(timestamp);
+
+  const result = await client.query(
+    `
+      WITH matched_vehicle AS (
+        SELECT id, vin
+        FROM vehicles
+        WHERE (
+            $1::text IS NOT NULL
+            AND turo_vehicle_id IS NOT NULL
+            AND CAST(turo_vehicle_id AS text) = $1::text
+          )
+          OR (
+            $2 <> ''
+            AND LOWER(nickname) = LOWER($2)
+          )
+        ORDER BY
+          CASE
+            WHEN $1::text IS NOT NULL
+             AND turo_vehicle_id IS NOT NULL
+             AND CAST(turo_vehicle_id AS text) = $1::text
+              THEN 0
+            ELSE 1
+          END
+        LIMIT 1
+      ),
+      snapshot_candidates AS (
+        SELECT
+          ROUND(s.odometer)::integer AS odometer,
+          COALESCE(s.vehicle_last_updated, s.captured_at) AS recorded_at,
+          0 AS source_priority
+        FROM vehicle_telemetry_snapshots s
+        JOIN matched_vehicle v
+          ON LOWER(s.vin) = LOWER(v.vin)
+        WHERE s.odometer IS NOT NULL
+          AND COALESCE(s.vehicle_last_updated, s.captured_at)
+            BETWEEN $3::timestamptz - INTERVAL '30 minutes'
+                AND $3::timestamptz + INTERVAL '5 minutes'
+      ),
+      history_candidates AS (
+        SELECT
+          ROUND(h.odometer_miles)::integer AS odometer,
+          h.recorded_at,
+          1 AS source_priority
+        FROM vehicle_odometer_history h
+        JOIN matched_vehicle v
+          ON h.vehicle_id = v.id
+        WHERE h.odometer_miles IS NOT NULL
+          AND h.recorded_at
+            BETWEEN $3::timestamptz - INTERVAL '30 minutes'
+                AND $3::timestamptz + INTERVAL '5 minutes'
+      ),
+      fallback_snapshot AS (
+        SELECT
+          ROUND(s.odometer)::integer AS odometer,
+          COALESCE(s.vehicle_last_updated, s.captured_at) AS recorded_at,
+          2 AS source_priority
+        FROM vehicle_telemetry_snapshots s
+        JOIN matched_vehicle v
+          ON LOWER(s.vin) = LOWER(v.vin)
+        WHERE s.odometer IS NOT NULL
+          AND COALESCE(s.vehicle_last_updated, s.captured_at) <= $3::timestamptz
+          AND COALESCE(s.vehicle_last_updated, s.captured_at) >= $3::timestamptz - INTERVAL '24 hours'
+        ORDER BY COALESCE(s.vehicle_last_updated, s.captured_at) DESC, s.id DESC
+        LIMIT 1
+      ),
+      fallback_history AS (
+        SELECT
+          ROUND(h.odometer_miles)::integer AS odometer,
+          h.recorded_at,
+          3 AS source_priority
+        FROM vehicle_odometer_history h
+        JOIN matched_vehicle v
+          ON h.vehicle_id = v.id
+        WHERE h.odometer_miles IS NOT NULL
+          AND h.recorded_at <= $3::timestamptz
+          AND h.recorded_at >= $3::timestamptz - INTERVAL '24 hours'
+        ORDER BY h.recorded_at DESC, h.id DESC
+        LIMIT 1
+      )
+      SELECT odometer
+      FROM (
+        SELECT * FROM snapshot_candidates
+        UNION ALL
+        SELECT * FROM history_candidates
+        UNION ALL
+        SELECT * FROM fallback_snapshot
+        UNION ALL
+        SELECT * FROM fallback_history
+      ) candidates
+      WHERE odometer IS NOT NULL
+      ORDER BY
+        source_priority ASC,
+        ABS(EXTRACT(EPOCH FROM (recorded_at - $3::timestamptz))) ASC,
+        recorded_at DESC
+      LIMIT 1
+    `,
+    [turoVehicleId || null, vehicleName, eventTimestamp]
+  );
+
+  return normalizeOdometer(result.rows[0]?.odometer);
 }
 
 async function updateTripMaxEngineRpm(client, trip) {
@@ -294,6 +415,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       throw err;
     }
 
+    const transitionTimestamp = toIsoTimestamp(options.changedAt);
     let capturedOdometer = null;
     const captureStart = shouldCaptureStartOdometer(
       currentStage,
@@ -307,6 +429,11 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
     if (captureStart || captureEnd) {
       capturedOdometer =
         normalizeOdometer(options.currentOdometer) ??
+        (await getVehicleTelemetryOdometerAt(
+          client,
+          trip,
+          transitionTimestamp
+        )) ??
         (await getVehicleCurrentOdometer(client, trip));
     }
 
@@ -321,7 +448,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
     UPDATE trips
     SET
       workflow_stage = $2,
-      stage_updated_at = NOW(),
+      stage_updated_at = $5::timestamptz,
 
       status = CASE
         WHEN $2 = 'confirmed'
@@ -346,7 +473,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       ),
 
       completed_at = CASE
-        WHEN $2 = 'complete' AND completed_at IS NULL THEN NOW()
+        WHEN $2 = 'complete' AND completed_at IS NULL THEN $5::timestamptz
         ELSE completed_at
       END,
 
@@ -356,12 +483,12 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       END,
 
       closed_out_at = CASE
-        WHEN $2 = 'complete' AND closed_out_at IS NULL THEN NOW()
+        WHEN $2 = 'complete' AND closed_out_at IS NULL THEN $5::timestamptz
         ELSE closed_out_at
       END,
 
       canceled_at = CASE
-        WHEN $2 = 'canceled' AND canceled_at IS NULL THEN NOW()
+        WHEN $2 = 'canceled' AND canceled_at IS NULL THEN $5::timestamptz
         ELSE canceled_at
       END,
 
@@ -397,6 +524,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
     normalizedNextStage,
     startingOdometerToSet,
     endingOdometerToSet,
+    transitionTimestamp,
   ]
 );
 
@@ -416,7 +544,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
           changed_by,
           reason
         )
-        VALUES ($1, $2, $3, NOW(), $4, $5)
+        VALUES ($1, $2, $3, $6::timestamptz, $4, $5)
       `,
       [
         updatedTrip.id,
@@ -424,6 +552,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
         normalizedNextStage,
         options.changedBy || "manual",
         options.reason || null,
+        transitionTimestamp,
       ]
     );
 

@@ -101,6 +101,22 @@ function formatPayoffDays(days) {
   return `${years.toFixed(1)} yr left`;
 }
 
+function formatRentedAvailableDays(rentedDays, availableDays) {
+  const rented = Number(rentedDays);
+  const available = Number(availableDays);
+  const safeRented = Number.isFinite(rented) ? Math.round(rented) : 0;
+  const safeAvailable = Number.isFinite(available) ? Math.round(available) : 0;
+
+  return `${safeRented.toLocaleString("en-US")} / ${safeAvailable.toLocaleString("en-US")}`;
+}
+
+function formatRevenuePerMileBasis(value) {
+  const basis = String(value || "").toLowerCase();
+  if (basis === "trip_miles") return "Trip miles";
+  if (basis === "total_miles") return "Total miles";
+  return "No miles";
+}
+
 function getPayoffConfidenceTone(confidence) {
   const value = String(confidence || "").toLowerCase();
   if (value === "high") return "positive";
@@ -185,6 +201,10 @@ export default function VehicleComparisonRow({
   const fmvEstimateMid = Number(vehicle?.fmv_estimate_mid ?? 0);
   const fmvChange = Number(vehicle?.fmv_change ?? 0);
   const totalRevenue = Number(vehicle?.revenue_total ?? vehicle?.trip_income ?? 0);
+  const revenuePerBookedDay = Number(
+    vehicle?.revenue_per_booked_day ?? vehicle?.income_per_booked_day ?? 0
+  );
+  const revenuePerMile = Number(vehicle?.revenue_per_mile ?? 0);
   const hasFmvEstimate = Number.isFinite(fmvEstimateMid) && fmvEstimateMid > 0;
   const fmvChangeTone =
     fmvChange > 0 ? "positive" : fmvChange < 0 ? "negative" : "warning";
@@ -239,6 +259,12 @@ export default function VehicleComparisonRow({
         </div>
 
         <div className="vehicle-compare__cell">
+          <div className="vehicle-compare__value">
+            {formatRentedAvailableDays(bookedDays, availableDays)}
+          </div>
+        </div>
+
+        <div className="vehicle-compare__cell">
           <div
             className={`vehicle-compare__value ${
               occupancy >= 0.75
@@ -254,7 +280,13 @@ export default function VehicleComparisonRow({
 
         <div className="vehicle-compare__cell">
           <div className="vehicle-compare__value">
-            {formatCurrencyCompact(vehicle?.income_per_booked_day)}
+            {formatCurrencyCompact(revenuePerBookedDay)}
+          </div>
+        </div>
+
+        <div className="vehicle-compare__cell">
+          <div className="vehicle-compare__value">
+            {formatCurrencyCompact(revenuePerMile)}
           </div>
         </div>
 
@@ -337,6 +369,23 @@ export default function VehicleComparisonRow({
                 <div className="vehicle-compare__detail-label">Rev / Trip</div>
                 <div className="vehicle-compare__detail-value">
                   {formatCurrencyCompact(vehicle?.income_per_overlapping_trip)}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Rev / Day</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatCurrencyCompact(revenuePerBookedDay)}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Rev / Mile</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatCurrencyCompact(revenuePerMile)}
+                </div>
+                <div className="vehicle-compare__detail-hint">
+                  {formatRevenuePerMileBasis(vehicle?.revenue_per_mile_basis)}
                 </div>
               </div>
             </div>
@@ -430,7 +479,7 @@ export default function VehicleComparisonRow({
                     {formatNumber(vehicle?.booked_vehicle_days)}
                   </div>
                 </div>
-                <div>
+                <div className="vehicle-compare__detail-stat">
                   <div className="vehicle-compare__detail-label">Available Days</div>
                   <div className="vehicle-compare__detail-value">
                     {formatNumber(vehicle?.calendar_days_available ?? 0)}
@@ -530,7 +579,7 @@ export default function VehicleComparisonRow({
                       {projectedPayoffStatus}
                     </div>
                     <div className="vehicle-compare__payoff-chip">
-                      {formatCurrencyCompact(vehicle?.capital_recovery_rate_monthly)}/mo
+                      {formatCurrencyCompact(vehicle?.capital_recovery_rate_monthly)}/mo recovered
                     </div>
                   </div>
                 </div>

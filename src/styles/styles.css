@@ -61,6 +61,7 @@ body {
 }
 
 .startup-brand img {
+  grid-area: 1 / 1;
   width: 92%;
   height: 92%;
   object-fit: contain;

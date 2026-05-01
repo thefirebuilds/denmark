@@ -299,6 +299,9 @@ function mapInspectionExportNoticeRow(row) {
 function mapCloseoutNoticeRow(row) {
   const vehicleName = row.vehicle_nickname || row.vehicle_name || "vehicle";
   const guestName = row.guest_name || "guest";
+  const fuelLevel =
+    row.latest_fuel_level == null ? null : Number(row.latest_fuel_level);
+  const fuelLow = Boolean(row.fuel_reminder_pending);
   const reasons = [];
 
   if (row.workflow_incomplete) reasons.push("advance workflow");
@@ -306,6 +309,7 @@ function mapCloseoutNoticeRow(row) {
   if (row.missing_ending_odometer) reasons.push("ending odometer");
   if (row.expenses_pending) reasons.push("expense review");
   if (row.tolls_pending) reasons.push("toll billing");
+  if (fuelLow) reasons.push("fuel before next guest");
   if (row.closeout_flag_incomplete) reasons.push("closeout flag");
 
   return {
@@ -332,9 +336,18 @@ function mapCloseoutNoticeRow(row) {
     closeout_missing_ending_odometer: row.missing_ending_odometer,
     closeout_expenses_pending: row.expenses_pending,
     closeout_tolls_pending: row.tolls_pending,
+    closeout_fuel_low: fuelLow,
+    closeout_fuel_threshold: 97,
+    closeout_latest_fuel_level: Number.isFinite(fuelLevel) ? fuelLevel : null,
+    closeout_latest_fuel_source: row.latest_fuel_source,
+    closeout_latest_fuel_at: row.latest_fuel_at,
+    closeout_next_trip_start: row.next_trip_start,
+    closeout_next_guest_name: row.next_guest_name,
     closeout_flag_incomplete: row.closeout_flag_incomplete,
     closeout_expense_status: row.expense_status,
     closeout_toll_review_status: row.toll_review_status,
+    closeout_toll_count: row.toll_count,
+    closeout_toll_total: row.toll_total,
     starting_odometer: row.starting_odometer,
     ending_odometer: row.ending_odometer,
     has_tolls: row.has_tolls,
@@ -833,14 +846,32 @@ router.get("/", async (req, res) => {
         t.ending_odometer,
         t.expense_status,
         t.has_tolls,
+        t.toll_count,
+        t.toll_total,
         t.toll_review_status,
+        latest_fuel.fuel_level AS latest_fuel_level,
+        latest_fuel.service_name AS latest_fuel_source,
+        latest_fuel.fuel_at AS latest_fuel_at,
+        next_trip.trip_start AS next_trip_start,
+        next_trip.guest_name AS next_guest_name,
+        (
+          latest_fuel.fuel_level < 97
+          AND (
+            next_trip.trip_start IS NULL
+            OR next_trip.trip_start > NOW()
+          )
+        ) AS fuel_reminder_pending,
         COALESCE(t.workflow_stage, '') NOT IN ('complete', 'closed') AS workflow_incomplete,
         t.starting_odometer IS NULL AS missing_starting_odometer,
         t.ending_odometer IS NULL AS missing_ending_odometer,
         COALESCE(t.expense_status, '') IN ('', 'pending', 'needs_review') AS expenses_pending,
         (
-          COALESCE(t.has_tolls, false) = true
-          AND COALESCE(t.toll_review_status, '') IN ('', 'pending', 'needs_review')
+          (
+            COALESCE(t.has_tolls, false) = true
+            OR COALESCE(t.toll_count, 0) > 0
+            OR COALESCE(t.toll_total, 0) > 0
+          )
+          AND COALESCE(t.toll_review_status, '') NOT IN ('billed', 'waived')
         ) AS tolls_pending,
         COALESCE(t.closed_out, false) = false AS closeout_flag_incomplete
       FROM trips t
@@ -853,6 +884,41 @@ router.get("/", async (req, res) => {
           COALESCE(t.vehicle_name, '') <> ''
           AND LOWER(v.nickname) = LOWER(t.vehicle_name)
         )
+      LEFT JOIN LATERAL (
+        SELECT
+          s.fuel_level,
+          s.service_name,
+          COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) AS fuel_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.fuel_level IS NOT NULL
+          AND v.vin IS NOT NULL
+          AND LOWER(s.vin) = LOWER(v.vin)
+        ORDER BY COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
+          s.id DESC
+        LIMIT 1
+      ) latest_fuel ON true
+      LEFT JOIN LATERAL (
+        SELECT nt.trip_start, nt.guest_name
+        FROM trips nt
+        WHERE nt.id <> t.id
+          AND nt.trip_start > t.trip_end
+          AND COALESCE(nt.workflow_stage, '') <> 'canceled'
+          AND COALESCE(nt.status, '') <> 'canceled'
+          AND (
+            (
+              nt.turo_vehicle_id IS NOT NULL
+              AND t.turo_vehicle_id IS NOT NULL
+              AND CAST(nt.turo_vehicle_id AS text) = CAST(t.turo_vehicle_id AS text)
+            )
+            OR (
+              COALESCE(nt.vehicle_name, '') <> ''
+              AND COALESCE(v.nickname, '') <> ''
+              AND LOWER(nt.vehicle_name) = LOWER(v.nickname)
+            )
+          )
+        ORDER BY nt.trip_start ASC
+        LIMIT 1
+      ) next_trip ON true
       WHERE t.trip_end < NOW()
         AND t.trip_end >= NOW() - INTERVAL '45 days'
         AND COALESCE(t.workflow_stage, '') <> 'canceled'
@@ -865,8 +931,19 @@ router.get("/", async (req, res) => {
           OR t.ending_odometer IS NULL
           OR COALESCE(t.expense_status, '') IN ('', 'pending', 'needs_review')
           OR (
-            COALESCE(t.has_tolls, false) = true
-            AND COALESCE(t.toll_review_status, '') IN ('', 'pending', 'needs_review')
+            (
+              COALESCE(t.has_tolls, false) = true
+              OR COALESCE(t.toll_count, 0) > 0
+              OR COALESCE(t.toll_total, 0) > 0
+            )
+            AND COALESCE(t.toll_review_status, '') NOT IN ('billed', 'waived')
+          )
+          OR (
+            latest_fuel.fuel_level < 97
+            AND (
+              next_trip.trip_start IS NULL
+              OR next_trip.trip_start > NOW()
+            )
           )
         )
       ORDER BY t.trip_end DESC NULLS LAST, t.id DESC

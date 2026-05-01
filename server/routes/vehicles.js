@@ -7,6 +7,7 @@ const express = require("express");
 const pool = require("../db");
 const {
   getCombinedVehicleStatusFeed,
+  getCachedVehicleStatusFeed,
   getVehicleStatusFeed,
 } = require("../services/vehicles/statusFeed");
 const {
@@ -101,6 +102,16 @@ router.get("/live-status", async (req, res) => {
   }
 });
 
+router.get("/cached-status", async (req, res) => {
+  try {
+    const feed = await getCachedVehicleStatusFeed();
+    res.json(feed);
+  } catch (err) {
+    console.error("Vehicle cached status error:", err);
+    res.status(500).json({ error: "Failed to fetch cached vehicle status" });
+  }
+});
+
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -113,10 +124,15 @@ router.get("/", async (req, res) => {
         model,
         standard_engine,
         license_plate,
+        license_state,
+        registration_month,
+        registration_year,
+        lockbox_pin,
         bouncie_vehicle_id,
         dimo_token_id,
         turo_vehicle_id,
         turo_vehicle_name,
+        current_odometer_miles,
         rockauto_url,
         is_active
       FROM vehicles

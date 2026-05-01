@@ -66,6 +66,12 @@ function normalizeFuel(value) {
   return Math.round(n);
 }
 
+function normalizeEngineTempF(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return n <= 130 ? (n * 9) / 5 + 32 : n;
+}
+
 function toTitleCase(value) {
   if (!value) return value;
 
@@ -386,9 +392,146 @@ async function getCombinedVehicleStatusFeed() {
   return rows;
 }
 
+async function getCachedVehicleStatusFeed() {
+  const { rows } = await pool.query(`
+    SELECT
+      v.*,
+      latest.service_name AS telemetry_service_name,
+      latest.odometer AS telemetry_odometer,
+      latest.fuel_level,
+      latest.is_running,
+      latest.speed,
+      latest.latitude,
+      latest.longitude,
+      latest.heading,
+      latest.address,
+      latest.mil_on,
+      latest.mil_last_updated,
+      latest.qualified_dtc_list,
+      latest.battery_status,
+      latest.battery_last_updated,
+      latest.battery_voltage,
+      latest.battery_voltage_last_updated,
+      latest.vehicle_last_updated,
+      latest.captured_at AS telemetry_captured_at,
+      latest.local_time_zone,
+      latest.engine_rpm,
+      latest.coolant_temp,
+      latest.raw_payload,
+      NULL::jsonb AS engine_temp_range,
+      NULL::jsonb AS engine_rpm_range
+    FROM vehicles v
+    LEFT JOIN LATERAL (
+      SELECT
+        service_name,
+        odometer,
+        fuel_level,
+        is_running,
+        speed,
+        latitude,
+        longitude,
+        heading,
+        address,
+        mil_on,
+        mil_last_updated,
+        qualified_dtc_list,
+        battery_status,
+        battery_last_updated,
+        battery_voltage,
+        battery_voltage_last_updated,
+        vehicle_last_updated,
+        captured_at,
+        local_time_zone,
+        engine_rpm,
+        coolant_temp,
+        raw_payload
+      FROM vehicle_telemetry_snapshots s
+      WHERE s.vin IS NOT NULL
+        AND s.vin <> ''
+        AND LOWER(s.vin) = LOWER(v.vin)
+      ORDER BY COALESCE(s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+      LIMIT 1
+    ) latest ON true
+    WHERE v.is_active = true
+    ORDER BY v.nickname NULLS LAST, v.make, v.model
+  `);
+
+  return rows.map((vehicle) => {
+    const telemetry = {
+      local_time_zone: vehicle.local_time_zone || null,
+      last_comm: vehicle.vehicle_last_updated || vehicle.telemetry_captured_at || null,
+      odometer: normalizeOdometer(
+        vehicle.telemetry_odometer ?? vehicle.current_odometer_miles
+      ),
+      fuel_level: normalizeFuel(vehicle.fuel_level),
+      engine_running:
+        typeof vehicle.is_running === "boolean" ? vehicle.is_running : null,
+      speed: vehicle.speed == null ? null : Number(vehicle.speed),
+      location: {
+        lat: vehicle.latitude == null ? null : Number(vehicle.latitude),
+        lon: vehicle.longitude == null ? null : Number(vehicle.longitude),
+        heading: vehicle.heading == null ? null : Number(vehicle.heading),
+        address: vehicle.address || null,
+      },
+      mil: {
+        mil_on:
+          typeof vehicle.mil_on === "boolean" ? vehicle.mil_on : null,
+        last_updated: vehicle.mil_last_updated || null,
+        qualified_dtc_list: Array.isArray(vehicle.qualified_dtc_list)
+          ? vehicle.qualified_dtc_list
+          : [],
+        dtc_count: Array.isArray(vehicle.qualified_dtc_list)
+          ? vehicle.qualified_dtc_list.length
+          : 0,
+      },
+      battery: {
+        status: vehicle.battery_status || null,
+        voltage:
+          vehicle.battery_voltage == null ? null : Number(vehicle.battery_voltage),
+        last_updated:
+          vehicle.battery_voltage_last_updated ||
+          vehicle.battery_last_updated ||
+          null,
+      },
+      engine: {
+        coolant_temp: normalizeEngineTempF(vehicle.coolant_temp),
+        coolant_temp_raw: vehicle.coolant_temp,
+        coolant_temp_unit: "F",
+        coolant_temp_range: vehicle.engine_temp_range || null,
+        overtemp: Boolean(
+          vehicle.engine_temp_range?.last_overtemp_at ||
+            normalizeEngineTempF(vehicle.coolant_temp) >= 240
+        ),
+        rpm: vehicle.engine_rpm == null ? null : Number(vehicle.engine_rpm),
+        rpm_range: vehicle.engine_rpm_range || null,
+      },
+      timestamps: {
+        captured_at: vehicle.telemetry_captured_at || null,
+        vehicle_last_updated: vehicle.vehicle_last_updated || null,
+      },
+      source: vehicle.telemetry_service_name || null,
+    };
+
+    return {
+      ...vehicle,
+      nickname: toTitleCase(vehicle.nickname || null),
+      make: toTitleCase(vehicle.make || null),
+      model: toTitleCase(vehicle.model || null),
+      current_odometer_miles: normalizeOdometer(
+        vehicle.current_odometer_miles ?? telemetry.odometer
+      ),
+      telemetry_source: vehicle.telemetry_service_name
+        ? [vehicle.telemetry_service_name]
+        : [],
+      telemetry,
+    };
+  });
+}
+
 module.exports = {
   getVehicleStatusFeed,
   getCombinedVehicleStatusFeed,
+  getCachedVehicleStatusFeed,
   getVehicleByVinOrNickname, 
   getVehicleBySelector
 };

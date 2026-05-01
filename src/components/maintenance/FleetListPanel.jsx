@@ -183,6 +183,23 @@ function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
   };
 }
 
+function mergeFleetCard(existing, next) {
+  if (!existing) return next;
+  return {
+    ...existing,
+    ...next,
+    status: next.status || existing.status,
+    tone: next.tone || existing.tone,
+    nextOffTrip: next.nextOffTrip || existing.nextOffTrip,
+    nextAvailableDate: next.nextAvailableDate || existing.nextAvailableDate,
+    currentOdometerMiles:
+      next.currentOdometerMiles ?? existing.currentOdometerMiles ?? null,
+    nextActivitySort: next.nextActivitySort || existing.nextActivitySort,
+    nextMaintenanceDue:
+      next.nextMaintenanceDue || existing.nextMaintenanceDue || null,
+  };
+}
+
 export default function FleetListPanel({
   selectedVehicleId,
   onSelectVehicle,
@@ -201,16 +218,52 @@ export default function FleetListPanel({
           setLoadError("");
         }
 
-        const vehicleRes = await fetch("http://localhost:5000/api/vehicles/live-status");
+        const vehicleRes = await fetch("http://localhost:5000/api/vehicles");
 
         if (!vehicleRes.ok) {
-          throw new Error(`Vehicle status HTTP ${vehicleRes.status}`);
+          throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
         }
 
         const vehicleData = await vehicleRes.json();
         const vehicles = Array.isArray(vehicleData) ? vehicleData : [];
 
-        const tripResults = await Promise.all(
+        const initialFleet = vehicles
+          .map((vehicle) => buildLiveFleetCard(vehicle, [], null))
+          .filter(Boolean)
+          .sort(compareFleetByMaintenance);
+
+        if (isMounted) {
+          setFleet(initialFleet);
+          setLoading(false);
+        }
+
+        fetch("http://localhost:5000/api/vehicles/cached-status")
+          .then((res) => (res.ok ? res.json() : []))
+          .then((cachedVehicles) => {
+            if (!isMounted || !Array.isArray(cachedVehicles)) return;
+
+            const cachedByVin = new Map(
+              cachedVehicles
+                .filter((vehicle) => vehicle?.vin)
+                .map((vehicle) => [String(vehicle.vin).toLowerCase(), vehicle])
+            );
+
+            setFleet((current) =>
+              (current || [])
+                .map((card) => {
+                  const cached = cachedByVin.get(String(card.vin || "").toLowerCase());
+                  return cached
+                    ? mergeFleetCard(card, buildLiveFleetCard(cached, [], null))
+                    : card;
+                })
+                .sort(compareFleetByMaintenance)
+            );
+          })
+          .catch((err) => {
+            console.warn("Cached fleet telemetry enrichment failed:", err);
+          });
+
+        await Promise.all(
           vehicles.map(async (vehicle) => {
             const routeKey = getVehicleRouteKey(vehicle);
             const maintenanceSelector = vehicle?.vin || routeKey;
@@ -235,33 +288,24 @@ export default function FleetListPanel({
               const maintenanceSummary =
                 maintenanceRes?.ok ? await maintenanceRes.json() : null;
 
-              return {
+              const card = buildLiveFleetCard(
                 vehicle,
-                trips: Array.isArray(tripData) ? tripData : [],
-                maintenanceSummary,
-              };
+                Array.isArray(tripData) ? tripData : [],
+                maintenanceSummary
+              );
+
+              if (isMounted && card) {
+                setFleet((current) => {
+                  const byId = new Map((current || []).map((item) => [item.id, item]));
+                  byId.set(card.id, mergeFleetCard(byId.get(card.id), card));
+                  return Array.from(byId.values()).sort(compareFleetByMaintenance);
+                });
+              }
             } catch (err) {
               console.error(`Failed to load trips for ${routeKey}:`, err);
-
-              return {
-                vehicle,
-                trips: [],
-                maintenanceSummary: null,
-              };
             }
           })
         );
-
-        const liveFleet = tripResults
-          .map(({ vehicle, trips, maintenanceSummary }) =>
-            buildLiveFleetCard(vehicle, trips, maintenanceSummary)
-          )
-          .filter(Boolean)
-          .sort(compareFleetByMaintenance);
-
-        if (isMounted) {
-          setFleet(liveFleet);
-        }
       } catch (err) {
         console.error("Failed to load live fleet status:", err);
 
@@ -294,10 +338,10 @@ export default function FleetListPanel({
         <div className="chip search">Maintenance mode</div>
         <div className="chip">
           {loading
-            ? "Loading live fleet"
+            ? "Loading fleet"
             : loadError
             ? "Fleet load failed"
-            : "Live fleet"}
+            : "Fleet"}
         </div>
       </div>
 
@@ -355,7 +399,7 @@ export default function FleetListPanel({
           })
         ) : (
           <div className="fleet-maintenance-note">
-            {loading ? "Loading fleet vehicles…" : "No live vehicles found."}
+            {loading ? "Loading fleet vehicles…" : "No fleet vehicles found."}
           </div>
         )}
       </div>

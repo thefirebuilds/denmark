@@ -13,6 +13,12 @@ const {
 const {
   maybeAutoStartReadyTripFromTelemetry,
 } = require("../trips/autoStartReadyTrip");
+const {
+  maybeAutoAdvanceTurnaroundTripFromTelemetry,
+} = require("../trips/autoAdvanceTurnaroundTrip");
+const {
+  stageStartingOdometerFromTelemetry,
+} = require("../trips/stageStartingOdometer");
 
 let snapshotColumnCache = null;
 let vehicleColumnCache = null;
@@ -759,6 +765,18 @@ async function persistDimoTelemetry({ normalized, raw }) {
 
   try {
     const vehicleResult = await upsertDimoVehicle(normalized, client);
+    const stagedOdometerResult = await stageStartingOdometerFromTelemetry(client, {
+      serviceName: "dimo",
+      vin: normalized.vin,
+      dimoTokenId: normalized.dimo_token_id,
+      odometer:
+        normalized.odometer == null ? null : Math.round(Number(normalized.odometer)),
+      eventTimestamp:
+        normalized.vehicle_last_updated ||
+        normalized.ignition_last_updated ||
+        normalized.location_last_updated ||
+        normalized.speed_last_updated,
+    });
     const autoStartResult = await maybeAutoStartReadyTripFromTelemetry(client, {
       serviceName: "dimo",
       vin: normalized.vin,
@@ -775,6 +793,26 @@ async function persistDimoTelemetry({ normalized, raw }) {
         normalized.location_last_updated ||
         normalized.speed_last_updated,
     });
+    const autoTurnaroundResult = await maybeAutoAdvanceTurnaroundTripFromTelemetry(
+      client,
+      {
+        serviceName: "dimo",
+        vin: normalized.vin,
+        dimoTokenId: normalized.dimo_token_id,
+        isRunning: normalized.is_running,
+        speed: normalized.speed,
+        latitude: normalized.latitude,
+        longitude: normalized.longitude,
+        address: normalized.address,
+        odometer:
+          normalized.odometer == null ? null : Math.round(Number(normalized.odometer)),
+        eventTimestamp:
+          normalized.vehicle_last_updated ||
+          normalized.ignition_last_updated ||
+          normalized.location_last_updated ||
+          normalized.speed_last_updated,
+      }
+    );
     const snapshotResult = await insertVehicleTelemetrySnapshot(normalized, client);
     const tripRpmResult = await updateActiveTripMaxEngineRpm(normalized, client);
     const maintenanceRules = normalized.vin
@@ -797,7 +835,9 @@ async function persistDimoTelemetry({ normalized, raw }) {
       snapshotId: snapshot.id,
       capturedAt: snapshot.captured_at,
       vehicleRows: vehicleResult.rowCount,
+      stagedStartingOdometerTrip: stagedOdometerResult?.id || null,
       autoStartedTrip: autoStartResult?.id || null,
+      autoAdvancedTurnaroundTrip: autoTurnaroundResult?.id || null,
       tripRpmRows: tripRpmResult.rowCount,
       maintenanceRuleRows: maintenanceRules.length,
       odometerRows: odometerResult.rowCount,

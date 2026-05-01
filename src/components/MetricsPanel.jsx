@@ -824,13 +824,14 @@ export default function MetricsPanel() {
       const bProfit = Number(b?.net_profit ?? 0);
       const aRevenue = Number(a?.revenue_total ?? a?.trip_income ?? 0);
       const bRevenue = Number(b?.revenue_total ?? b?.trip_income ?? 0);
-      const aRevDay = Number(a?.income_per_booked_day ?? 0);
-      const bRevDay = Number(b?.income_per_booked_day ?? 0);
+      const aRevDay = Number(a?.revenue_per_booked_day ?? a?.income_per_booked_day ?? 0);
+      const bRevDay = Number(b?.revenue_per_booked_day ?? b?.income_per_booked_day ?? 0);
+      const aRevMile = Number(a?.revenue_per_mile ?? 0);
+      const bRevMile = Number(b?.revenue_per_mile ?? 0);
       const aTrips = Number(a?.trip_count_overlapping ?? 0);
       const bTrips = Number(b?.trip_count_overlapping ?? 0);
       const aValue = Number(a?.fmv_estimate_mid ?? 0);
       const bValue = Number(b?.fmv_estimate_mid ?? 0);
-
       const aOccupancy =
         Number(a?.calendar_days_available ?? summary?.calendar_days ?? 0) > 0
           ? Number(a?.booked_vehicle_days ?? 0) /
@@ -868,6 +869,8 @@ export default function MetricsPanel() {
           return bOccupancy - aOccupancy;
         case "rev_day_desc":
           return bRevDay - aRevDay;
+        case "rev_mile_desc":
+          return bRevMile - aRevMile;
         case "trips_desc":
           return bTrips - aTrips;
         case "value_desc":
@@ -2031,6 +2034,7 @@ const mileageStats = useMemo(() => {
                   <option value="value_desc">Value ↓</option>
                   <option value="occupancy_desc">Occupancy ↓</option>
                   <option value="rev_day_desc">Rev / Day ↓</option>
+                  <option value="rev_mile_desc">Rev / Mile ↓</option>
                   <option value="trips_desc">Trips ↓</option>
                   <option value="toll_risk_desc">Toll Risk ↓</option>
                   <option value="recovery_desc">Recovery % ↓</option>
@@ -2070,8 +2074,10 @@ const mileageStats = useMemo(() => {
               <div className="vehicle-compare-header__cell">Profit</div>
               <div className="vehicle-compare-header__cell">Revenue</div>
               <div className="vehicle-compare-header__cell">Value</div>
+              <div className="vehicle-compare-header__cell">Rented / Available</div>
               <div className="vehicle-compare-header__cell">Occupancy</div>
               <div className="vehicle-compare-header__cell">Rev / Day</div>
+              <div className="vehicle-compare-header__cell">Rev / Mile</div>
               <div className="vehicle-compare-header__cell">Trips</div>
               <div className="vehicle-compare-header__cell">Toll Risk</div>
               <div className="vehicle-compare-header__cell"></div>

@@ -578,7 +578,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           setFleetLoadError("");
         }
 
-        const res = await fetch("http://localhost:5000/api/vehicles/live-status");
+        const res = await fetch("http://localhost:5000/api/vehicles");
 
         if (!res.ok) {
           const errorBody = await res.json().catch(() => null);
@@ -590,6 +590,28 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
         if (!cancelled) {
           setFleetVehicles(Array.isArray(vehicles) ? vehicles : []);
         }
+
+        fetch("http://localhost:5000/api/vehicles/cached-status")
+          .then((cachedRes) => (cachedRes.ok ? cachedRes.json() : []))
+          .then((cachedVehicles) => {
+            if (cancelled || !Array.isArray(cachedVehicles)) return;
+
+            const cachedByVin = new Map(
+              cachedVehicles
+                .filter((vehicle) => vehicle?.vin)
+                .map((vehicle) => [String(vehicle.vin).toLowerCase(), vehicle])
+            );
+
+            setFleetVehicles((current) =>
+              (current || []).map((vehicle) => {
+                const cached = cachedByVin.get(String(vehicle?.vin || "").toLowerCase());
+                return cached ? { ...vehicle, ...cached } : vehicle;
+              })
+            );
+          })
+          .catch((err) => {
+            console.warn("Cached fleet telemetry enrichment failed:", err);
+          });
       } catch (err) {
         console.error("Failed to load fleet vehicles:", err);
 
@@ -731,8 +753,8 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           setFleetPlanningError("");
         }
 
-        const vehicleRes = await fetch("http://localhost:5000/api/vehicles/live-status");
-        if (!vehicleRes.ok) throw new Error(`Vehicle status HTTP ${vehicleRes.status}`);
+        const vehicleRes = await fetch("http://localhost:5000/api/vehicles");
+        if (!vehicleRes.ok) throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
 
         const vehicleData = await vehicleRes.json();
         const vehicles = Array.isArray(vehicleData) ? vehicleData : [];
@@ -763,7 +785,11 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           })
         );
 
-        const planningCards = await Promise.all(
+        if (!cancelled) {
+          setFleetPlanningCards([]);
+        }
+
+        await Promise.all(
           vehicleTripPairs.map(async ({ vehicle, trips }) => {
             try {
               const summaryRes = await fetch(
@@ -777,20 +803,24 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
               }
 
               const summary = await summaryRes.json();
-              return buildFleetPlanningCard(vehicle, trips, summary);
+              const card = buildFleetPlanningCard(vehicle, trips, summary);
+
+              if (!cancelled && card) {
+                setFleetPlanningCards((current) =>
+                  sortFleetPlanningCards([
+                    ...current.filter((item) => item.id !== card.id),
+                    card,
+                  ])
+                );
+              }
             } catch (err) {
               console.error(
                 `Failed to load planning card for ${vehicle.nickname}:`,
                 err
               );
-              return null;
             }
           })
         );
-
-        if (!cancelled) {
-          setFleetPlanningCards(sortFleetPlanningCards(planningCards.filter(Boolean)));
-        }
       } catch (err) {
         console.error("Failed to load fleet planning cards:", err);
         if (!cancelled) {
@@ -1559,7 +1589,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
 
       <div className="message-list">
         {isFleetPlanningMode ? (
-          fleetPlanningLoading ? (
+          fleetPlanningLoading && fleetPlanningCards.length === 0 ? (
             <div className="fleet-planning-loading detail-card">
               <div className="detail-label">Fleet planning</div>
               <div className="detail-value">Loading fleet planning cards…</div>

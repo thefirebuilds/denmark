@@ -3,6 +3,12 @@ const { getVehicles } = require("./client");
 const {
   maybeAutoStartReadyTripFromTelemetry,
 } = require("../trips/autoStartReadyTrip");
+const {
+  maybeAutoAdvanceTurnaroundTripFromTelemetry,
+} = require("../trips/autoAdvanceTurnaroundTrip");
+const {
+  stageStartingOdometerFromTelemetry,
+} = require("../trips/stageStartingOdometer");
 
 function toIntegerOrNull(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -305,6 +311,32 @@ async function maybeAutoStartReadyTrip(client, snapshot) {
     speed: snapshot.speed,
     latitude: snapshot.latitude,
     longitude: snapshot.longitude,
+    address: snapshot.address,
+    odometer: snapshot.current_odometer_miles,
+    eventTimestamp: snapshot.vehicle_last_updated,
+  });
+}
+
+async function maybeAutoAdvanceTurnaroundTrip(client, snapshot) {
+  return maybeAutoAdvanceTurnaroundTripFromTelemetry(client, {
+    serviceName: "bouncie",
+    vin: snapshot.vin,
+    bouncieVehicleId: snapshot.bouncie_vehicle_id,
+    isRunning: snapshot.is_running,
+    speed: snapshot.speed,
+    latitude: snapshot.latitude,
+    longitude: snapshot.longitude,
+    address: snapshot.address,
+    odometer: snapshot.current_odometer_miles,
+    eventTimestamp: snapshot.vehicle_last_updated,
+  });
+}
+
+async function maybeStageStartingOdometer(client, snapshot) {
+  return stageStartingOdometerFromTelemetry(client, {
+    serviceName: "bouncie",
+    vin: snapshot.vin,
+    bouncieVehicleId: snapshot.bouncie_vehicle_id,
     odometer: snapshot.current_odometer_miles,
     eventTimestamp: snapshot.vehicle_last_updated,
   });
@@ -327,7 +359,9 @@ async function main() {
     await dbClient.query("BEGIN");
 
     let inserted = 0;
+    let stagedStartingOdometers = 0;
     let autoStarted = 0;
+    let autoAdvancedTurnaround = 0;
 
     for (const vehicle of vehicles) {
       const snapshot = normalizeVehicle(vehicle);
@@ -340,16 +374,28 @@ async function main() {
       }
 
       await upsertVehicle(dbClient, snapshot);
+      const stagedOdometerResult = await maybeStageStartingOdometer(
+        dbClient,
+        snapshot
+      );
       const autoStartResult = await maybeAutoStartReadyTrip(dbClient, snapshot);
+      const autoTurnaroundResult = await maybeAutoAdvanceTurnaroundTrip(
+        dbClient,
+        snapshot
+      );
       await insertSnapshot(dbClient, snapshot);
       await insertOdometerHistory(dbClient, snapshot);
 
+      if (stagedOdometerResult) stagedStartingOdometers += 1;
       if (autoStartResult) autoStarted += 1;
+      if (autoTurnaroundResult) autoAdvancedTurnaround += 1;
       inserted += 1;
     }
 
     await dbClient.query("COMMIT");
-    console.log(`[bouncie] snapshot done | inserted=${inserted} autoStarted=${autoStarted}`);
+    console.log(
+      `[bouncie] snapshot done | inserted=${inserted} stagedStartingOdometers=${stagedStartingOdometers} autoStarted=${autoStarted} autoAdvancedTurnaround=${autoAdvancedTurnaround}`
+    );
   } catch (err) {
     await dbClient.query("ROLLBACK");
     throw err;

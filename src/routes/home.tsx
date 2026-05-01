@@ -719,7 +719,13 @@ export default function Home() {
       <div className="startup-screen">
         <div className="startup-card">
           <div className="startup-brand">
-            <img src="/Fresh%20Coast-R3-05.png" alt="Fresh Coast" />
+            <img
+              src="/Fresh Coast-R3-05.png"
+              alt="Fresh Coast"
+              onError={(event) => {
+                event.currentTarget.hidden = true;
+              }}
+            />
           </div>
           <div>
             <div className="startup-eyebrow">Denmark</div>

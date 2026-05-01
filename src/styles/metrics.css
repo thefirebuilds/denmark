@@ -1118,7 +1118,7 @@
 .vehicle-compare__summary {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(180px, 1.6fr) repeat(5, minmax(90px, 1fr)) 28px;
+  grid-template-columns: minmax(180px, 1.6fr) repeat(9, minmax(74px, 1fr)) 28px;
   gap: 8px;
   align-items: center;
   text-align: left;
@@ -1254,6 +1254,14 @@
   text-overflow: ellipsis;
 }
 
+.vehicle-compare__detail-hint {
+  margin-top: 4px;
+  color: #8fa6ca;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
 .vehicle-compare__detail-action {
   margin-top: 7px;
   padding: 0;
@@ -1274,12 +1282,14 @@
   .vehicle-compare__summary {
     grid-template-columns:
       minmax(180px, 1.5fr)
-      repeat(5, minmax(88px, 1fr))
+      repeat(6, minmax(82px, 1fr))
       28px;
   }
 
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(7),
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(8) {
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(8),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(9),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(10) {
     display: none;
   }
 }
@@ -1308,7 +1318,7 @@
   display: grid;
   grid-template-columns:
     minmax(180px, 1.6fr)
-    repeat(7, minmax(82px, 1fr))
+    repeat(9, minmax(74px, 1fr))
     28px;
   gap: 8px;
   align-items: center;
@@ -1430,7 +1440,7 @@
   display: grid;
   grid-template-columns:
     minmax(180px, 1.6fr)
-    repeat(7, minmax(82px, 1fr))
+    repeat(9, minmax(74px, 1fr))
     28px;
   gap: 8px;
   align-items: center;
@@ -1501,14 +1511,18 @@
   .vehicle-compare__summary {
     grid-template-columns:
       minmax(180px, 1.5fr)
-      repeat(5, minmax(88px, 1fr))
+      repeat(6, minmax(82px, 1fr))
       28px;
   }
 
   .vehicle-compare-header .vehicle-compare-header__cell:nth-child(7),
   .vehicle-compare-header .vehicle-compare-header__cell:nth-child(8),
+  .vehicle-compare-header .vehicle-compare-header__cell:nth-child(9),
+  .vehicle-compare-header .vehicle-compare-header__cell:nth-child(10),
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(7),
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(8) {
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(8),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(9),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(10) {
     display: none;
   }
 }

@@ -96,14 +96,36 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
 
     async function loadFleetVehicles() {
       try {
-        const res = await fetch("http://localhost:5000/api/vehicles/live-status");
-        if (!res.ok) throw new Error(`Vehicle status HTTP ${res.status}`);
+        const res = await fetch("http://localhost:5000/api/vehicles");
+        if (!res.ok) throw new Error(`Vehicle list HTTP ${res.status}`);
 
         const vehicles = await res.json();
 
         if (!cancelled) {
           setFleetVehicles(Array.isArray(vehicles) ? vehicles : []);
         }
+
+        fetch("http://localhost:5000/api/vehicles/cached-status")
+          .then((cachedRes) => (cachedRes.ok ? cachedRes.json() : []))
+          .then((cachedVehicles) => {
+            if (cancelled || !Array.isArray(cachedVehicles)) return;
+
+            const cachedByVin = new Map(
+              cachedVehicles
+                .filter((vehicle) => vehicle?.vin)
+                .map((vehicle) => [String(vehicle.vin).toLowerCase(), vehicle])
+            );
+
+            setFleetVehicles((current) =>
+              (current || []).map((vehicle) => {
+                const cached = cachedByVin.get(String(vehicle?.vin || "").toLowerCase());
+                return cached ? { ...vehicle, ...cached } : vehicle;
+              })
+            );
+          })
+          .catch((err) => {
+            console.warn("Cached fleet telemetry enrichment failed:", err);
+          });
       } catch (err) {
         console.error("Failed to load fleet vehicles for queue panel:", err);
         if (!cancelled) setFleetVehicles([]);
@@ -151,8 +173,8 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
       try {
         if (!cancelled) setFleetPlanningLoading(true);
 
-        const vehicleRes = await fetch("http://localhost:5000/api/vehicles/live-status");
-        if (!vehicleRes.ok) throw new Error(`Vehicle status HTTP ${vehicleRes.status}`);
+        const vehicleRes = await fetch("http://localhost:5000/api/vehicles");
+        if (!vehicleRes.ok) throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
 
         const vehicleData = await vehicleRes.json();
         const vehicles = Array.isArray(vehicleData) ? vehicleData : [];
@@ -202,7 +224,11 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
           }))
           .filter((v) => v.vin);
 
-        const summaryResults = await Promise.all(
+        if (!cancelled) {
+          setFleetPlanningItems([]);
+        }
+
+        await Promise.all(
           liveFleet.map(async (vehicleCard) => {
             try {
               const summaryRes = await fetch(
@@ -217,21 +243,28 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
 
               const summary = await summaryRes.json();
               const summaryHistoryMap = buildInspectionHistoryMap(summary);
+              const items = buildFleetQueueItems(
+                vehicleCard,
+                summary,
+                summaryHistoryMap
+              );
 
-              return buildFleetQueueItems(vehicleCard, summary, summaryHistoryMap);
+              if (!cancelled) {
+                setFleetPlanningItems((current) =>
+                  sortFleetPlanningQueue([
+                    ...current.filter((item) => item.vehicleVin !== vehicleCard.vin),
+                    ...items,
+                  ])
+                );
+              }
             } catch (err) {
               console.error(
                 `Failed to load maintenance summary for ${vehicleCard.nickname}:`,
                 err
               );
-              return [];
             }
           })
         );
-
-        const flattened = sortFleetPlanningQueue(summaryResults.flat());
-
-        if (!cancelled) setFleetPlanningItems(flattened);
       } catch (err) {
         console.error("Failed to load fleet-wide maintenance planning queue:", err);
         if (!cancelled) setFleetPlanningItems([]);
@@ -424,7 +457,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
 
       <div className="detail-body">
         {!selectedVehicleId ? (
-          fleetPlanningLoading ? (
+          fleetPlanningLoading && fleetPlanningItems.length === 0 ? (
             <div className="detail-card">
               <div className="detail-label">Fleet planning</div>
               <div className="detail-value">Loading fleet maintenance queue…</div>
