@@ -39,11 +39,61 @@ const agent = new https.Agent({
 
 const API = "https://api.teller.io";
 
-async function getAccessToken() {
+async function getAccessTokens() {
   const result = await pool.query(
-    "SELECT access_token FROM teller_tokens ORDER BY id DESC LIMIT 1"
+    "SELECT id, access_token FROM teller_tokens ORDER BY id ASC"
   );
-  return result.rows[0]?.access_token || null;
+  return result.rows.filter((row) => row.access_token);
+}
+
+async function getTokenSummary() {
+  const result = await pool.query(`
+    SELECT
+      COUNT(*)::integer AS token_count,
+      MAX(created_at) AS latest_connected_at
+    FROM teller_tokens
+  `);
+
+  return result.rows[0] || { token_count: 0, latest_connected_at: null };
+}
+
+async function saveAccessToken(accessToken) {
+  const token = String(accessToken || "").trim();
+
+  if (!token) {
+    const err = new Error("Teller access token is required");
+    err.status = 400;
+    throw err;
+  }
+
+  const result = await pool.query(
+    `
+      INSERT INTO teller_tokens (access_token)
+      SELECT $1
+      WHERE NOT EXISTS (
+        SELECT 1 FROM teller_tokens WHERE access_token = $1
+      )
+      RETURNING id, created_at
+    `,
+    [token]
+  );
+
+  if (result.rows[0]) {
+    return { created: true, token: result.rows[0] };
+  }
+
+  const existing = await pool.query(
+    `
+      SELECT id, created_at
+      FROM teller_tokens
+      WHERE access_token = $1
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [token]
+  );
+
+  return { created: false, token: existing.rows[0] || null };
 }
 
 async function getAccounts(token) {
@@ -178,31 +228,45 @@ async function syncTransactionsForAccount(accountId, token, ignoreRules) {
 }
 
 async function syncTellerTransactions() {
-  console.log("[teller] fetching token");
-  const token = await getAccessToken();
+  console.log("[teller] fetching tokens");
+  const tokens = await getAccessTokens();
 
-  if (!token) {
+  if (!tokens.length) {
     throw new Error("No Teller token found");
-  }
-
-  console.log("[teller] fetching accounts");
-  const accounts = await getAccounts(token);
-
-  if (!accounts.length) {
-    throw new Error("No accounts returned from Teller");
   }
 
   const ignoreRules = await getIgnoreRules();
   let totalProcessed = 0;
+  let totalAccounts = 0;
 
-  for (const account of accounts) {
-    console.log(`[teller] syncing account=${account.id}`);
-    const count = await syncTransactionsForAccount(account.id, token, ignoreRules);
-    totalProcessed += count;
+  for (const tokenRow of tokens) {
+    console.log(`[teller] fetching accounts token=${tokenRow.id}`);
+    const accounts = await getAccounts(tokenRow.access_token);
+
+    if (!accounts.length) {
+      console.warn(`[teller] no accounts returned token=${tokenRow.id}`);
+      continue;
+    }
+
+    totalAccounts += accounts.length;
+
+    for (const account of accounts) {
+      console.log(`[teller] syncing account=${account.id}`);
+      const count = await syncTransactionsForAccount(
+        account.id,
+        tokenRow.access_token,
+        ignoreRules
+      );
+      totalProcessed += count;
+    }
   }
 
-  console.log(`[teller] sync done | processed=${totalProcessed}`);
-  return { processed: totalProcessed };
+  console.log(
+    `[teller] sync done | tokens=${tokens.length} accounts=${totalAccounts} processed=${totalProcessed}`
+  );
+  return { processed: totalProcessed, tokens: tokens.length, accounts: totalAccounts };
 }
 
 module.exports = syncTellerTransactions;
+module.exports.saveAccessToken = saveAccessToken;
+module.exports.getTokenSummary = getTokenSummary;

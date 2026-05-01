@@ -115,6 +115,17 @@ function formatMoney(value) {
   return `$${n.toFixed(2)}`;
 }
 
+function formatHoursDuration(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+
+  if (Math.abs(n) < 48) {
+    return `${n.toFixed(1)} hr`;
+  }
+
+  return `${(n / 24).toFixed(1)} days`;
+}
+
 function formatMileageIncluded(value) {
   const miles = Number(value);
   if (!Number.isFinite(miles) || miles <= 0) return "";
@@ -377,6 +388,16 @@ function buildMessageBody(message) {
     return `Trip ended${end ? ` ${end}` : ""}. ${reasonText}`;
   }
 
+  if (type === "late_toll_unbilled") {
+    const count = Number(message?.late_toll_count || 0);
+    const total = formatMoney(message?.late_toll_total) || "$0.00";
+    const lag = formatHoursDuration(message?.late_toll_hours_after_trip_end);
+
+    return `${count} toll${count === 1 ? "" : "s"} totaling ${total} were recorded after trip end${
+      lag ? ` (${lag} later)` : ""
+    } and still need Turo billing.`;
+  }
+
   if (type === "trip_overlap_detected") {
     const primaryGuest = message?.primary_guest_name || message?.guest_name || "Guest";
     const secondaryGuest = message?.overlapping_guest_name || "Guest";
@@ -479,6 +500,7 @@ function buildMessageSub(message) {
   if (type === "handoff_ready_required") return "Handoff prep required";
   if (type === "inspection_export_required") return "Guest inspection export";
   if (type === "closeout_required") return "Trip closeout needed";
+  if (type === "late_toll_unbilled") return "Late toll billing needed";
   if (type === "trip_overlap_detected") return "Trip overlap detected";
   if (type === "guest_message") return "Guest message";
   if (type === "trip_booked") return "Trip booked";
@@ -556,6 +578,11 @@ function isInspectionExportTask(message) {
 function isCloseoutTask(message) {
   const type = message?.type || message?.message_type;
   return type === "closeout_required" && message?.trip_id;
+}
+
+function isLateTollTask(message) {
+  const type = message?.type || message?.message_type;
+  return type === "late_toll_unbilled" && message?.trip_id;
 }
 
 function isTripOverlapTask(message) {
@@ -1470,6 +1497,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canAdvanceHandoff = isHandoffReadyTask(message);
             const canExportInspection = isInspectionExportTask(message);
             const canCloseoutTrip = isCloseoutTask(message);
+            const canReviewLateToll = isLateTollTask(message);
             const canReviewOverlap = isTripOverlapTask(message);
             const canConfirmBooking = isBookingConfirmationTask(message);
             const canShowMaintenance = isMaintenanceNotice(message);
@@ -1479,6 +1507,7 @@ async function handleExportGuestInspectionSheet(message) {
               (canAdvanceHandoff ||
                 canExportInspection ||
                 canCloseoutTrip ||
+                canReviewLateToll ||
                 canReviewOverlap ||
                 canConfirmBooking ||
                 canShowMaintenance) &&
@@ -1664,6 +1693,30 @@ async function handleExportGuestInspectionSheet(message) {
                   </div>
                 )}
 
+                {canReviewLateToll && (
+                  <div className="message-booking-task">
+                    <div className="message-booking-title">
+                      Late tolls received
+                      <span>
+                        {formatMoney(message.late_toll_total) || "$0.00"} unbilled
+                      </span>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Recorded</span>
+                      <strong>
+                        {formatTripTime(message.late_toll_latest_recorded_at) ||
+                          "Unknown"}
+                      </strong>
+                    </div>
+                    <div className="message-closeout-hint">
+                      {Number(message.late_toll_count || 0)} toll
+                      {Number(message.late_toll_count || 0) === 1 ? "" : "s"} landed
+                      after this trip ended. Bill the guest in Turo, then set toll
+                      status to billed on the trip.
+                    </div>
+                  </div>
+                )}
+
                 {canReviewOverlap && (
                   <div className="message-booking-task">
                     <div className="message-booking-title">
@@ -1784,6 +1837,7 @@ async function handleExportGuestInspectionSheet(message) {
                   canAdvanceHandoff ||
                   canExportInspection ||
                   canCloseoutTrip ||
+                  canReviewLateToll ||
                   canCompleteSyntheticTask ||
                   canConfirmBooking ||
                   canShowMaintenance ||
@@ -1803,6 +1857,8 @@ async function handleExportGuestInspectionSheet(message) {
                           ? "Loading..."
                           : canCloseoutTrip
                           ? "Close out trip"
+                          : canReviewLateToll
+                          ? "Review tolls"
                           : canReviewOverlap
                           ? "Review overlap"
                           : canShowMaintenance || canAdvanceHandoff || canExportInspection

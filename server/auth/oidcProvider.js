@@ -32,6 +32,7 @@ function getOidcConfig() {
     clientSecret: getClientSecret(),
     redirectUri: String(process.env.OIDC_REDIRECT_URI || "").trim(),
     scopes: String(process.env.OIDC_SCOPES || "openid profile email").trim(),
+    prompt: String(process.env.OIDC_PROMPT || "").trim(),
   };
 }
 
@@ -90,12 +91,13 @@ function buildAuthorizationUrl(baseUrl, params) {
   return url.toString();
 }
 
-async function buildLoginRequest() {
+async function buildLoginRequest(options = {}) {
   const config = assertOidcConfigured();
   const discovery = await getDiscoveryDocument();
   const state = crypto.randomBytes(24).toString("hex");
   const nonce = crypto.randomBytes(24).toString("hex");
   const { codeVerifier, codeChallenge } = generatePkcePair();
+  const loginHint = String(options.loginHint || "").trim();
 
   const authorizationUrl = buildAuthorizationUrl(discovery.authorization_endpoint, {
     client_id: config.clientId,
@@ -106,6 +108,8 @@ async function buildLoginRequest() {
     nonce,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
+    login_hint: loginHint,
+    prompt: config.prompt,
   });
 
   return {

@@ -66,6 +66,27 @@ const EMPTY_VEHICLE = {
   is_active: true,
 };
 
+function loadTellerConnectScript() {
+  if (window.TellerConnect) return Promise.resolve(window.TellerConnect);
+
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector("script[data-teller-connect]");
+
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.TellerConnect));
+      existing.addEventListener("error", reject);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://cdn.teller.io/connect/connect.js";
+    script.dataset.tellerConnect = "true";
+    script.onload = () => resolve(window.TellerConnect);
+    script.onerror = () => reject(new Error("Failed to load Teller Connect"));
+    document.body.appendChild(script);
+  });
+}
+
 function mergeDispatchSettings(settings) {
   const merged = {
     ...DEFAULT_DISPATCH_SETTINGS,
@@ -749,6 +770,213 @@ function DatabaseSettingsPanel() {
   );
 }
 
+function IntegrationsSettingsPanel() {
+  const [config, setConfig] = useState(null);
+  const [connections, setConnections] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadTellerState() {
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const [configRes, connectionsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/teller/connect/config`),
+        fetch(`${API_BASE}/api/teller/connections`),
+      ]);
+
+      const configJson = await configRes.json().catch(() => ({}));
+      const connectionsJson = await connectionsRes.json().catch(() => ({}));
+
+      if (!configRes.ok) {
+        throw new Error(configJson?.error || "Failed to load Teller config");
+      }
+
+      if (!connectionsRes.ok) {
+        throw new Error(
+          connectionsJson?.error || "Failed to load Teller connections"
+        );
+      }
+
+      setConfig(configJson);
+      setConnections(connectionsJson);
+    } catch (err) {
+      setMessage(err.message || "Failed to load integrations");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadTellerState();
+  }, []);
+
+  async function saveTellerEnrollment(enrollment) {
+    const accessToken = enrollment?.accessToken;
+
+    if (!accessToken) {
+      throw new Error("Teller did not return an access token");
+    }
+
+    const res = await fetch(`${API_BASE}/api/teller/connections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: accessToken }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(json?.error || "Failed to save Teller connection");
+    }
+
+    return json;
+  }
+
+  async function connectTeller() {
+    try {
+      setConnecting(true);
+      setMessage("");
+
+      if (!config?.configured) {
+        throw new Error("Add TELLER_APPLICATION_ID to .env before connecting.");
+      }
+
+      const TellerConnect = await loadTellerConnectScript();
+
+      if (!TellerConnect?.setup) {
+        throw new Error("Teller Connect did not initialize");
+      }
+
+      const tellerConnect = TellerConnect.setup({
+        applicationId: config.applicationId,
+        environment: config.environment || "development",
+        products: config.products || ["transactions", "balance"],
+        selectAccount: config.selectAccount || "multiple",
+        onSuccess: async (enrollment) => {
+          try {
+            const result = await saveTellerEnrollment(enrollment);
+            setMessage(
+              result.created
+                ? "Teller connection saved. Syncing transactions..."
+                : "Teller connection already existed. Syncing transactions..."
+            );
+            await syncTeller();
+            await loadTellerState();
+          } catch (err) {
+            setMessage(err.message || "Failed to save Teller connection");
+          } finally {
+            setConnecting(false);
+          }
+        },
+        onExit: () => {
+          setConnecting(false);
+        },
+      });
+
+      tellerConnect.open();
+    } catch (err) {
+      setConnecting(false);
+      setMessage(err.message || "Failed to open Teller Connect");
+    }
+  }
+
+  async function syncTeller() {
+    try {
+      setSyncing(true);
+
+      const res = await fetch(`${API_BASE}/api/teller/sync`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to sync Teller");
+      }
+
+      setMessage(
+        `Synced ${json.processed || 0} transactions across ${
+          json.accounts || 0
+        } account${Number(json.accounts || 0) === 1 ? "" : "s"}.`
+      );
+      await loadTellerState();
+    } catch (err) {
+      setMessage(err.message || "Failed to sync Teller");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const latestConnected = connections?.latest_connected_at
+    ? new Date(connections.latest_connected_at).toLocaleString()
+    : "Never";
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Integrations</h2>
+          <span>Teller banking connections</span>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Teller</div>
+          <div className="settings-empty-state">
+            Connect another bank or card through Teller. New connections are added
+            to the sync pool; existing expense matching still happens in Inbox.
+          </div>
+
+          <div className="settings-vehicle-list">
+            <div className="settings-vehicle-row">
+              <strong>Connections</strong>
+              <span>{loading ? "Loading..." : connections?.token_count || 0}</span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Latest connection</strong>
+              <span>{loading ? "Loading..." : latestConnected}</span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Connect config</strong>
+              <span>
+                {loading
+                  ? "Loading..."
+                  : config?.configured
+                  ? `${config.environment || "development"}`
+                  : "Missing TELLER_APPLICATION_ID"}
+              </span>
+            </div>
+          </div>
+
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={loading || connecting || !config?.configured}
+              onClick={connectTeller}
+            >
+              {connecting ? "Opening..." : "Connect Bank"}
+            </button>
+            <button
+              type="button"
+              className="settings-action-btn secondary"
+              disabled={loading || syncing || !connections?.token_count}
+              onClick={syncTeller}
+            >
+              {syncing ? "Syncing..." : "Sync Teller"}
+            </button>
+            {message ? <span className="settings-message">{message}</span> : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SettingsHelpPanel({ activeSection }) {
   const copy = useMemo(() => {
     if (activeSection === "dispatch") {
@@ -772,6 +1000,14 @@ function SettingsHelpPanel({ activeSection }) {
         title: "Database safety",
         body:
           "Backups are full JSON snapshots of the local public schema. Restore is intentionally destructive: it clears current tables and reloads the backup.",
+      };
+    }
+
+    if (activeSection === "integrations") {
+      return {
+        title: "Teller setup",
+        body:
+          "Teller Connect creates an access token for each bank enrollment. The server stores each token and syncs transactions across every connected account.",
       };
     }
 
@@ -814,6 +1050,8 @@ export default function SettingsPanel({
         <FleetSettingsPanel />
       ) : activeSection === "database" ? (
         <DatabaseSettingsPanel />
+      ) : activeSection === "integrations" ? (
+        <IntegrationsSettingsPanel />
       ) : (
         <section className="panel settings-main-panel">
           <div className="panel-header">

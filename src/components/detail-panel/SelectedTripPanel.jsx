@@ -41,6 +41,11 @@ function formatStageLabel(value) {
     .join(" ");
 }
 
+function formatStageActionLabel(value) {
+  if (value === "turnaround") return "Vehicle returned";
+  return `Advance to ${value ? formatStageLabel(value) : "Next Stage"}`;
+}
+
 function formatTollReviewStatus(value, hasTollExposure = false) {
   const normalized = String(value || "").trim().toLowerCase();
 
@@ -491,7 +496,7 @@ function renderLocationLink(vehicle) {
         >
           {stageSaving
             ? "Advancing…"
-            : `Advance to ${nextStage ? formatStageLabel(nextStage) : "Next Stage"}`}
+            : formatStageActionLabel(nextStage)}
         </button>
       </div>
 

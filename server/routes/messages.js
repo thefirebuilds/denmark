@@ -136,6 +136,7 @@ function messageQueueRank(item) {
   if (item.type === "handoff_ready_required") return -1;
   if (item.status === "unread") return 0;
   if (item.type === "trip_overlap_detected") return 1;
+  if (item.type === "late_toll_unbilled") return 1;
   if (item.type === "closeout_required") return 1;
   if (item.type === "inspection_export_required") return 2;
   if (item.type === "trip_booked" && item.is_booking_confirmation_task) return 2;
@@ -179,6 +180,15 @@ function compareQueueItems(a, b) {
   if (a.type === "closeout_required" && b.type === "closeout_required") {
     const aSortAt = new Date(a.closeout_sort_at || a.trip_end || 0).getTime();
     const bSortAt = new Date(b.closeout_sort_at || b.trip_end || 0).getTime();
+    const safeASortAt = Number.isFinite(aSortAt) ? aSortAt : 0;
+    const safeBSortAt = Number.isFinite(bSortAt) ? bSortAt : 0;
+
+    if (safeASortAt !== safeBSortAt) return safeBSortAt - safeASortAt;
+  }
+
+  if (a.type === "late_toll_unbilled" && b.type === "late_toll_unbilled") {
+    const aSortAt = new Date(a.late_toll_latest_recorded_at || 0).getTime();
+    const bSortAt = new Date(b.late_toll_latest_recorded_at || 0).getTime();
     const safeASortAt = Number.isFinite(aSortAt) ? aSortAt : 0;
     const safeBSortAt = Number.isFinite(bSortAt) ? bSortAt : 0;
 
@@ -353,6 +363,41 @@ function mapCloseoutNoticeRow(row) {
     has_tolls: row.has_tolls,
     closed_out: row.closed_out,
     created_at: row.trip_end,
+  };
+}
+
+function mapLateTollNoticeRow(row) {
+  const vehicleName = row.vehicle_nickname || row.vehicle_name || "vehicle";
+  const guestName = row.guest_name || "guest";
+
+  return {
+    id: `late-toll:${row.trip_id}`,
+    messageId: `late-toll:${row.trip_id}`,
+    subject: `Late tolls need billing for ${vehicleName}`,
+    status: "read",
+    timestamp: row.latest_recorded_at,
+    notification_created_at: row.latest_recorded_at,
+    type: "late_toll_unbilled",
+    guest_name: row.guest_name,
+    vehicle_name: row.vehicle_name,
+    vehicle_nickname: row.vehicle_nickname,
+    reservation_id: row.reservation_id,
+    trip_id: row.trip_id,
+    trip_start: row.trip_start,
+    trip_end: row.trip_end,
+    trip_workflow_stage: row.workflow_stage,
+    trip_status: row.trip_status,
+    late_toll_count: row.late_toll_count,
+    late_toll_total: row.late_toll_total,
+    late_toll_first_recorded_at: row.first_recorded_at,
+    late_toll_latest_recorded_at: row.latest_recorded_at,
+    late_toll_first_transaction_at: row.first_transaction_at,
+    late_toll_latest_transaction_at: row.latest_transaction_at,
+    late_toll_hours_after_trip_end: row.hours_after_trip_end,
+    late_toll_charged_total: row.toll_charged_total,
+    late_toll_review_status: row.toll_review_status,
+    created_at: row.latest_recorded_at,
+    guest_display_name: guestName,
   };
 }
 
@@ -919,7 +964,7 @@ router.get("/", async (req, res) => {
         ORDER BY nt.trip_start ASC
         LIMIT 1
       ) next_trip ON true
-      WHERE t.trip_end < NOW()
+      WHERE t.trip_end <= NOW() - INTERVAL '24 hours'
         AND t.trip_end >= NOW() - INTERVAL '45 days'
         AND COALESCE(t.workflow_stage, '') <> 'canceled'
         AND COALESCE(t.status, '') <> 'canceled'
@@ -947,6 +992,52 @@ router.get("/", async (req, res) => {
           )
         )
       ORDER BY t.trip_end DESC NULLS LAST, t.id DESC
+      LIMIT 25
+    `;
+
+    const lateTollSql = `
+      SELECT
+        t.id AS trip_id,
+        t.reservation_id,
+        t.guest_name,
+        t.vehicle_name,
+        v.nickname AS vehicle_nickname,
+        t.trip_start,
+        t.trip_end,
+        t.workflow_stage,
+        t.status AS trip_status,
+        t.toll_review_status,
+        t.toll_charged_total,
+        COUNT(tc.id)::integer AS late_toll_count,
+        COALESCE(SUM(tc.amount), 0)::numeric(10,2) AS late_toll_total,
+        MIN(tc.created_at) AS first_recorded_at,
+        MAX(tc.created_at) AS latest_recorded_at,
+        MIN(tc.trxn_at) AS first_transaction_at,
+        MAX(tc.trxn_at) AS latest_transaction_at,
+        EXTRACT(EPOCH FROM (MAX(tc.created_at) - t.trip_end)) / 3600.0 AS hours_after_trip_end
+      FROM trips t
+      JOIN toll_charges tc
+        ON tc.matched_trip_id = t.id
+      LEFT JOIN vehicles v
+        ON (
+          t.turo_vehicle_id IS NOT NULL
+          AND v.turo_vehicle_id = t.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+        )
+      WHERE t.trip_end < NOW()
+        AND t.trip_end >= NOW() - INTERVAL '90 days'
+        AND tc.created_at > t.trip_end
+        AND COALESCE(t.workflow_stage, '') <> 'canceled'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND COALESCE(t.toll_review_status, '') NOT IN ('billed', 'waived')
+      GROUP BY
+        t.id,
+        v.nickname
+      HAVING COALESCE(SUM(tc.amount), 0) > 0
+      ORDER BY MAX(tc.created_at) DESC NULLS LAST, t.trip_end DESC NULLS LAST
       LIMIT 25
     `;
 
@@ -1018,6 +1109,7 @@ router.get("/", async (req, res) => {
       handoffResult,
       inspectionExportResult,
       closeoutResult,
+      lateTollResult,
       overlapResult,
       messagesResult,
       maintenanceResult,
@@ -1025,6 +1117,7 @@ router.get("/", async (req, res) => {
       db.query(handoffSql),
       db.query(inspectionExportSql),
       db.query(closeoutSql),
+      db.query(lateTollSql),
       db.query(overlapSql),
       db.query(messagesSql, [candidateLimit]),
       db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES]),
@@ -1034,6 +1127,7 @@ router.get("/", async (req, res) => {
       ...handoffResult.rows.map(mapHandoffNoticeRow),
       ...inspectionExportResult.rows.map(mapInspectionExportNoticeRow),
       ...closeoutResult.rows.map(mapCloseoutNoticeRow),
+      ...lateTollResult.rows.map(mapLateTollNoticeRow),
       ...overlapResult.rows.map(mapTripOverlapNoticeRow),
       ...messagesResult.rows.map(mapMessageRow),
       ...maintenanceResult.rows.map(mapMaintenanceNoticeRow),

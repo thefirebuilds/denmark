@@ -63,7 +63,9 @@ router.get("/login", async (req, res) => {
       return res.status(503).json({ error: "OIDC login is disabled" });
     }
 
-    const loginRequest = await buildLoginRequest();
+    const loginRequest = await buildLoginRequest({
+      loginHint: req.query?.login_hint,
+    });
     req.session.oidcAuth = {
       state: loginRequest.state,
       nonce: loginRequest.nonce,

@@ -45,6 +45,7 @@ const LOCAL_API_ORIGINS = new Set([
 ]);
 const TRIP_LEDGER_FOCUS_STORAGE_KEY = "denmark.tripLedgerFocus";
 const EXPENSE_LEDGER_FOCUS_STORAGE_KEY = "denmark.expenseLedgerFocus";
+const AUTH_EMAIL_STORAGE_KEY = "denmark.authEmail";
 
 const DEFAULT_DISPATCH_SETTINGS = {
   openTripsSort: "priority",
@@ -118,6 +119,16 @@ function getFetchUrl(input: RequestInfo | URL) {
 function isApiFetch(input: RequestInfo | URL) {
   const url = getFetchUrl(input);
   return url.startsWith(API_BASE) || url.startsWith("/api/");
+}
+
+function buildLoginUrl() {
+  if (typeof window === "undefined") return "/api/login";
+
+  const email = window.localStorage.getItem(AUTH_EMAIL_STORAGE_KEY);
+  if (!email) return "/api/login";
+
+  const params = new URLSearchParams({ login_hint: email });
+  return `/api/login?${params.toString()}`;
 }
 
 function rewriteDevApiRequest(input: RequestInfo | URL) {
@@ -227,6 +238,10 @@ export default function Home() {
       try {
         const response = await originalFetch(rewrittenInput, init);
 
+        if (apiRequest && response.status === 401) {
+          window.dispatchEvent(new CustomEvent("denmark:auth-required"));
+        }
+
         if (apiRequest && response.status >= 500) {
           window.dispatchEvent(new CustomEvent("denmark:backend-unavailable"));
         }
@@ -276,6 +291,20 @@ export default function Home() {
         "denmark:open-expense-ledger",
         handleOpenExpenseLedger as EventListener
       );
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleAuthRequired() {
+      setAuthRequired(true);
+      returnToStartup("Sign in required");
+      setMessageStatsLoading(false);
+    }
+
+    window.addEventListener("denmark:auth-required", handleAuthRequired);
+
+    return () => {
+      window.removeEventListener("denmark:auth-required", handleAuthRequired);
     };
   }, []);
 
@@ -376,6 +405,9 @@ export default function Home() {
             displayName: meData?.display_name ?? null,
             role: meData?.role ?? null,
           });
+          if (meData?.email && typeof window !== "undefined") {
+            window.localStorage.setItem(AUTH_EMAIL_STORAGE_KEY, meData.email);
+          }
 
           setStartup({
             ready: false,
@@ -750,7 +782,7 @@ export default function Home() {
               type="button"
               className="startup-action"
               onClick={() => {
-                window.location.assign("/api/login");
+                window.location.assign(buildLoginUrl());
               }}
             >
               Sign in

@@ -16,6 +16,7 @@ const {
   getCategorySuggestionsForTransaction,
   detectRefundSignal,
 } = require("../services/teller/tellerMatchService");
+const syncTellerTransactions = require("../services/teller/teller");
 
 const router = express.Router();
 
@@ -85,6 +86,60 @@ router.get("/summary", async (req, res) => {
   } catch (err) {
     console.error("Failed to load Teller summary:", err);
     sendRouteError(res, err, "Failed to load Teller summary");
+  }
+});
+
+router.get("/connect/config", async (req, res) => {
+  try {
+    const applicationId = String(process.env.TELLER_APPLICATION_ID || "").trim();
+    const environment = String(
+      process.env.TELLER_CONNECT_ENVIRONMENT || "development"
+    ).trim();
+
+    res.json({
+      configured: Boolean(applicationId),
+      applicationId: applicationId || null,
+      environment,
+      products: ["transactions", "balance"],
+      selectAccount: "multiple",
+    });
+  } catch (err) {
+    console.error("Failed to load Teller Connect config:", err);
+    sendRouteError(res, err, "Failed to load Teller Connect config");
+  }
+});
+
+router.get("/connections", async (req, res) => {
+  try {
+    const summary = await syncTellerTransactions.getTokenSummary();
+    res.json({
+      token_count: Number(summary.token_count || 0),
+      latest_connected_at: summary.latest_connected_at || null,
+    });
+  } catch (err) {
+    console.error("Failed to load Teller connections:", err);
+    sendRouteError(res, err, "Failed to load Teller connections");
+  }
+});
+
+router.post("/connections", async (req, res) => {
+  try {
+    const accessToken = req.body?.access_token || req.body?.accessToken;
+    const result = await syncTellerTransactions.saveAccessToken(accessToken);
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (err) {
+    console.error("Failed to save Teller connection:", err);
+    sendRouteError(res, err, "Failed to save Teller connection");
+  }
+});
+
+router.post("/sync", async (req, res) => {
+  try {
+    const result = await syncTellerTransactions();
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to sync Teller transactions:", err);
+    sendRouteError(res, err, "Failed to sync Teller transactions");
   }
 });
 

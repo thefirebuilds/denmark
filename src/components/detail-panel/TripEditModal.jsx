@@ -51,6 +51,11 @@ function normalizeTollReviewStatus(value) {
   return "none";
 }
 
+function formatStageActionLabel(value) {
+  if (value === "turnaround") return "Vehicle returned";
+  return `Advance to ${value ? formatStageLabel(value) : "Next Stage"}`;
+}
+
 function resolveVehicleSelection(trip, vehiclesList) {
   const tripVehicleId = String(trip?.turo_vehicle_id ?? "").trim();
   const tripNames = [trip?.vehicle_name, trip?.vehicle_nickname]
@@ -593,11 +598,7 @@ export default function TripEditModal({
             >
               {stageSaving
                 ? "Advancing…"
-                : `Advance to ${
-                    defaultNextStage
-                      ? formatStageLabel(defaultNextStage)
-                      : "Next Stage"
-                  }`}
+                : formatStageActionLabel(defaultNextStage)}
             </button>
           </div>
 
