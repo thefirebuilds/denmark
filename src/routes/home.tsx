@@ -104,10 +104,14 @@ function isBackendUnavailableError(err: unknown) {
   return (
     /failed to fetch/i.test(message) ||
     /networkerror/i.test(message) ||
-    /request failed:\s*5\d\d/i.test(message) ||
-    /http\s*5\d\d/i.test(message) ||
-    /\b5\d\d\b/.test(message)
+    /request failed:\s*50[234]/i.test(message) ||
+    /http\s*50[234]/i.test(message) ||
+    /\b50[234]\b/.test(message)
   );
+}
+
+function isBackendAvailabilityStatus(status: number) {
+  return status === 502 || status === 503 || status === 504;
 }
 
 function getFetchUrl(input: RequestInfo | URL) {
@@ -250,7 +254,7 @@ export default function Home() {
           window.dispatchEvent(new CustomEvent("denmark:auth-required"));
         }
 
-        if (apiRequest && response.status >= 500) {
+        if (apiRequest && isBackendAvailabilityStatus(response.status)) {
           window.dispatchEvent(new CustomEvent("denmark:backend-unavailable"));
         }
 

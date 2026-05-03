@@ -223,7 +223,10 @@ function normalizeExpenseInput(input, { partial = false } = {}) {
   }
 
   if (!partial || Object.prototype.hasOwnProperty.call(input, "expense_scope")) {
-    normalized.expense_scope = normalizeScope(input.expense_scope);
+    normalized.expense_scope = normalizeScope(
+      input.expense_scope,
+      normalized.vehicle_id ? "direct" : "shared"
+    );
   }
 
   if (!partial || Object.prototype.hasOwnProperty.call(input, "trip_id")) {

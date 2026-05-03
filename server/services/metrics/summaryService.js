@@ -14,6 +14,7 @@ const {
   getTripProratedCount,
   getTripProratedValue,
   getTripRecognizedTollRevenueValue,
+  getTripTotalDays,
   isCleaningExpense,
   isTollExpense,
   roundMoney,
@@ -51,11 +52,14 @@ async function fetchTripsInRange(client, startDate, endDate) {
         t.workflow_stage,
         t.expense_status,
         t.completed_at,
-        t.canceled_at
+        t.canceled_at,
+        tf.cleaning_reimbursed
       FROM trips t
       LEFT JOIN vehicles v
         ON t.turo_vehicle_id IS NOT NULL
         AND v.turo_vehicle_id = t.turo_vehicle_id
+      LEFT JOIN trip_financial_facts tf
+        ON tf.trip_id = t.id
       WHERE t.trip_start <= $2
         AND t.trip_end >= COALESCE($1, t.trip_start)
         AND (
@@ -67,6 +71,31 @@ async function fetchTripsInRange(client, startDate, endDate) {
   );
 
   return rows.filter((trip) => tripOverlapsRange(trip, startDate, endDate));
+}
+
+async function fetchIncomeTransactionsInRange(client, startDate, endDate) {
+  const params = [endDate];
+  const dateClause = startDate
+    ? `income_date >= $2::date AND income_date <= $1::date`
+    : `income_date <= $1::date`;
+
+  if (startDate) params.push(startDate);
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        id,
+        trip_id,
+        amount,
+        income_date,
+        income_type
+      FROM income_transactions
+      WHERE ${dateClause}
+    `,
+    params
+  );
+
+  return rows;
 }
 
 async function fetchExpensesInRange(client, startDate, endDate) {
@@ -130,6 +159,146 @@ function extractTollAmountFromText(normalizedTextBody) {
   const text = String(normalizedTextBody || "");
   const match = text.match(/tolls?\s*-\s*\$([0-9,]+(?:\.\d{2})?)/i);
   return match ? parseMoney(match[1]) : null;
+}
+
+function getTripTuroOutputValue(trip) {
+  const tollRevenue =
+    trip?.toll_charged_total != null ? trip.toll_charged_total : trip?.toll_total;
+
+  return (
+    Number(trip?.amount ?? 0) +
+    Number(trip?.fuel_reimbursement_total ?? 0) +
+    Number(tollRevenue ?? 0) +
+    Number(trip?.cleaning_reimbursed ?? 0)
+  );
+}
+
+function addDaysToDate(value, days) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+function toDateKey(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function isDateInsideRange(value, startDate, endDate) {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  if (startDate && date < startDate) return false;
+  if (endDate && date > endDate) return false;
+  return true;
+}
+
+function buildTripScheduledTuroOutputEntries(trip, startDate, endDate) {
+  const totalValue = getTripTuroOutputValue(trip);
+  if (!totalValue) return [];
+
+  const totalDays = getTripTotalDays(trip?.trip_start, trip?.trip_end);
+  if (!totalDays) return [];
+
+  const entries = [];
+
+  function pushEntry(date, amount, label) {
+    if (!isDateInsideRange(date, startDate, endDate)) return;
+    entries.push({
+      date: toDateKey(date),
+      amount,
+      trip_id: trip.id,
+      reservation_id: trip.reservation_id,
+      guest_name: trip.guest_name,
+      vehicle_name: trip.vehicle_name || trip.vehicle_nickname,
+      label,
+    });
+  }
+
+  // Turo payouts are cash-timed: short trips pay after completion, while
+  // longer trips can pay in weekly portions before the final closeout.
+  if (totalDays <= 7) {
+    pushEntry(trip?.trip_end, totalValue, "trip_end");
+    return entries;
+  }
+
+  let paidDays = 0;
+
+  while (totalDays - paidDays > 7) {
+    paidDays += 7;
+    const trancheDate = addDaysToDate(trip.trip_start, paidDays);
+    pushEntry(trancheDate, totalValue * (7 / totalDays), `week_${paidDays / 7}`);
+  }
+
+  const remainingDays = totalDays - paidDays;
+  if (remainingDays > 0) {
+    pushEntry(trip?.trip_end, totalValue * (remainingDays / totalDays), "final");
+  }
+
+  return entries;
+}
+
+function getTripScheduledTuroOutputValue(trip, startDate, endDate) {
+  return buildTripScheduledTuroOutputEntries(trip, startDate, endDate).reduce(
+    (sum, entry) => sum + Number(entry?.amount ?? 0),
+    0
+  );
+}
+
+function buildIncomeReconciliationBuckets(trips, incomeTransactions, startDate, endDate) {
+  const buckets = new Map();
+
+  function getBucket(dateKey) {
+    if (!dateKey) return null;
+    if (!buckets.has(dateKey)) {
+      buckets.set(dateKey, {
+        date: dateKey,
+        expected: 0,
+        income: 0,
+        variance: 0,
+        expected_count: 0,
+        income_count: 0,
+      });
+    }
+    return buckets.get(dateKey);
+  }
+
+  for (const trip of trips) {
+    for (const entry of buildTripScheduledTuroOutputEntries(trip, startDate, endDate)) {
+      const bucket = getBucket(entry.date);
+      if (!bucket) continue;
+      bucket.expected += Number(entry.amount ?? 0);
+      bucket.expected_count += 1;
+    }
+  }
+
+  for (const item of incomeTransactions) {
+    const bucket = getBucket(toDateKey(item?.income_date));
+    if (!bucket) continue;
+    bucket.income += Number(item?.amount ?? 0);
+    bucket.income_count += 1;
+  }
+
+  return Array.from(buckets.values())
+    .map((bucket) => ({
+      ...bucket,
+      expected: roundMoney(bucket.expected),
+      income: roundMoney(bucket.income),
+      variance: roundMoney(bucket.income - bucket.expected),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function getLargestIncomeReconciliationGap(buckets) {
+  return (buckets || []).reduce((largest, bucket) => {
+    if (!largest) return bucket;
+    return Math.abs(Number(bucket.variance ?? 0)) >
+      Math.abs(Number(largest.variance ?? 0))
+      ? bucket
+      : largest;
+  }, null);
 }
 
 async function fetchTollChargesInRange(client, startDate, endDate) {
@@ -552,8 +721,16 @@ async function getSummaryMetrics(rangeKey = "30d") {
   const client = await pool.connect();
 
   try {
-    const [trips, expenses, latestFmvEstimates, tollCharges, vehicleMetricsPayload] = await Promise.all([
+    const [
+      trips,
+      incomeTransactions,
+      expenses,
+      latestFmvEstimates,
+      tollCharges,
+      vehicleMetricsPayload,
+    ] = await Promise.all([
       fetchTripsInRange(client, startDate, endDate),
+      fetchIncomeTransactionsInRange(client, startDate, endDate),
       fetchExpensesInRange(client, startDate, endDate),
       getLatestVehicleFmvEstimates(client),
       fetchTollChargesInRange(client, startDate, endDate),
@@ -574,6 +751,47 @@ async function getSummaryMetrics(rangeKey = "30d") {
         sum + getTripRecognizedTollRevenueValue(trip, startDate, endDate),
       0
     );
+    const incomeReconciliationBuckets = buildIncomeReconciliationBuckets(
+      trips,
+      incomeTransactions,
+      startDate,
+      endDate
+    );
+    const largestIncomeReconciliationGap = getLargestIncomeReconciliationGap(
+      incomeReconciliationBuckets
+    );
+    const turoOutputTripIncome = trips.reduce(
+      (sum, trip) => sum + Number(trip?.amount ?? 0),
+      0
+    );
+    const turoOutputFuelReimbursements = trips.reduce(
+      (sum, trip) => sum + Number(trip?.fuel_reimbursement_total ?? 0),
+      0
+    );
+    const turoOutputTollReimbursements = trips.reduce((sum, trip) => {
+      const tollRevenueValue =
+        trip?.toll_charged_total != null ? trip.toll_charged_total : trip?.toll_total;
+      return sum + Number(tollRevenueValue ?? 0);
+    }, 0);
+    const turoOutputCleaningReimbursements = trips.reduce(
+      (sum, trip) => sum + Number(trip?.cleaning_reimbursed ?? 0),
+      0
+    );
+    const turoOutputTotal = trips.reduce(
+      (sum, trip) => sum + getTripTuroOutputValue(trip),
+      0
+    );
+    const scheduledTuroOutputTotal = trips.reduce(
+      (sum, trip) =>
+        sum + getTripScheduledTuroOutputValue(trip, startDate, endDate),
+      0
+    );
+    const turoOutputDeferredTotal = turoOutputTotal - scheduledTuroOutputTotal;
+    const incomeCategoryTotal = incomeTransactions.reduce(
+      (sum, item) => sum + Number(item?.amount ?? 0),
+      0
+    );
+    const incomeCategoryVariance = incomeCategoryTotal - scheduledTuroOutputTotal;
 
     const tripCountOverlapping = trips.length;
 
@@ -710,6 +928,23 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       other_income: roundMoney(otherIncome),
       fuel_reimbursements: roundMoney(fuelReimbursements),
       toll_revenue: roundMoney(tollRevenue),
+      turo_output_total: roundMoney(turoOutputTotal),
+      turo_output_trip_income: roundMoney(turoOutputTripIncome),
+      turo_output_fuel_reimbursements: roundMoney(turoOutputFuelReimbursements),
+      turo_output_toll_reimbursements: roundMoney(turoOutputTollReimbursements),
+      turo_output_cleaning_reimbursements: roundMoney(
+        turoOutputCleaningReimbursements
+      ),
+      scheduled_turo_output_total: roundMoney(scheduledTuroOutputTotal),
+      turo_output_deferred_total: roundMoney(turoOutputDeferredTotal),
+      income_category_total: roundMoney(incomeCategoryTotal),
+      income_category_variance: roundMoney(incomeCategoryVariance),
+      income_category_coverage_rate: roundNumber(
+        safeDivide(incomeCategoryTotal, scheduledTuroOutputTotal)
+      ),
+      income_transaction_count: incomeTransactions.length,
+      income_reconciliation_buckets: incomeReconciliationBuckets,
+      income_reconciliation_largest_gap: largestIncomeReconciliationGap,
       expenses: roundMoney(expensesTotal),
       net_profit: roundMoney(netProfit),
       fleet_value: roundMoney(fleetValue),

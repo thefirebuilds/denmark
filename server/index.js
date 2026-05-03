@@ -41,6 +41,17 @@ const { isAuthEnforced } = require("./auth/config");
 const { getOidcConfig } = require("./auth/oidcProvider");
 const { ensureAuthTables } = require("./auth/store");
 const {
+  RETRY_AFTER_SECONDS,
+  buildDatabaseUnavailablePayload,
+  databaseUnavailableMiddleware,
+  getDatabaseHealth,
+  isDatabaseConnectionError,
+  markDatabaseReady,
+  markDatabaseUnavailable,
+  onDatabaseUnavailable,
+  summarizeError,
+} = require("./dbHealth");
+const {
   authenticateServiceToken,
   loadRequestAuth,
   requirePermission,
@@ -96,6 +107,24 @@ app.use(
 );
 
 app.use(express.json({ limit: "500mb" }));
+app.get("/api/health", defaultCors, (req, res) => {
+  res.json({
+    ok: true,
+    service: "denmark-backend",
+    database: getDatabaseHealth(),
+  });
+});
+app.get("/api/database/health", defaultCors, (req, res) => {
+  res.json({
+    ok: true,
+    database: getDatabaseHealth(),
+  });
+});
+app.use("/api", databaseUnavailableMiddleware);
+
+//load denmark notification bridge before auth is started
+app.use("/api/notifications", defaultCors, notificationRoutes);
+
 app.use(loadRequestAuth);
 app.use((err, req, res, next) => {
   if (err && err.type === "entity.parse.failed") {
@@ -206,7 +235,7 @@ app.use(
   requirePermission("calendar.write"),
   googleCalendarRoutes
 );
-app.use("/api/notifications", notificationRoutes);
+
 app.use("/api", publicAvailabilityRouter);
 
 app.get("/__whoami", (req, res) => {
@@ -218,30 +247,90 @@ app.get("/__whoami", (req, res) => {
   });
 });
 
-Promise.all([
-  ensureNotificationEventsTable(),
-  ensureVehicleFmvEstimatesTable(),
-  ensureBusinessMetricsTables(),
-  ensureIncomeTables(),
-  ensureAuthTables(),
-])
-  .then(() => {
-    app.listen(PORT, () => {
-      const authEnforced = isAuthEnforced();
-      const oidcConfig = getOidcConfig();
-      console.log(`[server] listening on http://localhost:${PORT}`);
-      console.log(
-        `[server] auth enforcement: ${authEnforced ? "ENABLED" : "DISABLED"}`
-      );
-      console.log(
-        `[server] auth provider: ${oidcConfig.providerName || "oidc"} | issuer: ${
-          oidcConfig.issuerUrl || "(not set)"
-        } | redirect: ${oidcConfig.redirectUri || "(not set)"}`
-      );
+let startupTablesReady = false;
+let startupTablesInitializing = false;
+let schedulerStarted = false;
+let startupRetryHandle = null;
+
+async function initializeStartupTables() {
+  await Promise.all([
+    ensureNotificationEventsTable(),
+    ensureVehicleFmvEstimatesTable(),
+    ensureBusinessMetricsTables(),
+    ensureIncomeTables(),
+    ensureAuthTables(),
+  ]);
+}
+
+async function initializeStartupTablesWithRetry() {
+  if (startupTablesReady || startupTablesInitializing) return;
+
+  if (startupRetryHandle) {
+    clearTimeout(startupRetryHandle);
+    startupRetryHandle = null;
+  }
+
+  startupTablesInitializing = true;
+
+  try {
+    await initializeStartupTables();
+    startupTablesReady = true;
+    markDatabaseReady();
+    console.log("[server] startup tables ready");
+
+    if (!schedulerStarted) {
+      schedulerStarted = true;
       startScheduler();
-    });
-  })
-  .catch((err) => {
-    console.error("[server] failed to initialize startup tables:", err);
-    process.exit(1);
+    }
+  } catch (err) {
+    markDatabaseUnavailable(err);
+    console.warn(
+      `[server] database unavailable; startup tables not ready. Retrying in ${RETRY_AFTER_SECONDS}s. ${summarizeError(err)}`
+    );
+
+    startupRetryHandle = setTimeout(() => {
+      startupRetryHandle = null;
+      void initializeStartupTablesWithRetry();
+    }, RETRY_AFTER_SECONDS * 1000);
+    startupRetryHandle.unref?.();
+  } finally {
+    startupTablesInitializing = false;
+  }
+}
+
+onDatabaseUnavailable(() => {
+  startupTablesReady = false;
+  void initializeStartupTablesWithRetry();
+});
+
+app.use((err, req, res, next) => {
+  if (!err) return next();
+
+  if (isDatabaseConnectionError(err)) {
+    markDatabaseUnavailable(err);
+    startupTablesReady = false;
+    void initializeStartupTablesWithRetry();
+    res.set("Retry-After", String(RETRY_AFTER_SECONDS));
+    return res.status(503).json(buildDatabaseUnavailablePayload());
+  }
+
+  res.status(err.statusCode || err.status || 500).json({
+    ok: false,
+    error: err.statusCode || err.status ? err.message : "internal server error",
   });
+});
+
+app.listen(PORT, () => {
+  const authEnforced = isAuthEnforced();
+  const oidcConfig = getOidcConfig();
+  console.log(`[server] listening on http://localhost:${PORT}`);
+  console.log(
+    `[server] auth enforcement: ${authEnforced ? "ENABLED" : "DISABLED"}`
+  );
+  console.log(
+    `[server] auth provider: ${oidcConfig.providerName || "oidc"} | issuer: ${
+      oidcConfig.issuerUrl || "(not set)"
+    } | redirect: ${oidcConfig.redirectUri || "(not set)"}`
+  );
+  void initializeStartupTablesWithRetry();
+});

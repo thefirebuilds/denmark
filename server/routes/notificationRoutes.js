@@ -64,6 +64,9 @@ function classifyTuroNotification(event) {
   const text = buildSearchText(event);
   const source = cleanString(event?.source).toLowerCase();
 
+  if (source === "android_bridge_heartbeat") {
+    return "bridge_heartbeat";
+  }
   if (
     source === "android_notification_test" ||
     includesAny(text, ["denmark bridge test"])

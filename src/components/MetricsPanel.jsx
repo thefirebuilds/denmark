@@ -48,6 +48,12 @@ function formatCurrencyCompact(value) {
   });
 }
 
+function formatSignedCurrency(value) {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num) || num === 0) return formatCurrencyCompact(0);
+  return `${num > 0 ? "+" : "-"}${formatCurrencyCompact(Math.abs(num))}`;
+}
+
 function formatNumber(value, digits = 0) {
   const num = Number(value ?? 0);
   return num.toLocaleString("en-US", {
@@ -76,6 +82,16 @@ function formatUpdatedLabel(value) {
     day: "numeric",
     year: "numeric",
   })}`;
+}
+
+function formatShortDate(value) {
+  if (!value) return "--";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function formatConfidenceLabel(value) {
@@ -1876,6 +1892,40 @@ const mileageStats = useMemo(() => {
               label="Avg Rev / Trip"
               value={formatCurrencyCompact(avgRevenuePerTrip)}
               subtitle={`${formatNumber(summary.trip_count_overlapping)} overlapping trips`}
+            />
+
+            <MetricCard
+              label="Expected Turo vs Income"
+              value={formatSignedCurrency(summary.income_category_variance)}
+              subtitle={
+                <>
+                  <div>
+                    {formatCurrencyCompact(
+                      summary.scheduled_turo_output_total ?? summary.turo_output_total
+                    )} expected / {formatCurrencyCompact(
+                      summary.income_category_total
+                    )} income / {formatCurrencyCompact(
+                      summary.turo_output_deferred_total
+                    )} deferred
+                  </div>
+                  {summary.income_reconciliation_largest_gap ? (
+                    <div>
+                      Largest gap {formatShortDate(
+                        summary.income_reconciliation_largest_gap.date
+                      )}: {formatSignedCurrency(
+                        summary.income_reconciliation_largest_gap.variance
+                      )}
+                    </div>
+                  ) : null}
+                </>
+              }
+              tone={
+                Math.abs(Number(summary.income_category_variance ?? 0)) < 1
+                  ? "positive"
+                  : Number(summary.income_category_variance ?? 0) < 0
+                  ? "warning"
+                  : "default"
+              }
             />
           </div>
 

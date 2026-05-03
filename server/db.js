@@ -1,5 +1,10 @@
 require("dotenv").config({ path: "../.env" });
 const { Pool } = require("pg");
+const {
+  isDatabaseConnectionError,
+  markDatabaseUnavailable,
+  summarizeError,
+} = require("./dbHealth");
 
 const pool = new Pool({
   host: process.env.PGHOST || "localhost",
@@ -14,6 +19,16 @@ const pool = new Pool({
   keepAliveInitialDelayMillis: Number(
     process.env.PGKEEPALIVE_INITIAL_DELAY_MS || 10000
   ),
+});
+
+pool.on("error", (err) => {
+  if (isDatabaseConnectionError(err)) {
+    markDatabaseUnavailable(err);
+    console.warn(`[db] connection lost: ${summarizeError(err)}`);
+    return;
+  }
+
+  console.error("[db] unexpected pool error:", err);
 });
 
 module.exports = pool;

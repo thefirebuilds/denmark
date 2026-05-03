@@ -286,7 +286,7 @@ router.get("/:id/expense-draft", async (req, res) => {
       category: categoryOptions[0]?.category || null,
       notes: tx.description || null,
       date: toDateOnly(tx.transaction_date),
-      expense_scope: "direct",
+      expense_scope: "shared",
       trip_id: null,
       category_options: categoryOptions,
       category_confidence: categoryOptions[0]?.confidence || 0,

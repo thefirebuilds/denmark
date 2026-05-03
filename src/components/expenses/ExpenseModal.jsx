@@ -15,7 +15,7 @@ const EMPTY_FORM = {
   category: "",
   notes: "",
   date: new Date().toISOString().slice(0, 10),
-  expense_scope: "general",
+  expense_scope: "shared",
   trip_id: "",
   tax_locked: false,
 };
@@ -31,7 +31,7 @@ function getInitialForm(expense, selectedVehicleId) {
     return {
       ...EMPTY_FORM,
       vehicle_id: selectedVehicleId ?? "",
-      expense_scope: selectedVehicleId ? "direct" : "general",
+      expense_scope: selectedVehicleId ? "direct" : "shared",
     };
   }
 
@@ -147,7 +147,7 @@ export default function ExpenseModal({
     setForm((prev) => ({
       ...prev,
       vehicle_id: nextVehicleId,
-      expense_scope: nextVehicleId ? "direct" : "general",
+      expense_scope: nextVehicleId ? "direct" : "shared",
     }));
   }
 

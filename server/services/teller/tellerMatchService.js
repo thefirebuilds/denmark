@@ -575,7 +575,7 @@ async function createExpenseFromTeller(id, payload = {}) {
     category: payload.category ?? null,
     notes: payload.notes ?? tx.description ?? null,
     date: toExpenseDate(payload.date ?? tx.transaction_date),
-    expense_scope: payload.expense_scope ?? "direct",
+    expense_scope: payload.expense_scope ?? (payload.vehicle_id ? "direct" : "shared"),
     trip_id: payload.trip_id ?? null,
   };
 

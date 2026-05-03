@@ -786,7 +786,7 @@ function ExpenseDraftModal({
           <label className="inbox-draft-field">
             <span>Scope</span>
             <select
-              value={draft.expense_scope || "direct"}
+              value={draft.expense_scope || "shared"}
               onChange={(e) => onChange("expense_scope", e.target.value)}
             >
               <option value="direct">direct</option>
@@ -1369,6 +1369,14 @@ export default function InboxPanel() {
   function handleDraftChange(field, value) {
     setExpenseDraft((current) => {
       if (!current) return current;
+
+      if (field === "vehicle_id") {
+        return {
+          ...current,
+          vehicle_id: value,
+          expense_scope: value ? "direct" : "shared",
+        };
+      }
 
       return {
         ...current,
