@@ -296,6 +296,18 @@ body {
   line-height: 1.1;
 }
 
+.bridge-heartbeat {
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #bbf7d0;
+}
+
+.bridge-heartbeat--stale,
+.notification-gap-chip {
+  border-color: rgba(248, 113, 113, 0.62);
+  background: rgba(127, 29, 29, 0.28);
+  color: #fecaca;
+}
+
 .chip-filter {
   appearance: none;
   cursor: pointer;
@@ -630,6 +642,22 @@ body {
   box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.14) inset;
 }
 
+.message.message-notification-gap {
+  border-color: rgba(248, 113, 113, 0.82);
+  background:
+    linear-gradient(180deg, rgba(74, 18, 24, 0.86), #10182c);
+  box-shadow:
+    0 0 0 1px rgba(248, 113, 113, 0.16) inset,
+    0 16px 34px rgba(127, 29, 29, 0.16);
+}
+
+.message.message-notification-gap:hover {
+  border-color: rgba(252, 165, 165, 0.92);
+  box-shadow:
+    0 0 0 1px rgba(248, 113, 113, 0.24) inset,
+    0 18px 38px rgba(127, 29, 29, 0.22);
+}
+
 .message-head {
   display: flex;
   justify-content: space-between;
@@ -666,6 +694,11 @@ body {
   padding: 10px;
   display: grid;
   gap: 8px;
+}
+
+.message-notification-gap-detail {
+  border-color: rgba(248, 113, 113, 0.46);
+  background: rgba(127, 29, 29, 0.22);
 }
 
 .message-closeout-guide .message-booking-task {

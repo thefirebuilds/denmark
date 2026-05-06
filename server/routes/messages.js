@@ -133,6 +133,7 @@ function isActionableBookingMessage(row) {
 }
 
 function messageQueueRank(item) {
+  if (item.type === "notification_unmatched") return -2;
   if (item.type === "handoff_ready_required") return -1;
   if (item.status === "unread") return 0;
   if (item.type === "trip_overlap_detected") return 1;
@@ -251,6 +252,40 @@ function mapMessageRow(row) {
     reply_url: row.reply_url,
     trip_details_url: row.trip_details_url,
     parsed: parseSubject(row.subject),
+  };
+}
+
+function mapUnmatchedNotificationRow(row) {
+  const title = row.title || row.classification || "Turo notification";
+  const body = row.body || row.big_text || row.sub_text || "";
+
+  return {
+    id: `notification-gap:${row.id}`,
+    messageId: `notification-gap:${row.id}`,
+    subject: `Bridge notification missing email: ${title}`,
+    status: "read",
+    timestamp: row.posted_at || row.received_at,
+    notification_created_at: row.received_at || row.posted_at,
+    type: "notification_unmatched",
+    notification_event_id: row.id,
+    notification_classification: row.classification,
+    notification_title: row.title,
+    notification_body: body,
+    notification_app: row.app,
+    notification_package_name: row.package_name,
+    notification_device: row.device,
+    notification_received_at: row.received_at,
+    notification_posted_at: row.posted_at,
+    notification_key: row.notification_key,
+    guest_name: row.guest_name,
+    vehicle_name: row.vehicle_name,
+    reservation_id: row.reservation_id,
+    trip_id: row.trip_id,
+    trip_start: row.trip_start,
+    trip_end: row.trip_end,
+    trip_workflow_stage: row.workflow_stage,
+    trip_status: row.trip_status,
+    created_at: row.received_at || row.posted_at,
   };
 }
 
@@ -431,10 +466,12 @@ function mapMaintenanceNoticeRow(row) {
     ? isActiveTrip
       ? `${taskLabel} during ${vehicleName}'s current trip`
       : `${taskLabel} will come due during ${vehicleName}'s trip`
-    : hasAfterReturnTasks || hasPostTripTasks || isActiveTrip
+    : hasAfterReturnTasks || isActiveTrip
     ? `${taskLabel} after ${vehicleName} returns`
     : isUpcomingTrip
     ? `${taskLabel} before ${vehicleName} goes out`
+    : hasPostTripTasks
+    ? `${taskLabel} while ${vehicleName} is home`
     : `${taskLabel} for ${vehicleName}`;
   const maintenanceQueueRank = isUpcomingTrip ? 0 : isActiveTrip ? 2 : 1;
   const maintenanceSortAt = isUpcomingTrip
@@ -525,7 +562,251 @@ router.get("/stats", async (req, res) => {
         COUNT(*) FILTER (WHERE message_type = 'trip_rated') AS trip_rated_count,
         COUNT(*) FILTER (WHERE message_type IS NULL OR message_type = 'unknown') AS unknown_count,
         COUNT(*) AS total_count,
-        MAX(message_timestamp) AS last_received
+        MAX(message_timestamp) AS last_received,
+        (
+          SELECT jsonb_build_object(
+            'received_at', hb.received_at,
+            'posted_at', hb.posted_at,
+            'device', hb.device,
+            'age_minutes',
+              CASE
+                WHEN hb.received_at IS NULL THEN NULL
+                ELSE ROUND((EXTRACT(EPOCH FROM (NOW() - hb.received_at)) / 60.0)::numeric, 1)
+              END,
+            'stale',
+              CASE
+                WHEN hb.received_at IS NULL THEN TRUE
+                ELSE hb.received_at < NOW() - INTERVAL '35 minutes'
+              END
+          )
+          FROM notification_events hb
+          WHERE hb.classification = 'bridge_heartbeat'
+          ORDER BY hb.received_at DESC NULLS LAST, hb.id DESC
+          LIMIT 1
+        ) AS bridge_heartbeat,
+        (
+          SELECT COUNT(*)
+          FROM (
+            SELECT
+              ne.*,
+              COALESCE(ne.posted_at, ne.received_at) AS event_at,
+              LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) AS notification_text,
+              NULLIF(
+                REPLACE(
+                  (regexp_match(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '\\$([0-9][0-9,]*(\\.[0-9]{2})?)'))[1],
+                  ',',
+                  ''
+                ),
+                ''
+              )::numeric AS event_amount,
+              substring(ne.title from '^Your trip with (.+) starts soon$') AS reminder_guest_name,
+              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'About ([^:]+) from ([^:]+):') AS paid_now_vehicle_name,
+              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'About [^:]+ from ([^:]+):') AS paid_now_guest_name,
+              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([A-Z][A-Za-z]+) paid (the|your)') AS paid_invoice_guest_name,
+              substring(ne.title from '^([^ ]+) rated their trip$') AS rated_guest_name,
+              substring(ne.title from '^([^ ]+) has returned ') AS returned_guest_name,
+              NULLIF(regexp_replace(ne.title, '^[^ ]+ has returned ', ''), ne.title) AS returned_vehicle_name,
+              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([^ ]+) has cancelled their trip') AS canceled_guest_name,
+              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+)') AS canceled_vehicle_name,
+              COALESCE(
+                substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([A-Za-z]+).s trip with your'),
+                NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '’s trip with your', 1), '^.* ', ''), ''),
+                NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '''s trip with your', 1), '^.* ', ''), '')
+              ) AS booked_guest_name,
+              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+) is booked') AS booked_vehicle_name,
+              CASE
+                WHEN ne.title LIKE 'Change requested to % trip'
+                THEN NULLIF(
+                  split_part(
+                    split_part(replace(ne.title, 'Change requested to ', ''), ' trip', 1),
+                    '’',
+                    1
+                  ),
+                  ''
+                )
+                ELSE NULL
+              END AS change_request_guest_name,
+              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([^ ]+) changed their trip with your') AS trip_changed_guest_name
+            FROM notification_events ne
+            WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
+              AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
+              AND ne.received_at >= NOW() - INTERVAL '7 days'
+              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
+              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
+              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%has added a driver%'
+              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%additional driver%'
+              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%added another driver%'
+          ) ne
+          WHERE NOT EXISTS (
+              SELECT 1
+              FROM messages m
+              WHERE (
+                  ne.reservation_id IS NOT NULL
+                  AND m.reservation_id IS NOT NULL
+                  AND m.reservation_id = ne.reservation_id
+                )
+                OR (
+                  ne.reservation_id IS NULL
+                  AND COALESCE(ne.guest_name, '') <> ''
+                  AND COALESCE(ne.vehicle_name, '') <> ''
+                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                    COALESCE(ne.posted_at, ne.received_at) - INTERVAL '24 hours'
+                    AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '24 hours'
+                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                    LIKE '%' || LOWER(ne.guest_name) || '%'
+                  AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
+                    LIKE '%' || LOWER(ne.vehicle_name) || '%'
+                )
+                OR (
+                  (
+                    ne.notification_text LIKE '%earnings payment%'
+                    OR ne.notification_text LIKE '%cha-ching%'
+                    OR ne.notification_text LIKE '%you’ve been paid%'
+                    OR ne.notification_text LIKE '%you''ve been paid%'
+                  )
+                  AND m.message_type = 'payment_notice'
+                  AND (
+                    (
+                      ne.event_amount IS NOT NULL
+                      AND m.amount IS NOT NULL
+                      AND m.amount = ne.event_amount
+                    )
+                    OR COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                      ne.event_at - INTERVAL '24 hours'
+                      AND ne.event_at + INTERVAL '24 hours'
+                  )
+                )
+                OR (
+                  (
+                    ne.notification_text LIKE '%paid the invoice%'
+                    OR ne.notification_text LIKE '%reimbursement invoice%'
+                    OR ne.notification_text LIKE '%paid now%'
+                  )
+                  AND m.message_type IN ('reimbursement_invoice', 'guest_message')
+                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                    ne.event_at - INTERVAL '24 hours'
+                    AND ne.event_at + INTERVAL '24 hours'
+                  AND (
+                    (
+                      COALESCE(ne.guest_name, ne.paid_now_guest_name, '') <> ''
+                      AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                        LIKE '%' || LOWER(COALESCE(ne.guest_name, ne.paid_now_guest_name)) || '%'
+                    )
+                    OR (
+                      COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name, '') <> ''
+                      AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
+                        LIKE '%' || LOWER(COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name)) || '%'
+                    )
+                    OR (
+                      COALESCE(ne.paid_invoice_guest_name, '') <> ''
+                      AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                        LIKE '%' || LOWER(ne.paid_invoice_guest_name) || '%'
+                    )
+                  )
+                )
+                OR (
+                  COALESCE(ne.paid_now_guest_name, '') <> ''
+                  AND COALESCE(ne.paid_now_vehicle_name, '') <> ''
+                  AND m.message_type = 'guest_message'
+                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                    ne.event_at - INTERVAL '24 hours'
+                    AND ne.event_at + INTERVAL '24 hours'
+                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                    LIKE '%' || LOWER(ne.paid_now_guest_name) || '%'
+                  AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
+                    LIKE '%' || LOWER(ne.paid_now_vehicle_name) || '%'
+                )
+                OR (
+                  COALESCE(ne.rated_guest_name, '') <> ''
+                  AND m.message_type IN ('trip_rated', 'turo_notification')
+                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                    ne.event_at - INTERVAL '24 hours'
+                    AND ne.event_at + INTERVAL '24 hours'
+                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                    LIKE '%' || LOWER(ne.rated_guest_name) || '%'
+                )
+                OR (
+                  COALESCE(ne.change_request_guest_name, '') <> ''
+                  AND m.message_type IN ('trip_changed', 'turo_notification')
+                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                    ne.event_at - INTERVAL '24 hours'
+                    AND ne.event_at + INTERVAL '24 hours'
+                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                    LIKE '%' || LOWER(ne.change_request_guest_name) || '%'
+                )
+                OR (
+                  COALESCE(ne.trip_changed_guest_name, '') <> ''
+                  AND m.message_type IN ('trip_changed', 'turo_notification')
+                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                    ne.event_at - INTERVAL '24 hours'
+                    AND ne.event_at + INTERVAL '24 hours'
+                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                    LIKE '%' || LOWER(ne.trip_changed_guest_name) || '%'
+                )
+                OR (
+                  ne.reminder_guest_name IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM trips reminder_trip
+                    WHERE LOWER(COALESCE(reminder_trip.guest_name, '')) = LOWER(ne.reminder_guest_name)
+                      AND reminder_trip.trip_start BETWEEN
+                        ne.event_at - INTERVAL '12 hours'
+                        AND ne.event_at + INTERVAL '7 days'
+                      AND COALESCE(reminder_trip.workflow_stage, '') <> 'canceled'
+                      AND COALESCE(reminder_trip.status, '') <> 'canceled'
+                  )
+                )
+                OR (
+                  COALESCE(ne.canceled_guest_name, '') <> ''
+                  AND EXISTS (
+                    SELECT 1
+                    FROM trips canceled_trip
+                    WHERE LOWER(COALESCE(canceled_trip.guest_name, '')) = LOWER(ne.canceled_guest_name)
+                      AND canceled_trip.created_at BETWEEN
+                        ne.event_at - INTERVAL '2 days'
+                        AND ne.event_at + INTERVAL '2 days'
+                      AND (
+                        COALESCE(canceled_trip.workflow_stage, '') = 'canceled'
+                        OR COALESCE(canceled_trip.status, '') = 'canceled'
+                      )
+                      AND (
+                        COALESCE(ne.canceled_vehicle_name, '') = ''
+                        OR LOWER(ne.canceled_vehicle_name) LIKE '%' || LOWER(COALESCE(canceled_trip.vehicle_name, '')) || '%'
+                        OR LOWER(COALESCE(canceled_trip.vehicle_name, '')) LIKE '%' || LOWER(split_part(ne.canceled_vehicle_name, ' ', 1)) || '%'
+                      )
+                  )
+                )
+                OR (
+                  COALESCE(ne.booked_guest_name, '') <> ''
+                  AND EXISTS (
+                    SELECT 1
+                    FROM trips booked_trip
+                    WHERE LOWER(COALESCE(booked_trip.guest_name, '')) = LOWER(ne.booked_guest_name)
+                      AND booked_trip.created_at BETWEEN
+                        ne.event_at - INTERVAL '2 days'
+                        AND ne.event_at + INTERVAL '2 days'
+                  )
+                )
+                OR (
+                  COALESCE(ne.returned_guest_name, '') <> ''
+                  AND EXISTS (
+                    SELECT 1
+                    FROM trips returned_trip
+                    WHERE LOWER(COALESCE(returned_trip.guest_name, '')) = LOWER(ne.returned_guest_name)
+                      AND returned_trip.trip_end BETWEEN
+                        ne.event_at - INTERVAL '3 days'
+                        AND ne.event_at + INTERVAL '36 hours'
+                      AND COALESCE(returned_trip.workflow_stage, '') <> 'canceled'
+                      AND COALESCE(returned_trip.status, '') <> 'canceled'
+                      AND (
+                        COALESCE(returned_trip.workflow_stage, '') IN ('complete', 'closed')
+                        OR COALESCE(returned_trip.status, '') IN ('complete', 'completed', 'closed')
+                        OR COALESCE(returned_trip.closed_out, false) = true
+                      )
+                  )
+                )
+            )
+        ) AS unmatched_notification_count
       FROM messages
     `;
 
@@ -543,6 +824,8 @@ router.get("/stats", async (req, res) => {
       unknown: Number(row.unknown_count || 0),
       total: Number(row.total_count || 0),
       lastReceived: row.last_received,
+      bridgeHeartbeat: row.bridge_heartbeat || null,
+      unmatchedNotifications: Number(row.unmatched_notification_count || 0),
     });
   } catch (err) {
     console.error("message stats endpoint failed:", err);
@@ -700,51 +983,297 @@ router.get("/", async (req, res) => {
       LIMIT $1
     `;
 
+    const unmatchedNotificationsSql = `
+      WITH candidate_notifications AS (
+        SELECT
+          ne.*,
+          COALESCE(ne.posted_at, ne.received_at) AS event_at,
+          LOWER(CONCAT_WS(
+            ' ',
+            ne.title,
+            ne.body,
+            ne.big_text,
+            ne.sub_text
+          )) AS notification_text,
+          NULLIF(
+            REPLACE(
+              (regexp_match(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '\\$([0-9][0-9,]*(\\.[0-9]{2})?)'))[1],
+              ',',
+              ''
+            ),
+            ''
+          )::numeric AS event_amount,
+          substring(ne.title from '^Your trip with (.+) starts soon$') AS reminder_guest_name,
+          substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'About ([^:]+) from ([^:]+):') AS paid_now_vehicle_name,
+          substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'About [^:]+ from ([^:]+):') AS paid_now_guest_name,
+          substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([A-Z][A-Za-z]+) paid (the|your)') AS paid_invoice_guest_name,
+          substring(ne.title from '^([^ ]+) rated their trip$') AS rated_guest_name,
+          substring(ne.title from '^([^ ]+) has returned ') AS returned_guest_name,
+          NULLIF(regexp_replace(ne.title, '^[^ ]+ has returned ', ''), ne.title) AS returned_vehicle_name,
+          substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([^ ]+) has cancelled their trip') AS canceled_guest_name,
+          substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+)') AS canceled_vehicle_name,
+          COALESCE(
+            substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([A-Za-z]+).s trip with your'),
+            NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '’s trip with your', 1), '^.* ', ''), ''),
+            NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '''s trip with your', 1), '^.* ', ''), '')
+          ) AS booked_guest_name,
+          substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+) is booked') AS booked_vehicle_name,
+          CASE
+            WHEN ne.title LIKE 'Change requested to % trip'
+            THEN NULLIF(
+              split_part(
+                split_part(replace(ne.title, 'Change requested to ', ''), ' trip', 1),
+                '’',
+                1
+              ),
+              ''
+            )
+            ELSE NULL
+          END AS change_request_guest_name,
+          substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([^ ]+) changed their trip with your') AS trip_changed_guest_name
+        FROM notification_events ne
+        WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
+          AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
+          AND ne.received_at >= NOW() - INTERVAL '7 days'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%has added a driver%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%additional driver%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%added another driver%'
+      )
+      SELECT
+        ne.id,
+        ne.source,
+        ne.app,
+        ne.package_name,
+        ne.title,
+        ne.body,
+        ne.big_text,
+        ne.sub_text,
+        ne.posted_at,
+        ne.received_at,
+        ne.device,
+        ne.notification_key,
+        ne.classification,
+        ne.reservation_id,
+        ne.vehicle_name,
+        ne.guest_name,
+        COALESCE(t.id, returned_trip.id) AS trip_id,
+        COALESCE(t.trip_start, returned_trip.trip_start) AS trip_start,
+        COALESCE(t.trip_end, returned_trip.trip_end) AS trip_end,
+        COALESCE(t.workflow_stage, returned_trip.workflow_stage) AS workflow_stage,
+        COALESCE(t.status, returned_trip.status) AS trip_status
+      FROM candidate_notifications ne
+      LEFT JOIN trips t
+        ON ne.reservation_id IS NOT NULL
+        AND t.reservation_id = ne.reservation_id
+      LEFT JOIN LATERAL (
+        SELECT
+          rt.id,
+          rt.trip_start,
+          rt.trip_end,
+          rt.workflow_stage,
+          rt.status
+        FROM trips rt
+        WHERE COALESCE(ne.returned_guest_name, '') <> ''
+          AND LOWER(COALESCE(rt.guest_name, '')) = LOWER(ne.returned_guest_name)
+          AND rt.trip_end BETWEEN
+            ne.event_at - INTERVAL '3 days'
+            AND ne.event_at + INTERVAL '36 hours'
+          AND COALESCE(rt.workflow_stage, '') <> 'canceled'
+          AND COALESCE(rt.status, '') <> 'canceled'
+          AND (
+            COALESCE(ne.returned_vehicle_name, '') = ''
+            OR LOWER(ne.returned_vehicle_name) LIKE '%' || LOWER(COALESCE(rt.vehicle_name, '')) || '%'
+            OR LOWER(COALESCE(rt.vehicle_name, '')) LIKE '%' || LOWER(split_part(ne.returned_vehicle_name, ' ', 1)) || '%'
+          )
+        ORDER BY rt.trip_end DESC NULLS LAST, rt.id DESC
+        LIMIT 1
+      ) returned_trip ON true
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM messages m
+        WHERE (
+            ne.reservation_id IS NOT NULL
+            AND m.reservation_id IS NOT NULL
+            AND m.reservation_id = ne.reservation_id
+          )
+          OR (
+            ne.reservation_id IS NULL
+            AND COALESCE(ne.guest_name, '') <> ''
+            AND COALESCE(ne.vehicle_name, '') <> ''
+            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+              ne.event_at - INTERVAL '24 hours'
+              AND ne.event_at + INTERVAL '24 hours'
+            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+              LIKE '%' || LOWER(ne.guest_name) || '%'
+            AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
+              LIKE '%' || LOWER(ne.vehicle_name) || '%'
+          )
+          OR (
+            (
+              ne.notification_text LIKE '%earnings payment%'
+              OR ne.notification_text LIKE '%cha-ching%'
+              OR ne.notification_text LIKE '%you’ve been paid%'
+              OR ne.notification_text LIKE '%you''ve been paid%'
+            )
+            AND m.message_type = 'payment_notice'
+            AND (
+              (
+                ne.event_amount IS NOT NULL
+                AND m.amount IS NOT NULL
+                AND m.amount = ne.event_amount
+              )
+              OR COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                ne.event_at - INTERVAL '24 hours'
+                AND ne.event_at + INTERVAL '24 hours'
+            )
+          )
+          OR (
+            COALESCE(ne.paid_now_guest_name, '') <> ''
+            AND COALESCE(ne.paid_now_vehicle_name, '') <> ''
+            AND m.message_type = 'guest_message'
+            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+              ne.event_at - INTERVAL '24 hours'
+              AND ne.event_at + INTERVAL '24 hours'
+            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+              LIKE '%' || LOWER(ne.paid_now_guest_name) || '%'
+            AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
+              LIKE '%' || LOWER(ne.paid_now_vehicle_name) || '%'
+          )
+          OR (
+            (
+              ne.notification_text LIKE '%paid the invoice%'
+              OR ne.notification_text LIKE '%reimbursement invoice%'
+              OR ne.notification_text LIKE '%paid now%'
+            )
+            AND m.message_type IN ('reimbursement_invoice', 'guest_message')
+            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+              ne.event_at - INTERVAL '24 hours'
+              AND ne.event_at + INTERVAL '24 hours'
+            AND (
+              (
+                COALESCE(ne.guest_name, ne.paid_now_guest_name, '') <> ''
+                AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                  LIKE '%' || LOWER(COALESCE(ne.guest_name, ne.paid_now_guest_name)) || '%'
+              )
+              OR (
+                COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name, '') <> ''
+                AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
+                  LIKE '%' || LOWER(COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name)) || '%'
+              )
+              OR (
+                COALESCE(ne.paid_invoice_guest_name, '') <> ''
+                AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+                  LIKE '%' || LOWER(ne.paid_invoice_guest_name) || '%'
+              )
+            )
+          )
+          OR (
+            COALESCE(ne.rated_guest_name, '') <> ''
+            AND m.message_type IN ('trip_rated', 'turo_notification')
+            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+              ne.event_at - INTERVAL '24 hours'
+              AND ne.event_at + INTERVAL '24 hours'
+            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+              LIKE '%' || LOWER(ne.rated_guest_name) || '%'
+          )
+          OR (
+            COALESCE(ne.change_request_guest_name, '') <> ''
+            AND m.message_type IN ('trip_changed', 'turo_notification')
+            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+              ne.event_at - INTERVAL '24 hours'
+              AND ne.event_at + INTERVAL '24 hours'
+            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+              LIKE '%' || LOWER(ne.change_request_guest_name) || '%'
+          )
+          OR (
+            COALESCE(ne.trip_changed_guest_name, '') <> ''
+            AND m.message_type IN ('trip_changed', 'turo_notification')
+            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+              ne.event_at - INTERVAL '24 hours'
+              AND ne.event_at + INTERVAL '24 hours'
+            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
+              LIKE '%' || LOWER(ne.trip_changed_guest_name) || '%'
+          )
+          OR (
+            ne.reminder_guest_name IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM trips reminder_trip
+              WHERE LOWER(COALESCE(reminder_trip.guest_name, '')) = LOWER(ne.reminder_guest_name)
+                AND reminder_trip.trip_start BETWEEN
+                  ne.event_at - INTERVAL '12 hours'
+                  AND ne.event_at + INTERVAL '7 days'
+                AND COALESCE(reminder_trip.workflow_stage, '') <> 'canceled'
+                AND COALESCE(reminder_trip.status, '') <> 'canceled'
+            )
+          )
+          OR (
+            COALESCE(ne.canceled_guest_name, '') <> ''
+            AND EXISTS (
+              SELECT 1
+              FROM trips canceled_trip
+              WHERE LOWER(COALESCE(canceled_trip.guest_name, '')) = LOWER(ne.canceled_guest_name)
+                AND canceled_trip.created_at BETWEEN
+                  ne.event_at - INTERVAL '2 days'
+                  AND ne.event_at + INTERVAL '2 days'
+                AND (
+                  COALESCE(canceled_trip.workflow_stage, '') = 'canceled'
+                  OR COALESCE(canceled_trip.status, '') = 'canceled'
+                )
+                AND (
+                  COALESCE(ne.canceled_vehicle_name, '') = ''
+                  OR LOWER(ne.canceled_vehicle_name) LIKE '%' || LOWER(COALESCE(canceled_trip.vehicle_name, '')) || '%'
+                  OR LOWER(COALESCE(canceled_trip.vehicle_name, '')) LIKE '%' || LOWER(split_part(ne.canceled_vehicle_name, ' ', 1)) || '%'
+                )
+            )
+          )
+          OR (
+            COALESCE(ne.booked_guest_name, '') <> ''
+            AND EXISTS (
+              SELECT 1
+              FROM trips booked_trip
+              WHERE LOWER(COALESCE(booked_trip.guest_name, '')) = LOWER(ne.booked_guest_name)
+                AND booked_trip.created_at BETWEEN
+                  ne.event_at - INTERVAL '2 days'
+                  AND ne.event_at + INTERVAL '2 days'
+            )
+          )
+          OR (
+            COALESCE(ne.returned_guest_name, '') <> ''
+            AND EXISTS (
+              SELECT 1
+              FROM trips completed_return_trip
+              WHERE LOWER(COALESCE(completed_return_trip.guest_name, '')) = LOWER(ne.returned_guest_name)
+                AND completed_return_trip.trip_end BETWEEN
+                  ne.event_at - INTERVAL '3 days'
+                  AND ne.event_at + INTERVAL '36 hours'
+                AND COALESCE(completed_return_trip.workflow_stage, '') <> 'canceled'
+                AND COALESCE(completed_return_trip.status, '') <> 'canceled'
+                AND (
+                  COALESCE(completed_return_trip.workflow_stage, '') IN ('complete', 'closed')
+                  OR COALESCE(completed_return_trip.status, '') IN ('complete', 'completed', 'closed')
+                  OR COALESCE(completed_return_trip.closed_out, false) = true
+                )
+            )
+          )
+      )
+      ORDER BY ne.received_at DESC NULLS LAST, ne.id DESC
+      LIMIT 10
+    `;
+
     const maintenanceSql = `
-      WITH trip_tasks AS (
+      WITH open_vehicle_tasks AS (
         SELECT
           COALESCE(
-            NULLIF(CAST(t.turo_vehicle_id AS text), ''),
+            NULLIF(v.turo_vehicle_id, ''),
+            NULLIF(CAST(related_trip.turo_vehicle_id AS text), ''),
             NULLIF(mt.vehicle_vin, ''),
-            LOWER(NULLIF(COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin), ''))
+            LOWER(NULLIF(COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
           ) AS vehicle_key,
-          t.id AS trip_id,
-          t.reservation_id,
-          t.guest_name,
-          t.trip_start,
-          t.trip_end,
-          t.workflow_stage,
-          t.status AS trip_status,
-          COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin) AS vehicle_name,
+          COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin) AS vehicle_name,
           mt.vehicle_vin,
-          COALESCE(
-            (
-              SELECT MIN(active.trip_end)
-              FROM trips active
-              LEFT JOIN vehicles active_v
-                ON active_v.turo_vehicle_id = active.turo_vehicle_id
-              WHERE COALESCE(active.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
-                AND COALESCE(active.status, '') <> 'canceled'
-                AND COALESCE(active.closed_out, false) = false
-                AND active.trip_start <= NOW()
-                AND active.trip_end > NOW()
-                AND (
-                  (
-                    t.turo_vehicle_id IS NOT NULL
-                    AND active.turo_vehicle_id = t.turo_vehicle_id
-                  )
-                  OR (
-                    mt.vehicle_vin IS NOT NULL
-                    AND active_v.vin = mt.vehicle_vin
-                  )
-                  OR (
-                    COALESCE(t.vehicle_name, '') <> ''
-                    AND LOWER(COALESCE(active.vehicle_name, '')) = LOWER(t.vehicle_name)
-                  )
-                )
-            ),
-            NOW()
-          ) AS maintenance_available_at,
           COUNT(*) AS open_task_count,
           MAX(mt.created_at) AS latest_task_created_at,
           jsonb_agg(
@@ -772,46 +1301,115 @@ router.get("/", async (req, res) => {
               mt.id DESC
           ) AS tasks
         FROM maintenance_tasks mt
-        JOIN trips t
-          ON t.id = mt.related_trip_id
         LEFT JOIN vehicles v
           ON v.vin = mt.vehicle_vin
+        LEFT JOIN trips related_trip
+          ON related_trip.id = mt.related_trip_id
         WHERE mt.status = ANY($1::text[])
-          AND t.trip_end > NOW()
-          AND COALESCE(t.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
-          AND COALESCE(t.status, '') <> 'canceled'
-          AND COALESCE(t.closed_out, false) = false
+          AND COALESCE(v.is_active, true) = true
+          AND COALESCE(v.in_service, true) = true
         GROUP BY
           COALESCE(
-            NULLIF(CAST(t.turo_vehicle_id AS text), ''),
+            NULLIF(v.turo_vehicle_id, ''),
+            NULLIF(CAST(related_trip.turo_vehicle_id AS text), ''),
             NULLIF(mt.vehicle_vin, ''),
-            LOWER(NULLIF(COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin), ''))
+            LOWER(NULLIF(COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
           ),
-          t.id,
-          t.reservation_id,
-          t.guest_name,
-          t.trip_start,
-          t.trip_end,
-          t.workflow_stage,
-          t.status,
-          t.turo_vehicle_id,
-          COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin),
+          COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin),
           mt.vehicle_vin
       ),
-      ranked_trip_tasks AS (
+      scheduled_vehicle_tasks AS (
         SELECT
-          trip_tasks.*,
-          ROW_NUMBER() OVER (
-            PARTITION BY vehicle_key
-            ORDER BY
-              trip_start ASC NULLS LAST,
-              trip_id ASC
-          ) AS rn
-        FROM trip_tasks
+          open_vehicle_tasks.vehicle_key,
+          COALESCE(next_trip.id, active_trip.id) AS trip_id,
+          COALESCE(next_trip.reservation_id, active_trip.reservation_id) AS reservation_id,
+          COALESCE(next_trip.guest_name, active_trip.guest_name) AS guest_name,
+          COALESCE(next_trip.trip_start, active_trip.trip_start) AS trip_start,
+          COALESCE(next_trip.trip_end, active_trip.trip_end) AS trip_end,
+          COALESCE(next_trip.workflow_stage, active_trip.workflow_stage) AS workflow_stage,
+          COALESCE(next_trip.status, active_trip.status) AS trip_status,
+          open_vehicle_tasks.vehicle_name,
+          open_vehicle_tasks.vehicle_vin,
+          CASE
+            WHEN active_trip.id IS NOT NULL THEN active_trip.trip_end
+            ELSE next_trip.trip_start
+          END AS maintenance_available_at,
+          open_vehicle_tasks.open_task_count,
+          open_vehicle_tasks.latest_task_created_at,
+          open_vehicle_tasks.tasks
+        FROM open_vehicle_tasks
+        LEFT JOIN LATERAL (
+          SELECT
+            active.id,
+            active.reservation_id,
+            active.guest_name,
+            active.trip_start,
+            active.trip_end,
+            active.workflow_stage,
+            active.status
+          FROM trips active
+          LEFT JOIN vehicles active_v
+            ON active_v.turo_vehicle_id = active.turo_vehicle_id
+          WHERE active.trip_start <= NOW()
+            AND active.trip_end > NOW()
+            AND COALESCE(active.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
+            AND COALESCE(active.status, '') <> 'canceled'
+            AND COALESCE(active.closed_out, false) = false
+            AND (
+              (
+                active.turo_vehicle_id IS NOT NULL
+                AND NULLIF(CAST(active.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
+              )
+              OR (
+                open_vehicle_tasks.vehicle_vin IS NOT NULL
+                AND active_v.vin = open_vehicle_tasks.vehicle_vin
+              )
+              OR (
+                COALESCE(active.vehicle_name, '') <> ''
+                AND LOWER(active.vehicle_name) = LOWER(open_vehicle_tasks.vehicle_name)
+              )
+            )
+          ORDER BY active.trip_start ASC NULLS LAST, active.id ASC
+          LIMIT 1
+        ) active_trip ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            upcoming.id,
+            upcoming.reservation_id,
+            upcoming.guest_name,
+            upcoming.trip_start,
+            upcoming.trip_end,
+            upcoming.workflow_stage,
+            upcoming.status
+          FROM trips upcoming
+          LEFT JOIN vehicles upcoming_v
+            ON upcoming_v.turo_vehicle_id = upcoming.turo_vehicle_id
+          WHERE active_trip.id IS NULL
+            AND upcoming.trip_start > NOW()
+            AND COALESCE(upcoming.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
+            AND COALESCE(upcoming.status, '') <> 'canceled'
+            AND COALESCE(upcoming.closed_out, false) = false
+            AND (
+              (
+                upcoming.turo_vehicle_id IS NOT NULL
+                AND NULLIF(CAST(upcoming.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
+              )
+              OR (
+                open_vehicle_tasks.vehicle_vin IS NOT NULL
+                AND upcoming_v.vin = open_vehicle_tasks.vehicle_vin
+              )
+              OR (
+                COALESCE(upcoming.vehicle_name, '') <> ''
+                AND LOWER(upcoming.vehicle_name) = LOWER(open_vehicle_tasks.vehicle_name)
+              )
+            )
+          ORDER BY upcoming.trip_start ASC NULLS LAST, upcoming.id ASC
+          LIMIT 1
+        ) next_trip ON true
+        WHERE COALESCE(next_trip.id, active_trip.id) IS NOT NULL
       )
       SELECT *
-      FROM ranked_trip_tasks
-      WHERE rn = 1
+      FROM scheduled_vehicle_tasks
     `;
 
     const handoffSql = `
@@ -1112,6 +1710,7 @@ router.get("/", async (req, res) => {
       lateTollResult,
       overlapResult,
       messagesResult,
+      unmatchedNotificationsResult,
       maintenanceResult,
     ] = await Promise.all([
       db.query(handoffSql),
@@ -1120,6 +1719,7 @@ router.get("/", async (req, res) => {
       db.query(lateTollSql),
       db.query(overlapSql),
       db.query(messagesSql, [candidateLimit]),
+      db.query(unmatchedNotificationsSql),
       db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES]),
     ]);
 
@@ -1130,6 +1730,7 @@ router.get("/", async (req, res) => {
       ...lateTollResult.rows.map(mapLateTollNoticeRow),
       ...overlapResult.rows.map(mapTripOverlapNoticeRow),
       ...messagesResult.rows.map(mapMessageRow),
+      ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
       ...maintenanceResult.rows.map(mapMaintenanceNoticeRow),
     ]
       .sort(compareQueueItems)

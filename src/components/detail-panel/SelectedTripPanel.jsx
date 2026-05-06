@@ -121,6 +121,7 @@ export default function SelectedTripPanel({
     ending_odometer: "",
     expense_status: "pending",
     fuel_reimbursement_total: "",
+    ticket_reimbursed: "",
     has_tolls: false,
     toll_count: "",
     toll_total: "",
@@ -143,6 +144,7 @@ export default function SelectedTripPanel({
       ),
       expense_status: selectedTrip?.expense_status || "pending",
       fuel_reimbursement_total: toFieldValue(selectedTrip?.fuel_reimbursement_total),
+      ticket_reimbursed: toFieldValue(selectedTrip?.ticket_reimbursed),
       has_tolls: Boolean(selectedTrip?.has_tolls),
       toll_count: toFieldValue(selectedTrip?.toll_count),
       toll_total: toFieldValue(selectedTrip?.toll_total),
@@ -177,6 +179,7 @@ export default function SelectedTripPanel({
   const tollCount = Number(selectedTrip?.toll_count ?? 0);
   const tollStatus = String(selectedTrip?.toll_review_status || "none").toLowerCase();
   const fuelReimbursement = Number(selectedTrip?.fuel_reimbursement_total ?? 0);
+  const ticketReimbursement = Number(selectedTrip?.ticket_reimbursed ?? 0);
   const tripEndMs = selectedTrip?.trip_end
     ? new Date(selectedTrip.trip_end).getTime()
     : NaN;
@@ -300,6 +303,7 @@ export default function SelectedTripPanel({
       ending_odometer: toNullableNumber(merged.ending_odometer),
       expense_status: merged.expense_status || "pending",
       fuel_reimbursement_total: toNullableNumber(merged.fuel_reimbursement_total),
+      ticket_reimbursed: toNullableNumber(merged.ticket_reimbursed),
       has_tolls: hasTollsPayload,
       toll_count: hasTollsPayload ? toNullableNumber(merged.toll_count) ?? 0 : 0,
       toll_total: hasTollsPayload ? toNullableNumber(merged.toll_total) ?? 0 : 0,
@@ -338,6 +342,9 @@ export default function SelectedTripPanel({
         fuel_reimbursement_total: toFieldValue(
           savedTrip.fuel_reimbursement_total ??
             optimisticForm.fuel_reimbursement_total
+        ),
+        ticket_reimbursed: toFieldValue(
+          savedTrip.ticket_reimbursed ?? optimisticForm.ticket_reimbursed
         ),
         has_tolls: Boolean(savedTrip.has_tolls ?? optimisticPayload.has_tolls),
         toll_count: toFieldValue(savedTrip.toll_count ?? optimisticPayload.toll_count),
@@ -599,6 +606,19 @@ function renderLocationLink(vehicle) {
                 />
               </label>
 
+              <label className="detail-closeout-field">
+                <span>Tickets</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={closeoutForm.ticket_reimbursed}
+                  onChange={(event) =>
+                    updateCloseoutField("ticket_reimbursed", event.target.value)
+                  }
+                />
+              </label>
+
               <label className="detail-closeout-field detail-closeout-checkfield">
                 <span>Has tolls</span>
                 <input
@@ -786,10 +806,17 @@ function renderLocationLink(vehicle) {
             ) : null}
 
             {showFuelFields ? (
-              <div className="detail-row">
-                <span>Fuel reimbursement</span>
-                <strong>{fuelReimbursement > 0 ? formatMoney(fuelReimbursement) : "—"}</strong>
-              </div>
+              <>
+                <div className="detail-row">
+                  <span>Fuel reimbursement</span>
+                  <strong>{fuelReimbursement > 0 ? formatMoney(fuelReimbursement) : "—"}</strong>
+                </div>
+
+                <div className="detail-row">
+                  <span>Tickets</span>
+                  <strong>{ticketReimbursement > 0 ? formatMoney(ticketReimbursement) : "—"}</strong>
+                </div>
+              </>
             ) : null}
           </div>
 

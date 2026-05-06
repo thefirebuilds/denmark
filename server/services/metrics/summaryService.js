@@ -53,7 +53,8 @@ async function fetchTripsInRange(client, startDate, endDate) {
         t.expense_status,
         t.completed_at,
         t.canceled_at,
-        tf.cleaning_reimbursed
+        tf.cleaning_reimbursed,
+        tf.ticket_reimbursed
       FROM trips t
       LEFT JOIN vehicles v
         ON t.turo_vehicle_id IS NOT NULL
@@ -71,6 +72,17 @@ async function fetchTripsInRange(client, startDate, endDate) {
   );
 
   return rows.filter((trip) => tripOverlapsRange(trip, startDate, endDate));
+}
+
+async function fetchActiveVehicleCount(client) {
+  const { rows } = await client.query(`
+    SELECT COUNT(*)::integer AS count
+    FROM vehicles
+    WHERE COALESCE(is_active, true) = true
+      AND COALESCE(in_service, true) = true
+  `);
+
+  return Number(rows[0]?.count ?? 0);
 }
 
 async function fetchIncomeTransactionsInRange(client, startDate, endDate) {
@@ -91,6 +103,35 @@ async function fetchIncomeTransactionsInRange(client, startDate, endDate) {
         income_type
       FROM income_transactions
       WHERE ${dateClause}
+    `,
+    params
+  );
+
+  return rows;
+}
+
+async function fetchPaymentNoticesInRange(client, startDate, endDate) {
+  const params = [endDate];
+  const dateClause = startDate
+    ? `COALESCE(message_timestamp, ingested_at) >= $2::timestamptz
+        AND COALESCE(message_timestamp, ingested_at) <= $1::timestamptz`
+    : `COALESCE(message_timestamp, ingested_at) <= $1::timestamptz`;
+
+  if (startDate) params.push(startDate);
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        id,
+        reservation_id,
+        amount,
+        message_timestamp,
+        ingested_at
+      FROM messages
+      WHERE message_type = 'payment_notice'
+        AND amount IS NOT NULL
+        AND ${dateClause}
+      ORDER BY COALESCE(message_timestamp, ingested_at) ASC, id ASC
     `,
     params
   );
@@ -169,8 +210,28 @@ function getTripTuroOutputValue(trip) {
     Number(trip?.amount ?? 0) +
     Number(trip?.fuel_reimbursement_total ?? 0) +
     Number(tollRevenue ?? 0) +
-    Number(trip?.cleaning_reimbursed ?? 0)
+    Number(trip?.cleaning_reimbursed ?? 0) +
+    Number(trip?.ticket_reimbursed ?? 0)
   );
+}
+
+function getPreviousDateRange(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return { startDate: null, endDate: null };
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const days = getCalendarDaysInRange(start, end);
+  const previousEnd = new Date(start);
+  previousEnd.setDate(previousEnd.getDate() - 1);
+  previousEnd.setHours(23, 59, 59, 999);
+
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(previousStart.getDate() - days + 1);
+  previousStart.setHours(0, 0, 0, 0);
+
+  return { startDate: previousStart, endDate: previousEnd };
 }
 
 function addDaysToDate(value, days) {
@@ -287,6 +348,53 @@ function buildIncomeReconciliationBuckets(trips, incomeTransactions, startDate, 
       expected: roundMoney(bucket.expected),
       income: roundMoney(bucket.income),
       variance: roundMoney(bucket.income - bucket.expected),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function buildPaymentNoticeReconciliationBuckets(
+  paymentNotices,
+  incomeTransactions,
+  startDate,
+  endDate
+) {
+  const buckets = new Map();
+
+  function getBucket(dateKey) {
+    if (!dateKey) return null;
+    if (!buckets.has(dateKey)) {
+      buckets.set(dateKey, {
+        date: dateKey,
+        payment_notices: 0,
+        income: 0,
+        variance: 0,
+        payment_notice_count: 0,
+        income_count: 0,
+      });
+    }
+    return buckets.get(dateKey);
+  }
+
+  for (const notice of paymentNotices || []) {
+    const bucket = getBucket(toDateKey(notice?.message_timestamp || notice?.ingested_at));
+    if (!bucket) continue;
+    bucket.payment_notices += Number(notice?.amount ?? 0);
+    bucket.payment_notice_count += 1;
+  }
+
+  for (const item of incomeTransactions || []) {
+    const bucket = getBucket(toDateKey(item?.income_date));
+    if (!bucket) continue;
+    bucket.income += Number(item?.amount ?? 0);
+    bucket.income_count += 1;
+  }
+
+  return Array.from(buckets.values())
+    .map((bucket) => ({
+      ...bucket,
+      payment_notices: roundMoney(bucket.payment_notices),
+      income: roundMoney(bucket.income),
+      variance: roundMoney(bucket.income - bucket.payment_notices),
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -718,27 +826,42 @@ async function getTollMetricsDetail(rangeKey = "30d") {
 
 async function getSummaryMetrics(rangeKey = "30d") {
   const { key, startDate, endDate } = getDateRange(rangeKey);
+  const previousRange = getPreviousDateRange(startDate, endDate);
   const client = await pool.connect();
 
   try {
-    const [
-      trips,
-      incomeTransactions,
-      expenses,
-      latestFmvEstimates,
-      tollCharges,
-      vehicleMetricsPayload,
-    ] = await Promise.all([
-      fetchTripsInRange(client, startDate, endDate),
-      fetchIncomeTransactionsInRange(client, startDate, endDate),
-      fetchExpensesInRange(client, startDate, endDate),
-      getLatestVehicleFmvEstimates(client),
-      fetchTollChargesInRange(client, startDate, endDate),
-      getVehicleMetrics(key),
-    ]);
+    const trips = await fetchTripsInRange(client, startDate, endDate);
+    const previousTrips = previousRange.startDate
+      ? await fetchTripsInRange(client, previousRange.startDate, previousRange.endDate)
+      : [];
+    const incomeTransactions = await fetchIncomeTransactionsInRange(
+      client,
+      startDate,
+      endDate
+    );
+    const paymentNotices = await fetchPaymentNoticesInRange(
+      client,
+      startDate,
+      endDate
+    );
+    const expenses = await fetchExpensesInRange(client, startDate, endDate);
+    const activeVehicleCount = await fetchActiveVehicleCount(client);
+    const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
+    const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
+    const vehicleMetricsPayload = await getVehicleMetrics(key);
 
     const tripIncome = trips.reduce(
       (sum, trip) => sum + getTripProratedAmount(trip, startDate, endDate),
+      0
+    );
+    const previousTripIncome = previousTrips.reduce(
+      (sum, trip) =>
+        sum +
+        getTripProratedAmount(
+          trip,
+          previousRange.startDate,
+          previousRange.endDate
+        ),
       0
     );
     const fuelReimbursements = trips.reduce(
@@ -746,9 +869,29 @@ async function getSummaryMetrics(rangeKey = "30d") {
         sum + getTripFuelReimbursementValue(trip, startDate, endDate),
       0
     );
+    const previousFuelReimbursements = previousTrips.reduce(
+      (sum, trip) =>
+        sum +
+        getTripFuelReimbursementValue(
+          trip,
+          previousRange.startDate,
+          previousRange.endDate
+        ),
+      0
+    );
     const tollRevenue = trips.reduce(
       (sum, trip) =>
         sum + getTripRecognizedTollRevenueValue(trip, startDate, endDate),
+      0
+    );
+    const previousTollRevenue = previousTrips.reduce(
+      (sum, trip) =>
+        sum +
+        getTripRecognizedTollRevenueValue(
+          trip,
+          previousRange.startDate,
+          previousRange.endDate
+        ),
       0
     );
     const incomeReconciliationBuckets = buildIncomeReconciliationBuckets(
@@ -759,6 +902,20 @@ async function getSummaryMetrics(rangeKey = "30d") {
     );
     const largestIncomeReconciliationGap = getLargestIncomeReconciliationGap(
       incomeReconciliationBuckets
+    );
+    const paymentNoticeTotal = paymentNotices.reduce(
+      (sum, item) => sum + Number(item?.amount ?? 0),
+      0
+    );
+    const paymentNoticeReconciliationBuckets =
+      buildPaymentNoticeReconciliationBuckets(
+        paymentNotices,
+        incomeTransactions,
+        startDate,
+        endDate
+      );
+    const largestPaymentNoticeGap = getLargestIncomeReconciliationGap(
+      paymentNoticeReconciliationBuckets
     );
     const turoOutputTripIncome = trips.reduce(
       (sum, trip) => sum + Number(trip?.amount ?? 0),
@@ -775,6 +932,10 @@ async function getSummaryMetrics(rangeKey = "30d") {
     }, 0);
     const turoOutputCleaningReimbursements = trips.reduce(
       (sum, trip) => sum + Number(trip?.cleaning_reimbursed ?? 0),
+      0
+    );
+    const turoOutputTicketReimbursements = trips.reduce(
+      (sum, trip) => sum + Number(trip?.ticket_reimbursed ?? 0),
       0
     );
     const turoOutputTotal = trips.reduce(
@@ -805,6 +966,17 @@ async function getSummaryMetrics(rangeKey = "30d") {
         sum + getOverlapDays(trip.trip_start, trip.trip_end, startDate, endDate),
       0
     );
+    const previousBookedVehicleDays = previousTrips.reduce(
+      (sum, trip) =>
+        sum +
+        getOverlapDays(
+          trip.trip_start,
+          trip.trip_end,
+          previousRange.startDate,
+          previousRange.endDate
+        ),
+      0
+    );
 
     const fleetCalendarDaysAvailable = Array.isArray(vehicleMetricsPayload?.vehicles)
       ? vehicleMetricsPayload.vehicles.reduce(
@@ -829,6 +1001,15 @@ async function getSummaryMetrics(rangeKey = "30d") {
               : 0;
           })()
         : getCalendarDaysInRange(startDate, endDate);
+    const previousCalendarDays = previousRange.startDate
+      ? getCalendarDaysInRange(previousRange.startDate, previousRange.endDate)
+      : 0;
+    const occupancyRate = safeDivide(bookedVehicleDays, fleetCalendarDaysAvailable);
+    const previousOccupancyRate = safeDivide(
+      previousBookedVehicleDays,
+      activeVehicleCount * previousCalendarDays
+    );
+    const occupancyRateDelta = occupancyRate - previousOccupancyRate;
 
     const expensesTotal = expenses.reduce(
       (sum, expense) => sum + getExpenseTotal(expense),
@@ -901,6 +1082,15 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
 
     const otherIncome = fuelReimbursements + tollRevenue;
     const revenue = tripIncome + otherIncome;
+    const previousOtherIncome = previousFuelReimbursements + previousTollRevenue;
+    const previousRevenue = previousTripIncome + previousOtherIncome;
+    const revenuePerCalendarDay = safeDivide(revenue, calendarDays);
+    const previousRevenuePerCalendarDay = safeDivide(
+      previousRevenue,
+      previousCalendarDays
+    );
+    const revenuePerCalendarDayDelta =
+      revenuePerCalendarDay - previousRevenuePerCalendarDay;
     const netProfit = revenue - expensesTotal;
     const fleetValue = latestFmvEstimates.reduce(
       (sum, estimate) => sum + Number(estimate?.estimate_mid ?? 0),
@@ -924,6 +1114,8 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
     return {
       range: key,
       revenue: roundMoney(revenue),
+      previous_revenue: roundMoney(previousRevenue),
+      revenue_delta: roundMoney(revenue - previousRevenue),
       trip_income: roundMoney(tripIncome),
       other_income: roundMoney(otherIncome),
       fuel_reimbursements: roundMoney(fuelReimbursements),
@@ -935,6 +1127,9 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       turo_output_cleaning_reimbursements: roundMoney(
         turoOutputCleaningReimbursements
       ),
+      turo_output_ticket_reimbursements: roundMoney(
+        turoOutputTicketReimbursements
+      ),
       scheduled_turo_output_total: roundMoney(scheduledTuroOutputTotal),
       turo_output_deferred_total: roundMoney(turoOutputDeferredTotal),
       income_category_total: roundMoney(incomeCategoryTotal),
@@ -945,6 +1140,16 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       income_transaction_count: incomeTransactions.length,
       income_reconciliation_buckets: incomeReconciliationBuckets,
       income_reconciliation_largest_gap: largestIncomeReconciliationGap,
+      payment_notice_total: roundMoney(paymentNoticeTotal),
+      payment_notice_count: paymentNotices.length,
+      payment_notice_vs_income_variance: roundMoney(
+        incomeCategoryTotal - paymentNoticeTotal
+      ),
+      payment_notice_vs_expected_variance: roundMoney(
+        paymentNoticeTotal - scheduledTuroOutputTotal
+      ),
+      payment_notice_reconciliation_buckets: paymentNoticeReconciliationBuckets,
+      payment_notice_reconciliation_largest_gap: largestPaymentNoticeGap,
       expenses: roundMoney(expensesTotal),
       net_profit: roundMoney(netProfit),
       fleet_value: roundMoney(fleetValue),
@@ -958,6 +1163,17 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       booked_vehicle_days: bookedVehicleDays,
       calendar_days: calendarDays,
       fleet_calendar_days_available: fleetCalendarDaysAvailable,
+      occupancy_rate: roundNumber(occupancyRate, 4),
+      previous_occupancy_rate: roundNumber(previousOccupancyRate, 4),
+      occupancy_rate_delta: roundNumber(occupancyRateDelta, 4),
+      occupancy_previous_period: previousRange.startDate
+        ? {
+            start_date: previousRange.startDate.toISOString(),
+            end_date: previousRange.endDate.toISOString(),
+            booked_vehicle_days: roundNumber(previousBookedVehicleDays, 2),
+            calendar_days: previousCalendarDays,
+          }
+        : null,
 
       revenue_per_overlapping_trip: roundMoney(
         safeDivide(revenue, tripCountOverlapping)
@@ -969,8 +1185,23 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
         safeDivide(revenue, bookedVehicleDays)
       ),
       revenue_per_calendar_day: roundMoney(
-        safeDivide(revenue, calendarDays)
+        revenuePerCalendarDay
       ),
+      previous_revenue_per_calendar_day: roundMoney(
+        previousRevenuePerCalendarDay
+      ),
+      revenue_per_calendar_day_delta: roundMoney(
+        revenuePerCalendarDayDelta
+      ),
+      revenue_previous_period: previousRange.startDate
+        ? {
+            start_date: previousRange.startDate.toISOString(),
+            end_date: previousRange.endDate.toISOString(),
+            revenue: roundMoney(previousRevenue),
+            revenue_per_calendar_day: roundMoney(previousRevenuePerCalendarDay),
+            calendar_days: previousCalendarDays,
+          }
+        : null,
 
       cleaning_cost_per_overlapping_trip: roundMoney(
         safeDivide(cleaningTotal, tripCountOverlapping)

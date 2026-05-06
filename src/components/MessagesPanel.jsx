@@ -78,6 +78,17 @@ function formatTripTime(value) {
   });
 }
 
+function formatBridgeHeartbeat(heartbeat) {
+  if (!heartbeat?.received_at) return "Bridge heartbeat: none";
+
+  const age = Number(heartbeat.age_minutes);
+  if (Number.isFinite(age)) {
+    return `Bridge heartbeat: ${Math.round(age)} min ago`;
+  }
+
+  return `Bridge heartbeat: ${formatTripTime(heartbeat.received_at)}`;
+}
+
 function formatTripWindow(start, end) {
   const startLabel = formatTripTime(start);
   const endLabel = formatTripTime(end);
@@ -317,7 +328,9 @@ function getMaintenanceTaskMode(message) {
     String(task?.task_type || "").toLowerCase().startsWith("post_trip")
   );
 
-  return hasPostTrip ? "after" : "before";
+  return hasPostTrip && getMaintenanceTripState(message) === "active"
+    ? "after"
+    : "before";
 }
 
 function getMaintenanceNoticeCopy(message) {
@@ -411,6 +424,21 @@ function buildMessageBody(message) {
     }. Check the trip dates and correct the bad reservation window.`;
   }
 
+  if (type === "notification_unmatched") {
+    const received = formatTripTime(message?.notification_received_at);
+    const classification = message?.notification_classification
+      ? ` (${message.notification_classification})`
+      : "";
+    const body =
+      message?.notification_body ||
+      message?.notification_title ||
+      "The Android bridge saw a Turo notification, but no matching email/message was found.";
+
+    return `Bridge saw this Turo notification${classification}${
+      received ? ` at ${received}` : ""
+    }, but the email/message table has no match yet. ${body}`;
+  }
+
   if (type === "maintenance_required") {
     const count = Number(message?.maintenance_task_count || 0);
     const copy = getMaintenanceNoticeCopy(message);
@@ -480,6 +508,10 @@ function formatTimeAgo(timestamp) {
 
 function buildMessageTitle(message) {
   const type = message?.type || message?.message_type;
+  if (type === "notification_unmatched") {
+    return message?.notification_title || "Turo notification missing email";
+  }
+
   if (type === "trip_overlap_detected") {
     return message?.vehicle_nickname || message?.vehicle_name || "Overlapping trips";
   }
@@ -502,6 +534,7 @@ function buildMessageSub(message) {
   if (type === "closeout_required") return "Trip closeout needed";
   if (type === "late_toll_unbilled") return "Late toll billing needed";
   if (type === "trip_overlap_detected") return "Trip overlap detected";
+  if (type === "notification_unmatched") return "Urgent bridge/email mismatch";
   if (type === "guest_message") return "Guest message";
   if (type === "trip_booked") return "Trip booked";
   if (type === "maintenance_required") return "Maintenance required";
@@ -588,6 +621,11 @@ function isLateTollTask(message) {
 function isTripOverlapTask(message) {
   const type = message?.type || message?.message_type;
   return type === "trip_overlap_detected" && message?.trip_id;
+}
+
+function isUnmatchedNotification(message) {
+  const type = message?.type || message?.message_type;
+  return type === "notification_unmatched";
 }
 
 function isCompletableSyntheticTask(message) {
@@ -801,6 +839,8 @@ export default function MessagesPanel({
   const [error, setError] = useState("");
   const [newMessageIds, setNewMessageIds] = useState([]);
   const [unreadCount, setUnreadCount] = useState(Number(initialUnreadCount || 0));
+  const [bridgeHeartbeat, setBridgeHeartbeat] = useState(null);
+  const [unmatchedNotificationCount, setUnmatchedNotificationCount] = useState(0);
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [confirmingMessageId, setConfirmingMessageId] = useState(null);
   const [focusingMessageId, setFocusingMessageId] = useState(null);
@@ -843,6 +883,8 @@ export default function MessagesPanel({
       const stats = await res.json();
 
       setUnreadCount(Number(stats.unread || 0));
+      setBridgeHeartbeat(stats.bridgeHeartbeat || null);
+      setUnmatchedNotificationCount(Number(stats.unmatchedNotifications || 0));
     } catch (err) {
       console.error("Failed loading message stats:", err);
     }
@@ -1468,6 +1510,18 @@ async function handleExportGuestInspectionSheet(message) {
         </div>
 
         <div className="chip">{unreadCount} unread</div>
+        <div
+          className={`chip bridge-heartbeat ${
+            bridgeHeartbeat?.stale ? "bridge-heartbeat--stale" : ""
+          }`}
+        >
+          {formatBridgeHeartbeat(bridgeHeartbeat)}
+        </div>
+        {unmatchedNotificationCount > 0 && (
+          <div className="chip notification-gap-chip">
+            {unmatchedNotificationCount} Bridge Notifications
+          </div>
+        )}
 
         {showingTripMessages && (
           <button
@@ -1499,6 +1553,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canCloseoutTrip = isCloseoutTask(message);
             const canReviewLateToll = isLateTollTask(message);
             const canReviewOverlap = isTripOverlapTask(message);
+            const canReviewUnmatchedNotification = isUnmatchedNotification(message);
             const canConfirmBooking = isBookingConfirmationTask(message);
             const canShowMaintenance = isMaintenanceNotice(message);
             const canCompleteSyntheticTask = isCompletableSyntheticTask(message);
@@ -1509,6 +1564,7 @@ async function handleExportGuestInspectionSheet(message) {
                 canCloseoutTrip ||
                 canReviewLateToll ||
                 canReviewOverlap ||
+                canReviewUnmatchedNotification ||
                 canConfirmBooking ||
                 canShowMaintenance) &&
               Boolean(message.trip_id);
@@ -1551,6 +1607,7 @@ async function handleExportGuestInspectionSheet(message) {
                   isNew ? "message-new" : ""
                 } ${canFocusTrip ? "message-focusable" : ""} ${
                   canCloseoutTrip ? "message-closeout-guide" : ""
+                } ${canReviewUnmatchedNotification ? "message-notification-gap" : ""
                 }`}
                 onClick={() => {
                   if (canShowMaintenance) {
@@ -1575,6 +1632,33 @@ async function handleExportGuestInspectionSheet(message) {
                 </div>
 
                 <div className="message-body">{buildMessageBody(message)}</div>
+
+                {canReviewUnmatchedNotification && (
+                  <div className="message-booking-task message-notification-gap-detail">
+                    <div className="message-booking-title">
+                      Notification arrived without a matching email
+                      <span>{message.notification_device || "bridge device"}</span>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Received</span>
+                      <strong>
+                        {formatTripTime(message.notification_received_at) || "Unknown"}
+                      </strong>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Classification</span>
+                      <strong>
+                        {message.notification_classification || "unknown"}
+                      </strong>
+                    </div>
+                    {message.reservation_id ? (
+                      <div className="message-maintenance-plan-date">
+                        <span>Reservation</span>
+                        <strong>#{message.reservation_id}</strong>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
 
                 {canAdvanceHandoff && (
                   <div className="message-booking-task">
@@ -1861,6 +1945,8 @@ async function handleExportGuestInspectionSheet(message) {
                           ? "Review tolls"
                           : canReviewOverlap
                           ? "Review overlap"
+                          : canReviewUnmatchedNotification
+                          ? "Open linked trip"
                           : canShowMaintenance || canAdvanceHandoff || canExportInspection
                           ? "View trip"
                           : "Verify details"}

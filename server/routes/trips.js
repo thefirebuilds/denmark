@@ -336,6 +336,7 @@ const TRIP_SELECT = `
     t.toll_charged_total,
     t.toll_review_status,
     t.fuel_reimbursement_total,
+    tf.ticket_reimbursed,
     t.max_engine_rpm,
     ti.updated_at,
     ti.message_count,
@@ -364,6 +365,8 @@ const TRIP_SELECT = `
     ON t.id = ti.id
   LEFT JOIN vehicles v
     ON v.turo_vehicle_id = t.turo_vehicle_id
+  LEFT JOIN trip_financial_facts tf
+    ON tf.trip_id = t.id
 `;
 
 router.get("/", async (req, res) => {
@@ -678,6 +681,7 @@ router.patch("/:id", async (req, res) => {
     toll_total,
     toll_review_status,
     fuel_reimbursement_total,
+    ticket_reimbursed,
     expense_status,
     closed_out,
     closed_out_at,
@@ -709,6 +713,11 @@ router.patch("/:id", async (req, res) => {
       : normalizeTollReviewStatus(toll_review_status, effectiveHasTolls);
 
   const normalizedClosedOut = toNullableBoolean(closed_out);
+  const normalizedTicketReimbursed = toNullableNumber(ticket_reimbursed);
+  const ticketFieldWasProvided = Object.prototype.hasOwnProperty.call(
+    req.body || {},
+    "ticket_reimbursed"
+  );
   const normalizedExpenseStatus =
     typeof expense_status === "string" && expense_status.trim() !== ""
       ? expense_status.trim().toLowerCase()
@@ -856,6 +865,46 @@ router.patch("/:id", async (req, res) => {
     if (updateResult.rowCount === 0) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Trip not found" });
+    }
+
+    if (ticketFieldWasProvided) {
+      await client.query(
+        `
+          INSERT INTO trip_financial_facts (
+            trip_id,
+            reservation_id,
+            vehicle_id,
+            ticket_reimbursed,
+            source_payload,
+            created_at,
+            updated_at
+          )
+          SELECT
+            t.id,
+            t.reservation_id,
+            v.id,
+            $2::numeric,
+            jsonb_build_object(
+              'manual_ticket_update', true,
+              'source', 'trip_reconciliation',
+              'updated_at', NOW()
+            ),
+            NOW(),
+            NOW()
+          FROM trips t
+          LEFT JOIN vehicles v
+            ON CAST(v.turo_vehicle_id AS text) = CAST(t.turo_vehicle_id AS text)
+          WHERE t.id = $1
+          ON CONFLICT (trip_id)
+          DO UPDATE SET
+            ticket_reimbursed = EXCLUDED.ticket_reimbursed,
+            source_payload =
+              COALESCE(trip_financial_facts.source_payload, '{}'::jsonb) ||
+              EXCLUDED.source_payload,
+            updated_at = NOW()
+        `,
+        [tripId, normalizedTicketReimbursed]
+      );
     }
 
     const proposedTrip = {

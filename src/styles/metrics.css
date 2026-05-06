@@ -125,6 +125,17 @@
    Shared section headers
 -------------------------------------------------------------- */
 
+.metrics-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(34, 48, 77, 0.72);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.008)),
+    rgba(8, 13, 24, 0.22);
+}
+
 .metrics-section-header,
 .toll-panel__header {
   display: flex;

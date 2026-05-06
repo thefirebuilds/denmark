@@ -223,6 +223,7 @@ async function ensureBusinessMetricsTables(client = pool) {
           tolls_collected NUMERIC(10,2),
           fuel_reimbursed NUMERIC(10,2),
           cleaning_reimbursed NUMERIC(10,2),
+          ticket_reimbursed NUMERIC(10,2),
           smoking_reimbursed NUMERIC(10,2),
           actual_tolls NUMERIC(10,2),
           actual_fuel_cost NUMERIC(10,2),
@@ -296,6 +297,11 @@ async function ensureBusinessMetricsTables(client = pool) {
           summary TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+      `);
+
+      await client.query(`
+        ALTER TABLE public.trip_financial_facts
+          ADD COLUMN IF NOT EXISTS ticket_reimbursed NUMERIC(10,2);
       `);
 
       await client.query(`
@@ -816,6 +822,7 @@ async function fetchTripsForBusinessMetrics(client, startDate, endDate) {
         tf.tolls_collected,
         tf.fuel_reimbursed,
         tf.cleaning_reimbursed,
+        tf.ticket_reimbursed,
         tf.smoking_reimbursed,
         tf.actual_tolls,
         tf.actual_fuel_cost,
@@ -1305,6 +1312,13 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       startDate,
       endDate
     );
+    const ticketReimbursed = getTripProratedValue(
+      trip.ticket_reimbursed,
+      trip.trip_start,
+      trip.trip_end,
+      startDate,
+      endDate
+    );
     const ownerMinutes =
       toNumber(trip.owner_cleaning_minutes) +
       toNumber(trip.owner_delivery_minutes) +
@@ -1319,7 +1333,11 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     metric.host_payout_total += hostPayout;
     metric.ancillary_revenue_collected += deliveryCollected + extrasCollected;
     metric.reimbursements_collected +=
-      tollsCollected + fuelReimbursed + cleaningReimbursed + smokingReimbursed;
+      tollsCollected +
+      fuelReimbursed +
+      cleaningReimbursed +
+      ticketReimbursed +
+      smokingReimbursed;
     metric.estimated_owner_hours += ownerMinutes / 60;
     metric.days_booked += overlapDays;
     metric.source_metrics.trip_count += 1;

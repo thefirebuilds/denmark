@@ -67,10 +67,28 @@ function formatPercent(value, digits = 0) {
   return `${num.toFixed(digits)}%`;
 }
 
+function formatSignedPercentPoints(value, digits = 1) {
+  const num = Number(value ?? 0) * 100;
+  if (!Number.isFinite(num) || num === 0) return `0.${"0".repeat(digits)} pts`;
+  return `${num > 0 ? "+" : "-"}${Math.abs(num).toFixed(digits)} pts`;
+}
+
+function formatOccupancyTrend(value) {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num) || num === 0) return "Flat vs previous period";
+  return `${num > 0 ? "▲" : "▼"} ${formatSignedPercentPoints(num)} vs previous period`;
+}
+
 function formatValueTrend(value) {
   const amount = Number(value ?? 0);
   if (!Number.isFinite(amount) || amount === 0) return "Flat";
   return `${amount > 0 ? "▲" : "▼"} ${formatCurrencyCompact(Math.abs(amount))}`;
+}
+
+function formatCurrencyTrend(value, label = "vs previous period") {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount) || amount === 0) return `Flat ${label}`;
+  return `${amount > 0 ? "▲" : "▼"} ${formatSignedCurrency(amount)} ${label}`;
 }
 
 function formatUpdatedLabel(value) {
@@ -1170,51 +1188,93 @@ const mileageStats = useMemo(() => {
             </div>
           </div>
 
-          <div className="metrics-summary-row">
-            <MetricCard
-              label="Revenue"
-              value={formatCurrency(summary.revenue)}
-            />
+          <section className="metrics-section">
+            <div className="metrics-section-header">
+              <div className="metrics-section-title">Financial Performance</div>
+              <div className="metrics-section-subtitle">
+                Gross revenue, margin, and earning pace for this range
+              </div>
+            </div>
+            <div className="metrics-summary-row">
+              <MetricCard
+                label="Revenue"
+                value={formatCurrency(summary.revenue)}
+                subtitle={formatCurrencyTrend(summary.revenue_delta)}
+                tone={
+                  Number(summary.revenue_delta ?? 0) > 0
+                    ? "positive"
+                    : Number(summary.revenue_delta ?? 0) < 0
+                    ? "warning"
+                    : undefined
+                }
+              />
 
-            <MetricCard
-              label="Net Profit"
-              value={formatCurrency(summary.net_profit)}
-              tone={Number(summary.net_profit) >= 0 ? "positive" : "negative"}
-            />
+              <MetricCard
+                label="Net Profit"
+                value={formatCurrency(summary.net_profit)}
+                tone={Number(summary.net_profit) >= 0 ? "positive" : "negative"}
+              />
 
-            <MetricCard
-              label="Expenses"
-              value={formatCurrency(summary.expenses)}
-            />
+              <MetricCard
+                label="Expenses"
+                value={formatCurrency(summary.expenses)}
+              />
 
-            <MetricCard
-              label="Fleet Value"
-              value={formatCurrency(summary.fleet_value)}
-              subtitle={
-                <>
-                  <div>{formatValueTrend(summary.fleet_value_change)}</div>
-                  <div>{formatUpdatedLabel(summary.fleet_value_updated_at)}</div>
-                </>
-              }
-              tone={
-                Number(summary.fleet_value_change ?? 0) > 0
-                  ? "positive"
-                  : Number(summary.fleet_value_change ?? 0) < 0
-                  ? "negative"
-                  : undefined
-              }
-            />
+              <MetricCard
+                label="Rev / Calendar Day"
+                value={formatCurrencyCompact(summary.revenue_per_calendar_day)}
+                subtitle={formatCurrencyTrend(
+                  summary.revenue_per_calendar_day_delta
+                )}
+                tone={
+                  Number(summary.revenue_per_calendar_day_delta ?? 0) > 0
+                    ? "positive"
+                    : Number(summary.revenue_per_calendar_day_delta ?? 0) < 0
+                    ? "warning"
+                    : undefined
+                }
+              />
 
-            <MetricCard
-              label="Rev / Calendar Day"
-              value={formatCurrencyCompact(summary.revenue_per_calendar_day)}
-            />
+              <MetricCard
+                label="Rev / Booked Day"
+                value={formatCurrencyCompact(summary.revenue_per_booked_day)}
+              />
 
-            <MetricCard
-              label="Rev / Booked Day"
-              value={formatCurrencyCompact(summary.revenue_per_booked_day)}
-            />
-          </div>
+              <MetricCard
+                label="Avg Rev / Trip"
+                value={formatCurrencyCompact(avgRevenuePerTrip)}
+                subtitle={`${formatNumber(summary.trip_count_overlapping)} overlapping trips`}
+              />
+            </div>
+          </section>
+
+          <section className="metrics-section">
+            <div className="metrics-section-header">
+              <div className="metrics-section-title">Fleet Value</div>
+              <div className="metrics-section-subtitle">
+                Market value movement and capital recovery context
+              </div>
+            </div>
+            <div className="metrics-ops-row">
+              <MetricCard
+                label="Fleet Value"
+                value={formatCurrency(summary.fleet_value)}
+                subtitle={
+                  <>
+                    <div>{formatValueTrend(summary.fleet_value_change)}</div>
+                    <div>{formatUpdatedLabel(summary.fleet_value_updated_at)}</div>
+                  </>
+                }
+                tone={
+                  Number(summary.fleet_value_change ?? 0) > 0
+                    ? "positive"
+                    : Number(summary.fleet_value_change ?? 0) < 0
+                    ? "negative"
+                    : undefined
+                }
+              />
+            </div>
+          </section>
 
           {businessMetrics?.fleet_summary ? (
             <section className="metrics-ops-row">
@@ -1340,13 +1400,6 @@ const mileageStats = useMemo(() => {
                     ? "positive"
                     : "negative"
                 }
-              />
-
-              <MetricCard
-                label="Fleet Equity"
-                value={formatCurrency(
-                  businessMetrics.fleet_summary.current_fleet_equity
-                )}
               />
 
               <MetricCard
@@ -1869,111 +1922,176 @@ const mileageStats = useMemo(() => {
           </section>
           ) : null}
 
-          <div className="metrics-ops-row">
-            <MetricCard
-              label="Trips"
-              value={`${formatNumber(summary.trip_count_overlapping)} trips`}
-              subtitle={`${formatNumber(summary.trip_count_prorated, 2)} effective trips`}
-            />
+          <section className="metrics-section">
+            <div className="metrics-section-header">
+              <div className="metrics-section-title">Utilization</div>
+              <div className="metrics-section-subtitle">
+                How hard the fleet worked during the selected range
+              </div>
+            </div>
+            <div className="metrics-ops-row">
+              <MetricCard
+                label="Trips"
+                value={`${formatNumber(summary.trip_count_overlapping)} trips`}
+                subtitle={`${formatNumber(summary.trip_count_prorated, 2)} effective trips`}
+              />
 
-            <MetricCard
-              label="Avg Vehicles Booked / Day"
-              value={formatNumber(avgVehiclesBookedPerDay, 1)}
-              subtitle={`${formatNumber(summary.booked_vehicle_days)} booked days across ${formatNumber(summary.calendar_days)} calendar days`}
-            />
+              <MetricCard
+                label="Avg Vehicles Booked / Day"
+                value={formatNumber(avgVehiclesBookedPerDay, 1)}
+                subtitle={`${formatNumber(summary.booked_vehicle_days)} booked days across ${formatNumber(summary.calendar_days)} calendar days`}
+              />
 
-            <MetricCard
-              label="Cleaning / Trip"
-              value={`${formatCurrencyCompact(summary.cleaning_cost_per_overlapping_trip)} actual`}
-              subtitle={`${formatCurrencyCompact(summary.cleaning_cost_per_prorated_trip)} effective`}
-            />
+              <MetricCard
+                label="Occupancy"
+                value={formatPercent(summary.occupancy_rate, 1)}
+                subtitle={formatOccupancyTrend(summary.occupancy_rate_delta)}
+                tone={
+                  Number(summary.occupancy_rate_delta ?? 0) > 0
+                    ? "positive"
+                    : Number(summary.occupancy_rate_delta ?? 0) < 0
+                    ? "warning"
+                    : "default"
+                }
+              />
 
-            <MetricCard
-              label="Avg Rev / Trip"
-              value={formatCurrencyCompact(avgRevenuePerTrip)}
-              subtitle={`${formatNumber(summary.trip_count_overlapping)} overlapping trips`}
-            />
+              <MetricCard
+                label="Cleaning / Trip"
+                value={`${formatCurrencyCompact(summary.cleaning_cost_per_overlapping_trip)} actual`}
+                subtitle={`${formatCurrencyCompact(summary.cleaning_cost_per_prorated_trip)} effective`}
+              />
+            </div>
+          </section>
 
-            <MetricCard
-              label="Expected Turo vs Income"
-              value={formatSignedCurrency(summary.income_category_variance)}
-              subtitle={
-                <>
-                  <div>
-                    {formatCurrencyCompact(
-                      summary.scheduled_turo_output_total ?? summary.turo_output_total
-                    )} expected / {formatCurrencyCompact(
-                      summary.income_category_total
-                    )} income / {formatCurrencyCompact(
-                      summary.turo_output_deferred_total
-                    )} deferred
-                  </div>
-                  {summary.income_reconciliation_largest_gap ? (
+          <section className="metrics-section">
+            <div className="metrics-section-header">
+              <div className="metrics-section-title">Revenue Reconciliation</div>
+              <div className="metrics-section-subtitle">
+                Turo expectations, bridge payment notices, and bank income
+              </div>
+            </div>
+            <div className="metrics-ops-row">
+              <MetricCard
+                label="Expected Turo vs Income"
+                value={formatSignedCurrency(summary.income_category_variance)}
+                subtitle={
+                  <>
                     <div>
-                      Largest gap {formatShortDate(
-                        summary.income_reconciliation_largest_gap.date
-                      )}: {formatSignedCurrency(
-                        summary.income_reconciliation_largest_gap.variance
-                      )}
+                      {formatCurrencyCompact(
+                        summary.scheduled_turo_output_total ?? summary.turo_output_total
+                      )} expected / {formatCurrencyCompact(
+                        summary.income_category_total
+                      )} income / {formatCurrencyCompact(
+                        summary.turo_output_deferred_total
+                      )} deferred
                     </div>
-                  ) : null}
-                </>
-              }
-              tone={
-                Math.abs(Number(summary.income_category_variance ?? 0)) < 1
-                  ? "positive"
-                  : Number(summary.income_category_variance ?? 0) < 0
-                  ? "warning"
-                  : "default"
-              }
-            />
-          </div>
+                    {summary.income_reconciliation_largest_gap ? (
+                      <div>
+                        Largest gap {formatShortDate(
+                          summary.income_reconciliation_largest_gap.date
+                        )}: {formatSignedCurrency(
+                          summary.income_reconciliation_largest_gap.variance
+                        )}
+                      </div>
+                    ) : null}
+                  </>
+                }
+                tone={
+                  Math.abs(Number(summary.income_category_variance ?? 0)) < 1
+                    ? "positive"
+                    : Number(summary.income_category_variance ?? 0) < 0
+                    ? "warning"
+                    : "default"
+                }
+              />
 
-          <section className="metrics-mileage-row">
-            <MetricCard
-              label="Trip Miles"
-              value={`${formatNumber(mileageStats.tripMiles)} mi`}
-              subtitle={`${formatPercent(mileageStats.tripMileUtilization, 0)} of total miles`}
-            />
+              <MetricCard
+                label="Payment Notices vs Bank"
+                value={formatSignedCurrency(summary.payment_notice_vs_income_variance)}
+                subtitle={
+                  <>
+                    <div>
+                      {formatCurrencyCompact(summary.payment_notice_total)} notices /{" "}
+                      {formatCurrencyCompact(summary.income_category_total)} bank income
+                    </div>
+                    <div>
+                      vs expected{" "}
+                      {formatSignedCurrency(summary.payment_notice_vs_expected_variance)}
+                      {summary.payment_notice_reconciliation_largest_gap ? (
+                        <>
+                          {" "}
+                          / largest {formatShortDate(
+                            summary.payment_notice_reconciliation_largest_gap.date
+                          )}: {formatSignedCurrency(
+                            summary.payment_notice_reconciliation_largest_gap.variance
+                          )}
+                        </>
+                      ) : null}
+                    </div>
+                  </>
+                }
+                tone={
+                  Math.abs(Number(summary.payment_notice_vs_income_variance ?? 0)) < 1
+                    ? "positive"
+                    : "warning"
+                }
+              />
+            </div>
+          </section>
 
-            <MetricCard
-              label="Off-Trip Miles"
-              value={`${formatNumber(mileageStats.offTripMiles)} mi`}
-              tone={
-                mileageStats.offTripShare >= 0.35
-                  ? "negative"
-                  : mileageStats.offTripShare >= 0.2
-                  ? "warning"
-                  : "positive"
-              }
-              subtitle={`${formatPercent(mileageStats.offTripShare, 0)} of total miles`}
-              onClick={() => setOffTripAuditOpen(true)}
-            />
+          <section className="metrics-section">
+            <div className="metrics-section-header">
+              <div className="metrics-section-title">Mileage Efficiency</div>
+              <div className="metrics-section-subtitle">
+                Revenue, profit, and cost normalized by miles driven
+              </div>
+            </div>
+            <div className="metrics-mileage-row">
+              <MetricCard
+                label="Trip Miles"
+                value={`${formatNumber(mileageStats.tripMiles)} mi`}
+                subtitle={`${formatPercent(mileageStats.tripMileUtilization, 0)} of total miles`}
+              />
 
-            <MetricCard
-              label="Rev / Trip Mile"
-              value={formatCurrencyCompact(mileageStats.revenuePerTripMile)}
-              subtitle={`${formatCurrencyCompact(mileageStats.revenuePerTotalMile)} / total mile`}
-            />
+              <MetricCard
+                label="Off-Trip Miles"
+                value={`${formatNumber(mileageStats.offTripMiles)} mi`}
+                tone={
+                  mileageStats.offTripShare >= 0.35
+                    ? "negative"
+                    : mileageStats.offTripShare >= 0.2
+                    ? "warning"
+                    : "positive"
+                }
+                subtitle={`${formatPercent(mileageStats.offTripShare, 0)} of total miles`}
+                onClick={() => setOffTripAuditOpen(true)}
+              />
 
-            <MetricCard
-              label="Profit / Trip Mile"
-              value={formatCurrencyCompact(mileageStats.profitPerTripMile)}
-              tone={
-                mileageStats.profitPerTripMile >= 0.25
-                  ? "positive"
-                  : mileageStats.profitPerTripMile >= 0.1
-                  ? "warning"
-                  : "negative"
-              }
-              subtitle={`${formatCurrencyCompact(mileageStats.profitPerTotalMile)} / total mile`}
-            />
+              <MetricCard
+                label="Rev / Trip Mile"
+                value={formatCurrencyCompact(mileageStats.revenuePerTripMile)}
+                subtitle={`${formatCurrencyCompact(mileageStats.revenuePerTotalMile)} / total mile`}
+              />
 
-            <MetricCard
-              label="Expense / Mile"
-              value={formatCurrencyCompact(mileageStats.expensePerMile)}
-              subtitle={`${formatCurrencyCompact(mileageStats.expensePerTripMile)} / trip mile`}
-            />
+              <MetricCard
+                label="Profit / Trip Mile"
+                value={formatCurrencyCompact(mileageStats.profitPerTripMile)}
+                tone={
+                  mileageStats.profitPerTripMile >= 0.25
+                    ? "positive"
+                    : mileageStats.profitPerTripMile >= 0.1
+                    ? "warning"
+                    : "negative"
+                }
+                subtitle={`${formatCurrencyCompact(mileageStats.profitPerTotalMile)} / total mile`}
+              />
+
+              <MetricCard
+                label="Expense / Mile"
+                value={formatCurrencyCompact(mileageStats.expensePerMile)}
+                subtitle={`${formatCurrencyCompact(mileageStats.expensePerTripMile)} / trip mile`}
+              />
+            </div>
           </section>
 
       <OffTripMilesDrawer

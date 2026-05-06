@@ -76,6 +76,29 @@ function classifyTuroNotification(event) {
 
   if (
     includesAny(text, [
+      "earnings payment",
+      "your earnings are on the way",
+      "cha-ching",
+      "you’ve been paid",
+      "you've been paid",
+    ])
+  ) {
+    return "payment_notice";
+  }
+
+  if (
+    includesAny(text, [
+      "reimbursement invoice",
+      "paid the invoice",
+      "paid your reimbursement",
+      "paid now",
+    ])
+  ) {
+    return "reimbursement_invoice";
+  }
+
+  if (
+    includesAny(text, [
       "booking request",
       "requested your car",
       "new request",
@@ -96,9 +119,37 @@ function classifyTuroNotification(event) {
       "modified",
       "new trip time",
       "trip update",
+      "change requested",
     ])
   ) {
     return "trip_changed";
+  }
+
+  if (includesAny(text, ["rated their trip", "return the favor"])) {
+    return "trip_rated";
+  }
+
+  if (
+    includesAny(text, [
+      "has added a driver",
+      "additional driver",
+      "added another driver",
+    ])
+  ) {
+    return "secondary_driver_added";
+  }
+
+  if (
+    includesAny(text, [
+      "prepare for checkout",
+      "complete checkout when your car is returned",
+    ])
+  ) {
+    return "checkout_reminder";
+  }
+
+  if (includesAny(text, ["has returned", "view its exact location"])) {
+    return "trip_returned";
   }
 
   if (includesAny(text, ["message", "sent you a message"])) {
@@ -150,6 +201,8 @@ function extractVehicleName(text) {
   if (!source) return null;
 
   const patterns = [
+    /\babout\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\s+from\s+[A-Z][A-Za-z.'-]+/i,
+    /\btrip with your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\b/i,
     /\babout your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})$/i,
     /\brequested your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})$/i,
     /\byour\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\s+has been\b/i,
@@ -168,6 +221,10 @@ function extractGuestName(text) {
   if (!source) return null;
 
   const patterns = [
+    /^Your trip with\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+starts soon\b/i,
+    /\bfrom\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s*:/i,
+    /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+paid\b/i,
+    /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+rated\b/i,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+sent you a message\b/,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+requested your car\b/,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+(?:booked|confirmed)\b/,

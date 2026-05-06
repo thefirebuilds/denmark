@@ -352,6 +352,7 @@ CREATE TABLE public.trip_financial_facts (
     tolls_collected numeric(10,2),
     fuel_reimbursed numeric(10,2),
     cleaning_reimbursed numeric(10,2),
+    ticket_reimbursed numeric(10,2),
     smoking_reimbursed numeric(10,2),
     actual_tolls numeric(10,2),
     actual_fuel_cost numeric(10,2),
