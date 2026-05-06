@@ -98,6 +98,89 @@ function mapInspectionExportNoticeRow(row) {
   };
 }
 
+function getMaintenanceTaskGroupKey(task) {
+  const type = String(task?.task_type || "").trim();
+  const title = String(task?.title || "Maintenance task")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+  return `${type || title}:${title}`.toLowerCase();
+}
+
+function groupMaintenanceTasksForNotice(tasks) {
+  const groups = new Map();
+  const priorityRank = { urgent: 4, high: 3, medium: 2, low: 1 };
+
+  for (const task of tasks || []) {
+    const key = getMaintenanceTaskGroupKey(task);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        ...task,
+        duplicate_count: 0,
+        task_ids: [],
+      });
+    }
+
+    const group = groups.get(key);
+    group.duplicate_count += 1;
+    if (task?.id != null) group.task_ids.push(task.id);
+
+    const groupRank = priorityRank[String(group.priority || "").toLowerCase()] || 0;
+    const taskRank = priorityRank[String(task?.priority || "").toLowerCase()] || 0;
+    if (taskRank > groupRank) group.priority = task.priority;
+  }
+
+  return Array.from(groups.values());
+}
+
+function attachMaintenanceToPrepNotices(prepNotices, maintenanceNotices) {
+  const maintenanceByTripId = new Map(
+    maintenanceNotices
+      .filter((item) => item.trip_id != null)
+      .map((item) => [Number(item.trip_id), item])
+  );
+
+  return prepNotices.map((notice) => {
+    const maintenance = maintenanceByTripId.get(Number(notice.trip_id));
+    if (!maintenance) return notice;
+
+    return {
+      ...notice,
+      maintenance_attached: true,
+      maintenance_vehicle_name: maintenance.maintenance_vehicle_name,
+      maintenance_vehicle_vin: maintenance.maintenance_vehicle_vin,
+      maintenance_available_at: maintenance.maintenance_available_at,
+      maintenance_task_count: maintenance.maintenance_task_count,
+      maintenance_open_task_record_count:
+        maintenance.maintenance_open_task_record_count,
+      maintenance_tasks: maintenance.maintenance_tasks,
+    };
+  });
+}
+
+function isRedundantPrepNotice(row) {
+  const type = row?.message_type || row?.type;
+  const subject = String(row?.subject || "");
+
+  return (
+    type === "trip_booked" ||
+    (type === "turo_notification" && /upcoming trip/i.test(subject))
+  );
+}
+
+function isUncorrelatedUnreadMessage(item) {
+  const type = item?.message_type || item?.type;
+
+  return (
+    item?.status === "unread" &&
+    type !== "payment_notice" &&
+    !item?.trip_id &&
+    !item?.reservation_id
+  );
+}
+
 function computeDisplayStatus(trip) {
   const now = new Date();
   const todayStart = startOfTodayChicago();
@@ -1049,6 +1132,11 @@ router.get("/:id/messages", async (req, res) => {
       WHERE m.trip_id = $1
       ORDER BY
         CASE
+          WHEN m.status = 'unread'
+            AND COALESCE(m.message_type, '') <> 'payment_notice'
+            AND m.trip_id IS NULL
+            AND m.reservation_id IS NULL
+            THEN -1
           WHEN m.status = 'unread' THEN 0
           WHEN m.message_type = 'trip_booked'
             AND t.id IS NOT NULL
@@ -1081,6 +1169,27 @@ router.get("/:id/messages", async (req, res) => {
     `;
 
     const maintenanceQuery = `
+      WITH active_maintenance_tasks AS (
+        SELECT mt.*
+        FROM maintenance_tasks mt
+        WHERE mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM maintenance_events me
+            JOIN maintenance_rules mr
+              ON mr.id = me.rule_id
+            WHERE me.vehicle_vin = mt.vehicle_vin
+              AND me.result IN ('pass', 'performed', 'measured', 'not_applicable')
+              AND COALESCE(me.performed_at, me.created_at) >= mt.created_at
+              AND (
+                mt.rule_id = me.rule_id
+                OR (
+                  COALESCE(mt.trigger_context->>'ruleCode', '') <> ''
+                  AND mr.rule_code = mt.trigger_context->>'ruleCode'
+                )
+              )
+          )
+      )
       SELECT
         t.id AS trip_id,
         t.reservation_id,
@@ -1126,6 +1235,7 @@ router.get("/:id/messages", async (req, res) => {
             'id', mt.id,
             'title', mt.title,
             'description', mt.description,
+            'task_type', mt.task_type,
             'priority', mt.priority,
             'status', mt.status,
             'blocks_rental', mt.blocks_rental,
@@ -1143,14 +1253,13 @@ router.get("/:id/messages", async (req, res) => {
             mt.created_at DESC,
             mt.id DESC
         ) AS tasks
-      FROM maintenance_tasks mt
+      FROM active_maintenance_tasks mt
       JOIN trips t
         ON t.id = mt.related_trip_id
       LEFT JOIN vehicles v
         ON v.vin = mt.vehicle_vin
       WHERE mt.related_trip_id = $1
         AND t.trip_end > NOW()
-        AND mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
       GROUP BY
         t.id,
         t.reservation_id,
@@ -1244,8 +1353,9 @@ router.get("/:id/messages", async (req, res) => {
         tripEnd > now;
       const isUpcomingTrip = Number.isFinite(tripStart) && tripStart > now;
       const vehicleName = row.vehicle_name || "vehicle";
-      const taskLabel = `${row.open_task_count} maintenance item${
-        Number(row.open_task_count) === 1 ? "" : "s"
+      const groupedTasks = groupMaintenanceTasksForNotice(row.tasks || []);
+      const taskLabel = `${groupedTasks.length} maintenance item${
+        groupedTasks.length === 1 ? "" : "s"
       }`;
       const subject = isActiveTrip
         ? `${taskLabel} after ${vehicleName} returns`
@@ -1272,8 +1382,10 @@ router.get("/:id/messages", async (req, res) => {
         maintenance_vehicle_name: row.vehicle_name,
         maintenance_vehicle_vin: row.vehicle_vin,
         maintenance_available_at: row.maintenance_available_at,
-        maintenance_task_count: Number(row.open_task_count || 0),
-        maintenance_tasks: row.tasks || [],
+        maintenance_queue_rank: isUpcomingTrip ? 0 : isActiveTrip ? 2 : 1,
+        maintenance_task_count: groupedTasks.length,
+        maintenance_open_task_record_count: Number(row.open_task_count || 0),
+        maintenance_tasks: groupedTasks,
       };
     });
 
@@ -1281,14 +1393,35 @@ router.get("/:id/messages", async (req, res) => {
     const inspectionExportNotices = inspectionExportResult.rows.map(
       mapInspectionExportNoticeRow
     );
+    const hasPrepTask =
+      handoffNotices.length > 0 || inspectionExportNotices.length > 0;
+    const attachedHandoffNotices = attachMaintenanceToPrepNotices(
+      handoffNotices,
+      maintenanceNotices
+    );
+    const attachedInspectionExportNotices = attachMaintenanceToPrepNotices(
+      inspectionExportNotices,
+      maintenanceNotices
+    );
+    const visibleMaintenanceNotices = hasPrepTask ? [] : maintenanceNotices;
+    const visibleRows = hasPrepTask
+      ? rows.filter((row) => !isRedundantPrepNotice(row))
+      : rows;
     const combined = [
-      ...handoffNotices,
-      ...inspectionExportNotices,
-      ...rows,
-      ...maintenanceNotices,
+      ...attachedHandoffNotices,
+      ...attachedInspectionExportNotices,
+      ...visibleRows,
+      ...visibleMaintenanceNotices,
     ].sort((a, b) => {
       const rank = (item) => {
         if (item.message_type === "handoff_ready_required") return -1;
+        if (isUncorrelatedUnreadMessage(item)) return -1;
+        if (
+          item.message_type === "maintenance_required" &&
+          Number(item.maintenance_queue_rank) === 0
+        ) {
+          return -1;
+        }
         if (item.status === "unread") return 0;
         if (item.message_type === "inspection_export_required") return 1;
         if (isActionableBookingMessage(item)) return 1;

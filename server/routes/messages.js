@@ -44,6 +44,30 @@ const OPEN_MAINTENANCE_TASK_STATUSES = [
   "deferred",
 ];
 
+let ensureNotificationAckColumnsPromise = null;
+
+async function ensureNotificationAckColumns() {
+  if (!ensureNotificationAckColumnsPromise) {
+    ensureNotificationAckColumnsPromise = db
+      .query(`
+        ALTER TABLE public.notification_events
+          ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+
+        ALTER TABLE public.notification_events
+          ADD COLUMN IF NOT EXISTS acknowledged_by TEXT;
+
+        ALTER TABLE public.notification_events
+          ADD COLUMN IF NOT EXISTS acknowledged_reason TEXT;
+      `)
+      .catch((err) => {
+        ensureNotificationAckColumnsPromise = null;
+        throw err;
+      });
+  }
+
+  await ensureNotificationAckColumnsPromise;
+}
+
 const AFTER_RETURN_PROJECTION_RULE_CODES = new Set([
   "cleaning",
   "fluid_leak_check",
@@ -106,6 +130,43 @@ function mapMaintenanceTaskForNotice(task) {
   };
 }
 
+function getMaintenanceTaskGroupKey(task) {
+  const type = String(task?.task_type || "").trim();
+  const title = String(task?.title || "Maintenance task")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+  return `${type || title}:${title}`.toLowerCase();
+}
+
+function groupMaintenanceTasksForNotice(tasks) {
+  const groups = new Map();
+  const priorityRank = { urgent: 4, high: 3, medium: 2, low: 1 };
+
+  for (const task of tasks || []) {
+    const key = getMaintenanceTaskGroupKey(task);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        ...task,
+        duplicate_count: 0,
+        task_ids: [],
+      });
+    }
+
+    const group = groups.get(key);
+    group.duplicate_count += 1;
+    if (task?.id != null) group.task_ids.push(task.id);
+
+    const groupRank = priorityRank[String(group.priority || "").toLowerCase()] || 0;
+    const taskRank = priorityRank[String(task?.priority || "").toLowerCase()] || 0;
+    if (taskRank > groupRank) group.priority = task.priority;
+  }
+
+  return Array.from(groups.values());
+}
+
 function isActionableBookingMessage(row) {
   const stage = String(row.trip_workflow_stage || "").toLowerCase();
   const status = String(row.trip_status || "").toLowerCase();
@@ -132,9 +193,37 @@ function isActionableBookingMessage(row) {
   );
 }
 
+function isRedundantPrepNotice(row) {
+  const type = row?.message_type || row?.type;
+  const subject = String(row?.subject || "");
+
+  return (
+    type === "trip_booked" ||
+    (type === "turo_notification" && /upcoming trip/i.test(subject))
+  );
+}
+
+function isUncorrelatedUnreadMessage(item) {
+  const type = item?.message_type || item?.type;
+
+  return (
+    item?.status === "unread" &&
+    type !== "payment_notice" &&
+    !item?.trip_id &&
+    !item?.reservation_id
+  );
+}
+
 function messageQueueRank(item) {
   if (item.type === "notification_unmatched") return -2;
+  if (isUncorrelatedUnreadMessage(item)) return -2;
   if (item.type === "handoff_ready_required") return -1;
+  if (
+    item.type === "maintenance_required" &&
+    Number(item.maintenance_queue_rank) === 0
+  ) {
+    return -1;
+  }
   if (item.status === "unread") return 0;
   if (item.type === "trip_overlap_detected") return 1;
   if (item.type === "late_toll_unbilled") return 1;
@@ -143,6 +232,31 @@ function messageQueueRank(item) {
   if (item.type === "trip_booked" && item.is_booking_confirmation_task) return 2;
   if (item.type === "maintenance_required") return 3;
   return 3;
+}
+
+function attachMaintenanceToPrepNotices(prepNotices, maintenanceNotices) {
+  const maintenanceByTripId = new Map(
+    maintenanceNotices
+      .filter((item) => item.trip_id != null)
+      .map((item) => [Number(item.trip_id), item])
+  );
+
+  return prepNotices.map((notice) => {
+    const maintenance = maintenanceByTripId.get(Number(notice.trip_id));
+    if (!maintenance) return notice;
+
+    return {
+      ...notice,
+      maintenance_attached: true,
+      maintenance_vehicle_name: maintenance.maintenance_vehicle_name,
+      maintenance_vehicle_vin: maintenance.maintenance_vehicle_vin,
+      maintenance_available_at: maintenance.maintenance_available_at,
+      maintenance_task_count: maintenance.maintenance_task_count,
+      maintenance_open_task_record_count:
+        maintenance.maintenance_open_task_record_count,
+      maintenance_tasks: maintenance.maintenance_tasks,
+    };
+  });
 }
 
 function compareQueueItems(a, b) {
@@ -248,11 +362,49 @@ function mapMessageRow(row) {
     trip_record_amount: row.trip_record_amount,
     trip_record_mileage_included: row.trip_record_mileage_included,
     trip_record_reservation_id: row.trip_record_reservation_id,
+    pickup_location: row.pickup_location,
+    active_trip_id: row.active_trip_id,
+    active_trip_guest_name: row.active_trip_guest_name,
+    active_trip_start: row.active_trip_start,
+    active_trip_end: row.active_trip_end,
+    active_trip_status: row.active_trip_status,
+    active_trip_workflow_stage: row.active_trip_workflow_stage,
     is_booking_confirmation_task: isBookingTask,
     reply_url: row.reply_url,
     trip_details_url: row.trip_details_url,
     parsed: parseSubject(row.subject),
   };
+}
+
+function cleanPickupLocation(value) {
+  const cleaned = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[.,;:]+$/g, "")
+    .trim();
+
+  if (!cleaned) return null;
+  if (/^(starting|from|to|is booked|will pick up)\b/i.test(cleaned)) return null;
+  if (cleaned.length > 140) return null;
+  return cleaned;
+}
+
+function extractPickupLocationFromNoticeText(value) {
+  const text = String(value || "");
+  const patterns = [
+    /Map of\s+([^:\n]+):/i,
+    /\btrip with your .+?\s+at\s+(.+?)\s+starting on\b/i,
+    /\btrip with your .+?\s+at\s+(.+?)\s+is booked from\b/i,
+    /\bdeliver the car to .+?\s+at\s+(.+?)\s+on\b/i,
+    /\bpick up the car (?:at|from)\s+(.+?)\s+on\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const location = cleanPickupLocation(match?.[1]);
+    if (location) return location;
+  }
+
+  return null;
 }
 
 function mapUnmatchedNotificationRow(row) {
@@ -443,6 +595,7 @@ function mapMaintenanceNoticeRow(row) {
   const tasks = Array.isArray(row.tasks)
     ? row.tasks.map(mapMaintenanceTaskForNotice)
     : [];
+  const groupedTasks = groupMaintenanceTasksForNotice(tasks);
   const hasProjectionTasks = tasks.some((task) =>
     task?.planning_mode === "during_trip"
   );
@@ -459,8 +612,8 @@ function mapMaintenanceNoticeRow(row) {
     tripEnd > now;
   const isUpcomingTrip = Number.isFinite(tripStart) && tripStart > now;
   const vehicleName = row.vehicle_name || "vehicle";
-  const taskLabel = `${row.open_task_count} maintenance planning item${
-    Number(row.open_task_count) === 1 ? "" : "s"
+  const taskLabel = `${groupedTasks.length} maintenance planning item${
+    groupedTasks.length === 1 ? "" : "s"
   }`;
   const subject = hasProjectionTasks
     ? isActiveTrip
@@ -499,8 +652,9 @@ function mapMaintenanceNoticeRow(row) {
     maintenance_available_at: row.maintenance_available_at,
     maintenance_queue_rank: maintenanceQueueRank,
     maintenance_sort_at: maintenanceSortAt,
-    maintenance_task_count: Number(row.open_task_count || 0),
-    maintenance_tasks: tasks,
+    maintenance_task_count: groupedTasks.length,
+    maintenance_open_task_record_count: Number(row.open_task_count || 0),
+    maintenance_tasks: groupedTasks,
     created_at: row.latest_task_created_at,
   };
 }
@@ -551,9 +705,14 @@ function mapTripOverlapNoticeRow(row) {
 
 router.get("/stats", async (req, res) => {
   try {
+    await ensureNotificationAckColumns();
+
     const sql = `
       SELECT
-        COUNT(*) FILTER (WHERE status = 'unread') AS unread_count,
+        COUNT(*) FILTER (
+          WHERE status = 'unread'
+            AND COALESCE(message_type, '') <> 'payment_notice'
+        ) AS unread_count,
         COUNT(*) FILTER (WHERE status = 'read') AS read_count,
         COUNT(*) FILTER (WHERE message_type = 'guest_message') AS guest_message_count,
         COUNT(*) FILTER (WHERE message_type = 'trip_booked') AS trip_booked_count,
@@ -630,6 +789,7 @@ router.get("/stats", async (req, res) => {
             FROM notification_events ne
             WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
               AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
+              AND ne.acknowledged_at IS NULL
               AND ne.received_at >= NOW() - INTERVAL '7 days'
               AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
               AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
@@ -835,6 +995,8 @@ router.get("/stats", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
+    await ensureNotificationAckColumns();
+
     const limit = Number(req.query.limit) || 100;
     const candidateLimit = Math.max(limit * 20, 100);
 
@@ -869,6 +1031,13 @@ router.get("/", async (req, res) => {
         trip_record_amount,
         trip_record_mileage_included,
         trip_record_reservation_id,
+        normalized_text_body,
+        active_trip_id,
+        active_trip_guest_name,
+        active_trip_start,
+        active_trip_end,
+        active_trip_status,
+        active_trip_workflow_stage,
         reply_url,
         trip_details_url
       FROM (
@@ -902,6 +1071,13 @@ router.get("/", async (req, res) => {
           t.amount AS trip_record_amount,
           t.mileage_included AS trip_record_mileage_included,
           t.reservation_id AS trip_record_reservation_id,
+          m.normalized_text_body,
+          active_trip.id AS active_trip_id,
+          active_trip.guest_name AS active_trip_guest_name,
+          active_trip.trip_start AS active_trip_start,
+          active_trip.trip_end AS active_trip_end,
+          active_trip.status AS active_trip_status,
+          active_trip.workflow_stage AS active_trip_workflow_stage,
           m.reply_url,
           m.trip_details_url
         FROM messages m
@@ -921,8 +1097,38 @@ router.get("/", async (req, res) => {
             COALESCE(t.vehicle_name, '') <> ''
             AND LOWER(v.nickname) = LOWER(t.vehicle_name)
           )
+        LEFT JOIN LATERAL (
+          SELECT
+            active.id,
+            active.guest_name,
+            active.trip_start,
+            active.trip_end,
+            active.status,
+            active.workflow_stage
+          FROM trips active
+          WHERE active.trip_start <= NOW()
+            AND active.trip_end > NOW()
+            AND COALESCE(active.status, '') <> 'canceled'
+            AND COALESCE(active.workflow_stage, '') <> 'canceled'
+            AND (
+              (
+                t.turo_vehicle_id IS NOT NULL
+                AND active.turo_vehicle_id IS NOT NULL
+                AND active.turo_vehicle_id = t.turo_vehicle_id
+              )
+              OR (
+                COALESCE(t.vehicle_name, m.vehicle_name, '') <> ''
+                AND LOWER(active.vehicle_name) = LOWER(COALESCE(t.vehicle_name, m.vehicle_name))
+              )
+            )
+          ORDER BY active.trip_start DESC NULLS LAST, active.id DESC
+          LIMIT 1
+        ) active_trip ON TRUE
         WHERE
-          m.status = 'unread'
+          (
+            m.status = 'unread'
+            AND COALESCE(m.message_type, '') <> 'payment_notice'
+          )
           OR (
             m.message_type = 'trip_booked'
             AND t.id IS NOT NULL
@@ -951,6 +1157,11 @@ router.get("/", async (req, res) => {
       ) actionable_messages
       ORDER BY
         CASE
+          WHEN status = 'unread'
+            AND COALESCE(message_type, '') <> 'payment_notice'
+            AND trip_id IS NULL
+            AND reservation_id IS NULL
+            THEN -1
           WHEN status = 'unread' THEN 0
           WHEN message_type = 'trip_booked'
             AND trip_id IS NOT NULL
@@ -1034,6 +1245,7 @@ router.get("/", async (req, res) => {
         FROM notification_events ne
         WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
           AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
+          AND ne.acknowledged_at IS NULL
           AND ne.received_at >= NOW() - INTERVAL '7 days'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
@@ -1264,7 +1476,28 @@ router.get("/", async (req, res) => {
     `;
 
     const maintenanceSql = `
-      WITH open_vehicle_tasks AS (
+      WITH active_maintenance_tasks AS (
+        SELECT mt.*
+        FROM maintenance_tasks mt
+        WHERE mt.status = ANY($1::text[])
+          AND NOT EXISTS (
+            SELECT 1
+            FROM maintenance_events me
+            JOIN maintenance_rules mr
+              ON mr.id = me.rule_id
+            WHERE me.vehicle_vin = mt.vehicle_vin
+              AND me.result IN ('pass', 'performed', 'measured', 'not_applicable')
+              AND COALESCE(me.performed_at, me.created_at) >= mt.created_at
+              AND (
+                mt.rule_id = me.rule_id
+                OR (
+                  COALESCE(mt.trigger_context->>'ruleCode', '') <> ''
+                  AND mr.rule_code = mt.trigger_context->>'ruleCode'
+                )
+              )
+          )
+      ),
+      open_vehicle_tasks AS (
         SELECT
           COALESCE(
             NULLIF(v.turo_vehicle_id, ''),
@@ -1300,13 +1533,12 @@ router.get("/", async (req, res) => {
               mt.created_at DESC,
               mt.id DESC
           ) AS tasks
-        FROM maintenance_tasks mt
+        FROM active_maintenance_tasks mt
         LEFT JOIN vehicles v
           ON v.vin = mt.vehicle_vin
         LEFT JOIN trips related_trip
           ON related_trip.id = mt.related_trip_id
-        WHERE mt.status = ANY($1::text[])
-          AND COALESCE(v.is_active, true) = true
+        WHERE COALESCE(v.is_active, true) = true
           AND COALESCE(v.in_service, true) = true
         GROUP BY
           COALESCE(
@@ -1723,15 +1955,51 @@ router.get("/", async (req, res) => {
       db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES]),
     ]);
 
+    messagesResult.rows.forEach((row) => {
+      row.pickup_location = extractPickupLocationFromNoticeText(
+        row.normalized_text_body || row.subject || ""
+      );
+    });
+    const handoffNotices = handoffResult.rows.map(mapHandoffNoticeRow);
+    const inspectionExportNotices = inspectionExportResult.rows.map(
+      mapInspectionExportNoticeRow
+    );
+    const maintenanceNotices = maintenanceResult.rows.map(mapMaintenanceNoticeRow);
+    const prepTaskTripIds = new Set(
+      [...handoffNotices, ...inspectionExportNotices]
+        .map((row) => row.trip_id)
+        .filter((id) => id != null)
+        .map((id) => Number(id))
+    );
+    const visibleMessageRows = messagesResult.rows.filter(
+      (row) =>
+        !(
+          row.trip_id &&
+          prepTaskTripIds.has(Number(row.trip_id)) &&
+          isRedundantPrepNotice(row)
+        )
+    );
+    const attachedHandoffNotices = attachMaintenanceToPrepNotices(
+      handoffNotices,
+      maintenanceNotices
+    );
+    const attachedInspectionExportNotices = attachMaintenanceToPrepNotices(
+      inspectionExportNotices,
+      maintenanceNotices
+    );
+    const visibleMaintenanceNotices = maintenanceNotices.filter(
+      (item) => !prepTaskTripIds.has(Number(item.trip_id))
+    );
+
     const queueItems = [
-      ...handoffResult.rows.map(mapHandoffNoticeRow),
-      ...inspectionExportResult.rows.map(mapInspectionExportNoticeRow),
+      ...attachedHandoffNotices,
+      ...attachedInspectionExportNotices,
       ...closeoutResult.rows.map(mapCloseoutNoticeRow),
       ...lateTollResult.rows.map(mapLateTollNoticeRow),
       ...overlapResult.rows.map(mapTripOverlapNoticeRow),
-      ...messagesResult.rows.map(mapMessageRow),
+      ...visibleMessageRows.map(mapMessageRow),
       ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
-      ...maintenanceResult.rows.map(mapMaintenanceNoticeRow),
+      ...visibleMaintenanceNotices,
     ]
       .sort(compareQueueItems)
       .slice(0, limit);
@@ -1740,6 +2008,80 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("messages endpoint failed:", err);
     res.status(500).json({ error: "failed to load messages" });
+  }
+});
+
+router.patch("/notifications/:id/ack", async (req, res) => {
+  try {
+    await ensureNotificationAckColumns();
+
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: "invalid notification id" });
+    }
+
+    const reason =
+      typeof req.body?.reason === "string" && req.body.reason.trim()
+        ? req.body.reason.trim().slice(0, 120)
+        : "acknowledged";
+
+    const result = await db.query(
+      `
+        UPDATE notification_events
+        SET
+          acknowledged_at = NOW(),
+          acknowledged_by = 'dashboard',
+          acknowledged_reason = $2
+        WHERE id = $1
+        RETURNING id, acknowledged_at, acknowledged_reason
+      `,
+      [id, reason]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "notification not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("ack notification failed:", err);
+    res.status(500).json({ error: "failed to acknowledge notification" });
+  }
+});
+
+router.patch("/maintenance/resolve", async (req, res) => {
+  try {
+    const taskIds = Array.isArray(req.body?.task_ids)
+      ? req.body.task_ids
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+
+    if (!taskIds.length) {
+      return res.status(400).json({ error: "task_ids are required" });
+    }
+
+    const result = await db.query(
+      `
+        UPDATE maintenance_tasks
+        SET
+          status = 'resolved',
+          updated_at = NOW()
+        WHERE id = ANY($1::bigint[])
+          AND status IN ('open', 'scheduled', 'in_progress', 'deferred')
+        RETURNING id, status
+      `,
+      [taskIds]
+    );
+
+    res.json({
+      ok: true,
+      resolved_count: result.rowCount,
+      resolved: result.rows,
+    });
+  } catch (err) {
+    console.error("resolve maintenance tasks failed:", err);
+    res.status(500).json({ error: "failed to resolve maintenance tasks" });
   }
 });
 

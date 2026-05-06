@@ -7,13 +7,15 @@ const pool = require("../../db");
 const {
   endOfDay,
   getDateRange,
+  getTripTotalDays,
   roundMoney,
+  startOfDay,
   tripOverlapsRange,
   toNumber,
 } = require("./metricHelpers");
 
 function getTrendGranularity(rangeKey) {
-  return rangeKey === "90d" || rangeKey === "all" ? "week" : "day";
+  return rangeKey === "all" ? "month" : "day";
 }
 
 function bucketStartForDate(dateInput, granularity) {
@@ -26,6 +28,10 @@ function bucketStartForDate(dateInput, granularity) {
     d.setDate(d.getDate() + diffToMonday);
   }
 
+  if (granularity === "month") {
+    d.setDate(1);
+  }
+
   d.setHours(0, 0, 0, 0);
   return d;
 }
@@ -34,6 +40,69 @@ function bucketKey(dateInput, granularity) {
   const d = bucketStartForDate(dateInput, granularity);
   if (!d) return null;
   return d.toISOString().slice(0, 10);
+}
+
+function addDays(dateInput, days) {
+  const d = new Date(dateInput);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function addMonths(dateInput, months) {
+  const d = new Date(dateInput);
+  d.setMonth(d.getMonth() + months);
+  return d;
+}
+
+function iterateBucketLabels(startDate, endDate, granularity) {
+  if (!startDate || !endDate) return [];
+
+  const labels = [];
+  let cursor = bucketStartForDate(startDate, granularity);
+  const end = bucketStartForDate(endDate, granularity);
+
+  while (cursor && end && cursor <= end) {
+    labels.push(cursor.toISOString().slice(0, 10));
+    cursor = granularity === "month" ? addMonths(cursor, 1) : addDays(cursor, 1);
+  }
+
+  return labels;
+}
+
+function addTripRevenueToBuckets(bucketMap, trip, rangeStart, rangeEnd, granularity) {
+  if (!trip?.trip_start || !trip?.trip_end) return;
+
+  if (granularity !== "day") {
+    const label = bucketKey(trip.trip_start, granularity);
+    if (!label) return;
+    const bucket = bucketMap.get(label);
+    if (!bucket) return;
+    bucket.revenue += toNumber(trip.amount);
+    return;
+  }
+
+  const totalDays = getTripTotalDays(trip.trip_start, trip.trip_end);
+  if (!totalDays) return;
+
+  const dailyRevenue = toNumber(trip.amount) / totalDays;
+  const tripStart = startOfDay(trip.trip_start);
+  const tripEnd = startOfDay(trip.trip_end);
+  const effectiveStart = rangeStart
+    ? new Date(Math.max(tripStart.getTime(), startOfDay(rangeStart).getTime()))
+    : tripStart;
+  const effectiveEnd = new Date(
+    Math.min(tripEnd.getTime(), startOfDay(rangeEnd).getTime())
+  );
+
+  for (
+    let cursor = effectiveStart;
+    cursor <= effectiveEnd;
+    cursor = addDays(cursor, 1)
+  ) {
+    const label = bucketKey(cursor, "day");
+    const bucket = bucketMap.get(label);
+    if (bucket) bucket.revenue += dailyRevenue;
+  }
 }
 
 async function fetchTripsInRange(client, startDate, endDate) {
@@ -102,6 +171,12 @@ async function getTrendMetrics(rangeKey = "90d") {
     ]);
 
     const bucketMap = new Map();
+    const effectiveStartDate =
+      startDate ||
+      [...trips.map((trip) => trip.trip_start), ...expenses.map((expense) => expense.date)]
+        .filter(Boolean)
+        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0] ||
+      endDate;
 
     function ensureBucket(label) {
       if (!bucketMap.has(label)) {
@@ -115,11 +190,12 @@ async function getTrendMetrics(rangeKey = "90d") {
       return bucketMap.get(label);
     }
 
+    for (const label of iterateBucketLabels(effectiveStartDate, endDate, granularity)) {
+      ensureBucket(label);
+    }
+
     for (const trip of trips) {
-      const label = bucketKey(trip.trip_start, granularity);
-      if (!label) continue;
-      const bucket = ensureBucket(label);
-      bucket.revenue += toNumber(trip.amount);
+      addTripRevenueToBuckets(bucketMap, trip, startDate, endDate, granularity);
     }
 
     for (const expense of expenses) {

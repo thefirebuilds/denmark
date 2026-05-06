@@ -27,7 +27,6 @@ const {
 const {
   getLatestVehicleFmvEstimates,
 } = require("../vehicles/fmvEstimateService");
-const { getVehicleMetrics } = require("./vehicleMetricsService");
 
 async function fetchTripsInRange(client, startDate, endDate) {
   const { rows } = await client.query(
@@ -83,6 +82,27 @@ async function fetchActiveVehicleCount(client) {
   `);
 
   return Number(rows[0]?.count ?? 0);
+}
+
+async function fetchFleetCalendarDaysAvailable(client, rangeStart, rangeEnd) {
+  if (!rangeStart || !rangeEnd) return 0;
+
+  const { rows } = await client.query(`
+    SELECT onboarding_date
+    FROM vehicles
+    WHERE COALESCE(is_active, true) = true
+      AND COALESCE(in_service, true) = true
+  `);
+
+  return rows.reduce((sum, vehicle) => {
+    const onboardedAt = vehicle.onboarding_date
+      ? new Date(vehicle.onboarding_date)
+      : null;
+    const effectiveStart =
+      onboardedAt && onboardedAt > rangeStart ? onboardedAt : rangeStart;
+
+    return sum + getCalendarDaysInRange(effectiveStart, rangeEnd);
+  }, 0);
 }
 
 async function fetchIncomeTransactionsInRange(client, startDate, endDate) {
@@ -848,7 +868,6 @@ async function getSummaryMetrics(rangeKey = "30d") {
     const activeVehicleCount = await fetchActiveVehicleCount(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
-    const vehicleMetricsPayload = await getVehicleMetrics(key);
 
     const tripIncome = trips.reduce(
       (sum, trip) => sum + getTripProratedAmount(trip, startDate, endDate),
@@ -978,29 +997,28 @@ async function getSummaryMetrics(rangeKey = "30d") {
       0
     );
 
-    const fleetCalendarDaysAvailable = Array.isArray(vehicleMetricsPayload?.vehicles)
-      ? vehicleMetricsPayload.vehicles.reduce(
-          (sum, vehicle) => sum + Number(vehicle?.calendar_days_available ?? 0),
-          0
-        )
-      : 0;
+    const earliestTripStartForAll =
+      key === "all"
+        ? trips.reduce((earliest, trip) => {
+            if (!trip?.trip_start) return earliest;
+            const tripStart = new Date(trip.trip_start);
+            if (Number.isNaN(tripStart.getTime())) return earliest;
+            if (!earliest) return tripStart;
+            return tripStart.getTime() < earliest.getTime() ? tripStart : earliest;
+          }, null)
+        : null;
 
     const calendarDays =
       key === "all"
-        ? (() => {
-            const earliestTripStart = trips.reduce((earliest, trip) => {
-              if (!trip?.trip_start) return earliest;
-              const tripStart = new Date(trip.trip_start);
-              if (Number.isNaN(tripStart.getTime())) return earliest;
-              if (!earliest) return tripStart;
-              return tripStart.getTime() < earliest.getTime() ? tripStart : earliest;
-            }, null);
-
-            return earliestTripStart
-              ? getCalendarDaysInRange(earliestTripStart, endDate)
-              : 0;
-          })()
+        ? earliestTripStartForAll
+          ? getCalendarDaysInRange(earliestTripStartForAll, endDate)
+          : 0
         : getCalendarDaysInRange(startDate, endDate);
+    const fleetCalendarDaysAvailable = await fetchFleetCalendarDaysAvailable(
+      client,
+      key === "all" ? earliestTripStartForAll : startDate,
+      endDate
+    );
     const previousCalendarDays = previousRange.startDate
       ? getCalendarDaysInRange(previousRange.startDate, previousRange.endDate)
       : 0;

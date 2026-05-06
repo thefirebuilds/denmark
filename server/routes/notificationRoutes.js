@@ -336,8 +336,20 @@ async function ensureNotificationEventsTable() {
           vehicle_name TEXT,
           guest_name TEXT,
           processed_at TIMESTAMPTZ,
+          acknowledged_at TIMESTAMPTZ,
+          acknowledged_by TEXT,
+          acknowledged_reason TEXT,
           received_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+
+        ALTER TABLE public.notification_events
+          ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+
+        ALTER TABLE public.notification_events
+          ADD COLUMN IF NOT EXISTS acknowledged_by TEXT;
+
+        ALTER TABLE public.notification_events
+          ADD COLUMN IF NOT EXISTS acknowledged_reason TEXT;
 
         CREATE INDEX IF NOT EXISTS idx_notification_events_received_at
           ON public.notification_events (received_at DESC);

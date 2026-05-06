@@ -2,7 +2,7 @@
 // /src/components/MetricsPanel.jsx
 //----------------------------------------------
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ExpenseModal from "./expenses/ExpenseModal";
 import MetricCard from "./metrics/MetricCard";
 import OffTripMilesDrawer from "./metrics/OffTripMilesDrawer";
@@ -110,6 +110,101 @@ function formatShortDate(value) {
     month: "short",
     day: "numeric",
   });
+}
+
+function buildSparklinePath(points, key, width, height, maxValue) {
+  if (!Array.isArray(points) || points.length === 0) return "";
+
+  const safeMax = Math.max(Number(maxValue || 0), 1);
+  const lastIndex = Math.max(points.length - 1, 1);
+
+  return points
+    .map((point, index) => {
+      const x = (index / lastIndex) * width;
+      const raw = Number(point?.[key] ?? 0);
+      const y = height - (Math.max(raw, 0) / safeMax) * height;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
+function RevenueExpenseSparkline({ trends, summary }) {
+  const points = Array.isArray(trends?.points) ? trends.points : [];
+
+  if (!points.length) {
+    return null;
+  }
+
+  const width = 960;
+  const height = 118;
+  const padding = 10;
+  const chartWidth = width - padding * 2;
+  const chartHeight = height - padding * 2;
+  const maxValue = points.reduce(
+    (max, point) =>
+      Math.max(max, Number(point.revenue ?? 0), Number(point.expenses ?? 0)),
+    0
+  );
+  const revenuePath = buildSparklinePath(points, "revenue", chartWidth, chartHeight, maxValue);
+  const expensePath = buildSparklinePath(points, "expenses", chartWidth, chartHeight, maxValue);
+  const latest = points[points.length - 1] || {};
+  const firstLabel = formatShortDate(points[0]?.label);
+  const lastLabel = formatShortDate(latest.label);
+
+  return (
+    <section className="metrics-trend-strip">
+      <div className="metrics-trend-strip__header">
+        <div>
+          <div className="metrics-section-title">Daily Flow</div>
+          <div className="metrics-section-subtitle">
+            Revenue and expenses across this range
+          </div>
+        </div>
+        <div className="metrics-trend-strip__legend">
+          <span className="metrics-trend-strip__legend-item revenue">
+            Revenue {formatCurrencyCompact(summary?.revenue)}
+          </span>
+          <span className="metrics-trend-strip__legend-item expense">
+            Expenses {formatCurrencyCompact(summary?.expenses)}
+          </span>
+        </div>
+      </div>
+
+      <div className="metrics-trend-strip__chart" aria-label="Daily revenue and expense line graph">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img">
+          <defs>
+            <linearGradient id="metricsRevenueGlow" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor="#54f0b0" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="#7dd3fc" stopOpacity="0.95" />
+            </linearGradient>
+            <linearGradient id="metricsExpenseGlow" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.45" />
+              <stop offset="100%" stopColor="#fb7185" stopOpacity="0.95" />
+            </linearGradient>
+          </defs>
+          <g transform={`translate(${padding} ${padding})`}>
+            <line
+              x1="0"
+              x2={chartWidth}
+              y1={chartHeight}
+              y2={chartHeight}
+              className="metrics-trend-strip__baseline"
+            />
+            <path className="metrics-trend-strip__path expense" d={expensePath} />
+            <path className="metrics-trend-strip__path revenue" d={revenuePath} />
+          </g>
+        </svg>
+        <div className="metrics-trend-strip__axis">
+          <span>{firstLabel}</span>
+          <span>
+            Latest: {formatCurrencyCompact(latest.revenue)} rev /{" "}
+            {formatCurrencyCompact(latest.expenses)} exp
+          </span>
+          <span>{lastLabel}</span>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function formatConfidenceLabel(value) {
@@ -243,9 +338,11 @@ function getCapitalRecoveryPct(vehicle) {
 }
 
 export default function MetricsPanel() {
+  const metricsLoadSeq = useRef(0);
   const [selectedRange, setSelectedRange] = useState("30d");
   const [summary, setSummary] = useState(null);
   const [businessMetrics, setBusinessMetrics] = useState(null);
+  const [trends, setTrends] = useState(null);
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -289,6 +386,9 @@ export default function MetricsPanel() {
     range,
     { resetExpanded = true, showPageLoading = true } = {}
   ) {
+    const loadSeq = metricsLoadSeq.current + 1;
+    metricsLoadSeq.current = loadSeq;
+
     if (showPageLoading) {
       setLoading(true);
     }
@@ -296,21 +396,21 @@ export default function MetricsPanel() {
 
     const params = new URLSearchParams({ range });
 
-    const [summaryRes, vehiclesRes, businessRes] = await Promise.all([
+    const [summaryRes, vehiclesRes, trendsRes] = await Promise.all([
       fetch(`${API_BASE}/api/metrics/summary?${params.toString()}`, {
         headers: { Accept: "application/json" },
       }),
       fetch(`${API_BASE}/api/metrics/vehicles?${params.toString()}`, {
         headers: { Accept: "application/json" },
       }),
-      fetch(`${API_BASE}/api/metrics/business/current?${params.toString()}`, {
+      fetch(`${API_BASE}/api/metrics/trends?${params.toString()}`, {
         headers: { Accept: "application/json" },
       }),
     ]);
 
     const summaryText = await summaryRes.text();
     const vehiclesText = await vehiclesRes.text();
-    const businessText = await businessRes.text();
+    const trendsText = await trendsRes.text();
 
     if (!summaryRes.ok) {
       throw new Error(
@@ -326,10 +426,12 @@ export default function MetricsPanel() {
 
     const summaryData = JSON.parse(summaryText);
     const vehiclesData = JSON.parse(vehiclesText);
-    const businessData = businessRes.ok ? JSON.parse(businessText) : null;
+    const trendsData = trendsRes.ok ? JSON.parse(trendsText) : null;
+
+    if (metricsLoadSeq.current !== loadSeq) return;
 
     setSummary(summaryData);
-    setBusinessMetrics(businessData);
+    setTrends(trendsData);
     setVehicles(
       Array.isArray(vehiclesData)
         ? vehiclesData
@@ -341,6 +443,32 @@ export default function MetricsPanel() {
     if (resetExpanded) {
       setExpandedVehicleId(null);
     }
+
+    setBusinessMetrics(null);
+
+    fetch(`${API_BASE}/api/metrics/business/current?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    })
+      .then(async (businessRes) => {
+        const businessText = await businessRes.text();
+        if (!businessRes.ok) {
+          throw new Error(
+            `Business metrics request failed: ${businessRes.status} ${businessText}`
+          );
+        }
+        return businessText ? JSON.parse(businessText) : null;
+      })
+      .then((businessData) => {
+        if (metricsLoadSeq.current === loadSeq) {
+          setBusinessMetrics(businessData);
+        }
+      })
+      .catch((err) => {
+        console.warn("Business metrics loaded after primary metrics failed:", err);
+        if (metricsLoadSeq.current === loadSeq) {
+          setBusinessMetrics(null);
+        }
+      });
   }
 
   function toggleBusinessProfile(vehicleId) {
@@ -1173,20 +1301,9 @@ const mileageStats = useMemo(() => {
                 ))}
               </div>
             </div>
-            <div className="metrics-topbar__group metrics-topbar__group--actions">
-              {fmvRefreshStatus ? (
-                <div className="metrics-topbar__status">{fmvRefreshStatus}</div>
-              ) : null}
-              <button
-                type="button"
-                className="metrics-topbar__button"
-                onClick={handleRefreshFmvNow}
-                disabled={fmvRefreshing}
-              >
-                {fmvRefreshing ? "Refreshing values..." : "Refresh values now"}
-              </button>
-            </div>
           </div>
+
+          <RevenueExpenseSparkline trends={trends} summary={summary} />
 
           <section className="metrics-section">
             <div className="metrics-section-header">
@@ -1260,10 +1377,23 @@ const mileageStats = useMemo(() => {
                 label="Fleet Value"
                 value={formatCurrency(summary.fleet_value)}
                 subtitle={
-                  <>
+                  <div className="fleet-value-card__meta">
                     <div>{formatValueTrend(summary.fleet_value_change)}</div>
                     <div>{formatUpdatedLabel(summary.fleet_value_updated_at)}</div>
-                  </>
+                    {fmvRefreshStatus ? (
+                      <div className="fleet-value-card__status">
+                        {fmvRefreshStatus}
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="fleet-value-card__refresh"
+                      onClick={handleRefreshFmvNow}
+                      disabled={fmvRefreshing}
+                    >
+                      {fmvRefreshing ? "Refreshing..." : "Refresh values now"}
+                    </button>
+                  </div>
                 }
                 tone={
                   Number(summary.fleet_value_change ?? 0) > 0

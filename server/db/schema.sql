@@ -839,6 +839,9 @@ CREATE TABLE public.notification_events (
     vehicle_name text,
     guest_name text,
     processed_at timestamp with time zone,
+    acknowledged_at timestamp with time zone,
+    acknowledged_by text,
+    acknowledged_reason text,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT notification_events_event_hash_key UNIQUE (event_hash),
     CONSTRAINT notification_events_pkey PRIMARY KEY (id)

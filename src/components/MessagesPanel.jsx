@@ -117,6 +117,13 @@ function formatHandoffCountdown(value, nowMs = Date.now()) {
   return `${parts.join(" ")} until pickup`;
 }
 
+function formatStatusLabel(value) {
+  if (!value) return "";
+  return String(value)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function formatMoney(value) {
   if (value == null) return "";
 
@@ -377,10 +384,17 @@ function buildMessageBody(message) {
   if (type === "handoff_ready_required") {
     const start = formatTripTime(message?.trip_start);
     const vehicleName = message?.vehicle_nickname || message?.vehicle_name || "Vehicle";
+    const maintenanceCount = Number(message?.maintenance_task_count || 0);
+    const maintenanceText =
+      maintenanceCount > 0
+        ? ` ${maintenanceCount} maintenance item${
+            maintenanceCount === 1 ? "" : "s"
+          } also need attention before handoff.`
+        : "";
 
     return `${vehicleName} goes out${
       start ? ` ${start}` : " soon"
-    }. Advance it when the handoff prep is complete.`;
+    }. Advance it when the handoff prep is complete.${maintenanceText}`;
   }
 
   if (type === "inspection_export_required") {
@@ -462,19 +476,21 @@ function buildMessageBody(message) {
   if (type === "trip_booked") {
     const start = formatTripTime(message.trip_start);
     const end = formatTripTime(message.trip_end);
-    const revenue = formatMoney(message.amount);
-
-    if (start && end && revenue) {
-      return `${start} → ${end} • ${revenue}`;
-    }
 
     if (start && end) {
-      return `${start} → ${end}`;
+      return `${start} -> ${end}`;
     }
+  }
 
-    if (revenue) {
-      return revenue;
-    }
+  if (
+    type === "turo_notification" &&
+    /upcoming trip/i.test(message?.subject || "")
+  ) {
+    const start = formatTripTime(message.trip_start || message.trip_record_start);
+    const pickup = message.pickup_location;
+    if (start && pickup) return `${start} pickup at ${pickup}`;
+    if (start) return `${start} pickup`;
+    if (pickup) return `Pickup at ${pickup}`;
   }
 
   const amount = formatMoney(message?.amount);
@@ -537,6 +553,12 @@ function buildMessageSub(message) {
   if (type === "notification_unmatched") return "Urgent bridge/email mismatch";
   if (type === "guest_message") return "Guest message";
   if (type === "trip_booked") return "Trip booked";
+  if (
+    type === "turo_notification" &&
+    /upcoming trip/i.test(message?.subject || "")
+  ) {
+    return "Upcoming trip notice";
+  }
   if (type === "maintenance_required") return "Maintenance required";
   if (type === "trip_changed") return "Trip changed";
   if (type === "payment_notice") return "Payment notice";
@@ -626,6 +648,40 @@ function isTripOverlapTask(message) {
 function isUnmatchedNotification(message) {
   const type = message?.type || message?.message_type;
   return type === "notification_unmatched";
+}
+
+function isOperationalTripNotice(message) {
+  const type = message?.type || message?.message_type;
+  if (!message?.trip_id && !message?.reservation_id) return false;
+
+  if (type === "trip_booked") return true;
+
+  return (
+    type === "turo_notification" &&
+    /upcoming trip/i.test(message?.subject || "")
+  );
+}
+
+function getVehicleOperationalStatus(message) {
+  if (message?.active_trip_id) {
+    const sameTrip =
+      message?.trip_id &&
+      Number(message.active_trip_id) === Number(message.trip_id);
+
+    if (sameTrip) return "This trip is active now";
+
+    const guest = message.active_trip_guest_name || "another guest";
+    const end = formatTripTime(message.active_trip_end);
+    if (end) return `Out with ${guest} until ${end}`;
+    return `Out with ${guest}`;
+  }
+
+  const stage = formatStatusLabel(
+    message?.trip_workflow_stage || message?.trip_status
+  );
+
+  if (stage) return `No active trip now; booking is ${stage}`;
+  return "No active trip now";
 }
 
 function isCompletableSyntheticTask(message) {
@@ -844,6 +900,8 @@ export default function MessagesPanel({
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [confirmingMessageId, setConfirmingMessageId] = useState(null);
   const [focusingMessageId, setFocusingMessageId] = useState(null);
+  const [ackingNotificationId, setAckingNotificationId] = useState(null);
+  const [resolvingMaintenanceId, setResolvingMaintenanceId] = useState(null);
   const [readyingHandoffMessageId, setReadyingHandoffMessageId] = useState(null);
   const [exportingPrepMessageId, setExportingPrepMessageId] = useState(null);
   const [exportingInspectionMessageId, setExportingInspectionMessageId] =
@@ -908,6 +966,93 @@ async function handleMarkAsRead(messageId) {
     notifyMessageStatsUpdated();
   } catch (err) {
     setError(err.message || "Failed to mark message as read");
+  }
+}
+
+async function handleAckNotification(message) {
+  const notificationId = message?.notification_event_id;
+  if (!notificationId) {
+    setError("No bridge notification id found");
+    return;
+  }
+
+  try {
+    setAckingNotificationId(notificationId);
+    setError("");
+
+    const res = await fetch(
+      `${API_BASE}/api/messages/notifications/${notificationId}/ack`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ reason: "handled from dispatch queue" }),
+      }
+    );
+
+    if (!res.ok) {
+      throw new Error(`Failed to acknowledge notification (${res.status})`);
+    }
+
+    setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+    setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
+    setUnmatchedNotificationCount((prev) => Math.max(0, prev - 1));
+    seenIdsRef.current.delete(message.id);
+    knownQueueItemIdsRef.current.delete(String(message.id));
+
+    notifyMessageStatsUpdated();
+  } catch (err) {
+    setError(err.message || "Failed to acknowledge notification");
+  } finally {
+    setAckingNotificationId(null);
+  }
+}
+
+async function handleResolveMaintenance(message) {
+  const taskIds = (message?.maintenance_tasks || []).flatMap((task) =>
+    Array.isArray(task?.task_ids) && task.task_ids.length
+      ? task.task_ids
+      : task?.id != null
+      ? [task.id]
+      : []
+  );
+
+  if (!taskIds.length) {
+    setError("No maintenance task ids found");
+    return;
+  }
+
+  try {
+    setResolvingMaintenanceId(message.id);
+    setError("");
+
+    const res = await fetch(`${API_BASE}/api/messages/maintenance/resolve`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ task_ids: taskIds }),
+    });
+
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+
+    if (!res.ok) {
+      throw new Error(data?.error || `Failed to resolve maintenance (${res.status})`);
+    }
+
+    setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+    setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
+    seenIdsRef.current.delete(message.id);
+    knownQueueItemIdsRef.current.delete(String(message.id));
+    notifyMessageStatsUpdated();
+  } catch (err) {
+    setError(err.message || "Failed to resolve maintenance");
+  } finally {
+    setResolvingMaintenanceId(null);
   }
 }
 
@@ -1555,7 +1700,13 @@ async function handleExportGuestInspectionSheet(message) {
             const canReviewOverlap = isTripOverlapTask(message);
             const canReviewUnmatchedNotification = isUnmatchedNotification(message);
             const canConfirmBooking = isBookingConfirmationTask(message);
+            const canShowOperationalTripNotice =
+              isOperationalTripNotice(message) && !canConfirmBooking;
             const canShowMaintenance = isMaintenanceNotice(message);
+            const hasMaintenanceDetails =
+              Number(message.maintenance_task_count || 0) > 0 &&
+              Array.isArray(message.maintenance_tasks) &&
+              message.maintenance_tasks.length > 0;
             const canCompleteSyntheticTask = isCompletableSyntheticTask(message);
             const canReply = !!buildReplyUrl(message) && !canCompleteSyntheticTask;
             const canFocusTrip =
@@ -1565,6 +1716,7 @@ async function handleExportGuestInspectionSheet(message) {
                 canReviewLateToll ||
                 canReviewOverlap ||
                 canReviewUnmatchedNotification ||
+                canShowOperationalTripNotice ||
                 canConfirmBooking ||
                 canShowMaintenance) &&
               Boolean(message.trip_id);
@@ -1577,8 +1729,15 @@ async function handleExportGuestInspectionSheet(message) {
               !canShowMaintenance;
             const maintenanceExpanded =
               canShowMaintenance && expandedMaintenanceIds.has(message.id);
+            const maintenanceDetailsExpanded =
+              canShowMaintenance ? maintenanceExpanded : true;
             const maintenanceCopy = canShowMaintenance
               ? getMaintenanceNoticeCopy(message)
+              : hasMaintenanceDetails
+              ? {
+                  title: "Maintenance before handoff",
+                  planLabel: "Plan around",
+                }
               : null;
             const bookingComparisonRows = canConfirmBooking
               ? buildBookingComparisonRows(message)
@@ -1657,6 +1816,74 @@ async function handleExportGuestInspectionSheet(message) {
                         <strong>#{message.reservation_id}</strong>
                       </div>
                     ) : null}
+                    <div className="message-inline-actions">
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={
+                          ackingNotificationId === message.notification_event_id
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleAckNotification(message);
+                        }}
+                      >
+                        {ackingNotificationId === message.notification_event_id
+                          ? "Acknowledging..."
+                          : "Acknowledge"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {canShowOperationalTripNotice && (
+                  <div className="message-booking-task">
+                    <div className="message-booking-title">
+                      Upcoming booking context
+                      <span>
+                        {message.trip_record_vehicle_nickname ||
+                          message.vehicle_nickname ||
+                          message.vehicle_name ||
+                          "Vehicle"}
+                      </span>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Pickup</span>
+                      <strong>
+                        {formatTripTime(
+                          message.trip_record_start || message.trip_start
+                        ) || "Unknown"}
+                      </strong>
+                    </div>
+                    <div className="message-handoff-countdown">
+                      {formatHandoffCountdown(
+                        message.trip_record_start || message.trip_start,
+                        countdownNow
+                      )}
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Vehicle status</span>
+                      <strong>{getVehicleOperationalStatus(message)}</strong>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Pickup location</span>
+                      <strong>{message.pickup_location || "Unknown"}</strong>
+                    </div>
+                    {message.trip_id && (
+                      <div className="message-inline-actions">
+                        <button
+                          type="button"
+                          className="message-action"
+                          disabled={focusingMessageId === message.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleFocusTrip(message);
+                          }}
+                        >
+                          {focusingMessageId === message.id ? "Loading..." : "Open trip"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1872,10 +2099,12 @@ async function handleExportGuestInspectionSheet(message) {
                   </div>
                 )}
 
-                {canShowMaintenance && (
+                {hasMaintenanceDetails && (
                   <div
                     className={`message-maintenance-task ${
-                      maintenanceExpanded ? "" : "message-maintenance-task--compact"
+                      maintenanceDetailsExpanded
+                        ? ""
+                        : "message-maintenance-task--compact"
                     }`}
                   >
                     <div className="message-booking-title">
@@ -1902,6 +2131,11 @@ async function handleExportGuestInspectionSheet(message) {
                           <div>
                             <strong>{task.title || "Maintenance task"}</strong>
                             {task.description ? <span>{task.description}</span> : null}
+                            {Number(task.duplicate_count || 0) > 1 ? (
+                              <span>
+                                {Number(task.duplicate_count)} open records grouped
+                              </span>
+                            ) : null}
                           </div>
                           <em>{task.priority || "medium"}</em>
                         </div>
@@ -1924,7 +2158,7 @@ async function handleExportGuestInspectionSheet(message) {
                   canReviewLateToll ||
                   canCompleteSyntheticTask ||
                   canConfirmBooking ||
-                  canShowMaintenance ||
+                  hasMaintenanceDetails ||
                   canFocusTrip) && (
                   <div className="message-actions">
                     {canFocusTrip && (
@@ -1950,6 +2184,22 @@ async function handleExportGuestInspectionSheet(message) {
                           : canShowMaintenance || canAdvanceHandoff || canExportInspection
                           ? "View trip"
                           : "Verify details"}
+                      </button>
+                    )}
+
+                    {hasMaintenanceDetails && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={resolvingMaintenanceId === message.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleResolveMaintenance(message);
+                        }}
+                      >
+                        {resolvingMaintenanceId === message.id
+                          ? "Updating..."
+                          : "Mark handled"}
                       </button>
                     )}
 
