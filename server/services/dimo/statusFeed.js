@@ -107,7 +107,7 @@ async function getDimoStatusFeed() {
         battery_voltage_last_updated,
         vehicle_last_updated,
         captured_at,
-        raw_payload,
+        COALESCE(raw.raw_payload, s.raw_payload) AS raw_payload,
         local_time_zone,
         qualified_dtc_list,
         dimo_token_id,
@@ -126,10 +126,12 @@ async function getDimoStatusFeed() {
         throttle_position,
         runtime_minutes,
         def_level
-      FROM vehicle_telemetry_snapshots
-      WHERE service_name = 'dimo'
-        AND dimo_token_id IS NOT NULL
-        AND dimo_token_id = ANY($1::bigint[])
+      FROM vehicle_telemetry_snapshots s
+      LEFT JOIN vehicle_telemetry_raw_payloads raw
+        ON raw.snapshot_id = s.id
+      WHERE s.service_name = 'dimo'
+        AND s.dimo_token_id IS NOT NULL
+        AND s.dimo_token_id = ANY($1::bigint[])
       ORDER BY dimo_token_id, captured_at DESC
     ),
     engine_temp AS (
@@ -170,7 +172,7 @@ async function getDimoStatusFeed() {
         jsonb_build_object(
           'max_rpm', MAX(
             COALESCE(
-              (hist.raw_payload -> 'rpmHistory' ->> 'maxRpm')::numeric,
+              (COALESCE(raw.raw_payload, hist.raw_payload) -> 'rpmHistory' ->> 'maxRpm')::numeric,
               hist.engine_rpm
             )
           ),
@@ -179,11 +181,13 @@ async function getDimoStatusFeed() {
           'last_recorded_at', MAX(hist.captured_at)
         ) AS engine_rpm_range
       FROM vehicle_telemetry_snapshots hist
+      LEFT JOIN vehicle_telemetry_raw_payloads raw
+        ON raw.snapshot_id = hist.id
       WHERE hist.service_name = 'dimo'
         AND hist.dimo_token_id = ANY($1::bigint[])
         AND (
           hist.engine_rpm IS NOT NULL
-          OR hist.raw_payload -> 'rpmHistory' ->> 'maxRpm' IS NOT NULL
+          OR COALESCE(raw.raw_payload, hist.raw_payload) -> 'rpmHistory' ->> 'maxRpm' IS NOT NULL
         )
         AND hist.captured_at >= NOW() - INTERVAL '14 days'
       GROUP BY hist.dimo_token_id

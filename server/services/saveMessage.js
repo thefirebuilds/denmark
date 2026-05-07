@@ -65,7 +65,8 @@ function classifyMessageType(subject) {
 
   if (
     /^reimbursement invoice$/i.test(s) ||
-    /^.+ has been charged for your reimbursement invoice$/i.test(s)
+    /^.+ has been charged for your reimbursement invoice$/i.test(s) ||
+    /^.+ has not responded to your reimbursement invoice$/i.test(s)
   ) {
     return "reimbursement_invoice";
   }
@@ -368,7 +369,8 @@ function baseExtractFields(normalizedTextBody, subject = "", htmlBody = "") {
     extractMatch(subject, /^(.+?) has cancelled their trip with your /i) ||
     extractMatch(subject, /^(.+?)[’']s trip with your /i) ||
     extractMatch(subject, /^(.+?) has just rated their trip/i) ||
-    extractMatch(subject, /^(.+?) has been charged for your reimbursement invoice/i);
+    extractMatch(subject, /^(.+?) has been charged for your reimbursement invoice/i) ||
+    extractMatch(subject, /^(.+?) has not responded to your reimbursement invoice/i);
 
   return {
     guestName: guestName || null,
@@ -868,3 +870,4 @@ async function saveMessage(message) {
 }
 
 module.exports = saveMessage;
+

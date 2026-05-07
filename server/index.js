@@ -73,17 +73,84 @@ const defaultCors = cors({
   credentials: true,
 });
 
-const marketplaceCors = cors({
-  origin: [
+const marketplaceAllowedOrigins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
     "https://www.facebook.com",
-  ],
+];
+
+function isMarketplaceExtensionOrigin(origin) {
+  if (!origin) return true;
+  if (marketplaceAllowedOrigins.includes(origin)) return true;
+  return /^chrome-extension:\/\/[a-z0-9]+$/i.test(origin);
+}
+
+const marketplaceCors = cors({
+  origin(origin, callback) {
+    callback(null, isMarketplaceExtensionOrigin(origin));
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Accept"],
+  allowedHeaders: [
+    "Content-Type",
+    "Accept",
+    "Authorization",
+    "X-Service-Token",
+    "X-Denmark-Marketplace-Extension",
+  ],
   credentials: true,
   optionsSuccessStatus: 204,
 });
+
+const marketplaceExtensionWritePaths = new Set([
+  "/enrich",
+  "/ingest",
+  "/listings/ignoreByUrl",
+]);
+
+function isMarketplaceExtensionWriteRequest(req) {
+  const extensionHeader = String(req.get("x-denmark-marketplace-extension") || "").trim();
+  const origin = String(req.get("origin") || "").trim();
+  const originalPath = String(req.originalUrl || "").split("?")[0];
+  const mountedPath = String(req.path || "").split("?")[0];
+  const marketplacePath = originalPath.replace(/^\/api\/marketplace/i, "") || mountedPath;
+  const hasExtensionMarker = extensionHeader === "1";
+  const hasLegacyExtensionOrigin =
+    origin === "https://www.facebook.com" ||
+    /^chrome-extension:\/\/[a-z0-9]+$/i.test(origin);
+
+  return (
+    req.method === "POST" &&
+    (marketplaceExtensionWritePaths.has(mountedPath) ||
+      marketplaceExtensionWritePaths.has(marketplacePath)) &&
+    (hasExtensionMarker || hasLegacyExtensionOrigin) &&
+    isMarketplaceExtensionOrigin(origin)
+  );
+}
+
+function allowMarketplaceExtensionWrite(req, res, next) {
+  if (isMarketplaceExtensionWriteRequest(req)) {
+    req.auth = {
+      kind: "marketplace_extension",
+      role: "owner",
+      permissions: ["*"],
+      isActive: true,
+    };
+  }
+
+  return next();
+}
+
+function requireMarketplacePermissions(req, res, next) {
+  if (isMarketplaceExtensionWriteRequest(req)) return next();
+  return requireMethodPermissions({
+    GET: "marketplace.read",
+    POST: "marketplace.write",
+    PUT: "marketplace.write",
+    PATCH: "marketplace.write",
+  })(req, res, next);
+}
 
 const cookieSecure =
   String(process.env.AUTH_COOKIE_SECURE || "").trim() !== ""
@@ -91,6 +158,11 @@ const cookieSecure =
     : process.env.NODE_ENV === "production";
 
 app.set("trust proxy", 1);
+
+// Marketplace requests can originate from Facebook content scripts. Apply this
+// before JSON parsing/database/auth gates so any error still includes CORS.
+app.use("/api/marketplace", marketplaceCors);
+app.options(/^\/api\/marketplace(?:\/.*)?$/, marketplaceCors);
 
 app.use(
   session({
@@ -134,12 +206,17 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
-// Explicit preflight handling for marketplace routes
-app.options(/^\/api\/marketplace\/.*$/, marketplaceCors);
-
 app.get("/api/startup/status", defaultCors, requirePermission("settings.read"), (req, res) => {
   res.json(startScheduler.getStartupStatus());
 });
+
+app.use(
+  "/api/marketplace",
+  marketplaceCors,
+  allowMarketplaceExtensionWrite,
+  requireMarketplacePermissions,
+  marketplaceRoutes
+);
 
 app.use("/api", defaultCors, authRoutes);
 app.use(
@@ -214,12 +291,6 @@ app.use(
   defaultCors,
   requireMethodPermissions({ GET: "metrics.read", PUT: "metrics.write", POST: "metrics.write" }),
   metricsRouter
-);
-app.use(
-  "/api/marketplace",
-  marketplaceCors,
-  requireMethodPermissions({ GET: "marketplace.read", POST: "marketplace.write", PUT: "marketplace.write", PATCH: "marketplace.write" }),
-  marketplaceRoutes
 );
 app.use(
   "/api/settings",

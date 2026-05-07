@@ -4,6 +4,9 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const {
+  closeSatisfiedMaintenanceTasks,
+} = require("./syncMaintenanceTasks");
 
 function getResolvableTaskTypesForRuleCode(ruleCode) {
   const normalized = String(ruleCode || "").trim().toLowerCase();
@@ -304,11 +307,16 @@ async function createMaintenanceEvent({
       [vin, rule.id, rule.rule_code, resolvableTaskTypes]
     );
 
+    const syncResult = await closeSatisfiedMaintenanceTasks(client, vin);
+
     await client.query("COMMIT");
 
     return {
       ...insert.rows[0],
-      closed_task_count: taskCloseResult.rowCount,
+      closed_task_count:
+        Number(taskCloseResult.rowCount || 0) +
+        Number(syncResult.closedRuleTaskCount || 0) +
+        Number(syncResult.closedObjectiveTaskCount || 0),
       vehicle_current_odometer_miles: Math.max(
         Number(vehicle.current_odometer_miles || 0),
         odo

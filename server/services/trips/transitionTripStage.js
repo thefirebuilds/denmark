@@ -309,7 +309,7 @@ async function updateTripMaxEngineRpm(client, trip) {
           t2.id,
           MAX(
             COALESCE(
-              (s.raw_payload -> 'rpmHistory' ->> 'maxRpm')::numeric,
+              (COALESCE(raw.raw_payload, s.raw_payload) -> 'rpmHistory' ->> 'maxRpm')::numeric,
               s.engine_rpm
             )
           ) AS max_engine_rpm
@@ -328,8 +328,13 @@ async function updateTripMaxEngineRpm(client, trip) {
           )
         JOIN vehicle_telemetry_snapshots s
           ON s.vin = v.vin
+        LEFT JOIN vehicle_telemetry_raw_payloads raw
+          ON raw.snapshot_id = s.id
         WHERE s.service_name = 'dimo'
-          AND s.engine_rpm IS NOT NULL
+          AND (
+            s.engine_rpm IS NOT NULL
+            OR COALESCE(raw.raw_payload, s.raw_payload) -> 'rpmHistory' ->> 'maxRpm' IS NOT NULL
+          )
           AND s.captured_at >= t2.trip_start
           AND s.captured_at <= t2.trip_end
           AND t2.id = $1

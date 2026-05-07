@@ -19,6 +19,7 @@ const {
 const {
   stageStartingOdometerFromTelemetry,
 } = require("../trips/stageStartingOdometer");
+const { saveTelemetryRawPayload } = require("../telemetry/rawPayloadStore");
 
 let snapshotColumnCache = null;
 let vehicleColumnCache = null;
@@ -590,7 +591,6 @@ async function insertVehicleTelemetrySnapshot(snapshot, client = pool) {
     ["battery_status", snapshot.battery_status],
     ["battery_last_updated", snapshot.battery_last_updated],
     ["vehicle_last_updated", snapshot.vehicle_last_updated],
-    ["raw_payload", JSON.stringify(snapshot.raw_payload), "::jsonb"],
     ["local_time_zone", snapshot.local_time_zone],
     ["qualified_dtc_list", JSON.stringify(snapshot.qualified_dtc_list), "::jsonb"],
     ["dimo_token_id", snapshot.dimo_token_id],
@@ -625,7 +625,9 @@ async function insertVehicleTelemetrySnapshot(snapshot, client = pool) {
     RETURNING id, captured_at
   `;
 
-  return client.query(sql, values);
+  const result = await client.query(sql, values);
+  await saveTelemetryRawPayload(client, result.rows[0]?.id, snapshot.raw_payload);
+  return result;
 }
 
 async function updateActiveTripMaxEngineRpm(snapshot, client = pool) {

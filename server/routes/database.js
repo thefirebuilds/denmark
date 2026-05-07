@@ -1,4 +1,5 @@
 const express = require("express");
+const zlib = require("zlib");
 const db = require("../db");
 
 const router = express.Router();
@@ -35,6 +36,26 @@ async function getTableColumns(client, tableName) {
       WHERE table_schema = 'public'
         AND table_name = $1
       ORDER BY ordinal_position
+    `,
+    [tableName]
+  );
+
+  return result.rows.map((row) => row.column_name);
+}
+
+async function getPrimaryKeyColumns(client, tableName) {
+  const result = await client.query(
+    `
+      SELECT kcu.column_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+       AND tc.table_name = kcu.table_name
+      WHERE tc.table_schema = 'public'
+        AND tc.table_name = $1
+        AND tc.constraint_type = 'PRIMARY KEY'
+      ORDER BY kcu.ordinal_position
     `,
     [tableName]
   );
@@ -97,6 +118,95 @@ function orderTablesByDependencies(tables, deps) {
   }
 
   return ordered;
+}
+
+function writeChunk(res, chunk) {
+  return new Promise((resolve, reject) => {
+    const ok = res.write(chunk, (error) => {
+      if (error) reject(error);
+    });
+
+    if (ok) {
+      resolve();
+      return;
+    }
+
+    res.once("drain", resolve);
+    res.once("error", reject);
+  });
+}
+
+async function streamBackup(res) {
+  const client = await db.connect();
+  const batchSize = 1000;
+
+  try {
+    const tables = await getPublicTables(client);
+    const deps = await getForeignKeyDependencies(client, tables);
+    const orderedTables = orderTablesByDependencies(tables, deps);
+
+    await writeChunk(
+      res,
+      JSON.stringify({
+        format: "denmark-postgres-json-backup",
+        version: 2,
+        capturedAt: new Date().toISOString(),
+        database: process.env.PGDATABASE || "denmark",
+      }).replace(/}$/, ',"tables":[')
+    );
+
+    for (let tableIndex = 0; tableIndex < orderedTables.length; tableIndex += 1) {
+      const tableName = orderedTables[tableIndex];
+      const columns = await getTableColumns(client, tableName);
+      const primaryKeyColumns = await getPrimaryKeyColumns(client, tableName);
+      const orderClause = primaryKeyColumns.length
+        ? ` ORDER BY ${primaryKeyColumns.map(quoteIdent).join(", ")}`
+        : "";
+
+      if (tableIndex > 0) await writeChunk(res, ",");
+
+      await writeChunk(
+        res,
+        `${JSON.stringify({
+          name: tableName,
+          columns,
+        }).replace(/}$/, ',"rows":[')}`
+      );
+
+      let offset = 0;
+      let wroteRow = false;
+
+      while (true) {
+        const rowsResult = await client.query(
+          `
+            SELECT ${columns.map(quoteIdent).join(", ")}
+            FROM ${qualifiedTable(tableName)}
+            ${orderClause}
+            LIMIT $1 OFFSET $2
+          `,
+          [batchSize, offset]
+        );
+
+        if (!rowsResult.rows.length) break;
+
+        for (const row of rowsResult.rows) {
+          if (wroteRow) await writeChunk(res, ",");
+          await writeChunk(res, JSON.stringify(row));
+          wroteRow = true;
+        }
+
+        offset += rowsResult.rows.length;
+        if (rowsResult.rows.length < batchSize) break;
+      }
+
+      await writeChunk(res, "]}");
+    }
+
+    await writeChunk(res, "]}");
+    res.end();
+  } finally {
+    client.release();
+  }
 }
 
 async function buildBackup() {
@@ -248,15 +358,31 @@ async function restoreBackup(backup) {
 
 router.get("/backup", async (req, res) => {
   try {
-    const backup = await buildBackup();
-    const filename = `denmark-db-backup-${isoStamp()}.json`;
+    const compressed =
+      String(req.query.compress || req.query.format || "").toLowerCase() === "gzip";
+    const filename = `denmark-db-backup-${isoStamp()}.json${compressed ? ".gz" : ""}`;
 
-    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Type", compressed ? "application/gzip" : "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.json(backup);
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    if (!compressed) {
+      await streamBackup(res);
+      return;
+    }
+
+    const gzip = zlib.createGzip({ level: 9 });
+    gzip.on("error", (error) => res.destroy(error));
+    gzip.pipe(res);
+    await streamBackup(gzip);
   } catch (err) {
     console.error("database backup failed:", err);
-    res.status(500).json({ error: err.message || "Database backup failed" });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || "Database backup failed" });
+      return;
+    }
+
+    res.destroy(err);
   }
 });
 

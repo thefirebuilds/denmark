@@ -59,7 +59,10 @@
 
         const resp = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Denmark-Marketplace-Extension": "1",
+          },
           body: JSON.stringify(payload),
           signal: controller.signal,
         });

@@ -31,7 +31,10 @@ async function postJsonWithFallback(path, payload, timeoutMs = 5000) {
 
       const resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Denmark-Marketplace-Extension": "1",
+        },
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
@@ -235,7 +238,10 @@ chrome.action.onClicked.addListener(async (tab) => {
 
             const resp = await fetch(url, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                "X-Denmark-Marketplace-Extension": "1",
+              },
               body: JSON.stringify(payload),
               signal: controller.signal,
             });

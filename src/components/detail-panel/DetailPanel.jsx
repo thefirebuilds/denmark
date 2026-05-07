@@ -46,7 +46,12 @@ function buildActionableTaskStats(summary) {
   };
 }
 
-export default function DetailPanel({ selectedTrip, onTripUpdated, trips }) {
+export default function DetailPanel({
+  selectedTrip,
+  editTripRequest,
+  onTripUpdated,
+  trips,
+}) {
   const { vehicles, vehiclesLoading, vehiclesError, highlightedVehicles } =
     useVehicleStatus(60000);
 
@@ -128,6 +133,13 @@ export default function DetailPanel({ selectedTrip, onTripUpdated, trips }) {
     if (!trip?.id) return;
     setEditingTripId(trip.id);
   }
+
+  useEffect(() => {
+    if (!editTripRequest?.tripId || !selectedTrip?.id) return;
+    if (Number(editTripRequest.tripId) !== Number(selectedTrip.id)) return;
+
+    setEditingTripId(selectedTrip.id);
+  }, [editTripRequest?.tripId, editTripRequest?.requestedAt, selectedTrip?.id]);
 
   function handleCloseEditModal() {
     setEditingTripId(null);

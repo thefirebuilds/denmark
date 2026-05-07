@@ -9,6 +9,7 @@ const {
 const {
   stageStartingOdometerFromTelemetry,
 } = require("../trips/stageStartingOdometer");
+const { saveTelemetryRawPayload } = require("../telemetry/rawPayloadStore");
 
 function toIntegerOrNull(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -169,7 +170,7 @@ async function upsertVehicle(client, snapshot) {
 }
 
 async function insertSnapshot(client, snapshot) {
-  await client.query(
+  const result = await client.query(
     `
       INSERT INTO vehicle_telemetry_snapshots (
         service_name,
@@ -194,15 +195,15 @@ async function insertSnapshot(client, snapshot) {
         qualified_dtc_list,
         battery_status,
         battery_last_updated,
-        vehicle_last_updated,
-        raw_payload
+        vehicle_last_updated
       )
       VALUES (
         'bouncie',
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23
+        $21, $22
       )
+      RETURNING id
     `,
     [
       snapshot.vin,
@@ -227,9 +228,11 @@ async function insertSnapshot(client, snapshot) {
       snapshot.battery_status,
       snapshot.battery_last_updated,
       snapshot.vehicle_last_updated,
-      JSON.stringify(snapshot.raw_payload),
     ]
   );
+
+  await saveTelemetryRawPayload(client, result.rows[0]?.id, snapshot.raw_payload);
+  return result;
 }
 
 function looksLikeRealTripStart(snapshot) {

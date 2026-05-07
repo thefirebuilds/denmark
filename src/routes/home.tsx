@@ -185,6 +185,7 @@ export default function Home() {
   } | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState(null);
+  const [editTripRequest, setEditTripRequest] = useState(null);
   const [trips, setTrips] = useState([]);
   const [startupVehicles, setStartupVehicles] = useState([]);
   const [startupMessages, setStartupMessages] = useState([]);
@@ -755,6 +756,16 @@ export default function Home() {
     );
   }
 
+  function handleEditTripFromMessage(trip) {
+    if (!trip?.id) return;
+
+    handleTripFocused(trip);
+    setEditTripRequest({
+      tripId: trip.id,
+      requestedAt: Date.now(),
+    });
+  }
+
   function handleTripSelectedFromQueue(trip) {
     setSelectedTrip(trip);
     setMessageMode(trip?.id ? "trip" : "live");
@@ -930,6 +941,7 @@ export default function Home() {
             messageMode={messageMode}
             onClearSelectedTrip={handleClearSelectedTrip}
             onSelectTrip={handleTripFocused}
+            onEditTrip={handleEditTripFromMessage}
             onOpenMaintenanceVehicle={handleOpenMaintenanceVehicle}
             initialMessages={startupMessages}
             initialUnreadCount={messageStats.unread}
@@ -938,6 +950,7 @@ export default function Home() {
 
           <DetailPanel
             selectedTrip={selectedTrip}
+            editTripRequest={editTripRequest}
             onTripUpdated={handleTripUpdated}
             trips={trips}
           />

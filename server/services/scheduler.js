@@ -33,6 +33,7 @@ const {
 } = require("./googleCalendar/googleCalendarStore");
 const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
 const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
+const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
 const pool = require("../db");
 
 let tellerSyncInProgress = false;
@@ -57,6 +58,8 @@ let fmvInProgress = false;
 let fmvIntervalHandle = null;
 let businessMetricsInProgress = false;
 let businessMetricsIntervalHandle = null;
+let telemetryRetentionInProgress = false;
+let telemetryRetentionIntervalHandle = null;
 
 const STARTUP_TASKS = [
   "teller",
@@ -66,6 +69,7 @@ const STARTUP_TASKS = [
   "dimo",
   "fmv",
   "businessMetrics",
+  "telemetryRetention",
   "publicAvailability",
   "googleCalendar",
 ];
@@ -481,6 +485,33 @@ async function runBusinessMetricsSnapshot(reason = "interval") {
   }
 }
 
+async function runTelemetryRetention(reason = "interval") {
+  if (telemetryRetentionInProgress) {
+    console.log(
+      `[scheduler] telemetryRetention skipped | reason=${reason} alreadyRunning=true`
+    );
+    return;
+  }
+
+  telemetryRetentionInProgress = true;
+  const startedAt = Date.now();
+
+  try {
+    console.log(`[scheduler] telemetryRetention start | reason=${reason}`);
+    const result = await pruneOldTelemetryRawPayloads();
+
+    console.log(
+      `[scheduler] telemetryRetention done | reason=${reason} ran=${result.ran} prunedRows=${result.prunedRows} retentionDays=${result.retentionDays} durationMs=${Date.now() - startedAt}`
+    );
+  } catch (err) {
+    console.error(
+      `[scheduler] telemetryRetention failed | reason=${reason} error=${err.message || err}`
+    );
+  } finally {
+    telemetryRetentionInProgress = false;
+  }
+}
+
 function startScheduler() {
   console.log("[scheduler] started");
 
@@ -488,6 +519,7 @@ function startScheduler() {
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
   const everyFiveMinutesMs = 5 * 60 * 1000;
   const everyTwentyFourHoursMs = 24 * 60 * 60 * 1000;
+  const everySevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
   resetStartupStatus();
 
@@ -532,6 +564,11 @@ function startScheduler() {
       // Business metrics snapshot immediately
       void runStartupTask("businessMetrics", () =>
         runBusinessMetricsSnapshot("startup")
+      );
+
+      // Telemetry raw payload retention is guarded internally, so startup is safe.
+      void runStartupTask("telemetryRetention", () =>
+        runTelemetryRetention("startup")
       );
 
       // Public availability push immediately
@@ -585,6 +622,11 @@ function startScheduler() {
     void runBusinessMetricsSnapshot("interval");
   }, everyTwentyFourHoursMs);
 
+  // Telemetry raw payload retention weekly
+  telemetryRetentionIntervalHandle = setInterval(() => {
+    void runTelemetryRetention("interval");
+  }, everySevenDaysMs);
+
   // Google Calendar reconcile every 8 hours
   googleCalendarIntervalHandle = setInterval(() => {
     void runGoogleCalendarReconcile("interval");
@@ -630,6 +672,11 @@ function stopScheduler() {
   if (businessMetricsIntervalHandle) {
     clearInterval(businessMetricsIntervalHandle);
     businessMetricsIntervalHandle = null;
+  }
+
+  if (telemetryRetentionIntervalHandle) {
+    clearInterval(telemetryRetentionIntervalHandle);
+    telemetryRetentionIntervalHandle = null;
   }
 
   console.log("[scheduler] stopped");

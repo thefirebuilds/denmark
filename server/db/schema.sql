@@ -35,6 +35,7 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_signal_values DROP CONSTRAINT IF EXISTS vehicle_telemetry_signal_values_snapshot_id_fkey;
+ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_raw_payloads DROP CONSTRAINT IF EXISTS vehicle_telemetry_raw_payloads_snapshot_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_history DROP CONSTRAINT IF EXISTS vehicle_odometer_history_vehicle_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_fmv_estimates DROP CONSTRAINT IF EXISTS vehicle_fmv_estimates_vehicle_vin_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_condition_notes DROP CONSTRAINT IF EXISTS vehicle_condition_notes_vehicle_vin_fkey;
@@ -81,6 +82,7 @@ DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_service_vin_captured
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_service_token_captured;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_external_key;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_dimo_token_captured;
+DROP INDEX IF EXISTS public.idx_vehicle_telemetry_raw_payloads_created_at;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_token_signal_time;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_snapshot;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_signal_timestamp;
@@ -138,6 +140,7 @@ DROP INDEX IF EXISTS public.idx_expenses_updated_at;
 DROP INDEX IF EXISTS public.idx_expenses_vehicle_date;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_id_key;
+ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_raw_payloads DROP CONSTRAINT IF EXISTS vehicle_telemetry_raw_payloads_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_snapshots DROP CONSTRAINT IF EXISTS vehicle_telemetry_snapshots_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_signal_values DROP CONSTRAINT IF EXISTS vehicle_telemetry_signal_values_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_history DROP CONSTRAINT IF EXISTS vehicle_odometer_history_pkey;
@@ -196,6 +199,7 @@ DROP TABLE IF EXISTS public.trip_google_sync;
 DROP SEQUENCE IF EXISTS public.vehicles_id_seq;
 DROP TABLE IF EXISTS public.vehicles;
 DROP SEQUENCE IF EXISTS public.vehicle_telemetry_snapshots_id_seq;
+DROP TABLE IF EXISTS public.vehicle_telemetry_raw_payloads;
 DROP TABLE IF EXISTS public.vehicle_telemetry_snapshots;
 DROP SEQUENCE IF EXISTS public.vehicle_telemetry_signal_values_id_seq;
 DROP TABLE IF EXISTS public.vehicle_telemetry_signal_values;
@@ -1470,6 +1474,17 @@ ALTER SEQUENCE public.vehicle_telemetry_snapshots_id_seq OWNED BY public.vehicle
 
 
 --
+-- Name: vehicle_telemetry_raw_payloads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vehicle_telemetry_raw_payloads (
+    snapshot_id bigint NOT NULL,
+    raw_payload jsonb NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: vehicles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1931,6 +1946,14 @@ ALTER TABLE ONLY public.vehicle_telemetry_signal_values
 
 
 --
+-- Name: vehicle_telemetry_raw_payloads vehicle_telemetry_raw_payloads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_telemetry_raw_payloads
+    ADD CONSTRAINT vehicle_telemetry_raw_payloads_pkey PRIMARY KEY (snapshot_id);
+
+
+--
 -- Name: vehicle_telemetry_snapshots vehicle_telemetry_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2328,6 +2351,13 @@ CREATE INDEX idx_vehicle_telemetry_signal_values_token_signal_time ON public.veh
 
 
 --
+-- Name: idx_vehicle_telemetry_raw_payloads_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_telemetry_raw_payloads_created_at ON public.vehicle_telemetry_raw_payloads USING btree (created_at);
+
+
+--
 -- Name: idx_vehicle_telemetry_snapshots_dimo_token_captured; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2360,6 +2390,12 @@ CREATE INDEX idx_vehicle_telemetry_snapshots_service_vin_captured ON public.vehi
 --
 
 CREATE INDEX idx_vehicle_telemetry_snapshots_vin_captured_at ON public.vehicle_telemetry_snapshots USING btree (vin, captured_at DESC);
+
+--
+-- Name: idx_vehicle_telemetry_snapshots_lower_vin_recorded_desc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_telemetry_snapshots_lower_vin_recorded_desc ON public.vehicle_telemetry_snapshots USING btree (lower(vin), COALESCE(vehicle_last_updated, captured_at) DESC NULLS LAST, id DESC);
 
 
 --
@@ -2668,6 +2704,14 @@ ALTER TABLE ONLY public.vehicle_odometer_history
 
 ALTER TABLE ONLY public.vehicle_telemetry_signal_values
     ADD CONSTRAINT vehicle_telemetry_signal_values_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.vehicle_telemetry_snapshots(id) ON DELETE CASCADE;
+
+
+--
+-- Name: vehicle_telemetry_raw_payloads vehicle_telemetry_raw_payloads_snapshot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_telemetry_raw_payloads
+    ADD CONSTRAINT vehicle_telemetry_raw_payloads_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.vehicle_telemetry_snapshots(id) ON DELETE CASCADE;
 
 
 --

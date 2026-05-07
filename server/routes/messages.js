@@ -214,7 +214,92 @@ function isUncorrelatedUnreadMessage(item) {
   );
 }
 
+function isGuestMessageItem(item) {
+  const type = item?.message_type || item?.type;
+  return type === "guest_message";
+}
+
+function getGuestMessageThreadKey(item) {
+  if (item?.trip_id) return `trip:${item.trip_id}`;
+  if (item?.reservation_id) return `reservation:${item.reservation_id}`;
+
+  const guest = String(item?.guest_name || item?.parsed?.guest || "")
+    .trim()
+    .toLowerCase();
+  const vehicle = String(
+    item?.vehicle_nickname ||
+      item?.vehicle_name ||
+      item?.parsed?.vehicle ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  return `guest:${guest || "unknown"}:${vehicle || "unknown"}`;
+}
+
+function getQueueTimestampMs(item) {
+  const value = item?.timestamp || item?.created_at || item?.notification_created_at;
+  const ms = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function compactGuestMessageThreads(items) {
+  const threadItems = new Map();
+  const passthrough = [];
+
+  for (const item of items || []) {
+    if (item?.status !== "unread" || !isGuestMessageItem(item)) {
+      passthrough.push(item);
+      continue;
+    }
+
+    const key = getGuestMessageThreadKey(item);
+    if (!threadItems.has(key)) threadItems.set(key, []);
+    threadItems.get(key).push(item);
+  }
+
+  for (const [key, messages] of threadItems.entries()) {
+    messages.sort((a, b) => getQueueTimestampMs(b) - getQueueTimestampMs(a));
+
+    if (messages.length === 1) {
+      passthrough.push(messages[0]);
+      continue;
+    }
+
+    const latest = messages[0];
+    const orderedOldestFirst = [...messages].reverse();
+    passthrough.push({
+      ...latest,
+      id: `guest-thread:${key}`,
+      messageId: `guest-thread:${key}`,
+      type: "guest_message_thread",
+      message_type: "guest_message_thread",
+      status: "unread",
+      subject: `${messages.length} guest messages from ${
+        latest.guest_name || latest.parsed?.guest || "guest"
+      }`,
+      guest_message_count: messages.length,
+      guest_messages: orderedOldestFirst.map((message) => ({
+        id: message.id,
+        messageId: message.messageId,
+        timestamp: message.timestamp,
+        guest_message: message.guest_message,
+        subject: message.subject,
+      })),
+      message_ids: messages.map((message) => message.id),
+      latest_message_id: latest.id,
+      latest_guest_message: latest.guest_message,
+      timestamp: latest.timestamp,
+      created_at: latest.created_at,
+    });
+  }
+
+  return passthrough;
+}
+
 function messageQueueRank(item) {
+  if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
   if (item.type === "notification_unmatched") return -2;
   if (isUncorrelatedUnreadMessage(item)) return -2;
   if (item.type === "handoff_ready_required") return -1;
@@ -1128,6 +1213,34 @@ router.get("/", async (req, res) => {
           (
             m.status = 'unread'
             AND COALESCE(m.message_type, '') <> 'payment_notice'
+            AND NOT (
+              LOWER(COALESCE(m.subject, '')) LIKE '%has not responded to your reimbursement invoice%'
+              AND EXISTS (
+                SELECT 1
+                FROM messages sibling
+                WHERE sibling.id <> m.id
+                  AND sibling.message_type = 'reimbursement_invoice'
+                  AND LOWER(COALESCE(sibling.subject, '')) NOT LIKE '%has not responded to your reimbursement invoice%'
+                  AND COALESCE(sibling.message_timestamp, sibling.created_at) BETWEEN
+                    COALESCE(m.message_timestamp, m.created_at) - INTERVAL '10 minutes'
+                    AND COALESCE(m.message_timestamp, m.created_at) + INTERVAL '10 minutes'
+                  AND (
+                    (
+                      m.trip_id IS NOT NULL
+                      AND sibling.trip_id = m.trip_id
+                    )
+                    OR (
+                      m.reservation_id IS NOT NULL
+                      AND sibling.reservation_id = m.reservation_id
+                    )
+                  )
+                  AND (
+                    m.amount IS NULL
+                    OR sibling.amount IS NULL
+                    OR sibling.amount = m.amount
+                  )
+              )
+            )
           )
           OR (
             m.message_type = 'trip_booked'
@@ -1991,7 +2104,7 @@ router.get("/", async (req, res) => {
       (item) => !prepTaskTripIds.has(Number(item.trip_id))
     );
 
-    const queueItems = [
+    const queueItems = compactGuestMessageThreads([
       ...attachedHandoffNotices,
       ...attachedInspectionExportNotices,
       ...closeoutResult.rows.map(mapCloseoutNoticeRow),
@@ -2000,7 +2113,7 @@ router.get("/", async (req, res) => {
       ...visibleMessageRows.map(mapMessageRow),
       ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
       ...visibleMaintenanceNotices,
-    ]
+    ])
       .sort(compareQueueItems)
       .slice(0, limit);
 

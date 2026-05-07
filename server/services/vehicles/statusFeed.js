@@ -417,12 +417,13 @@ async function getCachedVehicleStatusFeed() {
       latest.local_time_zone,
       latest.engine_rpm,
       latest.coolant_temp,
-      latest.raw_payload,
+      COALESCE(latest_raw.raw_payload, latest.raw_payload) AS raw_payload,
       NULL::jsonb AS engine_temp_range,
       NULL::jsonb AS engine_rpm_range
     FROM vehicles v
     LEFT JOIN LATERAL (
       SELECT
+        id,
         service_name,
         odometer,
         fuel_level,
@@ -452,6 +453,8 @@ async function getCachedVehicleStatusFeed() {
       ORDER BY COALESCE(s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
       LIMIT 1
     ) latest ON true
+    LEFT JOIN vehicle_telemetry_raw_payloads latest_raw
+      ON latest_raw.snapshot_id = latest.id
     WHERE v.is_active = true
     ORDER BY v.nickname NULLS LAST, v.make, v.model
   `);

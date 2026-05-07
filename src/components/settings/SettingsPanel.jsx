@@ -631,12 +631,16 @@ function DatabaseSettingsPanel() {
   const [restoreStatus, setRestoreStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function downloadBackup() {
+  async function downloadBackup({ compressed = false } = {}) {
     try {
       setBusy(true);
-      setBackupStatus("Building backup...");
+      setBackupStatus(
+        compressed ? "Streaming compressed backup..." : "Streaming backup..."
+      );
 
-      const res = await fetch(`${API_BASE}/api/database/backup`);
+      const res = await fetch(
+        `${API_BASE}/api/database/backup${compressed ? "?compress=gzip" : ""}`
+      );
 
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -725,18 +729,26 @@ function DatabaseSettingsPanel() {
         <div className="settings-group">
           <div className="settings-group-title">Backup</div>
           <div className="settings-empty-state">
-            Download a JSON snapshot of every table in the public schema. Keep
-            this somewhere private; it can contain guest, trip, expense, and
-            vehicle data.
+            Stream a JSON snapshot of every table in the public schema. The
+            compressed download is much smaller for storage; decompress it
+            before using the current restore form.
           </div>
           <div className="settings-form-actions">
             <button
               type="button"
               className="settings-action-btn"
               disabled={busy}
-              onClick={downloadBackup}
+              onClick={() => downloadBackup()}
             >
-              {busy ? "Working..." : "Download Backup"}
+              {busy ? "Working..." : "Download JSON Backup"}
+            </button>
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={busy}
+              onClick={() => downloadBackup({ compressed: true })}
+            >
+              {busy ? "Working..." : "Download Compressed Backup"}
             </button>
             {backupStatus ? (
               <span className="settings-message">{backupStatus}</span>

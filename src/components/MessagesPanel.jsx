@@ -453,6 +453,14 @@ function buildMessageBody(message) {
     }, but the email/message table has no match yet. ${body}`;
   }
 
+  if (type === "guest_message_thread") {
+    const count = Number(message?.guest_message_count || 0);
+    const latest = message?.latest_guest_message || message?.guest_message || "";
+    return `${count} guest message${count === 1 ? "" : "s"} grouped for review${
+      latest ? `. Latest: ${latest}` : "."
+    }`;
+  }
+
   if (type === "maintenance_required") {
     const count = Number(message?.maintenance_task_count || 0);
     const copy = getMaintenanceNoticeCopy(message);
@@ -551,6 +559,10 @@ function buildMessageSub(message) {
   if (type === "late_toll_unbilled") return "Late toll billing needed";
   if (type === "trip_overlap_detected") return "Trip overlap detected";
   if (type === "notification_unmatched") return "Urgent bridge/email mismatch";
+  if (type === "guest_message_thread") {
+    const count = Number(message?.guest_message_count || 0);
+    return `${count} guest messages`;
+  }
   if (type === "guest_message") return "Guest message";
   if (type === "trip_booked") return "Trip booked";
   if (
@@ -643,6 +655,16 @@ function isLateTollTask(message) {
 function isTripOverlapTask(message) {
   const type = message?.type || message?.message_type;
   return type === "trip_overlap_detected" && message?.trip_id;
+}
+
+function isReimbursementInvoiceMessage(message) {
+  const type = message?.type || message?.message_type;
+  const subject = String(message?.subject || "");
+
+  return (
+    type === "reimbursement_invoice" ||
+    /reimbursement invoice/i.test(subject)
+  );
 }
 
 function isUnmatchedNotification(message) {
@@ -883,6 +905,7 @@ export default function MessagesPanel({
   messageMode = "live",
   onClearSelectedTrip,
   onSelectTrip,
+  onEditTrip,
   onOpenMaintenanceVehicle,
   initialMessages = [],
   initialUnreadCount = 0,
@@ -949,19 +972,33 @@ export default function MessagesPanel({
   }
 
 async function handleMarkAsRead(messageId) {
+  const message =
+    typeof messageId === "object" && messageId !== null
+      ? messageId
+      : messages.find((item) => item.id === messageId);
+  const ids = Array.isArray(message?.message_ids) && message.message_ids.length
+    ? message.message_ids
+    : [typeof messageId === "object" ? message?.id : messageId].filter(Boolean);
+  const queueItemId = message?.id || messageId;
+
   try {
-    const res = await fetch(`http://localhost:5000/api/messages/${messageId}/read`, {
-      method: "PATCH",
-    });
+    await Promise.all(
+      ids.map(async (id) => {
+        const res = await fetch(`http://localhost:5000/api/messages/${id}/read`, {
+          method: "PATCH",
+        });
 
-    if (!res.ok) {
-      throw new Error(`Failed to mark message as read (${res.status})`);
-    }
+        if (!res.ok) {
+          throw new Error(`Failed to mark message as read (${res.status})`);
+        }
+      })
+    );
 
-    setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
-    setNewMessageIds((prev) => prev.filter((id) => id !== messageId));
-    setUnreadCount((prev) => Math.max(0, prev - 1));
-    seenIdsRef.current.delete(messageId);
+    setMessages((prev) => prev.filter((msg) => msg.id !== queueItemId));
+    setNewMessageIds((prev) => prev.filter((id) => id !== queueItemId));
+    setUnreadCount((prev) => Math.max(0, prev - ids.length));
+    seenIdsRef.current.delete(queueItemId);
+    knownQueueItemIdsRef.current.delete(String(queueItemId));
 
     notifyMessageStatsUpdated();
   } catch (err) {
@@ -1058,7 +1095,7 @@ async function handleResolveMaintenance(message) {
 
 async function handleFocusTrip(message) {
   if (!message?.trip_id) {
-    return;
+    return null;
   }
 
   try {
@@ -1088,10 +1125,19 @@ async function handleFocusTrip(message) {
       });
     }
     onSelectTrip?.(trip);
+    return trip;
   } catch (err) {
     setError(err.message || "Failed to focus trip");
+    return null;
   } finally {
     setFocusingMessageId(null);
+  }
+}
+
+async function handleEditTripFromMessage(message) {
+  const trip = await handleFocusTrip(message);
+  if (trip?.id) {
+    onEditTrip?.(trip);
   }
 }
 
@@ -1698,7 +1744,11 @@ async function handleExportGuestInspectionSheet(message) {
             const canCloseoutTrip = isCloseoutTask(message);
             const canReviewLateToll = isLateTollTask(message);
             const canReviewOverlap = isTripOverlapTask(message);
+            const canEditTripValues =
+              isReimbursementInvoiceMessage(message) && Boolean(message.trip_id);
             const canReviewUnmatchedNotification = isUnmatchedNotification(message);
+            const canReviewGuestThread =
+              (message.type || message.message_type) === "guest_message_thread";
             const canConfirmBooking = isBookingConfirmationTask(message);
             const canShowOperationalTripNotice =
               isOperationalTripNotice(message) && !canConfirmBooking;
@@ -1708,7 +1758,15 @@ async function handleExportGuestInspectionSheet(message) {
               Array.isArray(message.maintenance_tasks) &&
               message.maintenance_tasks.length > 0;
             const canCompleteSyntheticTask = isCompletableSyntheticTask(message);
-            const canReply = !!buildReplyUrl(message) && !canCompleteSyntheticTask;
+            const canOpenMaintenanceQueue =
+              hasMaintenanceDetails &&
+              (canShowMaintenance || canAdvanceHandoff || canExportInspection);
+            const canReply =
+              !!buildReplyUrl(message) &&
+              !canCompleteSyntheticTask &&
+              !canAdvanceHandoff &&
+              !canExportInspection &&
+              !canShowMaintenance;
             const canFocusTrip =
               (canAdvanceHandoff ||
                 canExportInspection ||
@@ -1832,6 +1890,36 @@ async function handleExportGuestInspectionSheet(message) {
                           ? "Acknowledging..."
                           : "Acknowledge"}
                       </button>
+                    </div>
+                  </div>
+                )}
+
+                {canReviewGuestThread && (
+                  <div className="message-booking-task">
+                    <div className="message-booking-title">
+                      Guest conversation
+                      <span>
+                        {Number(message.guest_message_count || 0)} unread
+                      </span>
+                    </div>
+                    <div className="message-maintenance-list">
+                      {(message.guest_messages || []).map((guestMessage) => (
+                        <div
+                          key={guestMessage.id}
+                          className="message-maintenance-item"
+                        >
+                          <div>
+                            <strong>
+                              {formatTimeAgo(guestMessage.timestamp)}
+                            </strong>
+                            <span>
+                              {guestMessage.guest_message ||
+                                guestMessage.subject ||
+                                "Guest message"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -2156,6 +2244,7 @@ async function handleExportGuestInspectionSheet(message) {
                   canExportInspection ||
                   canCloseoutTrip ||
                   canReviewLateToll ||
+                  canEditTripValues ||
                   canCompleteSyntheticTask ||
                   canConfirmBooking ||
                   hasMaintenanceDetails ||
@@ -2184,6 +2273,22 @@ async function handleExportGuestInspectionSheet(message) {
                           : canShowMaintenance || canAdvanceHandoff || canExportInspection
                           ? "View trip"
                           : "Verify details"}
+                      </button>
+                    )}
+
+                    {canEditTripValues && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={focusingMessageId === message.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleEditTripFromMessage(message);
+                        }}
+                      >
+                        {focusingMessageId === message.id
+                          ? "Loading..."
+                          : "Edit trip"}
                       </button>
                     )}
 
@@ -2235,7 +2340,7 @@ async function handleExportGuestInspectionSheet(message) {
                       </button>
                     )}
 
-                    {canShowMaintenance && (
+                    {canOpenMaintenanceQueue && (
                       <button
                         type="button"
                         className="message-action"
@@ -2338,10 +2443,10 @@ async function handleExportGuestInspectionSheet(message) {
                         className="message-action"
                         onClick={(event) => {
                           event.stopPropagation();
-                          handleMarkAsRead(message.id);
+                          handleMarkAsRead(message);
                         }}
                       >
-                        Mark as read
+                        {canReviewGuestThread ? "Mark all as read" : "Mark as read"}
                       </button>
                     )}
                   </div>

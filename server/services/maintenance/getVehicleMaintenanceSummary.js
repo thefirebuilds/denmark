@@ -12,6 +12,10 @@ const pool = require("../../db");
 const {
   ensureDefaultMaintenanceRulesForVehicle,
 } = require("./ruleTemplates");
+const {
+  ACTIVE_TASK_STATUSES,
+  closeSatisfiedMaintenanceTasks,
+} = require("./syncMaintenanceTasks");
 
 function toIntOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -303,9 +307,8 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
 
   await ensureDefaultMaintenanceRulesForVehicle(client, vehicle.vin);
 
-  const [rulesResult, tasksResult, notesResult, historyResult] = await Promise.all([
-    client.query(
-      `
+  const rulesResult = await client.query(
+    `
         SELECT
           r.id,
           r.vehicle_vin,
@@ -353,8 +356,28 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
           AND r.is_active = TRUE
         ORDER BY r.category, r.title
       `,
-      [vin]
-    ),
+    [vin]
+  );
+
+  const vehicleOdometerMiles = toIntOrNull(vehicle.current_odometer_miles);
+  const maintenanceOdometerMiles = toIntOrNull(
+    vehicle.latest_maintenance_odometer_miles
+  );
+  const currentOdometerMiles =
+    vehicleOdometerMiles != null && maintenanceOdometerMiles != null
+      ? Math.max(vehicleOdometerMiles, maintenanceOdometerMiles)
+      : vehicleOdometerMiles ?? maintenanceOdometerMiles;
+
+  const ruleStatuses = rulesResult.rows.map((rule) =>
+    getRuleStatus({
+      rule,
+      currentOdometerMiles,
+    })
+  );
+
+  await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
+
+  const [tasksResult, notesResult, historyResult] = await Promise.all([
     client.query(
       `
         SELECT
@@ -378,7 +401,7 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
           updated_at
         FROM maintenance_tasks
         WHERE vehicle_vin = $1
-          AND status IN ('open', 'scheduled', 'in_progress', 'deferred')
+          AND status = ANY($2::text[])
         ORDER BY
           CASE priority
             WHEN 'urgent' THEN 1
@@ -389,7 +412,7 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
           END,
           created_at ASC
       `,
-      [vin]
+      [vin, ACTIVE_TASK_STATUSES]
     ),
     client.query(
       `
@@ -443,22 +466,6 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
       [vin]
     ),
   ]);
-
-  const vehicleOdometerMiles = toIntOrNull(vehicle.current_odometer_miles);
-  const maintenanceOdometerMiles = toIntOrNull(
-    vehicle.latest_maintenance_odometer_miles
-  );
-  const currentOdometerMiles =
-    vehicleOdometerMiles != null && maintenanceOdometerMiles != null
-      ? Math.max(vehicleOdometerMiles, maintenanceOdometerMiles)
-      : vehicleOdometerMiles ?? maintenanceOdometerMiles;
-
-  const ruleStatuses = rulesResult.rows.map((rule) =>
-    getRuleStatus({
-      rule,
-      currentOdometerMiles,
-    })
-  );
 
   const tasks = tasksResult.rows;
   const guestVisibleConditionNotes = notesResult.rows;
