@@ -1,10 +1,9 @@
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
 const pool = require("../db");
 const { getPermissionsForRole, normalizeRole } = require("./permissions");
 
 let ensureAuthTablesPromise = null;
+const REQUIRED_AUTH_TABLES = ["app_users", "auth_audit_log", "service_tokens"];
 
 function normalizeEmail(value) {
   const text = String(value || "").trim().toLowerCase();
@@ -43,12 +42,25 @@ function getAuditRequestMeta(req) {
 async function ensureAuthTables(client = pool) {
   if (!ensureAuthTablesPromise) {
     ensureAuthTablesPromise = (async () => {
-      const migrationPath = path.resolve(
-        __dirname,
-        "../db/migrations/2026_add_auth_tables.sql"
+      const result = await client.query(
+        `
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = ANY($1::text[])
+        `,
+        [REQUIRED_AUTH_TABLES]
       );
-      const sql = fs.readFileSync(migrationPath, "utf8");
-      await client.query(sql);
+      const found = new Set(result.rows.map((row) => row.table_name));
+      const missing = REQUIRED_AUTH_TABLES.filter((table) => !found.has(table));
+
+      if (missing.length) {
+        throw new Error(
+          `Database schema is missing auth table(s): ${missing.join(
+            ", "
+          )}. Initialize or migrate the database before starting the app.`
+        );
+      }
     })().catch((error) => {
       ensureAuthTablesPromise = null;
       throw error;

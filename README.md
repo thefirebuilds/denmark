@@ -164,11 +164,76 @@ Notes:
 - DIMO coverage varies by vehicle and available permissions/signals.
 - Not every notification, email, or toll event can be perfectly linked on first pass.
 
-## Install / repave
+## Install / run
 
-This repo includes a full blank-install path for a new workstation or a rebuild after data loss.
+There are two supported ways to run Denmark:
 
-### Prerequisites
+- Docker Compose for a server deployment from the GitHub Container Registry image.
+- Local development for editing the app or rebuilding a workstation from scratch.
+
+### Option A: Server deploy with Docker Compose
+
+Use this path when you want the server to pull the already-built container image from GHCR.
+
+Prerequisites:
+- Docker Engine
+- Docker Compose plugin
+- A production `.env` file on the server
+- GitHub Container Registry access if the package is private
+
+The included `docker-compose.yml` runs the app service from:
+
+```text
+ghcr.io/thefirebuilds/denmark:latest
+```
+
+The compose file runs the app only. It does not create Postgres, so point your `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, or `DATABASE_URL` values at the database you want the app to use.
+
+Create a `.env` file next to `docker-compose.yml`. Do not commit it.
+
+Minimum shape:
+
+```dotenv
+PGHOST=your-postgres-host
+PGPORT=5432
+PGDATABASE=denmark
+PGUSER=your-postgres-user
+PGPASSWORD=replace-with-postgres-password
+DATABASE_URL=postgres://your-postgres-user:replace-with-postgres-password@your-postgres-host:5432/denmark
+
+PORT=5000
+FRONTEND_BASE_URL=https://your-domain.example
+SESSION_SECRET=replace-with-long-random-session-secret
+TOKEN_ENCRYPTION_KEY=replace-with-64-char-hex-or-long-random-secret
+DENMARK_BRIDGE_SECRET=replace-with-shared-secret-for-android-bridge
+```
+
+If the GHCR package is private, create a GitHub personal access token with `read:packages`, then log in on the server:
+
+```bash
+echo YOUR_GITHUB_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+Start the app:
+
+```bash
+docker compose up -d
+```
+
+Update later:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The GitHub Actions workflow publishes new images on pushes to `main`. See `DEPLOY.md` for the full deployment walkthrough.
+
+### Option B: Local development / repave
+
+Use this path for a new workstation, local development, or a rebuild after data loss.
+
+Prerequisites:
 
 - Node.js `20.19+` or `22.12+`
 - npm
@@ -235,7 +300,6 @@ PGPASSWORD=replace-with-local-postgres-password
 DATABASE_URL=postgres://postgres:replace-with-local-postgres-password@localhost:5432/denmark
 
 PORT=5000
-VITE_API_BASE_URL=http://localhost:5000
 FRONTEND_BASE_URL=http://localhost:5173
 SESSION_SECRET=replace-with-long-random-session-secret
 TOKEN_ENCRYPTION_KEY=replace-with-64-char-hex-or-long-random-secret
@@ -302,7 +366,7 @@ curl http://localhost:5000/api/vehicles/live-status
 Frontend build:
 
 ```bash
-npm run build
+npx vite build
 ```
 
 ## Android Turo bridge webhook
