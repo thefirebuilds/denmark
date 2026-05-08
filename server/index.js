@@ -61,6 +61,7 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+app.set("trust proxy", 1);
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   (process.env.NODE_ENV === "production" ? null : "denmark-local-dev-session-secret");
@@ -72,6 +73,7 @@ if (!SESSION_SECRET) {
 const defaultCors = cors({
   origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
   credentials: true,
+  exposedHeaders: ["Server-Timing", "X-Denmark-Route"],
 });
 
 const marketplaceAllowedOrigins = [
@@ -323,6 +325,9 @@ if (fs.existsSync(clientIndexPath)) {
 app.get("/__whoami", (req, res) => {
   res.json({
     ok: true,
+    buildMarker: "messages-fast-debug-2026-05-08",
+    cwd: process.cwd(),
+    pid: process.pid,
     envPort: process.env.PORT || null,
     finalPort: PORT,
     message: "This is the Denmark backend",

@@ -948,6 +948,7 @@ export default function MessagesPanel({
   const inspectionExportRef = useRef(null);
   const consumedInitialLiveMessagesRef = useRef(false);
   const completedSyntheticTaskIdsRef = useRef(completedSyntheticTaskIds);
+  const lastFullQueueRefreshAtRef = useRef(0);
 
   useEffect(() => {
     completedSyntheticTaskIdsRef.current = completedSyntheticTaskIds;
@@ -1391,21 +1392,54 @@ async function handleExportGuestInspectionSheet(message) {
       }
 
       const showingTripMessages = messageMode === "trip" && selectedTrip?.id;
+      const shouldRefreshFullQueue =
+        !isInitialLoad &&
+        !showingTripMessages &&
+        Date.now() - lastFullQueueRefreshAtRef.current > 60000;
+      const useFastQueue = !showingTripMessages && !shouldRefreshFullQueue;
+      if (shouldRefreshFullQueue) {
+        lastFullQueueRefreshAtRef.current = Date.now();
+      }
       const endpoint = showingTripMessages
         ? `/api/trips/${selectedTrip.id}/messages`
-        : "/api/messages";
+        : `/api/messages?limit=10${useFastQueue ? "&fast=1" : ""}&debug=1`;
 
+      const requestStartedAt = performance.now();
       const res = await fetch(endpoint);
+      const responseMs = Math.round(performance.now() - requestStartedAt);
+      const serverTiming = res.headers.get("Server-Timing");
 
       if (!res.ok) {
         throw new Error(`Failed to load messages (${res.status})`);
       }
 
       const data = await res.json();
-      const nextMessages = Array.isArray(data)
+      const messageItems = Array.isArray(data) ? data : data?.items;
+      const debugTiming = Array.isArray(data) ? null : data?.debugTiming;
+      const totalMs = Math.round(performance.now() - requestStartedAt);
+      let shouldLogTiming = totalMs >= 1000;
+      try {
+        shouldLogTiming =
+          shouldLogTiming ||
+          window.localStorage?.getItem("denmark.debugMessageTiming") === "1";
+      } catch {
+        // Ignore storage access failures in restricted browser contexts.
+      }
+      if (shouldLogTiming) {
+        console.info(
+          `[messages] ${isInitialLoad ? "initial" : "refresh"} ${
+            useFastQueue ? "fast" : "full"
+          } ${totalMs}ms response=${responseMs}ms endpoint=${endpoint}${
+            serverTiming ? ` | server: ${serverTiming}` : ""
+          }${
+            debugTiming ? ` | debug: ${JSON.stringify(debugTiming)}` : ""
+          }`
+        );
+      }
+      const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
-          ? data
-          : data.slice(0, 5)
+          ? messageItems
+          : messageItems.slice(0, 5)
         : [];
       const visibleMessages = nextMessages.filter(
         (message) =>

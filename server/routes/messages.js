@@ -43,6 +43,39 @@ const OPEN_MAINTENANCE_TASK_STATUSES = [
   "in_progress",
   "deferred",
 ];
+const MESSAGE_QUEUE_CACHE_MS = Number(process.env.MESSAGE_QUEUE_CACHE_MS || 10000);
+const MESSAGE_STATS_CACHE_MS = Number(process.env.MESSAGE_STATS_CACHE_MS || 10000);
+const EMPTY_QUERY_RESULT = Object.freeze({ rows: [] });
+
+let messageQueueCache = null;
+let messageStatsCache = null;
+
+function getCachedPayload(cache, key, ttlMs) {
+  if (!cache || cache.key !== key) return null;
+  if (Date.now() - cache.createdAt > ttlMs) return null;
+  return cache.payload;
+}
+
+function setMessageQueueCache(key, payload) {
+  messageQueueCache = {
+    key,
+    payload,
+    createdAt: Date.now(),
+  };
+}
+
+function setMessageStatsCache(payload) {
+  messageStatsCache = {
+    key: "stats",
+    payload,
+    createdAt: Date.now(),
+  };
+}
+
+function invalidateMessageCaches() {
+  messageQueueCache = null;
+  messageStatsCache = null;
+}
 
 let ensureNotificationAckColumnsPromise = null;
 
@@ -242,6 +275,65 @@ function getQueueTimestampMs(item) {
   const value = item?.timestamp || item?.created_at || item?.notification_created_at;
   const ms = value ? new Date(value).getTime() : NaN;
   return Number.isFinite(ms) ? ms : 0;
+}
+
+async function timeQueueQuery(timings, label, queryPromise) {
+  const started = Date.now();
+  try {
+    return await queryPromise;
+  } finally {
+    timings[label] = Date.now() - started;
+  }
+}
+
+function maybeLogQueueTimings(startedAt, timings, itemCount) {
+  const totalMs = Date.now() - startedAt;
+  const shouldLog =
+    totalMs >= Number(process.env.MESSAGE_QUEUE_SLOW_MS || 1000) ||
+    String(process.env.DEBUG_MESSAGE_QUEUE_TIMING || "").trim() === "1";
+
+  if (!shouldLog) return;
+
+  console.log(
+    `[messages] queue load ${totalMs}ms items=${itemCount} timings=${JSON.stringify(
+      timings
+    )}`
+  );
+}
+
+function setQueueTimingHeader(res, startedAt, timings) {
+  const totalMs = Date.now() - startedAt;
+  const timingEntries = {
+    auth: res.locals?.authMs,
+    ...timings,
+    total: totalMs,
+  };
+  const header = Object.entries(timingEntries)
+    .filter(([, value]) => Number.isFinite(Number(value)))
+    .map(([name, value]) => `${name};dur=${Number(value)}`)
+    .join(", ");
+
+  if (header) {
+    res.setHeader("Server-Timing", header);
+  }
+  res.setHeader("X-Denmark-Route", "messages");
+}
+
+function buildQueueDebugTiming(res, startedAt, timings) {
+  return {
+    auth: Number(resolvedTimingValue(res.locals?.authMs)),
+    ...Object.fromEntries(
+      Object.entries(timings)
+        .filter(([name]) => name !== "auth")
+        .map(([name, value]) => [name, Number(resolvedTimingValue(value))])
+    ),
+    total: Date.now() - startedAt,
+  };
+}
+
+function resolvedTimingValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function compactGuestMessageThreads(items) {
@@ -789,7 +881,13 @@ function mapTripOverlapNoticeRow(row) {
 }
 
 router.get("/stats", async (req, res) => {
+  const statsStartedAt = Date.now();
   try {
+    const cached = getCachedPayload(messageStatsCache, "stats", MESSAGE_STATS_CACHE_MS);
+    if (cached) {
+      return res.json(cached);
+    }
+
     await ensureNotificationAckColumns();
 
     const sql = `
@@ -1056,9 +1154,16 @@ router.get("/stats", async (req, res) => {
     `;
 
     const result = await db.query(sql);
+    const statsMs = Date.now() - statsStartedAt;
+    if (
+      statsMs >= Number(process.env.MESSAGE_QUEUE_SLOW_MS || 1000) ||
+      String(process.env.DEBUG_MESSAGE_QUEUE_TIMING || "").trim() === "1"
+    ) {
+      console.log(`[messages] stats load ${statsMs}ms`);
+    }
     const row = result.rows[0];
 
-    res.json({
+    const payload = {
       unread: Number(row.unread_count || 0),
       read: Number(row.read_count || 0),
       guestMessages: Number(row.guest_message_count || 0),
@@ -1071,7 +1176,10 @@ router.get("/stats", async (req, res) => {
       lastReceived: row.last_received,
       bridgeHeartbeat: row.bridge_heartbeat || null,
       unmatchedNotifications: Number(row.unmatched_notification_count || 0),
-    });
+    };
+
+    setMessageStatsCache(payload);
+    res.json(payload);
   } catch (err) {
     console.error("message stats endpoint failed:", err);
     res.status(500).json({ error: "failed to load message stats" });
@@ -1079,11 +1187,37 @@ router.get("/stats", async (req, res) => {
 });
 
 router.get("/", async (req, res) => {
+  const queueStartedAt = Date.now();
+  const queueTimings = {};
   try {
-    await ensureNotificationAckColumns();
-
     const limit = Number(req.query.limit) || 100;
     const candidateLimit = Math.max(limit * 20, 100);
+    const fast = String(req.query.fast || "").trim() === "1";
+    const includeDebug = String(req.query.debug || "").trim() === "1";
+    const cacheKey = `limit:${limit}:fast:${fast ? "1" : "0"}`;
+    const cached = getCachedPayload(
+      messageQueueCache,
+      cacheKey,
+      MESSAGE_QUEUE_CACHE_MS
+    );
+
+    if (cached) {
+      setQueueTimingHeader(res, queueStartedAt, { cache: 0 });
+      if (includeDebug) {
+        return res.json({
+          items: cached,
+          debugTiming: {
+            ...buildQueueDebugTiming(res, queueStartedAt, { cache: 0 }),
+            cached: true,
+          },
+        });
+      }
+      return res.json(cached);
+    }
+
+    if (!fast) {
+      await ensureNotificationAckColumns();
+    }
 
     const messagesSql = `
       SELECT
@@ -1304,6 +1438,65 @@ router.get("/", async (req, res) => {
         END,
         COALESCE(message_timestamp, NOW()) DESC NULLS LAST,
         id DESC
+      LIMIT $1
+    `;
+
+    const fastMessagesSql = `
+      SELECT
+        m.id,
+        m.message_id,
+        m.subject,
+        m.mailbox,
+        m.message_timestamp,
+        m.created_at,
+        m.status,
+        m.amount,
+        m.guest_message,
+        m.message_type,
+        m.guest_name,
+        m.vehicle_name,
+        COALESCE(v.nickname, t.vehicle_name, m.vehicle_name) AS vehicle_nickname,
+        m.trip_start,
+        m.trip_end,
+        m.mileage_included,
+        m.reservation_id,
+        COALESCE(m.trip_id, t.id) AS trip_id,
+        t.workflow_stage AS trip_workflow_stage,
+        t.needs_review AS trip_needs_review,
+        t.status AS trip_status,
+        t.guest_name AS trip_record_guest_name,
+        t.vehicle_name AS trip_record_vehicle_name,
+        COALESCE(v.nickname, t.vehicle_name) AS trip_record_vehicle_nickname,
+        t.trip_start AS trip_record_start,
+        t.trip_end AS trip_record_end,
+        t.amount AS trip_record_amount,
+        t.mileage_included AS trip_record_mileage_included,
+        t.reservation_id AS trip_record_reservation_id,
+        m.normalized_text_body,
+        NULL::integer AS active_trip_id,
+        NULL::text AS active_trip_guest_name,
+        NULL::timestamp with time zone AS active_trip_start,
+        NULL::timestamp with time zone AS active_trip_end,
+        NULL::text AS active_trip_status,
+        NULL::text AS active_trip_workflow_stage,
+        m.reply_url,
+        m.trip_details_url
+      FROM messages m
+      LEFT JOIN trips t
+        ON t.id = m.trip_id
+      LEFT JOIN vehicles v
+        ON t.turo_vehicle_id IS NOT NULL
+        AND v.turo_vehicle_id = t.turo_vehicle_id
+      WHERE m.status = 'unread'
+        AND COALESCE(m.message_type, '') <> 'payment_notice'
+      ORDER BY
+        CASE
+          WHEN m.message_type = 'guest_message' THEN -2
+          WHEN m.trip_id IS NULL AND m.reservation_id IS NULL THEN -1
+          ELSE 0
+        END,
+        COALESCE(m.message_timestamp, m.created_at) DESC NULLS LAST,
+        m.id DESC
       LIMIT $1
     `;
 
@@ -1819,24 +2012,80 @@ router.get("/", async (req, res) => {
     `;
 
     const closeoutSql = `
+      WITH closeout_candidates AS (
+        SELECT
+          t.id AS trip_id,
+          t.reservation_id,
+          t.guest_name,
+          t.vehicle_name,
+          v.nickname AS vehicle_nickname,
+          v.vin AS vehicle_vin,
+          t.turo_vehicle_id,
+          t.trip_start,
+          t.trip_end,
+          t.workflow_stage,
+          t.status AS trip_status,
+          t.closed_out,
+          t.starting_odometer,
+          t.ending_odometer,
+          t.expense_status,
+          t.has_tolls,
+          t.toll_count,
+          t.toll_total,
+          t.toll_review_status
+        FROM trips t
+        LEFT JOIN vehicles v
+          ON (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+        WHERE t.trip_end <= NOW() - INTERVAL '24 hours'
+          AND t.trip_end >= NOW() - INTERVAL '45 days'
+          AND COALESCE(t.workflow_stage, '') <> 'canceled'
+          AND COALESCE(t.status, '') <> 'canceled'
+      ),
+      candidate_vins AS (
+        SELECT DISTINCT LOWER(vehicle_vin) AS vin_key
+        FROM closeout_candidates
+        WHERE vehicle_vin IS NOT NULL
+      ),
+      latest_fuel AS (
+        SELECT DISTINCT ON (LOWER(s.vin))
+          LOWER(s.vin) AS vin_key,
+          s.fuel_level,
+          s.service_name,
+          COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) AS fuel_at
+        FROM vehicle_telemetry_snapshots s
+        JOIN candidate_vins cv
+          ON cv.vin_key = LOWER(s.vin)
+        WHERE s.fuel_level IS NOT NULL
+        ORDER BY
+          LOWER(s.vin),
+          COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
+          s.id DESC
+      )
       SELECT
-        t.id AS trip_id,
-        t.reservation_id,
-        t.guest_name,
-        t.vehicle_name,
-        v.nickname AS vehicle_nickname,
-        t.trip_start,
-        t.trip_end,
-        t.workflow_stage,
-        t.status AS trip_status,
-        t.closed_out,
-        t.starting_odometer,
-        t.ending_odometer,
-        t.expense_status,
-        t.has_tolls,
-        t.toll_count,
-        t.toll_total,
-        t.toll_review_status,
+        c.trip_id,
+        c.reservation_id,
+        c.guest_name,
+        c.vehicle_name,
+        c.vehicle_nickname,
+        c.trip_start,
+        c.trip_end,
+        c.workflow_stage,
+        c.trip_status,
+        c.closed_out,
+        c.starting_odometer,
+        c.ending_odometer,
+        c.expense_status,
+        c.has_tolls,
+        c.toll_count,
+        c.toll_total,
+        c.toll_review_status,
         latest_fuel.fuel_level AS latest_fuel_level,
         latest_fuel.service_name AS latest_fuel_source,
         latest_fuel.fuel_at AS latest_fuel_at,
@@ -1849,82 +2098,59 @@ router.get("/", async (req, res) => {
             OR next_trip.trip_start > NOW()
           )
         ) AS fuel_reminder_pending,
-        COALESCE(t.workflow_stage, '') NOT IN ('complete', 'closed') AS workflow_incomplete,
-        t.starting_odometer IS NULL AS missing_starting_odometer,
-        t.ending_odometer IS NULL AS missing_ending_odometer,
-        COALESCE(t.expense_status, '') IN ('', 'pending', 'needs_review') AS expenses_pending,
+        COALESCE(c.workflow_stage, '') NOT IN ('complete', 'closed') AS workflow_incomplete,
+        c.starting_odometer IS NULL AS missing_starting_odometer,
+        c.ending_odometer IS NULL AS missing_ending_odometer,
+        COALESCE(c.expense_status, '') IN ('', 'pending', 'needs_review') AS expenses_pending,
         (
           (
-            COALESCE(t.has_tolls, false) = true
-            OR COALESCE(t.toll_count, 0) > 0
-            OR COALESCE(t.toll_total, 0) > 0
+            COALESCE(c.has_tolls, false) = true
+            OR COALESCE(c.toll_count, 0) > 0
+            OR COALESCE(c.toll_total, 0) > 0
           )
-          AND COALESCE(t.toll_review_status, '') NOT IN ('billed', 'waived')
+          AND COALESCE(c.toll_review_status, '') NOT IN ('billed', 'waived')
         ) AS tolls_pending,
-        COALESCE(t.closed_out, false) = false AS closeout_flag_incomplete
-      FROM trips t
-      LEFT JOIN vehicles v
-        ON (
-          t.turo_vehicle_id IS NOT NULL
-          AND v.turo_vehicle_id = t.turo_vehicle_id
-        )
-        OR (
-          COALESCE(t.vehicle_name, '') <> ''
-          AND LOWER(v.nickname) = LOWER(t.vehicle_name)
-        )
-      LEFT JOIN LATERAL (
-        SELECT
-          s.fuel_level,
-          s.service_name,
-          COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) AS fuel_at
-        FROM vehicle_telemetry_snapshots s
-        WHERE s.fuel_level IS NOT NULL
-          AND v.vin IS NOT NULL
-          AND LOWER(s.vin) = LOWER(v.vin)
-        ORDER BY COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
-          s.id DESC
-        LIMIT 1
-      ) latest_fuel ON true
+        COALESCE(c.closed_out, false) = false AS closeout_flag_incomplete
+      FROM closeout_candidates c
+      LEFT JOIN latest_fuel
+        ON c.vehicle_vin IS NOT NULL
+        AND latest_fuel.vin_key = LOWER(c.vehicle_vin)
       LEFT JOIN LATERAL (
         SELECT nt.trip_start, nt.guest_name
         FROM trips nt
-        WHERE nt.id <> t.id
-          AND nt.trip_start > t.trip_end
+        WHERE nt.id <> c.trip_id
+          AND nt.trip_start > c.trip_end
           AND COALESCE(nt.workflow_stage, '') <> 'canceled'
           AND COALESCE(nt.status, '') <> 'canceled'
           AND (
             (
               nt.turo_vehicle_id IS NOT NULL
-              AND t.turo_vehicle_id IS NOT NULL
-              AND CAST(nt.turo_vehicle_id AS text) = CAST(t.turo_vehicle_id AS text)
+              AND c.turo_vehicle_id IS NOT NULL
+              AND CAST(nt.turo_vehicle_id AS text) = CAST(c.turo_vehicle_id AS text)
             )
             OR (
               COALESCE(nt.vehicle_name, '') <> ''
-              AND COALESCE(v.nickname, '') <> ''
-              AND LOWER(nt.vehicle_name) = LOWER(v.nickname)
+              AND COALESCE(c.vehicle_nickname, '') <> ''
+              AND LOWER(nt.vehicle_name) = LOWER(c.vehicle_nickname)
             )
           )
         ORDER BY nt.trip_start ASC
         LIMIT 1
       ) next_trip ON true
-      WHERE t.trip_end <= NOW() - INTERVAL '24 hours'
-        AND t.trip_end >= NOW() - INTERVAL '45 days'
-        AND COALESCE(t.workflow_stage, '') <> 'canceled'
-        AND COALESCE(t.status, '') <> 'canceled'
-        AND (
-          COALESCE(t.closed_out, false) = false
+      WHERE
+        COALESCE(c.closed_out, false) = false
           OR
-          COALESCE(t.workflow_stage, '') NOT IN ('complete', 'closed')
-          OR t.starting_odometer IS NULL
-          OR t.ending_odometer IS NULL
-          OR COALESCE(t.expense_status, '') IN ('', 'pending', 'needs_review')
+          COALESCE(c.workflow_stage, '') NOT IN ('complete', 'closed')
+          OR c.starting_odometer IS NULL
+          OR c.ending_odometer IS NULL
+          OR COALESCE(c.expense_status, '') IN ('', 'pending', 'needs_review')
           OR (
             (
-              COALESCE(t.has_tolls, false) = true
-              OR COALESCE(t.toll_count, 0) > 0
-              OR COALESCE(t.toll_total, 0) > 0
+              COALESCE(c.has_tolls, false) = true
+              OR COALESCE(c.toll_count, 0) > 0
+              OR COALESCE(c.toll_total, 0) > 0
             )
-            AND COALESCE(t.toll_review_status, '') NOT IN ('billed', 'waived')
+            AND COALESCE(c.toll_review_status, '') NOT IN ('billed', 'waived')
           )
           OR (
             latest_fuel.fuel_level < 97
@@ -1933,8 +2159,7 @@ router.get("/", async (req, res) => {
               OR next_trip.trip_start > NOW()
             )
           )
-        )
-      ORDER BY t.trip_end DESC NULLS LAST, t.id DESC
+      ORDER BY c.trip_end DESC NULLS LAST, c.trip_id DESC
       LIMIT 25
     `;
 
@@ -2058,14 +2283,36 @@ router.get("/", async (req, res) => {
       unmatchedNotificationsResult,
       maintenanceResult,
     ] = await Promise.all([
-      db.query(handoffSql),
-      db.query(inspectionExportSql),
-      db.query(closeoutSql),
-      db.query(lateTollSql),
-      db.query(overlapSql),
-      db.query(messagesSql, [candidateLimit]),
-      db.query(unmatchedNotificationsSql),
-      db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES]),
+      timeQueueQuery(queueTimings, "handoff", db.query(handoffSql)),
+      timeQueueQuery(queueTimings, "inspectionExport", db.query(inspectionExportSql)),
+      fast
+        ? Promise.resolve(EMPTY_QUERY_RESULT)
+        : timeQueueQuery(queueTimings, "closeout", db.query(closeoutSql)),
+      fast
+        ? Promise.resolve(EMPTY_QUERY_RESULT)
+        : timeQueueQuery(queueTimings, "lateToll", db.query(lateTollSql)),
+      fast
+        ? Promise.resolve(EMPTY_QUERY_RESULT)
+        : timeQueueQuery(queueTimings, "overlap", db.query(overlapSql)),
+      timeQueueQuery(
+        queueTimings,
+        fast ? "messagesFast" : "messages",
+        db.query(fast ? fastMessagesSql : messagesSql, [candidateLimit])
+      ),
+      fast
+        ? Promise.resolve(EMPTY_QUERY_RESULT)
+        : timeQueueQuery(
+            queueTimings,
+            "unmatchedNotifications",
+            db.query(unmatchedNotificationsSql)
+          ),
+      fast
+        ? Promise.resolve(EMPTY_QUERY_RESULT)
+        : timeQueueQuery(
+            queueTimings,
+            "maintenance",
+            db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
+          ),
     ]);
 
     messagesResult.rows.forEach((row) => {
@@ -2117,6 +2364,15 @@ router.get("/", async (req, res) => {
       .sort(compareQueueItems)
       .slice(0, limit);
 
+    setQueueTimingHeader(res, queueStartedAt, queueTimings);
+    maybeLogQueueTimings(queueStartedAt, queueTimings, queueItems.length);
+    setMessageQueueCache(cacheKey, queueItems);
+    if (includeDebug) {
+      return res.json({
+        items: queueItems,
+        debugTiming: buildQueueDebugTiming(res, queueStartedAt, queueTimings),
+      });
+    }
     res.json(queueItems);
   } catch (err) {
     console.error("messages endpoint failed:", err);
@@ -2155,6 +2411,7 @@ router.patch("/notifications/:id/ack", async (req, res) => {
       return res.status(404).json({ error: "notification not found" });
     }
 
+    invalidateMessageCaches();
     res.json(result.rows[0]);
   } catch (err) {
     console.error("ack notification failed:", err);
@@ -2187,6 +2444,7 @@ router.patch("/maintenance/resolve", async (req, res) => {
       [taskIds]
     );
 
+    invalidateMessageCaches();
     res.json({
       ok: true,
       resolved_count: result.rowCount,
@@ -2219,6 +2477,7 @@ router.patch("/:id/read", async (req, res) => {
       return res.status(404).json({ error: "message not found" });
     }
 
+    invalidateMessageCaches();
     res.json({
       success: true,
       id: result.rows[0].id,

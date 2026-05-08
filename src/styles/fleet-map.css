@@ -39,6 +39,20 @@
   line-height: 1.4;
 }
 
+.fleet-map-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.fleet-map-refresh-meta {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .fleet-map-refresh {
   border: 1px solid rgba(96, 165, 250, 0.48);
   border-radius: 999px;
@@ -47,6 +61,11 @@
   cursor: pointer;
   font-weight: 800;
   padding: 9px 13px;
+}
+
+.fleet-map-refresh:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .fleet-map-layout {
@@ -234,6 +253,11 @@
 .fleet-map-popup em,
 .fleet-map-popup a {
   font-size: 0.78rem;
+}
+
+.fleet-map-popup .fleet-map-absolute-time {
+  color: #64748b;
+  font-size: 0.72rem;
 }
 
 .fleet-map-popup em {

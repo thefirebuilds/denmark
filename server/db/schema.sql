@@ -82,6 +82,7 @@ DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_service_vin_captured
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_service_token_captured;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_external_key;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_dimo_token_captured;
+DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_fuel_vin_latest;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_raw_payloads_created_at;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_token_signal_time;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_snapshot;
@@ -111,6 +112,7 @@ DROP INDEX IF EXISTS public.idx_messages_status;
 DROP INDEX IF EXISTS public.idx_messages_reservation_id;
 DROP INDEX IF EXISTS public.idx_messages_message_timestamp;
 DROP INDEX IF EXISTS public.idx_messages_mailbox_uid;
+DROP INDEX IF EXISTS public.idx_messages_unread_queue;
 DROP INDEX IF EXISTS public.idx_notification_events_received_at;
 DROP INDEX IF EXISTS public.idx_notification_events_classification;
 DROP INDEX IF EXISTS public.idx_notification_events_reservation_id;
@@ -2146,6 +2148,10 @@ CREATE INDEX idx_messages_mailbox_uid ON public.messages USING btree (mailbox, i
 
 CREATE INDEX idx_messages_message_timestamp ON public.messages USING btree (message_timestamp);
 
+-- Name: idx_messages_unread_queue; Type: INDEX; Schema: public; Owner: -
+CREATE INDEX idx_messages_unread_queue ON public.messages USING btree ((COALESCE(message_timestamp, created_at)) DESC, id DESC)
+  WHERE status = 'unread' AND COALESCE(message_type, '') <> 'payment_notice';
+
 
 --
 -- Name: idx_messages_reservation_id; Type: INDEX; Schema: public; Owner: -
@@ -2396,6 +2402,13 @@ CREATE INDEX idx_vehicle_telemetry_snapshots_vin_captured_at ON public.vehicle_t
 --
 
 CREATE INDEX idx_vehicle_telemetry_snapshots_lower_vin_recorded_desc ON public.vehicle_telemetry_snapshots USING btree (lower(vin), COALESCE(vehicle_last_updated, captured_at) DESC NULLS LAST, id DESC);
+
+
+--
+-- Name: idx_vehicle_telemetry_snapshots_fuel_vin_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_telemetry_snapshots_fuel_vin_latest ON public.vehicle_telemetry_snapshots USING btree (lower(vin), COALESCE(fuel_level_last_updated, vehicle_last_updated, captured_at) DESC, id DESC) WHERE (fuel_level IS NOT NULL);
 
 
 --

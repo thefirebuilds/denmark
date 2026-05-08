@@ -14,10 +14,25 @@ const {
   touchServiceToken,
 } = require("./store");
 
+const SESSION_AUTH_CACHE_MS = Number(process.env.SESSION_AUTH_CACHE_MS || 60000);
+
 function buildAuthError(message, statusCode = 401) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+function buildRequestAuthFromUser(user) {
+  return {
+    kind: "user",
+    userId: user.id,
+    email: user.email,
+    displayName: user.display_name,
+    role: normalizeRole(user.role),
+    permissions: getPermissionsForRole(user.role),
+    isActive: user.is_active === true,
+    provider: user.provider,
+  };
 }
 
 async function logUnauthorizedAccess(req, details = {}) {
@@ -39,11 +54,26 @@ async function logUnauthorizedAccess(req, details = {}) {
 }
 
 async function loadRequestAuth(req, res, next) {
+  const startedAt = Date.now();
   try {
     if (req.auth) return next();
 
     const sessionUserId = req.session?.auth?.userId;
     if (!sessionUserId) return next();
+
+    const cachedUser = req.session?.auth?.cachedUser;
+    const cachedAt = cachedUser?.cachedAt
+      ? new Date(cachedUser.cachedAt).getTime()
+      : NaN;
+    if (
+      cachedUser?.id === sessionUserId &&
+      cachedUser?.is_active === true &&
+      Number.isFinite(cachedAt) &&
+      Date.now() - cachedAt < SESSION_AUTH_CACHE_MS
+    ) {
+      req.auth = buildRequestAuthFromUser(cachedUser);
+      return next();
+    }
 
     const user = await getUserById(sessionUserId);
     if (!user || user.is_active !== true) {
@@ -53,20 +83,24 @@ async function loadRequestAuth(req, res, next) {
       return next();
     }
 
-    req.auth = {
-      kind: "user",
-      userId: user.id,
+    req.session.auth.cachedUser = {
+      id: user.id,
       email: user.email,
-      displayName: user.display_name,
-      role: normalizeRole(user.role),
-      permissions: getPermissionsForRole(user.role),
-      isActive: user.is_active === true,
+      display_name: user.display_name,
+      role: user.role,
+      is_active: user.is_active,
       provider: user.provider,
+      cachedAt: new Date().toISOString(),
     };
+    req.auth = buildRequestAuthFromUser(user);
 
     return next();
   } catch (error) {
     return next(error);
+  } finally {
+    if (res.locals) {
+      res.locals.authMs = Date.now() - startedAt;
+    }
   }
 }
 

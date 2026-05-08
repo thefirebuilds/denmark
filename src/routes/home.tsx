@@ -142,6 +142,36 @@ function buildLoginUrl() {
   return `/api/login?${params.toString()}`;
 }
 
+async function timedStartupFetch(
+  label: string,
+  input: RequestInfo | URL,
+  init?: RequestInit
+) {
+  const startedAt = performance.now();
+  const response = await fetch(input, init);
+  const durationMs = Math.round(performance.now() - startedAt);
+  let shouldLog = durationMs >= 1000;
+
+  try {
+    shouldLog =
+      shouldLog ||
+      window.localStorage?.getItem("denmark.debugStartupTiming") === "1";
+  } catch {
+    // Local storage can be unavailable in locked-down browser contexts.
+  }
+
+  if (shouldLog) {
+    const serverTiming = response.headers.get("Server-Timing");
+    console.info(
+      `[startup] ${label} ${durationMs}ms${
+        serverTiming ? ` | server: ${serverTiming}` : ""
+      }`
+    );
+  }
+
+  return response;
+}
+
 function rewriteDevApiRequest(input: RequestInfo | URL) {
   if (typeof window === "undefined") return input;
 
@@ -396,7 +426,7 @@ export default function Home() {
     async function loadStartup() {
       for (;;) {
         try {
-          const meRes = await fetch(`${API_BASE}/api/me`, {
+          const meRes = await timedStartupFetch("auth", `${API_BASE}/api/me`, {
             headers: { Accept: "application/json" },
           });
 
@@ -429,46 +459,38 @@ export default function Home() {
             window.localStorage.setItem(AUTH_EMAIL_STORAGE_KEY, meData.email);
           }
 
-          setStartup({
-            ready: false,
-            label: "Waiting for startup jobs",
-            error: "",
-          });
-
-          for (;;) {
-            const statusRes = await fetch(`${API_BASE}/api/startup/status`, {
+          void timedStartupFetch(
+            "background startup status",
+            `${API_BASE}/api/startup/status`,
+            {
               headers: { Accept: "application/json" },
-            });
-
-            if (!statusRes.ok) {
-              throw new Error(
-                `Startup status request failed: ${statusRes.status}`
-              );
             }
-
-            const statusData = await statusRes.json();
-            if (statusData?.completed) break;
-
-            const running = Array.isArray(statusData?.running)
-              ? statusData.running
-              : [];
-            const pending = Array.isArray(statusData?.pending)
-              ? statusData.pending
-              : [];
-            const activeJobs = running.length ? running : pending;
-
-            if (cancelled) return;
-            setStartup({
-              ready: false,
-              label: activeJobs.length
-                ? `Running ${activeJobs.join(", ")}`
-                : "Waiting for startup jobs",
-              error: "",
+          )
+            .then(async (statusRes) => {
+              if (!statusRes.ok) return null;
+              return statusRes.json();
+            })
+            .then((statusData) => {
+              if (!statusData?.completed) {
+                const running = Array.isArray(statusData?.running)
+                  ? statusData.running
+                  : [];
+                const pending = Array.isArray(statusData?.pending)
+                  ? statusData.pending
+                  : [];
+                const activeJobs = running.length ? running : pending;
+                if (activeJobs.length) {
+                  console.info(
+                    `[startup] background jobs still running: ${activeJobs.join(
+                      ", "
+                    )}`
+                  );
+                }
+              }
+            })
+            .catch((err) => {
+              console.warn("Startup status check failed:", err);
             });
-
-            await delay(900);
-            if (cancelled) return;
-          }
 
           setStartup({
             ready: false,
@@ -476,7 +498,10 @@ export default function Home() {
             error: "",
           });
 
-          const settingsRes = await fetch(`${API_BASE}/api/settings/ui.dispatch`);
+          const settingsRes = await timedStartupFetch(
+            "dispatch settings",
+            `${API_BASE}/api/settings/ui.dispatch`
+          );
           if (!settingsRes.ok) {
             throw new Error(`Settings request failed: ${settingsRes.status}`);
           }
@@ -492,24 +517,28 @@ export default function Home() {
             error: "",
           });
 
-          const [statsRes, tripsRes, vehiclesRes, messagesRes] =
+          const [tripsRes, vehiclesRes, messagesRes] =
             await Promise.all([
-              fetch(`${API_BASE}/api/messages/stats`, {
+              timedStartupFetch("trips", `${API_BASE}/api/trips?scope=all`, {
                 headers: { Accept: "application/json" },
               }),
-              fetch(`${API_BASE}/api/trips?scope=all`, {
-                headers: { Accept: "application/json" },
-              }),
-              fetch(`${API_BASE}/api/vehicles/live-status`, {
-                headers: { Accept: "application/json" },
-              }),
-              fetch(`${API_BASE}/api/messages`, {
-                headers: { Accept: "application/json" },
-              }),
+              timedStartupFetch(
+                "cached vehicle telemetry",
+                `${API_BASE}/api/vehicles/cached-status`,
+                {
+                  headers: { Accept: "application/json" },
+                }
+              ),
+              timedStartupFetch(
+                "dispatch tasks",
+                `${API_BASE}/api/messages?limit=10&fast=1&debug=1`,
+                {
+                  headers: { Accept: "application/json" },
+                }
+              ),
             ]);
 
           const failures = [
-            ["message stats", statsRes],
             ["trips", tripsRes],
             ["vehicle telemetry", vehiclesRes],
             ["dispatch tasks", messagesRes],
@@ -520,9 +549,8 @@ export default function Home() {
             throw new Error(`${name} request failed: ${res.status}`);
           }
 
-          const [statsData, tripsData, vehiclesData, messagesData] =
+          const [tripsData, vehiclesData, messagesData] =
             await Promise.all([
-              statsRes.json(),
               tripsRes.json(),
               vehiclesRes.json(),
               messagesRes.json(),
@@ -530,17 +558,23 @@ export default function Home() {
 
           if (cancelled) return;
 
-          const nextUnread = Number(statsData?.unread ?? 0);
-          previousUnreadRef.current = nextUnread;
-          setMessageStats({
-            unread: nextUnread,
-            lastReceived: statsData?.lastReceived ?? null,
-          });
-          setMessageStatsLoading(false);
+          const startupMessageItems = Array.isArray(messagesData)
+            ? messagesData
+            : messagesData?.items;
+          if (messagesData?.debugTiming) {
+            console.info(
+              `[startup] dispatch tasks debug ${JSON.stringify(
+                messagesData.debugTiming
+              )}`
+            );
+          }
+
           setTrips(Array.isArray(tripsData) ? tripsData : []);
           setStartupVehicles(Array.isArray(vehiclesData) ? vehiclesData : []);
           setStartupMessages(
-            Array.isArray(messagesData) ? messagesData.slice(0, 5) : []
+            Array.isArray(startupMessageItems)
+              ? startupMessageItems.slice(0, 5)
+              : []
           );
           setStartup({
             ready: true,

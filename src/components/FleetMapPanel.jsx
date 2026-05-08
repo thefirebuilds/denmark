@@ -1,10 +1,11 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const STALE_AFTER_MS = 15 * 60 * 1000;
+const REFRESH_INTERVAL_MS = 60 * 1000;
 const DEFAULT_CENTER = [30.2672, -97.7431];
 
 function isStale(lastSeen) {
@@ -28,9 +29,30 @@ function formatTimestamp(value) {
   });
 }
 
+function formatFreshness(value) {
+  if (!value) return "unknown age";
+  const date = new Date(value);
+  const ageMs = Date.now() - date.getTime();
+  if (!Number.isFinite(ageMs)) return "unknown age";
+  if (ageMs < 0) return "just now";
+
+  const seconds = Math.floor(ageMs / 1000);
+  if (seconds < 45) return "just now";
+  if (seconds < 90) return "1 min ago";
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 function formatLastSeenLabel(type) {
   if (type === "location_fix") return "Location fix";
-  if (type === "vehicle_update") return "Vehicle update";
+  if (type === "vehicle_update") return "Telemetry check-in";
   return "Telemetry snapshot";
 }
 
@@ -152,10 +174,14 @@ function createVehicleIcon(vehicle, stale, selected, running) {
   });
 }
 
-function MapFocus({ vehicle, locations }) {
+function MapFocus({ vehicle, locations, focusKey }) {
   const map = useMap();
+  const lastFocusKeyRef = useRef(null);
 
   useEffect(() => {
+    if (lastFocusKeyRef.current === focusKey) return;
+    lastFocusKeyRef.current = focusKey;
+
     if (vehicle) {
       map.setView([vehicle.lat, vehicle.lon], Math.max(map.getZoom(), 14), {
         animate: true,
@@ -181,7 +207,7 @@ function MapFocus({ vehicle, locations }) {
       maxZoom: 13,
       padding: [42, 42],
     });
-  }, [map, vehicle, locations]);
+  }, [map, vehicle, locations, focusKey]);
 
   return null;
 }
@@ -190,14 +216,19 @@ export default function FleetMapPanel() {
   const [locations, setLocations] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [focusKey, setFocusKey] = useState(0);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+  const hasLoadedLocationsRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadLocations() {
-      setLoading(true);
+      setLoading((current) => current && locations.length === 0);
+      setRefreshing(locations.length > 0);
       setError("");
 
       try {
@@ -209,6 +240,11 @@ export default function FleetMapPanel() {
               ? current
               : null
           );
+          if (!hasLoadedLocationsRef.current) {
+            hasLoadedLocationsRef.current = true;
+            setFocusKey((value) => value + 1);
+          }
+          setLastRefreshedAt(new Date().toISOString());
         }
       } catch (err) {
         if (!cancelled) {
@@ -217,6 +253,7 @@ export default function FleetMapPanel() {
       } finally {
         if (!cancelled) {
           setLoading(false);
+          setRefreshing(false);
         }
       }
     }
@@ -227,6 +264,14 @@ export default function FleetMapPanel() {
       cancelled = true;
     };
   }, [refreshKey]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setRefreshKey((value) => value + 1);
+    }, REFRESH_INTERVAL_MS);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   const selectedVehicle = useMemo(
     () => locations.find((vehicle) => vehicle.id === selectedId) || null,
@@ -241,6 +286,12 @@ export default function FleetMapPanel() {
 
   function toggleSelectedVehicle(vehicleId) {
     setSelectedId((current) => (current === vehicleId ? null : vehicleId));
+    setFocusKey((value) => value + 1);
+  }
+
+  function showAllVehicles() {
+    setSelectedId(null);
+    setFocusKey((value) => value + 1);
   }
 
   return (
@@ -255,13 +306,23 @@ export default function FleetMapPanel() {
             running in the latest stored snapshot.
           </p>
         </div>
-        <button
-          type="button"
-          className="fleet-map-refresh"
-          onClick={() => setRefreshKey((value) => value + 1)}
-        >
-          Refresh
-        </button>
+        <div className="fleet-map-actions">
+          <span className="fleet-map-refresh-meta">
+            {refreshing
+              ? "Refreshing..."
+              : lastRefreshedAt
+                ? `Updated ${formatTimestamp(lastRefreshedAt)}`
+                : "Auto-refresh every minute"}
+          </span>
+          <button
+            type="button"
+            className="fleet-map-refresh"
+            onClick={() => setRefreshKey((value) => value + 1)}
+            disabled={loading || refreshing}
+          >
+            Refresh
+          </button>
+        </div>
       </header>
 
       {loading ? (
@@ -286,7 +347,11 @@ export default function FleetMapPanel() {
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-              <MapFocus vehicle={selectedVehicle} locations={locations} />
+              <MapFocus
+                vehicle={selectedVehicle}
+                locations={locations}
+                focusKey={focusKey}
+              />
               {locations.map((vehicle) => {
                 const stale = isStale(vehicle.lastSeen);
                 const running = vehicle.isRunning === true;
@@ -322,6 +387,9 @@ export default function FleetMapPanel() {
                         </span>
                         <span>
                           {formatLastSeenLabel(vehicle.lastSeenType)}{" "}
+                          {formatFreshness(vehicle.lastSeen)}
+                        </span>
+                        <span className="fleet-map-absolute-time">
                           {formatTimestamp(vehicle.lastSeen)}
                         </span>
                         {stale ? <em>Stale location</em> : null}
@@ -346,7 +414,7 @@ export default function FleetMapPanel() {
               className={`fleet-map-list-item fleet-map-list-item--all ${
                 selectedId == null ? "active" : ""
               }`}
-              onClick={() => setSelectedId(null)}
+              onClick={showAllVehicles}
             >
               <span>
                 <strong>All vehicles</strong>
@@ -380,7 +448,7 @@ export default function FleetMapPanel() {
                   <span className="fleet-map-list-meta">
                     {running ? "Running" : stale ? "Stale" : "Fresh"} ·{" "}
                     {formatLastSeenLabel(vehicle.lastSeenType)} ·{" "}
-                    {formatTimestamp(vehicle.lastSeen)}
+                    {formatFreshness(vehicle.lastSeen)}
                   </span>
                 </button>
               );
@@ -391,5 +459,6 @@ export default function FleetMapPanel() {
     </section>
   );
 }
+
 
 

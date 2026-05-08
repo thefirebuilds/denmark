@@ -16,8 +16,22 @@ const {
 
 const router = express.Router();
 
-function getFrontendRedirectBase() {
-  return String(process.env.FRONTEND_BASE_URL || "http://localhost:5173").replace(
+function getRequestOrigin(req) {
+  const forwardedProto = String(req.get("x-forwarded-proto") || "")
+    .split(",")[0]
+    .trim();
+  const forwardedHost = String(req.get("x-forwarded-host") || "")
+    .split(",")[0]
+    .trim();
+  const proto = forwardedProto || req.protocol || "http";
+  const host = forwardedHost || req.get("host");
+
+  return host ? `${proto}://${host}` : "";
+}
+
+function getFrontendRedirectBase(req) {
+  const configured = String(process.env.FRONTEND_BASE_URL || "").trim();
+  return String(configured || getRequestOrigin(req) || "http://localhost:5000").replace(
     /\/+$/,
     ""
   );
@@ -97,7 +111,7 @@ router.get("/auth/callback", async (req, res) => {
           reason: "missing_code_or_state",
         },
       });
-      return res.redirect(`${getFrontendRedirectBase()}/?authError=login_failed`);
+      return res.redirect(`${getFrontendRedirectBase(req)}/?authError=login_failed`);
     }
 
     if (state !== pendingAuth.state) {
@@ -108,7 +122,7 @@ router.get("/auth/callback", async (req, res) => {
           reason: "state_mismatch",
         },
       });
-      return res.redirect(`${getFrontendRedirectBase()}/?authError=state_mismatch`);
+      return res.redirect(`${getFrontendRedirectBase(req)}/?authError=state_mismatch`);
     }
 
     const tokens = await exchangeCodeForTokens({
@@ -139,7 +153,7 @@ router.get("/auth/callback", async (req, res) => {
           email: user.email,
         },
       });
-      return res.redirect(`${getFrontendRedirectBase()}/?authError=inactive_user`);
+      return res.redirect(`${getFrontendRedirectBase(req)}/?authError=inactive_user`);
     }
 
     await sessionRegenerate(req);
@@ -161,7 +175,7 @@ router.get("/auth/callback", async (req, res) => {
       },
     });
 
-    return res.redirect(`${getFrontendRedirectBase()}/?auth=success`);
+    return res.redirect(`${getFrontendRedirectBase(req)}/?auth=success`);
   } catch (error) {
     await createAuthAuditLog({
       eventType: "login_failure",
@@ -171,7 +185,7 @@ router.get("/auth/callback", async (req, res) => {
         message: error.message || "unknown error",
       },
     }).catch(() => null);
-    return res.redirect(`${getFrontendRedirectBase()}/?authError=callback_failed`);
+    return res.redirect(`${getFrontendRedirectBase(req)}/?authError=callback_failed`);
   }
 });
 
