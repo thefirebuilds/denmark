@@ -166,32 +166,59 @@ Notes:
 
 ## Install / run
 
-There are two supported ways to run Denmark:
+The production install path is Docker Compose pulling the app image from GitHub Container Registry. The VM should not build the app from source, and the container should not initialize the database from `.sql` files at startup. It expects an existing Postgres database and a valid `.env`.
 
-- Docker Compose for a server deployment from the GitHub Container Registry image.
-- Local development for editing the app or rebuilding a workstation from scratch.
+### How releases work
 
-### Option A: Server deploy with Docker Compose
+Pushes to `main` run `.github/workflows/publish-container.yml`.
 
-Use this path when you want the server to pull the already-built container image from GHCR.
-
-Prerequisites:
-- Docker Engine
-- Docker Compose plugin
-- A production `.env` file on the server
-- GitHub Container Registry access if the package is private
-
-The included `docker-compose.yml` runs the app service from:
+That workflow builds the repo Dockerfile and publishes:
 
 ```text
 ghcr.io/thefirebuilds/denmark:latest
+ghcr.io/thefirebuilds/denmark:<git-sha>
 ```
 
-The compose file runs the app only. It does not create Postgres, so point your `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, or `DATABASE_URL` values at the database you want the app to use.
+The server uses `docker-compose.yml` to pull and run the `latest` image.
 
-Create a `.env` file next to `docker-compose.yml`. Do not commit it.
+### Server prerequisites
 
-Minimum shape:
+Install these on the VM:
+
+- Docker Engine
+- Docker Compose plugin
+- Git, if you want to pull `docker-compose.yml` and docs from the repo
+- Access to the existing Postgres database
+- A production `.env` file kept on the VM
+
+The compose file runs only the app container. It does not run Postgres and it does not run schema migrations.
+
+### 1. Get the deploy files onto the VM
+
+Recommended:
+
+```bash
+git clone <repo-url> Denmark2.0
+cd Denmark2.0
+```
+
+If the repo is already cloned:
+
+```bash
+cd Denmark2.0
+git pull
+```
+
+The VM mainly needs:
+
+- `docker-compose.yml`
+- `.env`
+
+### 2. Create the VM `.env`
+
+Create `.env` next to `docker-compose.yml`. Do not commit this file.
+
+Minimum production shape:
 
 ```dotenv
 PGHOST=your-postgres-host
@@ -208,19 +235,56 @@ TOKEN_ENCRYPTION_KEY=replace-with-64-char-hex-or-long-random-secret
 DENMARK_BRIDGE_SECRET=replace-with-shared-secret-for-android-bridge
 ```
 
-If the GHCR package is private, create a GitHub personal access token with `read:packages`, then log in on the server:
+Add any integrations you use:
+
+- `BOUNCIE_*`
+- `DIMO_*`
+- `GOOGLE_*`
+- `IMAP_*`
+- `EZTAG_*`
+- `TELLER_*`
+
+For DIMO, map known vehicles deliberately:
+
+```dotenv
+DIMO_FLEET_JSON=[{"tokenId":191373,"nickname":"Geneva","vin":"KMHTC6AD3GU260321","active":true}]
+```
+
+### 3. Log in to GHCR if needed
+
+If the GHCR package is private, create a GitHub personal access token with `read:packages`, then run this on the VM:
 
 ```bash
 echo YOUR_GITHUB_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
-Start the app:
+You only need to do this again if the Docker login expires or the VM changes.
+
+### 4. Start the app
 
 ```bash
+docker compose pull
 docker compose up -d
 ```
 
-Update later:
+The app listens on container port `5000`, mapped to VM port `5000`.
+
+### 5. Check the app
+
+```bash
+docker compose ps
+docker compose logs -f app
+```
+
+Basic health check:
+
+```bash
+curl http://localhost:5000/api/vehicles/live-status
+```
+
+### 6. Update the VM later
+
+After changes are merged to `main`, wait for the GitHub Actions container publish workflow to finish. Then run:
 
 ```bash
 git pull
@@ -228,47 +292,13 @@ docker compose pull
 docker compose up -d
 ```
 
-Check the running container:
+If `docker compose pull` does not pick up a new image, confirm the `main` branch publish workflow completed successfully.
 
-```bash
-docker compose ps
-docker compose logs -f app
-```
+### Database bootstrap / repave
 
-If the GHCR package is private and the VM is not logged in yet:
+The Docker container expects the database to already exist.
 
-```bash
-echo YOUR_GITHUB_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-```
-
-The GitHub Actions workflow publishes new images on pushes to `main`. See `DEPLOY.md` for the full deployment walkthrough.
-If `docker compose pull` does not pick up a new image yet, confirm the `main` branch publish workflow has finished successfully.
-
-### Option B: Local development / repave
-
-Use this path for a new workstation, local development, or a rebuild after data loss.
-
-Prerequisites:
-
-- Node.js `20.19+` or `22.12+`
-- npm
-- PostgreSQL with `psql` on PATH
-- Git
-
-Expected local ports:
-- frontend: `5173`
-- backend: `5000`
-
-### 1. Clone
-
-```bash
-git clone <repo-url> Denmark2.0
-cd Denmark2.0
-```
-
-### 2. Create the schema
-
-Bootstrap file:
+For a brand-new local database or a destructive rebuild, use:
 
 ```text
 server/db/schema.sql
@@ -287,98 +317,51 @@ psql -U postgres -d postgres -f .\server\db\schema.sql
 ```
 
 Notes:
-- it creates the default `denmark` database if needed
-- it drops and recreates the public app schema
-- it does not include private operational data
-- it is destructive, so do not point it at a database you still need
 
-### 3. Create `.env`
+- It creates the default `denmark` database if needed.
+- It drops and recreates the public app schema.
+- It does not include private operational data.
+- It is destructive, so do not point it at a database you still need.
 
-```bash
-cp .env.example .env
-```
+### Local development
 
-PowerShell:
+Use this path only when editing the app locally.
 
-```powershell
-Copy-Item .env.example .env
-```
+Prerequisites:
 
-Minimal local values:
+- Node.js `20.19+` or `22.12+`
+- npm
+- PostgreSQL with `psql` on PATH
+- Git
 
-```dotenv
-PGHOST=localhost
-PGPORT=5432
-PGDATABASE=denmark
-PGUSER=postgres
-PGPASSWORD=replace-with-local-postgres-password
-DATABASE_URL=postgres://postgres:replace-with-local-postgres-password@localhost:5432/denmark
-
-PORT=5000
-FRONTEND_BASE_URL=http://localhost:5173
-SESSION_SECRET=replace-with-long-random-session-secret
-TOKEN_ENCRYPTION_KEY=replace-with-64-char-hex-or-long-random-secret
-DENMARK_BRIDGE_SECRET=replace-with-shared-secret-for-android-bridge
-```
-
-Important integration values you will likely need later:
-- `BOUNCIE_*`
-- `DIMO_*`
-- `GOOGLE_*`
-- `IMAP_*`
-- `EZTAG_*`
-- `TELLER_*`
-
-For DIMO, map known vehicles deliberately:
-
-```dotenv
-DIMO_FLEET_JSON=[{"tokenId":191373,"nickname":"Geneva","vin":"KMHTC6AD3GU260321","active":true}]
-```
-
-### 4. Install dependencies
-
-Frontend:
+Install dependencies:
 
 ```bash
 npm install
-```
-
-Backend:
-
-```bash
 cd server
 npm install
 cd ..
 ```
 
-### 5. Start the app
-
-Backend:
+Start the backend:
 
 ```bash
 cd server
 npm start
 ```
 
-Frontend:
+Start the frontend dev server from another terminal:
 
 ```bash
 npm run dev
 ```
 
 Default local URLs:
+
 - frontend: `http://localhost:5173`
 - backend: `http://localhost:5000`
 
-### 6. Verify basic health
-
-Backend check:
-
-```bash
-curl http://localhost:5000/api/vehicles/live-status
-```
-
-Frontend build:
+Build the deployable frontend bundle:
 
 ```bash
 npx vite build
