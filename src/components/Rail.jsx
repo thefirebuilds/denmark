@@ -70,6 +70,14 @@ export default function Rail({ activeView = "dispatch", onChangeView }) {
       >
         🛍️
       </button>
+      <button
+        type="button"
+        className={`rail-btn ${activeView === "fleet-map" ? "active" : ""}`}
+        onClick={() => onChangeView?.("fleet-map")}
+        title="Fleet Map"
+      >
+        MAP
+      </button>
 
       <div className="rail-spacer"></div>
 
@@ -84,3 +92,4 @@ export default function Rail({ activeView = "dispatch", onChangeView }) {
     </nav>
   );
 }
+

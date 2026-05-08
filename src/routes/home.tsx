@@ -14,6 +14,7 @@ import "../styles/tripSummary.css";
 import "../styles/inbox.css";
 import "../styles/metrics.css";
 import "../styles/marketplace.css";
+import "../styles/fleet-map.css";
 import "../styles/settings.css";
 
 import Rail from "../components/Rail";
@@ -31,6 +32,7 @@ import TripSummary from "../components/TripSummary";
 import InboxPanel from "../components/inbox/InboxPanel";
 import MetricsPanel from "../components/MetricsPanel";
 import MarketplacePanel from "../components/MarketplacePanel";
+import FleetMapPanel from "../components/FleetMapPanel";
 import SettingsPanel from "../components/settings/SettingsPanel";
 import MobileMaintenanceShell from "../components/mobile/MobileMaintenanceShell";
 
@@ -920,10 +922,12 @@ export default function Home() {
         <InboxPanel />
       ) : activeView === "metrics" ? (
         <MetricsPanel />
-            ) : activeView === "marketplace" ? (
-            <div className="marketplace-view-shell">
-              <MarketplacePanel />
-            </div>
+      ) : activeView === "marketplace" ? (
+        <div className="marketplace-view-shell">
+          <MarketplacePanel />
+        </div>
+      ) : activeView === "fleet-map" ? (
+        <FleetMapPanel />
       ) : activeView === "settings" ? (
         <SettingsPanel
           dispatchSettings={dispatchSettings}

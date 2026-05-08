@@ -10,6 +10,7 @@ const {
   getCachedVehicleStatusFeed,
   getVehicleStatusFeed,
 } = require("../services/vehicles/statusFeed");
+const { getVehicleLocations } = require("../services/vehicles/locationFeed");
 const {
   generateFleetFmvEstimates,
   generateVehicleFmvEstimate,
@@ -109,6 +110,16 @@ router.get("/cached-status", async (req, res) => {
   } catch (err) {
     console.error("Vehicle cached status error:", err);
     res.status(500).json({ error: "Failed to fetch cached vehicle status" });
+  }
+});
+
+router.get("/locations", async (req, res) => {
+  try {
+    const locations = await getVehicleLocations();
+    res.json(locations);
+  } catch (err) {
+    console.error("GET /api/vehicles/locations failed:", err);
+    res.status(500).json({ error: "Failed to fetch vehicle locations" });
   }
 });
 

@@ -553,25 +553,30 @@ export function getSelectedTripVehicle(trip, vehicles) {
     null;
 
   if (!vehicle) {
-    console.log("useVehicleStatus no match", {
-      tripId: trip?.id,
-      reservationId: trip?.reservation_id,
-      tripVehicleName: trip?.vehicle_name,
-      tripVehicleNickname: trip?.vehicle_nickname,
-      tripVehicleVin: trip?.vehicle_vin,
-      tripTuroVehicleId: trip?.turo_vehicle_id,
-      candidateVehicles: (vehicles || []).map((vehicle) => ({
-        nickname: vehicle?.nickname,
-        vin: vehicle?.vin,
-        make: vehicle?.make,
-        model: vehicle?.model,
-        year: vehicle?.year,
-        turo_vehicle_id: vehicle?.turo_vehicle_id,
-        bouncie_vehicle_id: vehicle?.bouncie_vehicle_id,
-        dimo_token_id: vehicle?.dimo_token_id,
-        telemetry_source: vehicle?.telemetry_source,
-      })),
-    });
+    if (
+      import.meta.env.DEV &&
+      window.localStorage?.getItem("denmark.debugVehicleMatch") === "1"
+    ) {
+      console.debug("useVehicleStatus no match", {
+        tripId: trip?.id,
+        reservationId: trip?.reservation_id,
+        tripVehicleName: trip?.vehicle_name,
+        tripVehicleNickname: trip?.vehicle_nickname,
+        tripVehicleVin: trip?.vehicle_vin,
+        tripTuroVehicleId: trip?.turo_vehicle_id,
+        candidateVehicles: (vehicles || []).map((vehicle) => ({
+          nickname: vehicle?.nickname,
+          vin: vehicle?.vin,
+          make: vehicle?.make,
+          model: vehicle?.model,
+          year: vehicle?.year,
+          turo_vehicle_id: vehicle?.turo_vehicle_id,
+          bouncie_vehicle_id: vehicle?.bouncie_vehicle_id,
+          dimo_token_id: vehicle?.dimo_token_id,
+          telemetry_source: vehicle?.telemetry_source,
+        })),
+      });
+    }
     return {
       matched: false,
       nickname: tripNickname || null,
