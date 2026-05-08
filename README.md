@@ -223,11 +223,26 @@ docker compose up -d
 Update later:
 
 ```bash
+git pull
 docker compose pull
 docker compose up -d
 ```
 
+Check the running container:
+
+```bash
+docker compose ps
+docker compose logs -f app
+```
+
+If the GHCR package is private and the VM is not logged in yet:
+
+```bash
+echo YOUR_GITHUB_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
 The GitHub Actions workflow publishes new images on pushes to `main`. See `DEPLOY.md` for the full deployment walkthrough.
+If `docker compose pull` does not pick up a new image yet, confirm the `main` branch publish workflow has finished successfully.
 
 ### Option B: Local development / repave
 
