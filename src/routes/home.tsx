@@ -36,7 +36,7 @@ import MobileMaintenanceShell from "../components/mobile/MobileMaintenanceShell"
 
 const APP_TITLE = "Trip Dispatch Console";
 const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+  import.meta.env.VITE_API_BASE_URL || "";
 const LAYOUT_MODE_STORAGE_KEY = "denmark.layoutMode";
 const MOBILE_LAYOUT_QUERY = "(max-width: 900px)";
 const LOCAL_API_ORIGINS = new Set([
@@ -122,7 +122,12 @@ function getFetchUrl(input: RequestInfo | URL) {
 
 function isApiFetch(input: RequestInfo | URL) {
   const url = getFetchUrl(input);
-  return url.startsWith(API_BASE) || url.startsWith("/api/");
+  return (
+    (API_BASE ? url.startsWith(API_BASE) : false) ||
+    url.startsWith("/api/") ||
+    url === "/api" ||
+    url.startsWith("/__whoami")
+  );
 }
 
 function buildLoginUrl() {
@@ -959,3 +964,4 @@ export default function Home() {
     </div>
   );
 }
+

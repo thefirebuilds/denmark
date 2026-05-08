@@ -4,7 +4,7 @@ import TripSummaryListPanel from "./TripSummaryListPanel";
 import TripSummaryMetricsPanel from "./TripSummaryMetricsPanel";
 import TripSummaryDrawer from "./TripSummaryDrawer";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 
 function getTripDays(start, end) {
@@ -290,3 +290,4 @@ export default function TripSummaryPage() {
     </div>
   );
 }
+

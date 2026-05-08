@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const EXPENSE_LEDGER_FOCUS_STORAGE_KEY = "denmark.expenseLedgerFocus";
 
 const RANGE_OPTIONS = [
@@ -384,3 +384,5 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
     </section>
   );
 }
+
+

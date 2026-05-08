@@ -1,6 +1,7 @@
 // server/index.js
 
 const cors = require("cors");
+const fs = require("fs");
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
@@ -308,6 +309,16 @@ app.use(
 );
 
 app.use("/api", publicAvailabilityRouter);
+
+const clientDistPath = path.resolve(__dirname, "../dist");
+const clientIndexPath = path.join(clientDistPath, "index.html");
+
+if (fs.existsSync(clientIndexPath)) {
+  app.use(express.static(clientDistPath));
+  app.get(/^(?!\/api(?:\/|$)|\/__whoami$).*/, (req, res) => {
+    res.sendFile(clientIndexPath);
+  });
+}
 
 app.get("/__whoami", (req, res) => {
   res.json({

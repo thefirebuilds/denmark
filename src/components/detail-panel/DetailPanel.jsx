@@ -17,7 +17,7 @@ import {
   buildQueueItemsFromSummary,
 } from "../../utils/maintUtils";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 function sumOpenTaskCounts(openTaskCounts) {
   if (!openTaskCounts || typeof openTaskCounts !== "object") return 0;
@@ -253,3 +253,5 @@ export default function DetailPanel({
     </>
   );
 }
+
+

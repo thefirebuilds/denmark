@@ -17,6 +17,21 @@ function getPayoffPaceTone(recoveryPct, timelinePct) {
 }
 
 function getTollRisk(vehicle) {
+  const unresolvedTotal = Number(vehicle?.unresolved_toll_charge_total ?? 0);
+  const unresolvedCount = Number(vehicle?.unresolved_toll_charge_count ?? 0);
+  const tollChargeTotal = Number(vehicle?.toll_charge_total ?? 0);
+
+  if (unresolvedTotal > 0 || unresolvedCount > 0) {
+    const unresolvedShare =
+      tollChargeTotal > 0 ? unresolvedTotal / tollChargeTotal : 1;
+
+    if (unresolvedTotal >= 75 || unresolvedShare >= 0.35) {
+      return { label: "High", tone: "negative" };
+    }
+
+    return { label: "Watch", tone: "warning" };
+  }
+
   const tollsPaid = Number(vehicle?.tolls_paid ?? 0);
   const recovered = Number(vehicle?.tolls_recovered ?? 0);
   const outstanding = Number(vehicle?.tolls_attributed_outstanding ?? 0);
@@ -26,6 +41,10 @@ function getTollRisk(vehicle) {
   const effectiveRecoveryRate =
     tollsPaid > 0 ? (recovered + outstanding) / tollsPaid : 1;
   const leakageShare = tollsPaid > 0 ? unattributed / tollsPaid : 0;
+
+  if (outstanding <= 0) {
+    return { label: "Low", tone: "positive" };
+  }
 
   if (tollsPaid <= 0 && unattributed <= 0) {
     return { label: "Low", tone: "positive" };

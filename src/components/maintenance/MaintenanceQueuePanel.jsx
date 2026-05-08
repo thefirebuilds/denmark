@@ -96,7 +96,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
 
     async function loadFleetVehicles() {
       try {
-        const res = await fetch("http://localhost:5000/api/vehicles");
+        const res = await fetch("/api/vehicles");
         if (!res.ok) throw new Error(`Vehicle list HTTP ${res.status}`);
 
         const vehicles = await res.json();
@@ -105,7 +105,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
           setFleetVehicles(Array.isArray(vehicles) ? vehicles : []);
         }
 
-        fetch("http://localhost:5000/api/vehicles/cached-status")
+        fetch("/api/vehicles/cached-status")
           .then((cachedRes) => (cachedRes.ok ? cachedRes.json() : []))
           .then((cachedVehicles) => {
             if (cancelled || !Array.isArray(cachedVehicles)) return;
@@ -146,7 +146,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
     }
 
     const res = await fetch(
-      `http://localhost:5000/api/vehicles/${encodeURIComponent(vin)}/maintenance-summary`
+      `/api/vehicles/${encodeURIComponent(vin)}/maintenance-summary`
     );
 
     if (!res.ok) {
@@ -173,7 +173,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
       try {
         if (!cancelled) setFleetPlanningLoading(true);
 
-        const vehicleRes = await fetch("http://localhost:5000/api/vehicles");
+        const vehicleRes = await fetch("/api/vehicles");
         if (!vehicleRes.ok) throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
 
         const vehicleData = await vehicleRes.json();
@@ -191,7 +191,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
 
             try {
               const tripsRes = await fetch(
-                `http://localhost:5000/api/trips/vehicle/${vehicleId}?mode=relevant`
+                `/api/trips/vehicle/${vehicleId}?mode=relevant`
               );
 
               if (!tripsRes.ok) throw new Error(`Trip status HTTP ${tripsRes.status}`);
@@ -232,7 +232,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
           liveFleet.map(async (vehicleCard) => {
             try {
               const summaryRes = await fetch(
-                `http://localhost:5000/api/vehicles/${encodeURIComponent(
+                `/api/vehicles/${encodeURIComponent(
                   vehicleCard.vin
                 )}/maintenance-summary`
               );
@@ -332,7 +332,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
 
     try {
       const res = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           item.vehicleVin
         )}/maintenance-summary`
       );
@@ -396,7 +396,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
       setSavingInspection(true);
 
       const saveRes = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           targetVin
         )}/maintenance-events`,
         {
@@ -593,3 +593,4 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
     </aside>
   );
 }
+

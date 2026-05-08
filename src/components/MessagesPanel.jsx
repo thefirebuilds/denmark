@@ -21,7 +21,7 @@ import {
   mapRuleStatusToInspectionItem,
 } from "../utils/maintUtils";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
 
 function notifyMessageStatsUpdated() {
@@ -955,7 +955,7 @@ export default function MessagesPanel({
 
   async function loadMessageStats() {
     try {
-      const res = await fetch("http://localhost:5000/api/messages/stats");
+      const res = await fetch("/api/messages/stats");
 
       if (!res.ok) {
         throw new Error(`Failed to load message stats (${res.status})`);
@@ -984,7 +984,7 @@ async function handleMarkAsRead(messageId) {
   try {
     await Promise.all(
       ids.map(async (id) => {
-        const res = await fetch(`http://localhost:5000/api/messages/${id}/read`, {
+        const res = await fetch(`/api/messages/${id}/read`, {
           method: "PATCH",
         });
 
@@ -1392,8 +1392,8 @@ async function handleExportGuestInspectionSheet(message) {
 
       const showingTripMessages = messageMode === "trip" && selectedTrip?.id;
       const endpoint = showingTripMessages
-        ? `http://localhost:5000/api/trips/${selectedTrip.id}/messages`
-        : "http://localhost:5000/api/messages";
+        ? `/api/trips/${selectedTrip.id}/messages`
+        : "/api/messages";
 
       const res = await fetch(endpoint);
 
@@ -2478,3 +2478,5 @@ async function handleExportGuestInspectionSheet(message) {
     </section>
   );
 }
+
+

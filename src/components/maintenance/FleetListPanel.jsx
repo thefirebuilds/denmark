@@ -218,7 +218,7 @@ export default function FleetListPanel({
           setLoadError("");
         }
 
-        const vehicleRes = await fetch("http://localhost:5000/api/vehicles");
+        const vehicleRes = await fetch("/api/vehicles");
 
         if (!vehicleRes.ok) {
           throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
@@ -237,7 +237,7 @@ export default function FleetListPanel({
           setLoading(false);
         }
 
-        fetch("http://localhost:5000/api/vehicles/cached-status")
+        fetch("/api/vehicles/cached-status")
           .then((res) => (res.ok ? res.json() : []))
           .then((cachedVehicles) => {
             if (!isMounted || !Array.isArray(cachedVehicles)) return;
@@ -270,10 +270,10 @@ export default function FleetListPanel({
 
             try {
               const [tripsRes, maintenanceRes] = await Promise.all([
-                fetch(`http://localhost:5000/api/trips/vehicle/${routeKey}?mode=relevant`),
+                fetch(`/api/trips/vehicle/${routeKey}?mode=relevant`),
                 maintenanceSelector
                   ? fetch(
-                      `http://localhost:5000/api/vehicles/${encodeURIComponent(
+                      `/api/vehicles/${encodeURIComponent(
                         maintenanceSelector
                       )}/maintenance-summary`
                     )
@@ -406,3 +406,4 @@ export default function FleetListPanel({
     </section>
   );
 }
+

@@ -31,7 +31,7 @@ import {
   getNextServiceDue,
 } from "../../utils/maintUtils";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 /**
  * Fleet-only view shown when no trip is selected.
@@ -513,3 +513,5 @@ export default function FleetSnapshotPanel({
     </aside>
   );
 }
+
+

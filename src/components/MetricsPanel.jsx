@@ -12,7 +12,7 @@ import VehicleComparisonRow from "./metrics/VehicleComparisonRow";
 import VehicleFinancialDrawer from "./metrics/VehicleFinancialDrawer";
 
 const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+  import.meta.env.VITE_API_BASE_URL || "";
 
 const RANGE_OPTIONS = [
   { value: "30d", label: "30D" },
@@ -298,6 +298,18 @@ function formatFlagMeta(flag) {
 }
 
 function getVehicleTollRiskScore(vehicle) {
+  const unresolvedTotal = Number(vehicle?.unresolved_toll_charge_total ?? 0);
+  const unresolvedCount = Number(vehicle?.unresolved_toll_charge_count ?? 0);
+  const tollChargeTotal = Number(vehicle?.toll_charge_total ?? 0);
+
+  if (unresolvedTotal > 0 || unresolvedCount > 0) {
+    const unresolvedShare =
+      tollChargeTotal > 0 ? unresolvedTotal / tollChargeTotal : 1;
+
+    if (unresolvedTotal >= 75 || unresolvedShare >= 0.35) return 2;
+    return 1;
+  }
+
   const paid = Number(vehicle?.tolls_paid ?? 0);
   const recovered = Number(vehicle?.tolls_recovered ?? 0);
   const outstanding = Number(vehicle?.tolls_attributed_outstanding ?? 0);
@@ -307,6 +319,7 @@ function getVehicleTollRiskScore(vehicle) {
   const effectiveRecoveryRate = paid > 0 ? (recovered + outstanding) / paid : 1;
   const leakageShare = paid > 0 ? unattributed / paid : 0;
 
+  if (outstanding <= 0) return 0;
   if (paid <= 0 && unattributed <= 0) return 0;
   if (
     unattributed >= 75 ||
@@ -2853,3 +2866,4 @@ const mileageStats = useMemo(() => {
     </div>
   );
 }
+

@@ -173,6 +173,54 @@ async function fetchExpensesForVehicles(client, startDate, endDate) {
   return rows;
 }
 
+async function fetchTollExposureForVehicles(client, startDate, endDate) {
+  const dateFilter = startDate
+    ? `tc.trxn_at >= $1::timestamp AND tc.trxn_at <= $2::timestamp`
+    : `tc.trxn_at <= $1::timestamp`;
+  const params = startDate ? [startDate, endDate] : [endDate];
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        v.id AS vehicle_id,
+        COUNT(*)::int AS toll_charge_count,
+        COALESCE(SUM(ABS(tc.amount)), 0)::numeric AS toll_charge_total,
+        COUNT(*) FILTER (
+          WHERE NOT (
+            COALESCE(t.toll_review_status, '') IN ('billed', 'waived')
+            OR COALESCE(tc.review_status, '') IN ('billed', 'waived', 'ignored', 'reviewed')
+          )
+        )::int AS unresolved_toll_charge_count,
+        COALESCE(
+          SUM(ABS(tc.amount)) FILTER (
+            WHERE NOT (
+              COALESCE(t.toll_review_status, '') IN ('billed', 'waived')
+              OR COALESCE(tc.review_status, '') IN ('billed', 'waived', 'ignored', 'reviewed')
+            )
+          ),
+          0
+        )::numeric AS unresolved_toll_charge_total
+      FROM toll_charges tc
+      JOIN vehicles v
+        ON tc.matched_vehicle_id = v.id
+        OR (
+          COALESCE(v.license_plate, '') <> ''
+          AND UPPER(COALESCE(tc.license_plate_normalized, tc.license_plate, '')) =
+            UPPER(v.license_plate)
+        )
+      LEFT JOIN trips t
+        ON t.id = tc.matched_trip_id
+      WHERE ${dateFilter}
+        AND COALESCE(v.is_active, true) = true
+        AND COALESCE(v.in_service, true) = true
+      GROUP BY v.id
+    `,
+    params
+  );
+
+  return rows;
+}
+
 async function fetchVehicleOdometerAnchors(client, startDate, endDate) {
   const { rows } = await client.query(
     `
@@ -761,6 +809,11 @@ async function getVehicleMetrics(rangeKey = "30d") {
     const vehicles = await fetchActiveVehicles(client);
     const trips = await fetchTripsForVehicles(client, startDate, endDate);
     const expenses = await fetchExpensesForVehicles(client, startDate, endDate);
+    const tollExposureRows = await fetchTollExposureForVehicles(
+      client,
+      startDate,
+      endDate
+    );
     const odometerAnchors = await fetchVehicleOdometerAnchors(
       client,
       startDate,
@@ -773,6 +826,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
       String(row.vehicle_id)
     );
     const capitalMetricsMap = toMapBy(capitalMetricsRows, (row) =>
+      String(row.vehicle_id)
+    );
+    const tollExposureMap = toMapBy(tollExposureRows, (row) =>
       String(row.vehicle_id)
     );
     const latestFmvMap = new Map(
@@ -875,6 +931,10 @@ async function getVehicleMetrics(rangeKey = "30d") {
         tolls_attributed_outstanding: 0,
         tolls_unattributed: 0,
         tolls_paid: 0,
+        toll_charge_count: 0,
+        toll_charge_total: 0,
+        unresolved_toll_charge_count: 0,
+        unresolved_toll_charge_total: 0,
         fmv_estimate_low: null,
         fmv_estimate_mid: null,
         fmv_estimate_high: null,
@@ -903,8 +963,18 @@ async function getVehicleMetrics(rangeKey = "30d") {
       const vehicleId = String(vehicle.id);
       const metrics = vehicleMetrics.get(vehicleId);
       const latestFmv = latestFmvMap.get(String(vehicle.vin || ""));
+      const tollExposure = tollExposureMap.get(vehicleId) || {};
       const tripsForVehicle = vehicleTrips.get(vehicleId) || [];
       const closedTripMileage = calculateTripOffTripMiles(tripsForVehicle);
+
+      metrics.toll_charge_count = Number(tollExposure.toll_charge_count || 0);
+      metrics.toll_charge_total = roundMoney(tollExposure.toll_charge_total);
+      metrics.unresolved_toll_charge_count = Number(
+        tollExposure.unresolved_toll_charge_count || 0
+      );
+      metrics.unresolved_toll_charge_total = roundMoney(
+        tollExposure.unresolved_toll_charge_total
+      );
       
       const openTripAtRangeEnd = hasOpenTripAtRangeEnd(tripsForVehicle, endDate);
       metrics.has_open_trip_at_range_end = openTripAtRangeEnd;

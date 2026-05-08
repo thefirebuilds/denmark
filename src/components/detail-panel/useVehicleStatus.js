@@ -53,7 +53,7 @@ export function useVehicleStatus(pollMs = 60000) {
       setVehiclesError("");
 
       try {
-        const resp = await fetch("http://localhost:5000/api/vehicles/live-status");
+        const resp = await fetch("/api/vehicles/live-status");
         if (!resp.ok) {
           throw new Error(`HTTP ${resp.status}`);
         }
@@ -119,3 +119,4 @@ export function useVehicleStatus(pollMs = 60000) {
     highlightedVehicles,
   };
 }
+

@@ -578,7 +578,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           setFleetLoadError("");
         }
 
-        const res = await fetch("http://localhost:5000/api/vehicles");
+        const res = await fetch("/api/vehicles");
 
         if (!res.ok) {
           const errorBody = await res.json().catch(() => null);
@@ -591,7 +591,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           setFleetVehicles(Array.isArray(vehicles) ? vehicles : []);
         }
 
-        fetch("http://localhost:5000/api/vehicles/cached-status")
+        fetch("/api/vehicles/cached-status")
           .then((cachedRes) => (cachedRes.ok ? cachedRes.json() : []))
           .then((cachedVehicles) => {
             if (cancelled || !Array.isArray(cachedVehicles)) return;
@@ -633,7 +633,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
 
   const loadMaintenanceTemplates = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:5000/api/maintenance-rule-templates");
+      const res = await fetch("/api/maintenance-rule-templates");
 
       if (!res.ok) {
         const errorBody = await res.json().catch(() => null);
@@ -662,7 +662,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
     }
 
     const res = await fetch(
-      `http://localhost:5000/api/vehicles/${encodeURIComponent(
+      `/api/vehicles/${encodeURIComponent(
         selectedFleetVehicle.vin
       )}/maintenance-summary`
     );
@@ -694,7 +694,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
         if (!cancelled) setLoading(true);
 
         const res = await fetch(
-          `http://localhost:5000/api/vehicles/${encodeURIComponent(
+          `/api/vehicles/${encodeURIComponent(
             selectedFleetVehicle.vin
           )}/maintenance-summary`
         );
@@ -753,7 +753,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           setFleetPlanningError("");
         }
 
-        const vehicleRes = await fetch("http://localhost:5000/api/vehicles");
+        const vehicleRes = await fetch("/api/vehicles");
         if (!vehicleRes.ok) throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
 
         const vehicleData = await vehicleRes.json();
@@ -771,7 +771,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
 
             try {
               const tripsRes = await fetch(
-                `http://localhost:5000/api/trips/vehicle/${vehicleId}?mode=relevant`
+                `/api/trips/vehicle/${vehicleId}?mode=relevant`
               );
 
               if (!tripsRes.ok) throw new Error(`Trip status HTTP ${tripsRes.status}`);
@@ -793,7 +793,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
           vehicleTripPairs.map(async ({ vehicle, trips }) => {
             try {
               const summaryRes = await fetch(
-                `http://localhost:5000/api/vehicles/${encodeURIComponent(
+                `/api/vehicles/${encodeURIComponent(
                   vehicle.vin
                 )}/maintenance-summary`
               );
@@ -857,7 +857,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
         );
 
         const res = await fetch(
-          `http://localhost:5000/api/trips/vehicle/${vehicleId}?mode=relevant`
+          `/api/trips/vehicle/${vehicleId}?mode=relevant`
         );
 
         if (!res.ok) throw new Error("Trip load failed");
@@ -1057,7 +1057,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       setSavingInspection(true);
 
       const res = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           vin
         )}/maintenance-events/${entry.id}`,
         { method: "DELETE" }
@@ -1110,7 +1110,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
         .filter(Boolean);
 
       const res = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           selectedFleetVehicle.vin
         )}`,
         {
@@ -1150,7 +1150,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       setRegistrationError("");
 
       const res = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           selectedFleetVehicle.vin
         )}`,
         {
@@ -1223,7 +1223,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       setLockboxPinError("");
 
       const res = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           selectedFleetVehicle.vin
         )}`,
         {
@@ -1310,8 +1310,8 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       setCustomRuleError("");
 
       const endpoint = customRuleForm.saveAsTemplate
-        ? "http://localhost:5000/api/maintenance-rule-templates"
-        : `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        ? "/api/maintenance-rule-templates"
+        : `/api/vehicles/${encodeURIComponent(
             selectedFleetVehicle.vin
           )}/maintenance-rules`;
 
@@ -1396,7 +1396,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
 
     try {
       const res = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           vin
         )}/maintenance-summary`
       );
@@ -1458,7 +1458,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       setSavingInspection(true);
 
       const saveRes = await fetch(
-        `http://localhost:5000/api/vehicles/${encodeURIComponent(
+        `/api/vehicles/${encodeURIComponent(
           vin
         )}/maintenance-events`,
         {
@@ -2492,3 +2492,4 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
     </section>
   );
 }
+

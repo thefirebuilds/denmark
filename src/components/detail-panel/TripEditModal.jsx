@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "../../styles/trip-edit.css";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 const STAGE_ORDER = [
   "booked",
@@ -880,3 +880,5 @@ export default function TripEditModal({
     </div>
   );
 }
+
+

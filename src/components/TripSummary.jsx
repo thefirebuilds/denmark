@@ -21,7 +21,7 @@ import {
   isOpenActionTrip,
 } from "../utils/tripUtils";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const TRIP_LEDGER_FOCUS_STORAGE_KEY = "denmark.tripLedgerFocus";
 
 function readStoredTripLedgerFocus() {
@@ -472,3 +472,5 @@ async function handleSelectTrip(trip) {
     </div>
   );
 }
+
+

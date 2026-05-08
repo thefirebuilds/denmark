@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const VEHICLES_API = `${API_BASE}/api/vehicles`;
 const SUGGESTIONS_API = `${API_BASE}/api/expenses/suggestions`;
 const DEFAULT_TAX_RATE = 0.0825;
@@ -440,3 +440,5 @@ export default function ExpenseModal({
     document.body
   );
 }
+
+
