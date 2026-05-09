@@ -23,6 +23,12 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
+const RAW_FEED_TYPES = [
+  { id: "emails", label: "Emails" },
+  { id: "internal", label: "Internal messages" },
+  { id: "android", label: "Android notifications" },
+];
+const RAW_FEED_PAGE_SIZE = 10;
 
 function notifyMessageStatsUpdated() {
   window.dispatchEvent(new CustomEvent("messages:stats-updated"));
@@ -95,6 +101,67 @@ function formatTripWindow(start, end) {
 
   if (startLabel && endLabel) return `${startLabel} -> ${endLabel}`;
   return startLabel || endLabel || "";
+}
+
+function truncateRawText(value, maxLength = 180) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function getRawItemTimestamp(type, item) {
+  if (type === "android") {
+    return item.received_at || item.posted_at;
+  }
+
+  return item.message_timestamp || item.ingested_at || item.created_at;
+}
+
+function getRawItemTitle(type, item) {
+  if (type === "android") {
+    return item.title || item.classification || item.app || "Android notification";
+  }
+
+  return item.subject || item.message_type || `Message #${item.id}`;
+}
+
+function getRawItemBody(type, item) {
+  if (type === "android") {
+    return truncateRawText(
+      [item.body, item.big_text, item.sub_text].filter(Boolean).join(" ")
+    );
+  }
+
+  return truncateRawText(
+    item.guest_message || item.normalized_text_body || item.date_header || ""
+  );
+}
+
+function getRawItemMeta(type, item) {
+  if (type === "android") {
+    return [
+      item.classification || "unclassified",
+      item.device || item.source,
+      item.guest_name,
+      item.vehicle_name,
+      item.reservation_id ? `#${item.reservation_id}` : "",
+      item.acknowledged_at ? "acknowledged" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  return [
+    item.message_type || "message",
+    item.status,
+    item.mailbox,
+    item.guest_name,
+    item.vehicle_name,
+    item.reservation_id ? `#${item.reservation_id}` : "",
+    item.amount != null ? formatMoney(item.amount) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function formatHandoffCountdown(value, nowMs = Date.now()) {
@@ -453,6 +520,19 @@ function buildMessageBody(message) {
     }, but the email/message table has no match yet. ${body}`;
   }
 
+  if (type === "return_location_check") {
+    const received = formatTripTime(message?.notification_received_at);
+    const vehicle = message?.vehicle_name || "the car";
+    const body =
+      message?.return_location_text ||
+      message?.notification_body ||
+      "Turo says this vehicle has been returned.";
+
+    return `Turo says ${vehicle} was returned${
+      received ? ` at ${received}` : ""
+    }. Verify the vehicle GPS matches the return location. ${body}`;
+  }
+
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);
     const latest = message?.latest_guest_message || message?.guest_message || "";
@@ -532,6 +612,13 @@ function formatTimeAgo(timestamp) {
 
 function buildMessageTitle(message) {
   const type = message?.type || message?.message_type;
+  if (type === "return_location_check") {
+    const guest = message?.guest_name;
+    const vehicle = message?.vehicle_name || message?.vehicle_nickname;
+    if (guest && vehicle) return `${guest} returned ${vehicle}`;
+    return message?.notification_title || "Return location check";
+  }
+
   if (type === "notification_unmatched") {
     return message?.notification_title || "Turo notification missing email";
   }
@@ -558,6 +645,7 @@ function buildMessageSub(message) {
   if (type === "closeout_required") return "Trip closeout needed";
   if (type === "late_toll_unbilled") return "Late toll billing needed";
   if (type === "trip_overlap_detected") return "Trip overlap detected";
+  if (type === "return_location_check") return "Verify return GPS";
   if (type === "notification_unmatched") return "Urgent bridge/email mismatch";
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);
@@ -670,6 +758,11 @@ function isReimbursementInvoiceMessage(message) {
 function isUnmatchedNotification(message) {
   const type = message?.type || message?.message_type;
   return type === "notification_unmatched";
+}
+
+function isReturnLocationCheck(message) {
+  const type = message?.type || message?.message_type;
+  return type === "return_location_check";
 }
 
 function isOperationalTripNotice(message) {
@@ -919,7 +1012,16 @@ export default function MessagesPanel({
   const [newMessageIds, setNewMessageIds] = useState([]);
   const [unreadCount, setUnreadCount] = useState(Number(initialUnreadCount || 0));
   const [bridgeHeartbeat, setBridgeHeartbeat] = useState(null);
-  const [unmatchedNotificationCount, setUnmatchedNotificationCount] = useState(0);
+  const [rawFeedType, setRawFeedType] = useState("");
+  const [rawFeedPage, setRawFeedPage] = useState(1);
+  const [rawFeed, setRawFeed] = useState({
+    items: [],
+    total: 0,
+    page: 1,
+    limit: RAW_FEED_PAGE_SIZE,
+  });
+  const [rawFeedLoading, setRawFeedLoading] = useState(false);
+  const [rawFeedError, setRawFeedError] = useState("");
   const [countdownNow, setCountdownNow] = useState(() => Date.now());
   const [confirmingMessageId, setConfirmingMessageId] = useState(null);
   const [focusingMessageId, setFocusingMessageId] = useState(null);
@@ -966,10 +1068,58 @@ export default function MessagesPanel({
 
       setUnreadCount(Number(stats.unread || 0));
       setBridgeHeartbeat(stats.bridgeHeartbeat || null);
-      setUnmatchedNotificationCount(Number(stats.unmatchedNotifications || 0));
     } catch (err) {
       console.error("Failed loading message stats:", err);
     }
+  }
+
+  async function loadRawFeed(type = rawFeedType, page = rawFeedPage) {
+    if (!type) return;
+
+    setRawFeedLoading(true);
+    setRawFeedError("");
+
+    try {
+      const params = new URLSearchParams({
+        type,
+        page: String(page),
+        limit: String(RAW_FEED_PAGE_SIZE),
+      });
+      const res = await fetch(`${API_BASE}/api/messages/raw?${params.toString()}`);
+
+      if (!res.ok) {
+        throw new Error(`Failed to load raw feed (${res.status})`);
+      }
+
+      const data = await res.json();
+      setRawFeed({
+        items: Array.isArray(data.items) ? data.items : [],
+        total: Number(data.total || 0),
+        page: Number(data.page || page),
+        limit: Number(data.limit || RAW_FEED_PAGE_SIZE),
+      });
+    } catch (err) {
+      setRawFeedError(err.message || "Failed to load raw feed");
+    } finally {
+      setRawFeedLoading(false);
+    }
+  }
+
+  function selectRawFeed(type) {
+    setRawFeedType((current) => {
+      const next = current === type ? "" : type;
+      setRawFeedPage(1);
+      if (!next) {
+        setRawFeed({
+          items: [],
+          total: 0,
+          page: 1,
+          limit: RAW_FEED_PAGE_SIZE,
+        });
+        setRawFeedError("");
+      }
+      return next;
+    });
   }
 
 async function handleMarkAsRead(messageId) {
@@ -1036,7 +1186,6 @@ async function handleAckNotification(message) {
 
     setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
     setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
-    setUnmatchedNotificationCount((prev) => Math.max(0, prev - 1));
     seenIdsRef.current.delete(message.id);
     knownQueueItemIdsRef.current.delete(String(message.id));
 
@@ -1524,6 +1673,11 @@ async function handleExportGuestInspectionSheet(message) {
   }, []);
 
   useEffect(() => {
+    if (!rawFeedType) return;
+    loadRawFeed(rawFeedType, rawFeedPage);
+  }, [rawFeedType, rawFeedPage]);
+
+  useEffect(() => {
     if (messageMode !== "trip" || !selectedTrip?.id) {
       setFocusedCloseoutTask(null);
       return;
@@ -1719,6 +1873,15 @@ async function handleExportGuestInspectionSheet(message) {
   }, [inspectionExport]);
 
   const showingTripMessages = messageMode === "trip" && selectedTrip?.id;
+  const visibleUnmatchedNotificationCount = showingTripMessages
+    ? 0
+    : messages.filter(isUnmatchedNotification).length;
+  const rawFeedTotalPages = Math.max(
+    1,
+    Math.ceil(Number(rawFeed.total || 0) / Number(rawFeed.limit || RAW_FEED_PAGE_SIZE))
+  );
+  const activeRawFeedLabel =
+    RAW_FEED_TYPES.find((type) => type.id === rawFeedType)?.label || "";
 
   return (
     <section className="panel messages-panel">
@@ -1742,9 +1905,9 @@ async function handleExportGuestInspectionSheet(message) {
         >
           {formatBridgeHeartbeat(bridgeHeartbeat)}
         </div>
-        {unmatchedNotificationCount > 0 && (
+        {visibleUnmatchedNotificationCount > 0 && (
           <div className="chip notification-gap-chip">
-            {unmatchedNotificationCount} Bridge Notifications
+            {visibleUnmatchedNotificationCount} Bridge Notifications
           </div>
         )}
 
@@ -1758,6 +1921,92 @@ async function handleExportGuestInspectionSheet(message) {
           </button>
         )}
       </div>
+
+      {!showingTripMessages && (
+        <div className="raw-feed-bar">
+          <span className="raw-feed-label">Raw feeds</span>
+          {RAW_FEED_TYPES.map((type) => (
+            <button
+              key={type.id}
+              type="button"
+              className={`chip chip-filter raw-feed-chip ${
+                rawFeedType === type.id ? "is-active" : ""
+              }`}
+              onClick={() => selectRawFeed(type.id)}
+            >
+              {type.label}
+            </button>
+          ))}
+          {rawFeedType && (
+            <button
+              type="button"
+              className="message-action raw-feed-refresh"
+              disabled={rawFeedLoading}
+              onClick={() => loadRawFeed(rawFeedType, rawFeedPage)}
+            >
+              Refresh raw
+            </button>
+          )}
+        </div>
+      )}
+
+      {!showingTripMessages && rawFeedType && (
+        <div className="raw-feed-panel">
+          <div className="raw-feed-panel-head">
+            <div>
+              <strong>{activeRawFeedLabel}</strong>
+              <span>
+                {rawFeed.total} stored item{rawFeed.total === 1 ? "" : "s"} · page{" "}
+                {rawFeed.page} of {rawFeedTotalPages}
+              </span>
+            </div>
+            <div className="raw-feed-pager">
+              <button
+                type="button"
+                className="message-action"
+                disabled={rawFeedLoading || rawFeedPage <= 1}
+                onClick={() => setRawFeedPage((page) => Math.max(1, page - 1))}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                className="message-action"
+                disabled={rawFeedLoading || rawFeedPage >= rawFeedTotalPages}
+                onClick={() =>
+                  setRawFeedPage((page) => Math.min(rawFeedTotalPages, page + 1))
+                }
+              >
+                Next
+              </button>
+            </div>
+          </div>
+
+          {rawFeedLoading && <div className="raw-feed-empty">Loading raw feed…</div>}
+          {!rawFeedLoading && rawFeedError && (
+            <div className="raw-feed-empty">{rawFeedError}</div>
+          )}
+          {!rawFeedLoading && !rawFeedError && rawFeed.items.length === 0 && (
+            <div className="raw-feed-empty">No raw items in this lane yet.</div>
+          )}
+          {!rawFeedLoading && !rawFeedError && rawFeed.items.length > 0 && (
+            <div className="raw-feed-list">
+              {rawFeed.items.map((item) => (
+                <div key={`${rawFeedType}:${item.id}`} className="raw-feed-item">
+                  <div className="raw-feed-item-main">
+                    <strong>{getRawItemTitle(rawFeedType, item)}</strong>
+                    <span>{getRawItemMeta(rawFeedType, item)}</span>
+                    {getRawItemBody(rawFeedType, item) ? (
+                      <p>{getRawItemBody(rawFeedType, item)}</p>
+                    ) : null}
+                  </div>
+                  <time>{formatTripTime(getRawItemTimestamp(rawFeedType, item))}</time>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="message-list">
         {loading && <div className="message-empty">Loading messages…</div>}
@@ -1781,6 +2030,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canEditTripValues =
               isReimbursementInvoiceMessage(message) && Boolean(message.trip_id);
             const canReviewUnmatchedNotification = isUnmatchedNotification(message);
+            const canVerifyReturnLocation = isReturnLocationCheck(message);
             const canReviewGuestThread =
               (message.type || message.message_type) === "guest_message_thread";
             const canConfirmBooking = isBookingConfirmationTask(message);
@@ -1808,6 +2058,7 @@ async function handleExportGuestInspectionSheet(message) {
                 canReviewLateToll ||
                 canReviewOverlap ||
                 canReviewUnmatchedNotification ||
+                canVerifyReturnLocation ||
                 canShowOperationalTripNotice ||
                 canConfirmBooking ||
                 canShowMaintenance) &&
@@ -1858,7 +2109,10 @@ async function handleExportGuestInspectionSheet(message) {
                   isNew ? "message-new" : ""
                 } ${canFocusTrip ? "message-focusable" : ""} ${
                   canCloseoutTrip ? "message-closeout-guide" : ""
-                } ${canReviewUnmatchedNotification ? "message-notification-gap" : ""
+                } ${
+                  canReviewUnmatchedNotification || canVerifyReturnLocation
+                    ? "message-notification-gap"
+                    : ""
                 }`}
                 onClick={() => {
                   if (canShowMaintenance) {
@@ -1884,12 +2138,24 @@ async function handleExportGuestInspectionSheet(message) {
 
                 <div className="message-body">{buildMessageBody(message)}</div>
 
-                {canReviewUnmatchedNotification && (
+                {(canReviewUnmatchedNotification || canVerifyReturnLocation) && (
                   <div className="message-booking-task message-notification-gap-detail">
                     <div className="message-booking-title">
-                      Notification arrived without a matching email
+                      {canVerifyReturnLocation
+                        ? "Verify returned vehicle location"
+                        : "Notification arrived without a matching email"}
                       <span>{message.notification_device || "bridge device"}</span>
                     </div>
+                    {canVerifyReturnLocation ? (
+                      <div className="message-maintenance-plan-date">
+                        <span>Expected return spot</span>
+                        <strong>
+                          {message.return_location_text ||
+                            message.notification_body ||
+                            "Check Turo return details"}
+                        </strong>
+                      </div>
+                    ) : null}
                     <div className="message-maintenance-plan-date">
                       <span>Received</span>
                       <strong>
@@ -1909,6 +2175,18 @@ async function handleExportGuestInspectionSheet(message) {
                       </div>
                     ) : null}
                     <div className="message-inline-actions">
+                      {canVerifyReturnLocation && message.trip_id ? (
+                        <button
+                          type="button"
+                          className="message-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleFocusTrip(message);
+                          }}
+                        >
+                          Open linked trip
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="message-action"
@@ -1922,6 +2200,8 @@ async function handleExportGuestInspectionSheet(message) {
                       >
                         {ackingNotificationId === message.notification_event_id
                           ? "Acknowledging..."
+                          : canVerifyReturnLocation
+                          ? "GPS verified / acknowledge"
                           : "Acknowledge"}
                       </button>
                     </div>

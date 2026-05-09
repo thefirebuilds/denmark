@@ -1,6 +1,7 @@
-const express = require("express");
+﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const tripAutomationRules = require("../config/tripAutomationRules.json");
 
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
@@ -78,6 +79,177 @@ function invalidateMessageCaches() {
 }
 
 let ensureNotificationAckColumnsPromise = null;
+
+function toNumber(value) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getReturnLocationConfig() {
+  const rules = Array.isArray(tripAutomationRules?.tripStageAutomations)
+    ? tripAutomationRules.tripStageAutomations
+    : [];
+  const returnRule = rules.find(
+    (rule) =>
+      rule?.enabled !== false &&
+      String(rule?.fromStage || "") === "in_progress" &&
+      String(rule?.toStage || "") === "turnaround" &&
+      Array.isArray(rule?.conditions) &&
+      rule.conditions.some((condition) => condition?.type === "location")
+  );
+  const location = returnRule?.conditions?.find(
+    (condition) => condition?.type === "location"
+  );
+  const lat = toNumber(location?.lat);
+  const lon = toNumber(location?.lon);
+
+  if (lat == null || lon == null) return null;
+
+  return {
+    lat,
+    lon,
+    radiusMiles: toNumber(location?.radiusMiles) ?? 0.15,
+    label: location?.label || "configured return location",
+  };
+}
+
+async function autoAcknowledgeVerifiedReturnNotifications() {
+  const location = getReturnLocationConfig();
+  if (!location) return { verified: 0 };
+
+  await ensureNotificationAckColumns();
+
+  const result = await db.query(
+    `
+      WITH candidate_notifications AS (
+        SELECT
+          ne.id,
+          ne.received_at,
+          COALESCE(ne.posted_at, ne.received_at) AS event_at,
+          substring(ne.title from '^([^ ]+) has returned ') AS returned_guest_name,
+          NULLIF(regexp_replace(ne.title, '^[^ ]+ has returned ', ''), ne.title) AS returned_vehicle_name
+        FROM notification_events ne
+        WHERE ne.classification = 'trip_returned'
+          AND ne.acknowledged_at IS NULL
+          AND ne.received_at >= NOW() - INTERVAL '72 hours'
+      ),
+      matched_trips AS (
+        SELECT
+          ne.id AS notification_id,
+          ne.event_at,
+          t.id AS trip_id,
+          COALESCE(v.vin, '') AS vehicle_vin,
+          COALESCE(v.nickname, t.vehicle_name, '') AS vehicle_name
+        FROM candidate_notifications ne
+        JOIN LATERAL (
+          SELECT t.*
+          FROM trips t
+          WHERE LOWER(COALESCE(t.guest_name, '')) = LOWER(ne.returned_guest_name)
+            AND t.trip_end BETWEEN ne.event_at - INTERVAL '3 days'
+              AND ne.event_at + INTERVAL '36 hours'
+            AND COALESCE(t.workflow_stage, '') <> 'canceled'
+            AND COALESCE(t.status, '') <> 'canceled'
+            AND (
+              COALESCE(ne.returned_vehicle_name, '') = ''
+              OR LOWER(ne.returned_vehicle_name) LIKE '%' || LOWER(COALESCE(t.vehicle_name, '')) || '%'
+              OR LOWER(COALESCE(t.vehicle_name, '')) LIKE '%' || LOWER(split_part(ne.returned_vehicle_name, ' ', 1)) || '%'
+            )
+          ORDER BY t.trip_end DESC NULLS LAST, t.id DESC
+          LIMIT 1
+        ) t ON true
+        LEFT JOIN vehicles v
+          ON (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+      ),
+      latest_locations AS (
+        SELECT
+          mt.notification_id,
+          mt.trip_id,
+          latest.latitude,
+          latest.longitude,
+          COALESCE(
+            latest.location_last_updated,
+            latest.vehicle_last_updated,
+            latest.captured_at
+          ) AS location_at,
+          (
+            3958.8 * 2 * asin(
+              sqrt(
+                power(sin(radians((latest.latitude::double precision - $1::double precision) / 2)), 2) +
+                cos(radians($1::double precision)) *
+                cos(radians(latest.latitude::double precision)) *
+                power(sin(radians((latest.longitude::double precision - $2::double precision) / 2)), 2)
+              )
+            )
+          ) AS miles_from_return_location
+        FROM matched_trips mt
+        JOIN LATERAL (
+          SELECT
+            s.latitude,
+            s.longitude,
+            s.location_last_updated,
+            s.vehicle_last_updated,
+            s.captured_at
+          FROM vehicle_telemetry_snapshots s
+          WHERE s.latitude IS NOT NULL
+            AND s.longitude IS NOT NULL
+            AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at)
+              >= mt.event_at - INTERVAL '2 hours'
+            AND (
+              (
+                mt.vehicle_vin <> ''
+                AND s.vin IS NOT NULL
+                AND LOWER(s.vin) = LOWER(mt.vehicle_vin)
+              )
+              OR (
+                mt.vehicle_name <> ''
+                AND s.nickname IS NOT NULL
+                AND LOWER(s.nickname) = LOWER(mt.vehicle_name)
+              )
+            )
+          ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
+            s.id DESC
+          LIMIT 1
+        ) latest ON true
+      ),
+      verified AS (
+        SELECT *
+        FROM latest_locations
+        WHERE miles_from_return_location <= $3::double precision
+      )
+      UPDATE notification_events ne
+      SET
+        acknowledged_at = NOW(),
+        acknowledged_by = 'return-location-auto-check',
+        acknowledged_reason = CONCAT(
+          'Vehicle GPS verified within ',
+          ROUND(verified.miles_from_return_location::numeric, 2),
+          ' mi of ',
+          $4::text
+        )
+      FROM verified
+      WHERE ne.id = verified.notification_id
+      RETURNING ne.id, verified.trip_id, verified.miles_from_return_location
+    `,
+    [location.lat, location.lon, location.radiusMiles, location.label]
+  );
+
+  if (result.rowCount > 0) {
+    invalidateMessageCaches();
+    console.log(
+      `[messages] auto-acknowledged ${result.rowCount} returned vehicle notification(s) by GPS`
+    );
+  }
+
+  return { verified: result.rowCount, rows: result.rows };
+}
 
 async function ensureNotificationAckColumns() {
   if (!ensureNotificationAckColumnsPromise) {
@@ -392,6 +564,7 @@ function compactGuestMessageThreads(items) {
 
 function messageQueueRank(item) {
   if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
+  if (item.type === "return_location_check") return -2;
   if (item.type === "notification_unmatched") return -2;
   if (isUncorrelatedUnreadMessage(item)) return -2;
   if (item.type === "handoff_ready_required") return -1;
@@ -587,19 +760,23 @@ function extractPickupLocationFromNoticeText(value) {
 function mapUnmatchedNotificationRow(row) {
   const title = row.title || row.classification || "Turo notification";
   const body = row.body || row.big_text || row.sub_text || "";
+  const isReturnLocationCheck = row.classification === "trip_returned";
 
   return {
     id: `notification-gap:${row.id}`,
     messageId: `notification-gap:${row.id}`,
-    subject: `Bridge notification missing email: ${title}`,
+    subject: isReturnLocationCheck
+      ? `Return location check: ${title}`
+      : `Bridge notification missing email: ${title}`,
     status: "read",
     timestamp: row.posted_at || row.received_at,
     notification_created_at: row.received_at || row.posted_at,
-    type: "notification_unmatched",
+    type: isReturnLocationCheck ? "return_location_check" : "notification_unmatched",
     notification_event_id: row.id,
     notification_classification: row.classification,
     notification_title: row.title,
     notification_body: body,
+    return_location_text: body,
     notification_app: row.app,
     notification_package_name: row.package_name,
     notification_device: row.device,
@@ -926,230 +1103,7 @@ router.get("/stats", async (req, res) => {
           ORDER BY hb.received_at DESC NULLS LAST, hb.id DESC
           LIMIT 1
         ) AS bridge_heartbeat,
-        (
-          SELECT COUNT(*)
-          FROM (
-            SELECT
-              ne.*,
-              COALESCE(ne.posted_at, ne.received_at) AS event_at,
-              LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) AS notification_text,
-              NULLIF(
-                REPLACE(
-                  (regexp_match(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '\\$([0-9][0-9,]*(\\.[0-9]{2})?)'))[1],
-                  ',',
-                  ''
-                ),
-                ''
-              )::numeric AS event_amount,
-              substring(ne.title from '^Your trip with (.+) starts soon$') AS reminder_guest_name,
-              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'About ([^:]+) from ([^:]+):') AS paid_now_vehicle_name,
-              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'About [^:]+ from ([^:]+):') AS paid_now_guest_name,
-              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([A-Z][A-Za-z]+) paid (the|your)') AS paid_invoice_guest_name,
-              substring(ne.title from '^([^ ]+) rated their trip$') AS rated_guest_name,
-              substring(ne.title from '^([^ ]+) has returned ') AS returned_guest_name,
-              NULLIF(regexp_replace(ne.title, '^[^ ]+ has returned ', ''), ne.title) AS returned_vehicle_name,
-              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([^ ]+) has cancelled their trip') AS canceled_guest_name,
-              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+)') AS canceled_vehicle_name,
-              COALESCE(
-                substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([A-Za-z]+).s trip with your'),
-                NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '’s trip with your', 1), '^.* ', ''), ''),
-                NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '''s trip with your', 1), '^.* ', ''), '')
-              ) AS booked_guest_name,
-              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+) is booked') AS booked_vehicle_name,
-              CASE
-                WHEN ne.title LIKE 'Change requested to % trip'
-                THEN NULLIF(
-                  split_part(
-                    split_part(replace(ne.title, 'Change requested to ', ''), ' trip', 1),
-                    '’',
-                    1
-                  ),
-                  ''
-                )
-                ELSE NULL
-              END AS change_request_guest_name,
-              substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([^ ]+) changed their trip with your') AS trip_changed_guest_name
-            FROM notification_events ne
-            WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
-              AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
-              AND ne.acknowledged_at IS NULL
-              AND ne.received_at >= NOW() - INTERVAL '7 days'
-              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
-              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
-              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%has added a driver%'
-              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%additional driver%'
-              AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%added another driver%'
-          ) ne
-          WHERE NOT EXISTS (
-              SELECT 1
-              FROM messages m
-              WHERE (
-                  ne.reservation_id IS NOT NULL
-                  AND m.reservation_id IS NOT NULL
-                  AND m.reservation_id = ne.reservation_id
-                )
-                OR (
-                  ne.reservation_id IS NULL
-                  AND COALESCE(ne.guest_name, '') <> ''
-                  AND COALESCE(ne.vehicle_name, '') <> ''
-                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                    COALESCE(ne.posted_at, ne.received_at) - INTERVAL '24 hours'
-                    AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '24 hours'
-                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                    LIKE '%' || LOWER(ne.guest_name) || '%'
-                  AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
-                    LIKE '%' || LOWER(ne.vehicle_name) || '%'
-                )
-                OR (
-                  (
-                    ne.notification_text LIKE '%earnings payment%'
-                    OR ne.notification_text LIKE '%cha-ching%'
-                    OR ne.notification_text LIKE '%you’ve been paid%'
-                    OR ne.notification_text LIKE '%you''ve been paid%'
-                  )
-                  AND m.message_type = 'payment_notice'
-                  AND (
-                    (
-                      ne.event_amount IS NOT NULL
-                      AND m.amount IS NOT NULL
-                      AND m.amount = ne.event_amount
-                    )
-                    OR COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                      ne.event_at - INTERVAL '24 hours'
-                      AND ne.event_at + INTERVAL '24 hours'
-                  )
-                )
-                OR (
-                  (
-                    ne.notification_text LIKE '%paid the invoice%'
-                    OR ne.notification_text LIKE '%reimbursement invoice%'
-                    OR ne.notification_text LIKE '%paid now%'
-                  )
-                  AND m.message_type IN ('reimbursement_invoice', 'guest_message')
-                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                    ne.event_at - INTERVAL '24 hours'
-                    AND ne.event_at + INTERVAL '24 hours'
-                  AND (
-                    (
-                      COALESCE(ne.guest_name, ne.paid_now_guest_name, '') <> ''
-                      AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                        LIKE '%' || LOWER(COALESCE(ne.guest_name, ne.paid_now_guest_name)) || '%'
-                    )
-                    OR (
-                      COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name, '') <> ''
-                      AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
-                        LIKE '%' || LOWER(COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name)) || '%'
-                    )
-                    OR (
-                      COALESCE(ne.paid_invoice_guest_name, '') <> ''
-                      AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                        LIKE '%' || LOWER(ne.paid_invoice_guest_name) || '%'
-                    )
-                  )
-                )
-                OR (
-                  COALESCE(ne.paid_now_guest_name, '') <> ''
-                  AND COALESCE(ne.paid_now_vehicle_name, '') <> ''
-                  AND m.message_type = 'guest_message'
-                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                    ne.event_at - INTERVAL '24 hours'
-                    AND ne.event_at + INTERVAL '24 hours'
-                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                    LIKE '%' || LOWER(ne.paid_now_guest_name) || '%'
-                  AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
-                    LIKE '%' || LOWER(ne.paid_now_vehicle_name) || '%'
-                )
-                OR (
-                  COALESCE(ne.rated_guest_name, '') <> ''
-                  AND m.message_type IN ('trip_rated', 'turo_notification')
-                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                    ne.event_at - INTERVAL '24 hours'
-                    AND ne.event_at + INTERVAL '24 hours'
-                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                    LIKE '%' || LOWER(ne.rated_guest_name) || '%'
-                )
-                OR (
-                  COALESCE(ne.change_request_guest_name, '') <> ''
-                  AND m.message_type IN ('trip_changed', 'turo_notification')
-                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                    ne.event_at - INTERVAL '24 hours'
-                    AND ne.event_at + INTERVAL '24 hours'
-                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                    LIKE '%' || LOWER(ne.change_request_guest_name) || '%'
-                )
-                OR (
-                  COALESCE(ne.trip_changed_guest_name, '') <> ''
-                  AND m.message_type IN ('trip_changed', 'turo_notification')
-                  AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                    ne.event_at - INTERVAL '24 hours'
-                    AND ne.event_at + INTERVAL '24 hours'
-                  AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                    LIKE '%' || LOWER(ne.trip_changed_guest_name) || '%'
-                )
-                OR (
-                  ne.reminder_guest_name IS NOT NULL
-                  AND EXISTS (
-                    SELECT 1
-                    FROM trips reminder_trip
-                    WHERE LOWER(COALESCE(reminder_trip.guest_name, '')) = LOWER(ne.reminder_guest_name)
-                      AND reminder_trip.trip_start BETWEEN
-                        ne.event_at - INTERVAL '12 hours'
-                        AND ne.event_at + INTERVAL '7 days'
-                      AND COALESCE(reminder_trip.workflow_stage, '') <> 'canceled'
-                      AND COALESCE(reminder_trip.status, '') <> 'canceled'
-                  )
-                )
-                OR (
-                  COALESCE(ne.canceled_guest_name, '') <> ''
-                  AND EXISTS (
-                    SELECT 1
-                    FROM trips canceled_trip
-                    WHERE LOWER(COALESCE(canceled_trip.guest_name, '')) = LOWER(ne.canceled_guest_name)
-                      AND canceled_trip.created_at BETWEEN
-                        ne.event_at - INTERVAL '2 days'
-                        AND ne.event_at + INTERVAL '2 days'
-                      AND (
-                        COALESCE(canceled_trip.workflow_stage, '') = 'canceled'
-                        OR COALESCE(canceled_trip.status, '') = 'canceled'
-                      )
-                      AND (
-                        COALESCE(ne.canceled_vehicle_name, '') = ''
-                        OR LOWER(ne.canceled_vehicle_name) LIKE '%' || LOWER(COALESCE(canceled_trip.vehicle_name, '')) || '%'
-                        OR LOWER(COALESCE(canceled_trip.vehicle_name, '')) LIKE '%' || LOWER(split_part(ne.canceled_vehicle_name, ' ', 1)) || '%'
-                      )
-                  )
-                )
-                OR (
-                  COALESCE(ne.booked_guest_name, '') <> ''
-                  AND EXISTS (
-                    SELECT 1
-                    FROM trips booked_trip
-                    WHERE LOWER(COALESCE(booked_trip.guest_name, '')) = LOWER(ne.booked_guest_name)
-                      AND booked_trip.created_at BETWEEN
-                        ne.event_at - INTERVAL '2 days'
-                        AND ne.event_at + INTERVAL '2 days'
-                  )
-                )
-                OR (
-                  COALESCE(ne.returned_guest_name, '') <> ''
-                  AND EXISTS (
-                    SELECT 1
-                    FROM trips returned_trip
-                    WHERE LOWER(COALESCE(returned_trip.guest_name, '')) = LOWER(ne.returned_guest_name)
-                      AND returned_trip.trip_end BETWEEN
-                        ne.event_at - INTERVAL '3 days'
-                        AND ne.event_at + INTERVAL '36 hours'
-                      AND COALESCE(returned_trip.workflow_stage, '') <> 'canceled'
-                      AND COALESCE(returned_trip.status, '') <> 'canceled'
-                      AND (
-                        COALESCE(returned_trip.workflow_stage, '') IN ('complete', 'closed')
-                        OR COALESCE(returned_trip.status, '') IN ('complete', 'completed', 'closed')
-                        OR COALESCE(returned_trip.closed_out, false) = true
-                      )
-                  )
-                )
-            )
-        ) AS unmatched_notification_count
+        0 AS unmatched_notification_count
       FROM messages
     `;
 
@@ -1186,6 +1140,129 @@ router.get("/stats", async (req, res) => {
   }
 });
 
+function clampRawFeedLimit(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 10;
+  return Math.min(Math.max(Math.floor(parsed), 1), 50);
+}
+
+function clampRawFeedPage(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(Math.floor(parsed), 1);
+}
+
+router.get("/raw", async (req, res) => {
+  try {
+    const type = String(req.query.type || "emails").trim().toLowerCase();
+    const page = clampRawFeedPage(req.query.page);
+    const limit = clampRawFeedLimit(req.query.limit);
+    const offset = (page - 1) * limit;
+
+    if (!["emails", "internal", "android"].includes(type)) {
+      return res.status(400).json({ error: "invalid raw feed type" });
+    }
+
+    if (type === "android") {
+      await autoAcknowledgeVerifiedReturnNotifications();
+
+      const countResult = await db.query(`
+        SELECT COUNT(*)::integer AS total
+        FROM notification_events
+        WHERE COALESCE(classification, '') <> 'bridge_heartbeat'
+          AND COALESCE(source, '') <> 'android_bridge_heartbeat'
+      `);
+      const result = await db.query(
+        `
+          SELECT
+            id,
+            source,
+            app,
+            package_name,
+            title,
+            body,
+            big_text,
+            sub_text,
+            posted_at,
+            received_at,
+            device,
+            notification_key,
+            classification,
+            reservation_id,
+            vehicle_name,
+            guest_name,
+            acknowledged_at,
+            acknowledged_reason
+          FROM notification_events
+          WHERE COALESCE(classification, '') <> 'bridge_heartbeat'
+            AND COALESCE(source, '') <> 'android_bridge_heartbeat'
+          ORDER BY received_at DESC NULLS LAST, id DESC
+          LIMIT $1 OFFSET $2
+        `,
+        [limit, offset]
+      );
+
+      return res.json({
+        type,
+        page,
+        limit,
+        total: Number(countResult.rows[0]?.total || 0),
+        items: result.rows,
+      });
+    }
+
+    const emailPredicate =
+      "(message_id IS NOT NULL OR imap_uid IS NOT NULL OR from_header IS NOT NULL OR raw_headers IS NOT NULL)";
+    const predicate =
+      type === "emails" ? emailPredicate : `NOT ${emailPredicate}`;
+    const countResult = await db.query(`
+      SELECT COUNT(*)::integer AS total
+      FROM messages
+      WHERE ${predicate}
+    `);
+    const result = await db.query(
+      `
+        SELECT
+          id,
+          message_id,
+          subject,
+          status,
+          mailbox,
+          imap_uid,
+          from_header,
+          to_header,
+          date_header,
+          message_timestamp,
+          created_at,
+          ingested_at,
+          message_type,
+          reservation_id,
+          guest_name,
+          vehicle_name,
+          amount,
+          guest_message,
+          normalized_text_body
+        FROM messages
+        WHERE ${predicate}
+        ORDER BY COALESCE(message_timestamp, ingested_at, created_at) DESC NULLS LAST, id DESC
+        LIMIT $1 OFFSET $2
+      `,
+      [limit, offset]
+    );
+
+    return res.json({
+      type,
+      page,
+      limit,
+      total: Number(countResult.rows[0]?.total || 0),
+      items: result.rows,
+    });
+  } catch (err) {
+    console.error("raw message feed failed:", err);
+    res.status(500).json({ error: "failed to load raw message feed" });
+  }
+});
+
 router.get("/", async (req, res) => {
   const queueStartedAt = Date.now();
   const queueTimings = {};
@@ -1217,6 +1294,11 @@ router.get("/", async (req, res) => {
 
     if (!fast) {
       await ensureNotificationAckColumns();
+      await timeQueueQuery(
+        queueTimings,
+        "returnLocationAutoAck",
+        autoAcknowledgeVerifiedReturnNotifications()
+      );
     }
 
     const messagesSql = `
@@ -1501,7 +1583,16 @@ router.get("/", async (req, res) => {
     `;
 
     const unmatchedNotificationsSql = `
-      WITH candidate_notifications AS (
+      WITH recent_messages AS MATERIALIZED (
+        SELECT
+          m.*,
+          COALESCE(m.message_timestamp, m.created_at) AS message_at,
+          LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, '')) AS guest_search_text,
+          LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, '')) AS vehicle_search_text
+        FROM messages m
+        WHERE COALESCE(m.message_timestamp, m.created_at) >= NOW() - INTERVAL '9 days'
+      ),
+      candidate_notifications AS MATERIALIZED (
         SELECT
           ne.*,
           COALESCE(ne.posted_at, ne.received_at) AS event_at,
@@ -1531,7 +1622,7 @@ router.get("/", async (req, res) => {
           substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+)') AS canceled_vehicle_name,
           COALESCE(
             substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([A-Za-z]+).s trip with your'),
-            NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '’s trip with your', 1), '^.* ', ''), ''),
+            NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), 'â€™s trip with your', 1), '^.* ', ''), ''),
             NULLIF(regexp_replace(split_part(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text), '''s trip with your', 1), '^.* ', ''), '')
           ) AS booked_guest_name,
           substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from 'trip with your ([^.]+) is booked') AS booked_vehicle_name,
@@ -1540,7 +1631,7 @@ router.get("/", async (req, res) => {
             THEN NULLIF(
               split_part(
                 split_part(replace(ne.title, 'Change requested to ', ''), ' trip', 1),
-                '’',
+                'â€™',
                 1
               ),
               ''
@@ -1552,12 +1643,14 @@ router.get("/", async (req, res) => {
         WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
           AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
           AND ne.acknowledged_at IS NULL
-          AND ne.received_at >= NOW() - INTERVAL '7 days'
+          AND ne.received_at >= NOW() - INTERVAL '48 hours'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%has added a driver%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%additional driver%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%added another driver%'
+        ORDER BY ne.received_at DESC NULLS LAST, ne.id DESC
+        LIMIT 75
       )
       SELECT
         ne.id,
@@ -1610,7 +1703,7 @@ router.get("/", async (req, res) => {
       ) returned_trip ON true
       WHERE NOT EXISTS (
         SELECT 1
-        FROM messages m
+        FROM recent_messages m
         WHERE (
             ne.reservation_id IS NOT NULL
             AND m.reservation_id IS NOT NULL
@@ -1620,19 +1713,17 @@ router.get("/", async (req, res) => {
             ne.reservation_id IS NULL
             AND COALESCE(ne.guest_name, '') <> ''
             AND COALESCE(ne.vehicle_name, '') <> ''
-            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+            AND m.message_at BETWEEN
               ne.event_at - INTERVAL '24 hours'
               AND ne.event_at + INTERVAL '24 hours'
-            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-              LIKE '%' || LOWER(ne.guest_name) || '%'
-            AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
-              LIKE '%' || LOWER(ne.vehicle_name) || '%'
+            AND m.guest_search_text LIKE '%' || LOWER(ne.guest_name) || '%'
+            AND m.vehicle_search_text LIKE '%' || LOWER(ne.vehicle_name) || '%'
           )
           OR (
             (
               ne.notification_text LIKE '%earnings payment%'
               OR ne.notification_text LIKE '%cha-ching%'
-              OR ne.notification_text LIKE '%you’ve been paid%'
+              OR ne.notification_text LIKE '%youâ€™ve been paid%'
               OR ne.notification_text LIKE '%you''ve been paid%'
             )
             AND m.message_type = 'payment_notice'
@@ -1642,7 +1733,7 @@ router.get("/", async (req, res) => {
                 AND m.amount IS NOT NULL
                 AND m.amount = ne.event_amount
               )
-              OR COALESCE(m.message_timestamp, m.created_at) BETWEEN
+              OR m.message_at BETWEEN
                 ne.event_at - INTERVAL '24 hours'
                 AND ne.event_at + INTERVAL '24 hours'
             )
@@ -1651,13 +1742,11 @@ router.get("/", async (req, res) => {
             COALESCE(ne.paid_now_guest_name, '') <> ''
             AND COALESCE(ne.paid_now_vehicle_name, '') <> ''
             AND m.message_type = 'guest_message'
-            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+            AND m.message_at BETWEEN
               ne.event_at - INTERVAL '24 hours'
               AND ne.event_at + INTERVAL '24 hours'
-            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-              LIKE '%' || LOWER(ne.paid_now_guest_name) || '%'
-            AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
-              LIKE '%' || LOWER(ne.paid_now_vehicle_name) || '%'
+            AND m.guest_search_text LIKE '%' || LOWER(ne.paid_now_guest_name) || '%'
+            AND m.vehicle_search_text LIKE '%' || LOWER(ne.paid_now_vehicle_name) || '%'
           )
           OR (
             (
@@ -1666,53 +1755,47 @@ router.get("/", async (req, res) => {
               OR ne.notification_text LIKE '%paid now%'
             )
             AND m.message_type IN ('reimbursement_invoice', 'guest_message')
-            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+            AND m.message_at BETWEEN
               ne.event_at - INTERVAL '24 hours'
               AND ne.event_at + INTERVAL '24 hours'
             AND (
               (
                 COALESCE(ne.guest_name, ne.paid_now_guest_name, '') <> ''
-                AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                  LIKE '%' || LOWER(COALESCE(ne.guest_name, ne.paid_now_guest_name)) || '%'
+                AND m.guest_search_text LIKE '%' || LOWER(COALESCE(ne.guest_name, ne.paid_now_guest_name)) || '%'
               )
               OR (
                 COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name, '') <> ''
-                AND LOWER(COALESCE(m.vehicle_name, m.subject, m.normalized_text_body, ''))
-                  LIKE '%' || LOWER(COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name)) || '%'
+                AND m.vehicle_search_text LIKE '%' || LOWER(COALESCE(ne.vehicle_name, ne.paid_now_vehicle_name)) || '%'
               )
               OR (
                 COALESCE(ne.paid_invoice_guest_name, '') <> ''
-                AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-                  LIKE '%' || LOWER(ne.paid_invoice_guest_name) || '%'
+                AND m.guest_search_text LIKE '%' || LOWER(ne.paid_invoice_guest_name) || '%'
               )
             )
           )
           OR (
             COALESCE(ne.rated_guest_name, '') <> ''
             AND m.message_type IN ('trip_rated', 'turo_notification')
-            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+            AND m.message_at BETWEEN
               ne.event_at - INTERVAL '24 hours'
               AND ne.event_at + INTERVAL '24 hours'
-            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-              LIKE '%' || LOWER(ne.rated_guest_name) || '%'
+            AND m.guest_search_text LIKE '%' || LOWER(ne.rated_guest_name) || '%'
           )
           OR (
             COALESCE(ne.change_request_guest_name, '') <> ''
             AND m.message_type IN ('trip_changed', 'turo_notification')
-            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+            AND m.message_at BETWEEN
               ne.event_at - INTERVAL '24 hours'
               AND ne.event_at + INTERVAL '24 hours'
-            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-              LIKE '%' || LOWER(ne.change_request_guest_name) || '%'
+            AND m.guest_search_text LIKE '%' || LOWER(ne.change_request_guest_name) || '%'
           )
           OR (
             COALESCE(ne.trip_changed_guest_name, '') <> ''
             AND m.message_type IN ('trip_changed', 'turo_notification')
-            AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+            AND m.message_at BETWEEN
               ne.event_at - INTERVAL '24 hours'
               AND ne.event_at + INTERVAL '24 hours'
-            AND LOWER(COALESCE(m.guest_name, m.subject, m.normalized_text_body, ''))
-              LIKE '%' || LOWER(ne.trip_changed_guest_name) || '%'
+            AND m.guest_search_text LIKE '%' || LOWER(ne.trip_changed_guest_name) || '%'
           )
           OR (
             ne.reminder_guest_name IS NOT NULL
@@ -2299,13 +2382,11 @@ router.get("/", async (req, res) => {
         fast ? "messagesFast" : "messages",
         db.query(fast ? fastMessagesSql : messagesSql, [candidateLimit])
       ),
-      fast
-        ? Promise.resolve(EMPTY_QUERY_RESULT)
-        : timeQueueQuery(
-            queueTimings,
-            "unmatchedNotifications",
-            db.query(unmatchedNotificationsSql)
-          ),
+      timeQueueQuery(
+        queueTimings,
+        "unmatchedNotifications",
+        db.query(unmatchedNotificationsSql)
+      ),
       fast
         ? Promise.resolve(EMPTY_QUERY_RESULT)
         : timeQueueQuery(
@@ -2552,3 +2633,6 @@ const sql = `
 
 
 module.exports = router;
+
+
+

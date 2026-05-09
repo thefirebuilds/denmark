@@ -34,6 +34,7 @@ const {
 const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
 const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
 const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
+const { runFleetAlerts } = require("./alerts/fleetAlerts");
 const pool = require("../db");
 
 let tellerSyncInProgress = false;
@@ -60,6 +61,7 @@ let businessMetricsInProgress = false;
 let businessMetricsIntervalHandle = null;
 let telemetryRetentionInProgress = false;
 let telemetryRetentionIntervalHandle = null;
+let fleetAlertsIntervalHandle = null;
 
 const STARTUP_TASKS = [
   "teller",
@@ -70,6 +72,7 @@ const STARTUP_TASKS = [
   "fmv",
   "businessMetrics",
   "telemetryRetention",
+  "fleetAlerts",
   "publicAvailability",
   "googleCalendar",
 ];
@@ -571,6 +574,9 @@ function startScheduler() {
         runTelemetryRetention("startup")
       );
 
+      // Text alerts immediately, with dedupe guarded in the alert service.
+      void runStartupTask("fleetAlerts", () => runFleetAlerts("startup"));
+
       // Public availability push immediately
       void runStartupTask("publicAvailability", () =>
         pushPublicAvailabilitySnapshotSafe("server startup")
@@ -610,6 +616,11 @@ function startScheduler() {
   // DIMO every 5 minutes
   dimoIntervalHandle = setInterval(() => {
     void runDimo("interval");
+  }, everyFiveMinutesMs);
+
+  // Operational text alerts every 5 minutes
+  fleetAlertsIntervalHandle = setInterval(() => {
+    void runFleetAlerts("interval");
   }, everyFiveMinutesMs);
 
   // FMV freshness check daily; actual estimates run only if older than a week
@@ -677,6 +688,11 @@ function stopScheduler() {
   if (telemetryRetentionIntervalHandle) {
     clearInterval(telemetryRetentionIntervalHandle);
     telemetryRetentionIntervalHandle = null;
+  }
+
+  if (fleetAlertsIntervalHandle) {
+    clearInterval(fleetAlertsIntervalHandle);
+    fleetAlertsIntervalHandle = null;
   }
 
   console.log("[scheduler] stopped");

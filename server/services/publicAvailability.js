@@ -5,6 +5,10 @@ const AVAILABILITY_WINDOW_DAYS = 90;
 const MIN_PUBLIC_BOOKING_GAP_HOURS = 48;
 const PUBLIC_TIME_ZONE = "America/Chicago";
 
+const VEHICLE_IMAGE_BY_NICKNAME = {
+  geneva: "/images/geneva.jpg",
+};
+
 const INACTIVE_STATUSES = new Set([
   "canceled",
   "cancelled",
@@ -144,6 +148,47 @@ function chooseVehicleTripKey(trip) {
 
 function chooseVehicleKey(vehicle) {
   return firstPresent(vehicle, ["id", "turo_vehicle_id"]);
+}
+
+function slugify(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getVehicleImageUrl(vehicle) {
+  const nickname = String(vehicle?.nickname || "").trim();
+  const key = nickname.toLowerCase();
+  if (VEHICLE_IMAGE_BY_NICKNAME[key]) return VEHICLE_IMAGE_BY_NICKNAME[key];
+
+  const slug = slugify(nickname);
+  return slug ? `/images/${slug}.jpg` : null;
+}
+
+function getVehicleDisplayName(vehicle) {
+  return (
+    vehicle.nickname ||
+    vehicle.turo_vehicle_name ||
+    [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") ||
+    vehicle.vin ||
+    "Vehicle"
+  );
+}
+
+function buildVehiclePublicMetadata(vehicle) {
+  const displayName = getVehicleDisplayName(vehicle);
+  const imageUrl = getVehicleImageUrl(vehicle);
+
+  return {
+    vehicleId: vehicle.id ?? null,
+    turoVehicleId: vehicle.turo_vehicle_id ?? null,
+    nickname: vehicle.nickname ?? null,
+    displayName,
+    imageUrl,
+    imageAlt: imageUrl ? `${displayName} rental car` : null,
+  };
 }
 
 function getDateWindow() {
@@ -292,9 +337,7 @@ function buildVehicleStatus(vehicle, trips, now) {
 
   if (activeTrip && isLongTermTrip(activeTrip)) {
     return {
-      vehicleId: vehicle.id ?? null,
-      turoVehicleId: vehicle.turo_vehicle_id ?? null,
-      nickname: vehicle.nickname ?? null,
+      ...buildVehiclePublicMetadata(vehicle),
       status: "unavailable",
       label: "Long Term Trip Underway",
       nextAvailableDate: null,
@@ -313,9 +356,7 @@ function buildVehicleStatus(vehicle, trips, now) {
 
   if (activeTrip) {
     return {
-      vehicleId: vehicle.id ?? null,
-      turoVehicleId: vehicle.turo_vehicle_id ?? null,
-      nickname: vehicle.nickname ?? null,
+      ...buildVehiclePublicMetadata(vehicle),
       status: "unavailable_until_current_trip_ends",
       label: nextAvailableDateKey
         ? `Next Available: ${formatPublicDate(parseDateKeyToUtcMidday(nextAvailableDateKey))}`
@@ -330,9 +371,7 @@ function buildVehicleStatus(vehicle, trips, now) {
 
   if (calendar.availableDates.length) {
     return {
-      vehicleId: vehicle.id ?? null,
-      turoVehicleId: vehicle.turo_vehicle_id ?? null,
-      nickname: vehicle.nickname ?? null,
+      ...buildVehiclePublicMetadata(vehicle),
       status: "available_now",
       label: "Available Now",
       nextAvailableDate: nextAvailableDateKey,
@@ -347,9 +386,7 @@ function buildVehicleStatus(vehicle, trips, now) {
   }
 
   return {
-    vehicleId: vehicle.id ?? null,
-    turoVehicleId: vehicle.turo_vehicle_id ?? null,
-    nickname: vehicle.nickname ?? null,
+    ...buildVehiclePublicMetadata(vehicle),
     status: "fully_unavailable_in_window",
     label: "No Availability In Next 90 Days",
     nextAvailableDate: null,
@@ -365,8 +402,12 @@ async function getVehicles() {
     SELECT
       id,
       turo_vehicle_id,
+      turo_vehicle_name,
       nickname,
-      vin
+      vin,
+      year,
+      make,
+      model
     FROM vehicles
     ORDER BY nickname NULLS LAST, id
   `;

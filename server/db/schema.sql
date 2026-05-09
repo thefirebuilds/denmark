@@ -140,6 +140,7 @@ DROP INDEX IF EXISTS public.idx_expenses_date_category;
 DROP INDEX IF EXISTS public.idx_expenses_trip_id;
 DROP INDEX IF EXISTS public.idx_expenses_updated_at;
 DROP INDEX IF EXISTS public.idx_expenses_vehicle_date;
+DROP INDEX IF EXISTS public.idx_fleet_alert_deliveries_type_sent;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_id_key;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_raw_payloads DROP CONSTRAINT IF EXISTS vehicle_telemetry_raw_payloads_pkey;
@@ -171,6 +172,8 @@ ALTER TABLE IF EXISTS ONLY public.maintenance_rule_templates DROP CONSTRAINT IF 
 ALTER TABLE IF EXISTS ONLY public.maintenance_rule_templates DROP CONSTRAINT IF EXISTS maintenance_rule_templates_pkey;
 ALTER TABLE IF EXISTS ONLY public.maintenance_events DROP CONSTRAINT IF EXISTS maintenance_events_pkey;
 ALTER TABLE IF EXISTS ONLY public.expenses DROP CONSTRAINT IF EXISTS expenses_pkey;
+ALTER TABLE IF EXISTS ONLY public.fleet_alert_deliveries DROP CONSTRAINT IF EXISTS fleet_alert_deliveries_alert_key_key;
+ALTER TABLE IF EXISTS ONLY public.fleet_alert_deliveries DROP CONSTRAINT IF EXISTS fleet_alert_deliveries_pkey;
 ALTER TABLE IF EXISTS ONLY public.app_settings DROP CONSTRAINT IF EXISTS app_settings_pkey;
 ALTER TABLE IF EXISTS ONLY public.api_auth_tokens DROP CONSTRAINT IF EXISTS api_auth_tokens_service_name_key;
 ALTER TABLE IF EXISTS ONLY public.api_auth_tokens DROP CONSTRAINT IF EXISTS api_auth_tokens_pkey;
@@ -244,6 +247,8 @@ DROP SEQUENCE IF EXISTS public.google_calendar_connections_id_seq;
 DROP TABLE IF EXISTS public.google_calendar_connections;
 DROP SEQUENCE IF EXISTS public.expenses_id_seq;
 DROP TABLE IF EXISTS public.expenses;
+DROP SEQUENCE IF EXISTS public.fleet_alert_deliveries_id_seq;
+DROP TABLE IF EXISTS public.fleet_alert_deliveries;
 DROP TABLE IF EXISTS public.app_settings;
 DROP SEQUENCE IF EXISTS public.api_auth_tokens_id_seq;
 DROP TABLE IF EXISTS public.api_auth_tokens;
@@ -513,6 +518,45 @@ CREATE SEQUENCE public.expenses_id_seq
 --
 
 ALTER SEQUENCE public.expenses_id_seq OWNED BY public.expenses.id;
+
+
+--
+-- Name: fleet_alert_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fleet_alert_deliveries (
+    id bigint NOT NULL,
+    alert_key text NOT NULL,
+    alert_type text NOT NULL,
+    severity text DEFAULT 'info'::text NOT NULL,
+    body text NOT NULL,
+    provider text DEFAULT 'twilio'::text NOT NULL,
+    provider_message_id text,
+    status text DEFAULT 'sent'::text NOT NULL,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: fleet_alert_deliveries_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fleet_alert_deliveries_id_seq
+    AS bigint
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fleet_alert_deliveries_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fleet_alert_deliveries_id_seq OWNED BY public.fleet_alert_deliveries.id;
 
 
 --
@@ -1560,6 +1604,13 @@ ALTER TABLE ONLY public.expenses ALTER COLUMN id SET DEFAULT nextval('public.exp
 
 
 --
+-- Name: fleet_alert_deliveries id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fleet_alert_deliveries ALTER COLUMN id SET DEFAULT nextval('public.fleet_alert_deliveries_id_seq'::regclass);
+
+
+--
 -- Name: google_calendar_connections id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1729,6 +1780,22 @@ ALTER TABLE ONLY public.app_settings
 
 ALTER TABLE ONLY public.expenses
     ADD CONSTRAINT expenses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fleet_alert_deliveries fleet_alert_deliveries_alert_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fleet_alert_deliveries
+    ADD CONSTRAINT fleet_alert_deliveries_alert_key_key UNIQUE (alert_key);
+
+
+--
+-- Name: fleet_alert_deliveries fleet_alert_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fleet_alert_deliveries
+    ADD CONSTRAINT fleet_alert_deliveries_pkey PRIMARY KEY (id);
 
 
 --
@@ -1993,6 +2060,13 @@ CREATE INDEX idx_expenses_updated_at ON public.expenses USING btree (updated_at 
 
 -- Name: idx_expenses_vehicle_date; Type: INDEX; Schema: public; Owner: -
 CREATE INDEX idx_expenses_vehicle_date ON public.expenses USING btree (vehicle_id, date DESC);
+
+
+--
+-- Name: idx_fleet_alert_deliveries_type_sent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fleet_alert_deliveries_type_sent ON public.fleet_alert_deliveries USING btree (alert_type, sent_at DESC);
 
 
 --
