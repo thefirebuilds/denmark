@@ -224,6 +224,57 @@ function buildTelematicsStatus(fleetVehicle = null) {
   };
 }
 
+function buildMilStatus(fleetVehicle = null) {
+  const mil = fleetVehicle?.telemetry?.mil || {};
+  const codes = Array.isArray(mil.qualified_dtc_list)
+    ? mil.qualified_dtc_list
+        .map((item) => {
+          if (typeof item === "string") return item;
+          return item?.code || item?.dtc || item?.name || "";
+        })
+        .map((item) => String(item || "").trim().toUpperCase())
+        .filter(Boolean)
+    : [];
+  const count = Number(mil.dtc_count ?? codes.length ?? 0);
+  const lastUpdated = mil.last_updated || null;
+
+  if (mil.mil_on === true) {
+    return {
+      tone: "fail",
+      label: codes.length ? `MIL on: ${codes.join(", ")}` : "MIL on",
+      detail: codes.length
+        ? `${codes.length} decoded DTC${codes.length === 1 ? "" : "s"} reported`
+        : "Check-engine light is on, but no decoded DTCs were reported yet",
+      lastUpdated,
+    };
+  }
+
+  if (codes.length || count > 0) {
+    return {
+      tone: "fail",
+      label: codes.length ? `DTC: ${codes.join(", ")}` : `${count} DTC active`,
+      detail: "Diagnostic trouble code reported by telematics",
+      lastUpdated,
+    };
+  }
+
+  if (mil.mil_on === false) {
+    return {
+      tone: "pass",
+      label: "MIL clear",
+      detail: "No active check-engine light reported",
+      lastUpdated,
+    };
+  }
+
+  return {
+    tone: "unknown",
+    label: "No MIL reading",
+    detail: "No diagnostic status reported yet",
+    lastUpdated,
+  };
+}
+
 function formatEngineTemp(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return null;
@@ -417,6 +468,7 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
     overall_status: overallStatus,
     export_ready: !summary.blocksGuestExport,
     telematics: buildTelematicsStatus(fleetVehicle),
+    mil_status: buildMilStatus(fleetVehicle),
     engine_temperature: buildEngineTemperatureStatus(fleetVehicle),
     engine_rpm: buildEngineRpmStatus(fleetVehicle),
     body_condition: notes.length ? "documented" : "good",
@@ -929,6 +981,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
         overall_status: "attention",
         export_ready: false,
         telematics: buildTelematicsStatus(selectedFleetVehicle),
+        mil_status: buildMilStatus(selectedFleetVehicle),
         engine_temperature: buildEngineTemperatureStatus(selectedFleetVehicle),
         engine_rpm: buildEngineRpmStatus(selectedFleetVehicle),
         body_condition: "unknown",
@@ -960,6 +1013,7 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       overall_status: "attention",
       export_ready: false,
       telematics: buildTelematicsStatus(null),
+      mil_status: buildMilStatus(null),
       engine_temperature: buildEngineTemperatureStatus(null),
       engine_rpm: buildEngineRpmStatus(null),
       body_condition: "unknown",
@@ -1978,6 +2032,27 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                   <span className="fleet-maintenance-registration-subvalue">
                     Last call-in:{" "}
                     {vehicle.telematics?.lastCallLabel || "No call-in recorded"}
+                  </span>
+                </div>
+
+                <div
+                  className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
+                    vehicle.mil_status?.tone || "unknown"
+                  }`}
+                >
+                  <span className="fleet-maintenance-meta-label">
+                    Diagnostics
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    {vehicle.mil_status?.label || "No MIL reading"}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    {vehicle.mil_status?.detail || "No diagnostic status reported"}
+                    {vehicle.mil_status?.lastUpdated
+                      ? ` - ${formatTelematicsLastCall(
+                          vehicle.mil_status.lastUpdated
+                        )}`
+                      : ""}
                   </span>
                 </div>
 

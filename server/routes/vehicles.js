@@ -56,6 +56,13 @@ function toNullableBoolean(value, fallback = null) {
   return fallback;
 }
 
+function toNullableDate(value) {
+  if (value === "" || value == null) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return String(value).slice(0, 10);
+}
+
 async function getVehicleColumns(client = pool) {
   const { rows } = await client.query(`
     SELECT column_name
@@ -125,6 +132,10 @@ router.get("/locations", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
+    const includeInactive =
+      String(req.query.includeInactive || "").toLowerCase() === "true" ||
+      String(req.query.include_inactive || "").toLowerCase() === "true";
+
     const result = await pool.query(`
       SELECT
         id,
@@ -144,12 +155,21 @@ router.get("/", async (req, res) => {
         turo_vehicle_id,
         turo_vehicle_name,
         current_odometer_miles,
+        provider_vehicle_id,
+        external_vehicle_key,
         rockauto_url,
+        oil_type,
+        oil_capacity_quarts,
+        oil_capacity_liters,
+        onboarding_date,
+        acquisition_cost,
+        retired_at,
+        in_service,
         is_active
       FROM vehicles
-      WHERE is_active = true
-      ORDER BY nickname NULLS LAST, make NULLS LAST, model NULLS LAST, id ASC
-    `);
+      WHERE ($1::boolean = true OR is_active = true)
+      ORDER BY is_active DESC, in_service DESC, nickname NULLS LAST, make NULLS LAST, model NULLS LAST, id ASC
+    `, [includeInactive]);
 
     res.json(result.rows);
   } catch (err) {
@@ -219,6 +239,10 @@ router.post("/", async (req, res) => {
       oil_capacity_quarts: toNullableNumber(req.body.oil_capacity_quarts),
       oil_capacity_liters: toNullableNumber(req.body.oil_capacity_liters),
       rockauto_url: toNullableText(req.body.rockauto_url),
+      onboarding_date: toNullableDate(req.body.onboarding_date),
+      acquisition_cost: toNullableNumber(req.body.acquisition_cost),
+      retired_at: toNullableDate(req.body.retired_at),
+      in_service: toNullableBoolean(req.body.in_service, true),
       is_active: toNullableBoolean(req.body.is_active, true),
     };
 
@@ -340,6 +364,34 @@ router.patch("/:selector", async (req, res) => {
         ? normalizePlate(req.body.license_plate)
         : existing.license_plate;
 
+    const nickname =
+      req.body.nickname !== undefined
+        ? toNullableText(req.body.nickname)
+        : existing.nickname;
+
+    const vin =
+      req.body.vin !== undefined
+        ? toNullableText(req.body.vin)?.toUpperCase() || existing.vin
+        : existing.vin;
+
+    const year =
+      req.body.year !== undefined
+        ? toNullableInt(req.body.year)
+        : existing.year;
+
+    const make =
+      req.body.make !== undefined ? toNullableText(req.body.make) : existing.make;
+
+    const model =
+      req.body.model !== undefined
+        ? toNullableText(req.body.model)
+        : existing.model;
+
+    const standard_engine =
+      req.body.standard_engine !== undefined
+        ? toNullableText(req.body.standard_engine)
+        : existing.standard_engine;
+
     const license_state =
       req.body.license_state !== undefined
         ? toNullableText(req.body.license_state)?.toUpperCase() || null
@@ -380,6 +432,61 @@ router.patch("/:selector", async (req, res) => {
         ? toNullableText(req.body.lockbox_pin)
         : existing.lockbox_pin;
 
+    const bouncie_vehicle_id =
+      req.body.bouncie_vehicle_id !== undefined
+        ? toNullableText(req.body.bouncie_vehicle_id)
+        : existing.bouncie_vehicle_id;
+
+    const dimo_token_id =
+      req.body.dimo_token_id !== undefined
+        ? toNullableInt(req.body.dimo_token_id)
+        : existing.dimo_token_id;
+
+    const provider_vehicle_id =
+      req.body.provider_vehicle_id !== undefined
+        ? toNullableText(req.body.provider_vehicle_id)
+        : existing.provider_vehicle_id;
+
+    const external_vehicle_key =
+      req.body.external_vehicle_key !== undefined
+        ? toNullableText(req.body.external_vehicle_key)
+        : existing.external_vehicle_key;
+
+    const turo_vehicle_id =
+      req.body.turo_vehicle_id !== undefined
+        ? toNullableText(req.body.turo_vehicle_id)
+        : existing.turo_vehicle_id;
+
+    const turo_vehicle_name =
+      req.body.turo_vehicle_name !== undefined
+        ? toNullableText(req.body.turo_vehicle_name)
+        : existing.turo_vehicle_name;
+
+    const onboarding_date =
+      req.body.onboarding_date !== undefined
+        ? toNullableDate(req.body.onboarding_date)
+        : existing.onboarding_date;
+
+    const acquisition_cost =
+      req.body.acquisition_cost !== undefined
+        ? toNullableNumber(req.body.acquisition_cost)
+        : existing.acquisition_cost;
+
+    const retired_at =
+      req.body.retired_at !== undefined
+        ? toNullableDate(req.body.retired_at)
+        : existing.retired_at;
+
+    const in_service =
+      req.body.in_service !== undefined
+        ? toNullableBoolean(req.body.in_service, existing.in_service)
+        : existing.in_service;
+
+    const is_active =
+      req.body.is_active !== undefined
+        ? toNullableBoolean(req.body.is_active, existing.is_active)
+        : existing.is_active;
+
     const guestVisibleConditionNotes = normalizeGuestVisibleNotes(
       req.body.guest_visible_condition_notes
     );
@@ -405,21 +512,44 @@ router.patch("/:selector", async (req, res) => {
     const vehicleQuery = `
       UPDATE vehicles
       SET
-        license_plate = $1,
-        license_state = $2,
-        registration_month = $3,
-        registration_year = $4,
-        oil_type = $5,
-        oil_capacity_quarts = $6,
-        oil_capacity_liters = $7,
-        rockauto_url = $8,
-        lockbox_pin = $9,
+        nickname = $1,
+        vin = $2,
+        year = $3,
+        make = $4,
+        model = $5,
+        standard_engine = $6,
+        license_plate = $7,
+        license_state = $8,
+        registration_month = $9,
+        registration_year = $10,
+        oil_type = $11,
+        oil_capacity_quarts = $12,
+        oil_capacity_liters = $13,
+        rockauto_url = $14,
+        lockbox_pin = $15,
+        bouncie_vehicle_id = $16,
+        dimo_token_id = $17,
+        provider_vehicle_id = $18,
+        external_vehicle_key = COALESCE($19, CASE WHEN $17::bigint IS NOT NULL THEN 'dimo:' || $17::text ELSE NULL END),
+        turo_vehicle_id = $20,
+        turo_vehicle_name = $21,
+        onboarding_date = $22,
+        acquisition_cost = $23,
+        retired_at = $24,
+        in_service = $25,
+        is_active = $26,
         updated_at = NOW()
-      WHERE id = $10
+      WHERE id = $27
       RETURNING *
     `;
 
     const vehicleValues = [
+      nickname,
+      vin,
+      year,
+      make,
+      model,
+      standard_engine,
       license_plate,
       license_state,
       registration_month,
@@ -429,6 +559,17 @@ router.patch("/:selector", async (req, res) => {
       oil_capacity_liters,
       rockauto_url,
       lockbox_pin,
+      bouncie_vehicle_id,
+      dimo_token_id,
+      provider_vehicle_id,
+      external_vehicle_key,
+      turo_vehicle_id,
+      turo_vehicle_name,
+      onboarding_date,
+      acquisition_cost,
+      retired_at,
+      in_service,
+      is_active,
       existing.id,
     ];
 

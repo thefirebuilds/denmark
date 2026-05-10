@@ -1342,12 +1342,29 @@ const mileageStats = useMemo(() => {
               <MetricCard
                 label="Net Profit"
                 value={formatCurrency(summary.net_profit)}
-                tone={Number(summary.net_profit) >= 0 ? "positive" : "negative"}
+                subtitle={formatCurrencyTrend(summary.net_profit_delta)}
+                tone={
+                  Number(summary.net_profit_delta ?? 0) > 0
+                    ? "positive"
+                    : Number(summary.net_profit_delta ?? 0) < 0
+                    ? "warning"
+                    : Number(summary.net_profit) >= 0
+                    ? "positive"
+                    : "negative"
+                }
               />
 
               <MetricCard
                 label="Expenses"
                 value={formatCurrency(summary.expenses)}
+                subtitle={formatCurrencyTrend(summary.expenses_delta)}
+                tone={
+                  Number(summary.expenses_delta ?? 0) > 0
+                    ? "warning"
+                    : Number(summary.expenses_delta ?? 0) < 0
+                    ? "positive"
+                    : undefined
+                }
               />
 
               <MetricCard
@@ -1368,6 +1385,16 @@ const mileageStats = useMemo(() => {
               <MetricCard
                 label="Rev / Booked Day"
                 value={formatCurrencyCompact(summary.revenue_per_booked_day)}
+                subtitle={formatCurrencyTrend(
+                  summary.revenue_per_booked_day_delta
+                )}
+                tone={
+                  Number(summary.revenue_per_booked_day_delta ?? 0) > 0
+                    ? "positive"
+                    : Number(summary.revenue_per_booked_day_delta ?? 0) < 0
+                    ? "warning"
+                    : undefined
+                }
               />
 
               <MetricCard

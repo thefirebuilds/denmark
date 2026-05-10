@@ -533,6 +533,12 @@ function buildMessageBody(message) {
     }. Verify the vehicle GPS matches the return location. ${body}`;
   }
 
+  if (type === "vehicle_diagnostic_alert") {
+    const source = message?.diagnostic_source || "telematics";
+    const label = message?.diagnostic_label || "diagnostic warning";
+    return `${message?.vehicle_name || "Vehicle"} reported ${label} from ${source}. Review before the next handoff.`;
+  }
+
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);
     const latest = message?.latest_guest_message || message?.guest_message || "";
@@ -619,6 +625,10 @@ function buildMessageTitle(message) {
     return message?.notification_title || "Return location check";
   }
 
+  if (type === "vehicle_diagnostic_alert") {
+    return message?.vehicle_name || message?.vehicle_nickname || "Vehicle diagnostic";
+  }
+
   if (type === "notification_unmatched") {
     return message?.notification_title || "Turo notification missing email";
   }
@@ -646,6 +656,7 @@ function buildMessageSub(message) {
   if (type === "late_toll_unbilled") return "Late toll billing needed";
   if (type === "trip_overlap_detected") return "Trip overlap detected";
   if (type === "return_location_check") return "Verify return GPS";
+  if (type === "vehicle_diagnostic_alert") return "Diagnostic alert";
   if (type === "notification_unmatched") return "Urgent bridge/email mismatch";
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);
@@ -763,6 +774,11 @@ function isUnmatchedNotification(message) {
 function isReturnLocationCheck(message) {
   const type = message?.type || message?.message_type;
   return type === "return_location_check";
+}
+
+function isVehicleDiagnosticAlert(message) {
+  const type = message?.type || message?.message_type;
+  return type === "vehicle_diagnostic_alert";
 }
 
 function isOperationalTripNotice(message) {
@@ -2031,6 +2047,7 @@ async function handleExportGuestInspectionSheet(message) {
               isReimbursementInvoiceMessage(message) && Boolean(message.trip_id);
             const canReviewUnmatchedNotification = isUnmatchedNotification(message);
             const canVerifyReturnLocation = isReturnLocationCheck(message);
+            const canReviewDiagnostic = isVehicleDiagnosticAlert(message);
             const canReviewGuestThread =
               (message.type || message.message_type) === "guest_message_thread";
             const canConfirmBooking = isBookingConfirmationTask(message);
@@ -2043,8 +2060,9 @@ async function handleExportGuestInspectionSheet(message) {
               message.maintenance_tasks.length > 0;
             const canCompleteSyntheticTask = isCompletableSyntheticTask(message);
             const canOpenMaintenanceQueue =
-              hasMaintenanceDetails &&
-              (canShowMaintenance || canAdvanceHandoff || canExportInspection);
+              (hasMaintenanceDetails &&
+                (canShowMaintenance || canAdvanceHandoff || canExportInspection)) ||
+              canReviewDiagnostic;
             const canReply =
               !!buildReplyUrl(message) &&
               !canCompleteSyntheticTask &&
@@ -2110,7 +2128,9 @@ async function handleExportGuestInspectionSheet(message) {
                 } ${canFocusTrip ? "message-focusable" : ""} ${
                   canCloseoutTrip ? "message-closeout-guide" : ""
                 } ${
-                  canReviewUnmatchedNotification || canVerifyReturnLocation
+                  canReviewUnmatchedNotification ||
+                  canVerifyReturnLocation ||
+                  canReviewDiagnostic
                     ? "message-notification-gap"
                     : ""
                 }`}
@@ -2204,6 +2224,27 @@ async function handleExportGuestInspectionSheet(message) {
                           ? "GPS verified / acknowledge"
                           : "Acknowledge"}
                       </button>
+                    </div>
+                  </div>
+                )}
+
+                {canReviewDiagnostic && (
+                  <div className="message-booking-task message-notification-gap-detail">
+                    <div className="message-booking-title">
+                      Vehicle diagnostics
+                      <span>{message.diagnostic_source || "telematics"}</span>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Status</span>
+                      <strong>
+                        {message.diagnostic_label || "Diagnostic warning"}
+                      </strong>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Last seen</span>
+                      <strong>
+                        {formatTripTime(message.diagnostic_last_seen) || "Unknown"}
+                      </strong>
                     </div>
                   </div>
                 )}
@@ -2562,6 +2603,7 @@ async function handleExportGuestInspectionSheet(message) {
                   canCompleteSyntheticTask ||
                   canConfirmBooking ||
                   hasMaintenanceDetails ||
+                  canOpenMaintenanceQueue ||
                   canFocusTrip) && (
                   <div className="message-actions">
                     {canFocusTrip && (

@@ -865,6 +865,13 @@ async function getSummaryMetrics(rangeKey = "30d") {
       endDate
     );
     const expenses = await fetchExpensesInRange(client, startDate, endDate);
+    const previousExpenses = previousRange.startDate
+      ? await fetchExpensesInRange(
+          client,
+          previousRange.startDate,
+          previousRange.endDate
+        )
+      : [];
     const activeVehicleCount = await fetchActiveVehicleCount(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
@@ -1033,6 +1040,10 @@ async function getSummaryMetrics(rangeKey = "30d") {
       (sum, expense) => sum + getExpenseTotal(expense),
       0
     );
+    const previousExpensesTotal = previousExpenses.reduce(
+      (sum, expense) => sum + getExpenseTotal(expense),
+      0
+    );
 
     const cleaningTotal = expenses
       .filter(isCleaningExpense)
@@ -1109,7 +1120,15 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
     );
     const revenuePerCalendarDayDelta =
       revenuePerCalendarDay - previousRevenuePerCalendarDay;
+    const revenuePerBookedDay = safeDivide(revenue, bookedVehicleDays);
+    const previousRevenuePerBookedDay = safeDivide(
+      previousRevenue,
+      previousBookedVehicleDays
+    );
+    const revenuePerBookedDayDelta =
+      revenuePerBookedDay - previousRevenuePerBookedDay;
     const netProfit = revenue - expensesTotal;
+    const previousNetProfit = previousRevenue - previousExpensesTotal;
     const fleetValue = latestFmvEstimates.reduce(
       (sum, estimate) => sum + Number(estimate?.estimate_mid ?? 0),
       0
@@ -1169,7 +1188,11 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       payment_notice_reconciliation_buckets: paymentNoticeReconciliationBuckets,
       payment_notice_reconciliation_largest_gap: largestPaymentNoticeGap,
       expenses: roundMoney(expensesTotal),
+      previous_expenses: roundMoney(previousExpensesTotal),
+      expenses_delta: roundMoney(expensesTotal - previousExpensesTotal),
       net_profit: roundMoney(netProfit),
+      previous_net_profit: roundMoney(previousNetProfit),
+      net_profit_delta: roundMoney(netProfit - previousNetProfit),
       fleet_value: roundMoney(fleetValue),
       fleet_value_previous: roundMoney(previousFleetValue),
       fleet_value_change: roundMoney(fleetValueChange),
@@ -1200,8 +1223,10 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
         safeDivide(revenue, tripCountProrated)
       ),
       revenue_per_booked_day: roundMoney(
-        safeDivide(revenue, bookedVehicleDays)
+        revenuePerBookedDay
       ),
+      previous_revenue_per_booked_day: roundMoney(previousRevenuePerBookedDay),
+      revenue_per_booked_day_delta: roundMoney(revenuePerBookedDayDelta),
       revenue_per_calendar_day: roundMoney(
         revenuePerCalendarDay
       ),
@@ -1217,7 +1242,9 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
             end_date: previousRange.endDate.toISOString(),
             revenue: roundMoney(previousRevenue),
             revenue_per_calendar_day: roundMoney(previousRevenuePerCalendarDay),
+            revenue_per_booked_day: roundMoney(previousRevenuePerBookedDay),
             calendar_days: previousCalendarDays,
+            booked_vehicle_days: roundNumber(previousBookedVehicleDays, 2),
           }
         : null,
 

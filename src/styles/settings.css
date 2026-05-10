@@ -277,9 +277,191 @@
   font-weight: 800;
 }
 
+.settings-fleet-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-fleet-summary > div {
+  border: 1px solid #28415f;
+  background: linear-gradient(135deg, #10182c, #0d1520);
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-fleet-summary strong {
+  color: #f8fafc;
+  font-size: 1.35rem;
+}
+
+.settings-fleet-summary span {
+  color: #9fb0c7;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-vehicle-config-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-vehicle-config-card,
+.settings-add-vehicle-card {
+  border: 1px solid #2a395d;
+  background: #10182c;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.settings-add-vehicle-card {
+  padding: 14px;
+}
+
+.settings-vehicle-config-head {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.settings-vehicle-config-head > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-vehicle-config-head strong {
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.settings-vehicle-config-head span {
+  color: #9fb0c7;
+  font-size: 0.86rem;
+}
+
+.settings-vehicle-config-badges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.settings-status-badge {
+  border: 1px solid #35507a;
+  background: #132033;
+  color: #dbe7f8;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.settings-status-badge.is-good {
+  border-color: rgba(60, 179, 113, 0.38);
+  background: rgba(60, 179, 113, 0.12);
+  color: #bbf7d0;
+}
+
+.settings-status-badge.is-warn {
+  border-color: rgba(255, 200, 87, 0.38);
+  background: rgba(255, 200, 87, 0.12);
+  color: #fde68a;
+}
+
+.settings-status-badge.is-muted {
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(148, 163, 184, 0.08);
+  color: #cbd5e1;
+}
+
+.settings-vehicle-config-body {
+  border-top: 1px solid #2a395d;
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+}
+
 .settings-message {
   color: #b8c4d8;
   font-size: 0.9rem;
+}
+
+.settings-dimo-share-card {
+  border: 1px solid #28415f;
+  background:
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.14), transparent 34%),
+    linear-gradient(135deg, #0e1726, #10182c);
+  border-radius: 14px;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.settings-dimo-share-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-dimo-instructions {
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  background: rgba(96, 165, 250, 0.09);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-dimo-instructions strong {
+  color: #dbeafe;
+  font-size: 0.82rem;
+}
+
+.settings-dimo-instructions span {
+  color: #b8c4d8;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.settings-dimo-qr-wrap {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: #f8fafc;
+  border-radius: 14px;
+  padding: 10px;
+  width: 166px;
+  height: 166px;
+  display: grid;
+  place-items: center;
+}
+
+.settings-dimo-qr {
+  width: 146px;
+  height: 146px;
+  display: block;
+}
+
+.settings-dimo-qr-placeholder {
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
 }
 
 .settings-vehicle-list {
@@ -318,9 +500,22 @@
   }
 
   .settings-inline-add,
-  .settings-category-row {
+  .settings-category-row,
+  .settings-fleet-summary,
+  .settings-vehicle-config-head,
+  .settings-dimo-share-card {
     display: flex;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .settings-vehicle-config-badges {
+    justify-content: flex-start;
+  }
+
+  .settings-dimo-qr-wrap {
+    width: 100%;
+    height: auto;
+    min-height: 166px;
   }
 }

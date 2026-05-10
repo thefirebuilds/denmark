@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -76,10 +77,20 @@ const EMPTY_VEHICLE = {
   turo_vehicle_name: "",
   bouncie_vehicle_id: "",
   dimo_token_id: "",
+  provider_vehicle_id: "",
+  external_vehicle_key: "",
   imei: "",
   oil_type: "",
   oil_capacity_quarts: "",
+  oil_capacity_liters: "",
   rockauto_url: "",
+  lockbox_pin: "",
+  registration_month: "",
+  registration_year: "",
+  onboarding_date: "",
+  acquisition_cost: "",
+  retired_at: "",
+  in_service: true,
   is_active: true,
 };
 
@@ -142,8 +153,16 @@ function toPayloadVehicle(form) {
     ...form,
     year: form.year === "" ? null : Number(form.year),
     dimo_token_id: form.dimo_token_id === "" ? null : Number(form.dimo_token_id),
+    acquisition_cost:
+      form.acquisition_cost === "" ? null : Number(form.acquisition_cost),
+    registration_month:
+      form.registration_month === "" ? null : Number(form.registration_month),
+    registration_year:
+      form.registration_year === "" ? null : Number(form.registration_year),
     oil_capacity_quarts:
       form.oil_capacity_quarts === "" ? null : Number(form.oil_capacity_quarts),
+    oil_capacity_liters:
+      form.oil_capacity_liters === "" ? null : Number(form.oil_capacity_liters),
   };
 }
 
@@ -374,20 +393,314 @@ function DispatchSettingsPanel({ settings, onSaved }) {
   );
 }
 
+function toDateInputValue(value) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
+function toVehicleForm(vehicle = EMPTY_VEHICLE) {
+  return {
+    ...EMPTY_VEHICLE,
+    ...vehicle,
+    year: vehicle.year == null ? "" : String(vehicle.year),
+    dimo_token_id:
+      vehicle.dimo_token_id == null ? "" : String(vehicle.dimo_token_id),
+    registration_month:
+      vehicle.registration_month == null ? "" : String(vehicle.registration_month),
+    registration_year:
+      vehicle.registration_year == null ? "" : String(vehicle.registration_year),
+    oil_capacity_quarts:
+      vehicle.oil_capacity_quarts == null
+        ? ""
+        : String(vehicle.oil_capacity_quarts),
+    oil_capacity_liters:
+      vehicle.oil_capacity_liters == null
+        ? ""
+        : String(vehicle.oil_capacity_liters),
+    acquisition_cost:
+      vehicle.acquisition_cost == null ? "" : String(vehicle.acquisition_cost),
+    onboarding_date: toDateInputValue(vehicle.onboarding_date),
+    retired_at: toDateInputValue(vehicle.retired_at),
+    in_service: vehicle.in_service !== false,
+    is_active: vehicle.is_active !== false,
+  };
+}
+
+function VehicleConfigFields({ form, update, mode = "edit" }) {
+  return (
+    <div className="settings-form-grid">
+      <label className="settings-field">
+        <span>Nickname</span>
+        <input
+          value={form.nickname || ""}
+          onChange={(e) => update("nickname", e.target.value)}
+          placeholder="Winnie"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>VIN</span>
+        <input
+          required={mode === "add"}
+          value={form.vin || ""}
+          onChange={(e) => update("vin", e.target.value.toUpperCase())}
+          placeholder="17 characters"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Year</span>
+        <input
+          type="number"
+          value={form.year || ""}
+          onChange={(e) => update("year", e.target.value)}
+          placeholder="2016"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Make</span>
+        <input
+          value={form.make || ""}
+          onChange={(e) => update("make", e.target.value)}
+          placeholder="Hyundai"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Model</span>
+        <input
+          value={form.model || ""}
+          onChange={(e) => update("model", e.target.value)}
+          placeholder="Accent"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Engine</span>
+        <input
+          value={form.standard_engine || ""}
+          onChange={(e) => update("standard_engine", e.target.value)}
+          placeholder="1.6L L4"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Plate</span>
+        <input
+          value={form.license_plate || ""}
+          onChange={(e) => update("license_plate", e.target.value.toUpperCase())}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Plate state</span>
+        <input
+          value={form.license_state || ""}
+          onChange={(e) => update("license_state", e.target.value.toUpperCase())}
+          placeholder="TX"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Registration month</span>
+        <input
+          type="number"
+          min="1"
+          max="12"
+          value={form.registration_month || ""}
+          onChange={(e) => update("registration_month", e.target.value)}
+          placeholder="1-12"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Registration year</span>
+        <input
+          type="number"
+          value={form.registration_year || ""}
+          onChange={(e) => update("registration_year", e.target.value)}
+          placeholder="2026"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Onboarding date</span>
+        <input
+          type="date"
+          value={form.onboarding_date || ""}
+          onChange={(e) => update("onboarding_date", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Retired date</span>
+        <input
+          type="date"
+          value={form.retired_at || ""}
+          onChange={(e) => update("retired_at", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Capex / acquisition cost</span>
+        <input
+          type="number"
+          step="0.01"
+          value={form.acquisition_cost || ""}
+          onChange={(e) => update("acquisition_cost", e.target.value)}
+          placeholder="0.00"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Lockbox PIN</span>
+        <input
+          value={form.lockbox_pin || ""}
+          onChange={(e) => update("lockbox_pin", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Turo vehicle ID</span>
+        <input
+          value={form.turo_vehicle_id || ""}
+          onChange={(e) => update("turo_vehicle_id", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Turo name</span>
+        <input
+          value={form.turo_vehicle_name || ""}
+          onChange={(e) => update("turo_vehicle_name", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>DIMO token ID</span>
+        <input
+          type="number"
+          value={form.dimo_token_id || ""}
+          onChange={(e) => update("dimo_token_id", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Bouncie vehicle ID</span>
+        <input
+          value={form.bouncie_vehicle_id || ""}
+          onChange={(e) => update("bouncie_vehicle_id", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Provider vehicle ID</span>
+        <input
+          value={form.provider_vehicle_id || ""}
+          onChange={(e) => update("provider_vehicle_id", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>External vehicle key</span>
+        <input
+          value={form.external_vehicle_key || ""}
+          onChange={(e) => update("external_vehicle_key", e.target.value)}
+          placeholder="dimo:123456"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>IMEI</span>
+        <input
+          value={form.imei || ""}
+          onChange={(e) => update("imei", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Oil type</span>
+        <input
+          value={form.oil_type || ""}
+          onChange={(e) => update("oil_type", e.target.value)}
+          placeholder="0W-20"
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Oil quarts</span>
+        <input
+          type="number"
+          step="0.1"
+          value={form.oil_capacity_quarts || ""}
+          onChange={(e) => update("oil_capacity_quarts", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Oil liters</span>
+        <input
+          type="number"
+          step="0.1"
+          value={form.oil_capacity_liters || ""}
+          onChange={(e) => update("oil_capacity_liters", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field settings-field-wide">
+        <span>RockAuto URL</span>
+        <input
+          value={form.rockauto_url || ""}
+          onChange={(e) => update("rockauto_url", e.target.value)}
+          placeholder="https://www.rockauto.com/..."
+        />
+      </label>
+
+      <label className="settings-check-row">
+        <input
+          type="checkbox"
+          checked={Boolean(form.is_active)}
+          onChange={(e) => update("is_active", e.target.checked)}
+        />
+        <span>Active in Denmark</span>
+      </label>
+
+      <label className="settings-check-row">
+        <input
+          type="checkbox"
+          checked={Boolean(form.in_service)}
+          onChange={(e) => update("in_service", e.target.checked)}
+        />
+        <span>In service for operations</span>
+      </label>
+    </div>
+  );
+}
+
 function FleetSettingsPanel() {
   const [vehicles, setVehicles] = useState([]);
-  const [form, setForm] = useState(EMPTY_VEHICLE);
+  const [form, setForm] = useState(() => toVehicleForm(EMPTY_VEHICLE));
+  const [editForms, setEditForms] = useState({});
+  const [expandedVehicleId, setExpandedVehicleId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingVehicleId, setSavingVehicleId] = useState(null);
   const [message, setMessage] = useState("");
 
   async function loadVehicles() {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/api/vehicles`);
+      const res = await fetch(`${API_BASE}/api/vehicles?includeInactive=true`);
       if (!res.ok) throw new Error(`Vehicle request failed: ${res.status}`);
       const data = await res.json();
-      setVehicles(Array.isArray(data) ? data : []);
+      const nextVehicles = Array.isArray(data) ? data : [];
+      setVehicles(nextVehicles);
+      setEditForms(
+        Object.fromEntries(
+          nextVehicles.map((vehicle) => [vehicle.id, toVehicleForm(vehicle)])
+        )
+      );
     } catch (err) {
       setMessage(err.message || "Failed to load vehicles");
     } finally {
@@ -418,7 +731,7 @@ function FleetSettingsPanel() {
         throw new Error(json?.error || "Failed to add vehicle");
       }
 
-      setForm(EMPTY_VEHICLE);
+      setForm(toVehicleForm(EMPTY_VEHICLE));
       setMessage(`Added ${json.nickname || json.vin || "vehicle"}`);
       await loadVehicles();
     } catch (err) {
@@ -432,193 +745,194 @@ function FleetSettingsPanel() {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function updateVehicleForm(vehicleId, field, value) {
+    setEditForms((current) => ({
+      ...current,
+      [vehicleId]: {
+        ...(current[vehicleId] || {}),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function saveVehicle(vehicle) {
+    const vehicleId = vehicle.id;
+    const payload = toPayloadVehicle(editForms[vehicleId] || vehicle);
+    const selector = encodeURIComponent(vehicle.vin || vehicle.nickname || vehicle.id);
+
+    try {
+      setSavingVehicleId(vehicleId);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/vehicles/${selector}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save vehicle");
+      }
+
+      setMessage(`Saved ${json.nickname || json.vin || "vehicle"}`);
+      await loadVehicles();
+    } catch (err) {
+      setMessage(err.message || "Failed to save vehicle");
+    } finally {
+      setSavingVehicleId(null);
+    }
+  }
+
+  const activeCount = vehicles.filter((vehicle) => vehicle.is_active !== false).length;
+  const inServiceCount = vehicles.filter(
+    (vehicle) => vehicle.is_active !== false && vehicle.in_service !== false
+  ).length;
+
   return (
     <section className="panel settings-main-panel">
       <div className="panel-header">
         <div>
           <h2>Fleet</h2>
-          <span>add a canonical vehicle record</span>
+          <span>vehicle configuration and onboarding</span>
         </div>
       </div>
 
-      <form className="settings-form" onSubmit={addVehicle}>
-        <div className="settings-form-grid">
-          <label className="settings-field">
-            <span>Nickname</span>
-            <input
-              value={form.nickname}
-              onChange={(e) => update("nickname", e.target.value)}
-              placeholder="Winnie"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>VIN</span>
-            <input
-              required
-              value={form.vin}
-              onChange={(e) => update("vin", e.target.value)}
-              placeholder="17 characters"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Year</span>
-            <input
-              type="number"
-              value={form.year}
-              onChange={(e) => update("year", e.target.value)}
-              placeholder="2016"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Make</span>
-            <input
-              value={form.make}
-              onChange={(e) => update("make", e.target.value)}
-              placeholder="Honda"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Model</span>
-            <input
-              value={form.model}
-              onChange={(e) => update("model", e.target.value)}
-              placeholder="Fit"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Engine</span>
-            <input
-              value={form.standard_engine}
-              onChange={(e) => update("standard_engine", e.target.value)}
-              placeholder="1.5L L4"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Plate</span>
-            <input
-              value={form.license_plate}
-              onChange={(e) => update("license_plate", e.target.value)}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Plate state</span>
-            <input
-              value={form.license_state}
-              onChange={(e) => update("license_state", e.target.value)}
-              placeholder="TX"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Turo vehicle ID</span>
-            <input
-              value={form.turo_vehicle_id}
-              onChange={(e) => update("turo_vehicle_id", e.target.value)}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Turo name</span>
-            <input
-              value={form.turo_vehicle_name}
-              onChange={(e) => update("turo_vehicle_name", e.target.value)}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Bouncie vehicle ID</span>
-            <input
-              value={form.bouncie_vehicle_id}
-              onChange={(e) => update("bouncie_vehicle_id", e.target.value)}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>DIMO token ID</span>
-            <input
-              type="number"
-              value={form.dimo_token_id}
-              onChange={(e) => update("dimo_token_id", e.target.value)}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>IMEI</span>
-            <input
-              value={form.imei}
-              onChange={(e) => update("imei", e.target.value)}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Oil type</span>
-            <input
-              value={form.oil_type}
-              onChange={(e) => update("oil_type", e.target.value)}
-              placeholder="0W-20"
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Oil quarts</span>
-            <input
-              type="number"
-              step="0.1"
-              value={form.oil_capacity_quarts}
-              onChange={(e) => update("oil_capacity_quarts", e.target.value)}
-            />
-          </label>
-
-          <label className="settings-field settings-field-wide">
-            <span>RockAuto URL</span>
-            <input
-              value={form.rockauto_url}
-              onChange={(e) => update("rockauto_url", e.target.value)}
-              placeholder="https://www.rockauto.com/..."
-            />
-          </label>
-        </div>
-
-        <label className="settings-check-row">
-          <input
-            type="checkbox"
-            checked={Boolean(form.is_active)}
-            onChange={(e) => update("is_active", e.target.checked)}
-          />
-          <span>Active vehicle</span>
-        </label>
-
-        <div className="settings-form-actions">
-          <button
-            type="submit"
-            className="settings-action-btn"
-            disabled={saving}
-          >
-            {saving ? "Adding..." : "Add Car"}
-          </button>
-          {message ? <span className="settings-message">{message}</span> : null}
-        </div>
-      </form>
-
-      <div className="settings-vehicle-list">
-        <div className="settings-group-title">
-          Active fleet {loading ? "" : `(${vehicles.length})`}
-        </div>
-        {vehicles.map((vehicle) => (
-          <div key={vehicle.id} className="settings-vehicle-row">
-            <strong>{vehicle.nickname || vehicle.vin || `Vehicle ${vehicle.id}`}</strong>
-            <span>
-              {[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ")}
-            </span>
+      <div className="settings-form">
+        <div className="settings-fleet-summary">
+          <div>
+            <strong>{loading ? "..." : vehicles.length}</strong>
+            <span>total records</span>
           </div>
-        ))}
+          <div>
+            <strong>{loading ? "..." : activeCount}</strong>
+            <span>active</span>
+          </div>
+          <div>
+            <strong>{loading ? "..." : inServiceCount}</strong>
+            <span>in service</span>
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Configured vehicles</div>
+          <div className="settings-empty-state">
+            Keep every fleet identifier here: operating state, onboarding and capex,
+            Turo IDs, DIMO/Bouncie IDs, registration, maintenance metadata, and
+            sourcing links.
+          </div>
+
+          <div className="settings-vehicle-config-list">
+            {vehicles.map((vehicle) => {
+              const isExpanded = expandedVehicleId === vehicle.id;
+              const editForm = editForms[vehicle.id] || toVehicleForm(vehicle);
+              const title =
+                editForm.nickname || editForm.vin || `Vehicle ${vehicle.id}`;
+              const subtitle = [editForm.year, editForm.make, editForm.model]
+                .filter(Boolean)
+                .join(" ");
+
+              return (
+                <article key={vehicle.id} className="settings-vehicle-config-card">
+                  <button
+                    type="button"
+                    className="settings-vehicle-config-head"
+                    onClick={() =>
+                      setExpandedVehicleId(isExpanded ? null : vehicle.id)
+                    }
+                  >
+                    <div>
+                      <strong>{title}</strong>
+                      <span>{subtitle || editForm.vin || "Vehicle record"}</span>
+                    </div>
+                    <div className="settings-vehicle-config-badges">
+                      <span
+                        className={`settings-status-badge ${
+                          editForm.is_active ? "is-good" : "is-muted"
+                        }`}
+                      >
+                        {editForm.is_active ? "Active" : "Inactive"}
+                      </span>
+                      <span
+                        className={`settings-status-badge ${
+                          editForm.in_service ? "is-good" : "is-warn"
+                        }`}
+                      >
+                        {editForm.in_service ? "In service" : "Out of service"}
+                      </span>
+                      <span className="settings-status-badge">
+                        {editForm.dimo_token_id
+                          ? `DIMO ${editForm.dimo_token_id}`
+                          : editForm.bouncie_vehicle_id
+                          ? "Bouncie linked"
+                          : "No telemetry ID"}
+                      </span>
+                    </div>
+                  </button>
+
+                  {isExpanded ? (
+                    <div className="settings-vehicle-config-body">
+                      <VehicleConfigFields
+                        form={editForm}
+                        update={(field, value) =>
+                          updateVehicleForm(vehicle.id, field, value)
+                        }
+                      />
+                      <div className="settings-form-actions">
+                        <button
+                          type="button"
+                          className="settings-action-btn"
+                          disabled={savingVehicleId === vehicle.id}
+                          onClick={() => saveVehicle(vehicle)}
+                        >
+                          {savingVehicleId === vehicle.id
+                            ? "Saving..."
+                            : "Save vehicle"}
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-action-btn secondary"
+                          disabled={savingVehicleId === vehicle.id}
+                          onClick={() =>
+                            setEditForms((current) => ({
+                              ...current,
+                              [vehicle.id]: toVehicleForm(vehicle),
+                            }))
+                          }
+                        >
+                          Reset edits
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </div>
+
+        <form className="settings-group settings-add-vehicle-card" onSubmit={addVehicle}>
+          <div className="settings-group-title">Add vehicle</div>
+          <div className="settings-empty-state">
+            Create the canonical Denmark record before telemetry, Turo imports,
+            or expenses arrive. VIN is the anchor; everything else can be filled
+            in as the car onboards.
+          </div>
+
+          <VehicleConfigFields form={form} update={update} mode="add" />
+
+          <div className="settings-form-actions">
+            <button
+              type="submit"
+              className="settings-action-btn"
+              disabled={saving}
+            >
+              {saving ? "Adding..." : "Add Vehicle"}
+            </button>
+            {message ? <span className="settings-message">{message}</span> : null}
+          </div>
+        </form>
       </div>
     </section>
   );
@@ -953,10 +1267,135 @@ function ExpenseSettingsPanel() {
   );
 }
 
+function DimoShareCard({ config, loading }) {
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [copyMessage, setCopyMessage] = useState("");
+  const shareTarget = String(config?.shareTarget || "").trim();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function buildQr() {
+      if (!shareTarget) {
+        setQrDataUrl("");
+        return;
+      }
+
+      try {
+        const url = await QRCode.toDataURL(shareTarget, {
+          width: 220,
+          margin: 2,
+          color: {
+            dark: "#0b1220",
+            light: "#f8fafc",
+          },
+        });
+
+        if (!cancelled) setQrDataUrl(url);
+      } catch {
+        if (!cancelled) setQrDataUrl("");
+      }
+    }
+
+    buildQr();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shareTarget]);
+
+  async function copyShareTarget() {
+    if (!shareTarget) return;
+
+    try {
+      await navigator.clipboard.writeText(shareTarget);
+      setCopyMessage("Copied");
+      window.setTimeout(() => setCopyMessage(""), 1600);
+    } catch {
+      setCopyMessage("Copy failed");
+      window.setTimeout(() => setCopyMessage(""), 2200);
+    }
+  }
+
+  return (
+    <div className="settings-dimo-share-card">
+      <div className="settings-dimo-share-copy">
+        <div className="settings-group-title">DIMO vehicle sharing</div>
+        <div className="settings-empty-state">
+          In the DIMO mobile app, open a vehicle, choose permission sharing,
+          then scan this QR or paste the share target below. Denmark only exposes
+          the public Developer License target here, never DIMO JWTs or private keys.
+        </div>
+
+        <div className="settings-dimo-instructions">
+          <strong>Next time:</strong>
+          <span>
+            Go to the vehicle in the DIMO app, open Vehicle Settings, tap
+            Permission Sharing, then share with another entity using this QR or
+            share target.
+          </span>
+        </div>
+
+        <div className="settings-vehicle-list">
+          <div className="settings-vehicle-row">
+            <strong>Share target</strong>
+            <span>
+              {loading
+                ? "Loading..."
+                : shareTarget || "Missing DIMO_CLIENT_ID"}
+            </span>
+          </div>
+          <div className="settings-vehicle-row">
+            <strong>Type</strong>
+            <span>
+              {loading
+                ? "Loading..."
+                : config?.shareTargetKind === "wallet_address"
+                ? "Wallet address"
+                : config?.shareTargetKind
+                ? "ENS / name"
+                : "Not configured"}
+            </span>
+          </div>
+        </div>
+
+        <div className="settings-form-actions">
+          <button
+            type="button"
+            className="settings-action-btn"
+            disabled={loading || !shareTarget}
+            onClick={copyShareTarget}
+          >
+            Copy Share Target
+          </button>
+          {copyMessage ? (
+            <span className="settings-message">{copyMessage}</span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="settings-dimo-qr-wrap">
+        {qrDataUrl ? (
+          <img
+            className="settings-dimo-qr"
+            src={qrDataUrl}
+            alt="DIMO developer share target QR code"
+          />
+        ) : (
+          <div className="settings-dimo-qr-placeholder">
+            {loading ? "Loading QR..." : "No DIMO share target"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
   const [connections, setConnections] = useState(null);
   const [mercuryConfig, setMercuryConfig] = useState(null);
+  const [dimoConfig, setDimoConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -968,15 +1407,17 @@ function IntegrationsSettingsPanel() {
       setLoading(true);
       setMessage("");
 
-      const [configRes, connectionsRes, mercuryConfigRes] = await Promise.all([
+      const [configRes, connectionsRes, mercuryConfigRes, dimoConfigRes] = await Promise.all([
         fetch(`${API_BASE}/api/teller/connect/config`),
         fetch(`${API_BASE}/api/teller/connections`),
         fetch(`${API_BASE}/api/teller/mercury/config`),
+        fetch(`${API_BASE}/api/dimo/config`),
       ]);
 
       const configJson = await configRes.json().catch(() => ({}));
       const connectionsJson = await connectionsRes.json().catch(() => ({}));
       const mercuryConfigJson = await mercuryConfigRes.json().catch(() => ({}));
+      const dimoConfigJson = await dimoConfigRes.json().catch(() => ({}));
 
       if (!configRes.ok) {
         throw new Error(configJson?.error || "Failed to load Teller config");
@@ -994,9 +1435,14 @@ function IntegrationsSettingsPanel() {
         );
       }
 
+      if (!dimoConfigRes.ok) {
+        throw new Error(dimoConfigJson?.error || "Failed to load DIMO config");
+      }
+
       setConfig(configJson);
       setConnections(connectionsJson);
       setMercuryConfig(mercuryConfigJson);
+      setDimoConfig(dimoConfigJson);
     } catch (err) {
       setMessage(err.message || "Failed to load integrations");
     } finally {
@@ -1140,11 +1586,13 @@ function IntegrationsSettingsPanel() {
       <div className="panel-header">
         <div>
           <h2>Integrations</h2>
-          <span>Teller banking connections</span>
+          <span>banking, telemetry, and external systems</span>
         </div>
       </div>
 
       <div className="settings-form">
+        <DimoShareCard config={dimoConfig} loading={loading} />
+
         <div className="settings-group">
           <div className="settings-group-title">Teller</div>
           <div className="settings-empty-state">

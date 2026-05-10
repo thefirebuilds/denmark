@@ -280,11 +280,14 @@ async function collectDtcAlerts() {
         nickname,
         captured_at AT TIME ZONE 'America/Chicago' AS captured_at,
         vehicle_last_updated AT TIME ZONE 'America/Chicago' AS vehicle_last_updated,
+        mil_on,
         qualified_dtc_list,
         dtc_count
       FROM vehicle_telemetry_snapshots
       WHERE (captured_at AT TIME ZONE 'America/Chicago') >= NOW() - INTERVAL '24 hours'
         AND (
+          COALESCE(mil_on, false) = true
+          OR
           COALESCE(dtc_count, 0) > 0
           OR (
             jsonb_typeof(COALESCE(qualified_dtc_list, '[]'::jsonb)) = 'array'
@@ -308,14 +311,22 @@ async function collectDtcAlerts() {
   return rows.map((row) => {
     const vehicle = row.vehicle_nickname || row.nickname || row.vin || "vehicle";
     const codes = normalizeDtcCodes(row.qualified_dtc_list);
-    const codeLabel = codes.length ? codes.join(", ") : `${row.dtc_count || 1} DTC`;
-    const dtcKey = codes.length ? codes.join("-") : `count-${row.dtc_count || 1}`;
+    const codeLabel = codes.length
+      ? codes.join(", ")
+      : row.mil_on
+      ? "MIL/check-engine light on; no decoded DTCs"
+      : `${row.dtc_count || 1} DTC`;
+    const dtcKey = codes.length
+      ? codes.join("-")
+      : row.mil_on
+      ? "mil-on-no-codes"
+      : `count-${row.dtc_count || 1}`;
 
     return {
       alertKey: `dtc:${row.service_name}:${row.vin || row.id}:${dtcKey}`,
       alertType: "dtc_received",
       severity: "urgent",
-      body: `Denmark: ${vehicle} reported DTC ${codeLabel} from ${row.service_name}. Seen ${formatChicago(
+      body: `Denmark: ${vehicle} reported ${codeLabel} from ${row.service_name}. Seen ${formatChicago(
         row.vehicle_last_updated || row.captured_at
       )}.`,
       details: row,

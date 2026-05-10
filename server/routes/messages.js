@@ -566,6 +566,7 @@ function messageQueueRank(item) {
   if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
   if (item.type === "return_location_check") return -2;
   if (item.type === "notification_unmatched") return -2;
+  if (item.type === "vehicle_diagnostic_alert") return -2;
   if (isUncorrelatedUnreadMessage(item)) return -2;
   if (item.type === "handoff_ready_required") return -1;
   if (
@@ -1010,6 +1011,46 @@ function mapMaintenanceNoticeRow(row) {
     maintenance_open_task_record_count: Number(row.open_task_count || 0),
     maintenance_tasks: groupedTasks,
     created_at: row.latest_task_created_at,
+  };
+}
+
+function mapVehicleDiagnosticNoticeRow(row) {
+  const codes = Array.isArray(row.qualified_dtc_list)
+    ? row.qualified_dtc_list
+        .map((item) => {
+          if (typeof item === "string") return item;
+          return item?.code || item?.dtc || item?.name || "";
+        })
+        .map((item) => String(item || "").trim().toUpperCase())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+  const vehicleName = row.vehicle_nickname || row.nickname || row.vin || "vehicle";
+  const hasMil = row.mil_on === true;
+  const label = codes.length
+    ? codes.join(", ")
+    : hasMil
+    ? "MIL/check-engine light on"
+    : `${Number(row.dtc_count || 1)} DTC active`;
+
+  return {
+    id: `vehicle-diagnostic:${row.service_name}:${row.vin || row.id}`,
+    messageId: `vehicle-diagnostic:${row.service_name}:${row.vin || row.id}`,
+    subject: `${vehicleName} needs diagnostic review`,
+    status: "read",
+    timestamp: row.vehicle_last_updated || row.captured_at,
+    notification_created_at: row.vehicle_last_updated || row.captured_at,
+    type: "vehicle_diagnostic_alert",
+    vehicle_name: vehicleName,
+    vehicle_nickname: row.vehicle_nickname,
+    vehicle_vin: row.vin,
+    diagnostic_source: row.service_name,
+    diagnostic_label: label,
+    diagnostic_codes: codes,
+    diagnostic_mil_on: hasMil,
+    diagnostic_dtc_count: Number(row.dtc_count || codes.length || 0),
+    diagnostic_last_seen: row.vehicle_last_updated || row.captured_at,
+    created_at: row.vehicle_last_updated || row.captured_at,
   };
 }
 
@@ -1864,6 +1905,45 @@ router.get("/", async (req, res) => {
       LIMIT 10
     `;
 
+    const diagnosticSql = `
+      SELECT
+        latest.*,
+        v.nickname AS vehicle_nickname
+      FROM vehicles v
+      JOIN LATERAL (
+        SELECT
+          s.id,
+          s.service_name,
+          s.vin,
+          s.imei,
+          s.nickname,
+          s.mil_on,
+          s.mil_last_updated,
+          s.qualified_dtc_list,
+          s.dtc_count,
+          s.vehicle_last_updated,
+          s.captured_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.vin IS NOT NULL
+          AND s.vin <> ''
+          AND LOWER(s.vin) = LOWER(v.vin)
+        ORDER BY COALESCE(s.vehicle_last_updated, s.mil_last_updated, s.captured_at) DESC NULLS LAST,
+          s.id DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE COALESCE(v.is_active, true) = true
+        AND (
+          COALESCE(latest.mil_on, false) = true
+          OR COALESCE(latest.dtc_count, 0) > 0
+          OR (
+            jsonb_typeof(COALESCE(latest.qualified_dtc_list, '[]'::jsonb)) = 'array'
+            AND jsonb_array_length(COALESCE(latest.qualified_dtc_list, '[]'::jsonb)) > 0
+          )
+        )
+      ORDER BY COALESCE(latest.vehicle_last_updated, latest.mil_last_updated, latest.captured_at) DESC NULLS LAST
+      LIMIT 10
+    `;
+
     const maintenanceSql = `
       WITH active_maintenance_tasks AS (
         SELECT mt.*
@@ -2364,6 +2444,7 @@ router.get("/", async (req, res) => {
       overlapResult,
       messagesResult,
       unmatchedNotificationsResult,
+      diagnosticResult,
       maintenanceResult,
     ] = await Promise.all([
       timeQueueQuery(queueTimings, "handoff", db.query(handoffSql)),
@@ -2387,6 +2468,7 @@ router.get("/", async (req, res) => {
         "unmatchedNotifications",
         db.query(unmatchedNotificationsSql)
       ),
+      timeQueueQuery(queueTimings, "diagnostics", db.query(diagnosticSql)),
       fast
         ? Promise.resolve(EMPTY_QUERY_RESULT)
         : timeQueueQuery(
@@ -2440,6 +2522,7 @@ router.get("/", async (req, res) => {
       ...overlapResult.rows.map(mapTripOverlapNoticeRow),
       ...visibleMessageRows.map(mapMessageRow),
       ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
+      ...diagnosticResult.rows.map(mapVehicleDiagnosticNoticeRow),
       ...visibleMaintenanceNotices,
     ])
       .sort(compareQueueItems)
