@@ -244,11 +244,9 @@ Add any integrations you use:
 - `EZTAG_*`
 - `TELLER_*`
 
-For DIMO, map known vehicles deliberately:
-
-```dotenv
-DIMO_FLEET_JSON=[{"tokenId":191373,"nickname":"Geneva","vin":"KMHTC6AD3GU260321","active":true}]
-```
+For DIMO, map known vehicles deliberately in **Settings > Fleet** by saving each
+vehicle's DIMO token ID. Live DIMO polling constructs the fleet shape from the
+database vehicle records instead of reading per-vehicle token IDs from `.env`.
 
 ### 3. Log in to GHCR if needed
 

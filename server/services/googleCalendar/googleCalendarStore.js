@@ -102,9 +102,26 @@ async function getGoogleCalendarConnection(userId = null) {
     [userId]
   );
 
-  if (!result.rows.length) return null;
+  let row = result.rows[0] || null;
 
-  const row = result.rows[0];
+  if (!row || !row.calendar_id) {
+    const fallback = await pool.query(
+      `
+        SELECT *
+        FROM google_calendar_connections
+        WHERE refresh_token_encrypted IS NOT NULL
+          AND calendar_id IS NOT NULL
+          AND user_id IS DISTINCT FROM $1
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `,
+      [userId]
+    );
+
+    row = fallback.rows[0] || row;
+  }
+
+  if (!row) return null;
 
   return {
     ...row,

@@ -390,6 +390,12 @@
   color: #cbd5e1;
 }
 
+.settings-field-note {
+  color: #8fb4d8;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
 .settings-vehicle-config-body {
   border-top: 1px solid #2a395d;
   padding: 14px;

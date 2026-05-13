@@ -871,7 +871,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
 
       const capital = capitalMetricsMap.get(vehicleId) || {};
 
-      const onboardingDate = capital.onboarding_date || vehicle.onboarding_date;
+      const onboardingDate = vehicle.onboarding_date || capital.onboarding_date;
 
       vehicleMetrics.set(vehicleId, {
         vehicle_id: vehicleId,

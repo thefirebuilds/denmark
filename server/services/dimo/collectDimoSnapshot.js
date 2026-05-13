@@ -946,13 +946,14 @@ async function collectDimoVehicleSnapshot(vehicleConfig) {
 
 async function collectDimoFleetSnapshots() {
   const startedAt = Date.now();
-  const { fleet, sharedVehicles, localFleet } = await getDimoFleet();
+  const { fleet, sharedVehicles, localFleet, localFleetSource } =
+    await getDimoFleet();
   const results = [];
 
   console.log(
     `[dimo] fleet poll start | vehicles=${fleet.length} shared=${
       sharedVehicles?.totalCount ?? sharedVehicles?.nodes?.length ?? 0
-    } localOverrides=${localFleet.length}`
+    } configured=${localFleet.length} source=${localFleetSource || "unknown"}`
   );
 
   for (const vehicle of fleet) {

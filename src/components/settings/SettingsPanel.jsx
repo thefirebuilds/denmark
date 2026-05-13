@@ -88,6 +88,9 @@ const EMPTY_VEHICLE = {
   registration_month: "",
   registration_year: "",
   onboarding_date: "",
+  first_trip_start: "",
+  effective_onboarding_date: "",
+  onboarding_date_source: "",
   acquisition_cost: "",
   retired_at: "",
   in_service: true,
@@ -149,20 +152,38 @@ function moveItem(items, index, direction) {
 }
 
 function toPayloadVehicle(form) {
+  const vehicleFields = { ...form };
+  delete vehicleFields.first_trip_start;
+  delete vehicleFields.effective_onboarding_date;
+  delete vehicleFields.onboarding_date_source;
+
   return {
-    ...form,
-    year: form.year === "" ? null : Number(form.year),
-    dimo_token_id: form.dimo_token_id === "" ? null : Number(form.dimo_token_id),
+    ...vehicleFields,
+    year: vehicleFields.year === "" ? null : Number(vehicleFields.year),
+    dimo_token_id:
+      vehicleFields.dimo_token_id === ""
+        ? null
+        : Number(vehicleFields.dimo_token_id),
     acquisition_cost:
-      form.acquisition_cost === "" ? null : Number(form.acquisition_cost),
+      vehicleFields.acquisition_cost === ""
+        ? null
+        : Number(vehicleFields.acquisition_cost),
     registration_month:
-      form.registration_month === "" ? null : Number(form.registration_month),
+      vehicleFields.registration_month === ""
+        ? null
+        : Number(vehicleFields.registration_month),
     registration_year:
-      form.registration_year === "" ? null : Number(form.registration_year),
+      vehicleFields.registration_year === ""
+        ? null
+        : Number(vehicleFields.registration_year),
     oil_capacity_quarts:
-      form.oil_capacity_quarts === "" ? null : Number(form.oil_capacity_quarts),
+      vehicleFields.oil_capacity_quarts === ""
+        ? null
+        : Number(vehicleFields.oil_capacity_quarts),
     oil_capacity_liters:
-      form.oil_capacity_liters === "" ? null : Number(form.oil_capacity_liters),
+      vehicleFields.oil_capacity_liters === ""
+        ? null
+        : Number(vehicleFields.oil_capacity_liters),
   };
 }
 
@@ -420,6 +441,11 @@ function toVehicleForm(vehicle = EMPTY_VEHICLE) {
     acquisition_cost:
       vehicle.acquisition_cost == null ? "" : String(vehicle.acquisition_cost),
     onboarding_date: toDateInputValue(vehicle.onboarding_date),
+    first_trip_start: toDateInputValue(vehicle.first_trip_start),
+    effective_onboarding_date: toDateInputValue(
+      vehicle.effective_onboarding_date
+    ),
+    onboarding_date_source: vehicle.onboarding_date_source || "",
     retired_at: toDateInputValue(vehicle.retired_at),
     in_service: vehicle.in_service !== false,
     is_active: vehicle.is_active !== false,
@@ -427,6 +453,11 @@ function toVehicleForm(vehicle = EMPTY_VEHICLE) {
 }
 
 function VehicleConfigFields({ form, update, mode = "edit" }) {
+  const derivedOnboardingDate =
+    !form.onboarding_date && form.effective_onboarding_date
+      ? form.effective_onboarding_date
+      : "";
+
   return (
     <div className="settings-form-grid">
       <label className="settings-field">
@@ -531,6 +562,11 @@ function VehicleConfigFields({ form, update, mode = "edit" }) {
           value={form.onboarding_date || ""}
           onChange={(e) => update("onboarding_date", e.target.value)}
         />
+        {derivedOnboardingDate ? (
+          <small className="settings-field-note">
+            Falls back to first rental trip: {derivedOnboardingDate}
+          </small>
+        ) : null}
       </label>
 
       <label className="settings-field">
@@ -1336,6 +1372,15 @@ function DimoShareCard({ config, loading }) {
           </span>
         </div>
 
+        <div className="settings-dimo-instructions">
+          <strong>After sharing:</strong>
+          <span>
+            Add the vehicle's DIMO token ID on its Fleet settings vehicle card.
+            Denmark polls DIMO from those database vehicle records now, so
+            per-car DIMO IDs no longer need to be maintained in the server .env.
+          </span>
+        </div>
+
         <div className="settings-vehicle-list">
           <div className="settings-vehicle-row">
             <strong>Share target</strong>
@@ -1391,15 +1436,109 @@ function DimoShareCard({ config, loading }) {
   );
 }
 
+function GoogleCalendarCard({
+  status,
+  loading,
+  syncing,
+  onConnect,
+  onSync,
+}) {
+  const tokenStatus = status?.tokenStatus || "missing";
+  const needsReconnect =
+    tokenStatus === "invalid" ||
+    tokenStatus === "missing" ||
+    !status?.configured;
+  const statusLabel = loading
+    ? "Checking..."
+    : status?.connected
+    ? "Connected"
+    : needsReconnect
+    ? "Reconnect needed"
+    : "Needs setup";
+  const badgeClass = status?.connected
+    ? "is-ok"
+    : needsReconnect
+    ? "is-warn"
+    : "is-muted";
+  const lastSynced = status?.sync?.lastSyncedAt
+    ? new Date(status.sync.lastSyncedAt).toLocaleString()
+    : "Never";
+
+  return (
+    <div className="settings-group">
+      <div className="settings-group-title">Google Calendar</div>
+      <div className="settings-empty-state">
+        Trip pickup, return, and closeout events sync to the selected Google
+        calendar. Google can revoke offline access without a predictable expiry,
+        so Denmark checks the saved token directly.
+      </div>
+
+      <div className="settings-vehicle-list">
+        <div className="settings-vehicle-row">
+          <strong>Status</strong>
+          <span className={`settings-status-badge ${badgeClass}`}>
+            {statusLabel}
+          </span>
+        </div>
+        <div className="settings-vehicle-row">
+          <strong>Calendar</strong>
+          <span>
+            {loading
+              ? "Loading..."
+              : status?.selectedCalendar?.summary ||
+                status?.selectedCalendar?.id ||
+                "None selected"}
+          </span>
+        </div>
+        <div className="settings-vehicle-row">
+          <strong>Last sync</strong>
+          <span>{loading ? "Loading..." : lastSynced}</span>
+        </div>
+        <div className="settings-vehicle-row">
+          <strong>Synced trips</strong>
+          <span>{loading ? "Loading..." : status?.sync?.syncedTrips || 0}</span>
+        </div>
+        {!loading && status?.tokenError ? (
+          <div className="settings-vehicle-row">
+            <strong>Google response</strong>
+            <span>{status.tokenError}</span>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="settings-form-actions">
+        <button
+          type="button"
+          className="settings-action-btn"
+          disabled={loading}
+          onClick={onConnect}
+        >
+          {needsReconnect ? "Reconnect Google" : "Refresh Connection"}
+        </button>
+        <button
+          type="button"
+          className="settings-action-btn secondary"
+          disabled={loading || syncing || !status?.connected}
+          onClick={onSync}
+        >
+          {syncing ? "Syncing..." : "Sync Trips"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
   const [connections, setConnections] = useState(null);
   const [mercuryConfig, setMercuryConfig] = useState(null);
   const [dimoConfig, setDimoConfig] = useState(null);
+  const [googleCalendarStatus, setGoogleCalendarStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncingMercury, setSyncingMercury] = useState(false);
+  const [syncingGoogleCalendar, setSyncingGoogleCalendar] = useState(false);
   const [message, setMessage] = useState("");
 
   async function loadTellerState() {
@@ -1407,17 +1546,27 @@ function IntegrationsSettingsPanel() {
       setLoading(true);
       setMessage("");
 
-      const [configRes, connectionsRes, mercuryConfigRes, dimoConfigRes] = await Promise.all([
+      const [
+        configRes,
+        connectionsRes,
+        mercuryConfigRes,
+        dimoConfigRes,
+        googleCalendarStatusRes,
+      ] = await Promise.all([
         fetch(`${API_BASE}/api/teller/connect/config`),
         fetch(`${API_BASE}/api/teller/connections`),
         fetch(`${API_BASE}/api/teller/mercury/config`),
         fetch(`${API_BASE}/api/dimo/config`),
+        fetch(`${API_BASE}/api/integrations/google-calendar/status`),
       ]);
 
       const configJson = await configRes.json().catch(() => ({}));
       const connectionsJson = await connectionsRes.json().catch(() => ({}));
       const mercuryConfigJson = await mercuryConfigRes.json().catch(() => ({}));
       const dimoConfigJson = await dimoConfigRes.json().catch(() => ({}));
+      const googleCalendarStatusJson = await googleCalendarStatusRes
+        .json()
+        .catch(() => ({}));
 
       if (!configRes.ok) {
         throw new Error(configJson?.error || "Failed to load Teller config");
@@ -1439,10 +1588,18 @@ function IntegrationsSettingsPanel() {
         throw new Error(dimoConfigJson?.error || "Failed to load DIMO config");
       }
 
+      if (!googleCalendarStatusRes.ok) {
+        throw new Error(
+          googleCalendarStatusJson?.error ||
+            "Failed to load Google Calendar status"
+        );
+      }
+
       setConfig(configJson);
       setConnections(connectionsJson);
       setMercuryConfig(mercuryConfigJson);
       setDimoConfig(dimoConfigJson);
+      setGoogleCalendarStatus(googleCalendarStatusJson);
     } catch (err) {
       setMessage(err.message || "Failed to load integrations");
     } finally {
@@ -1577,6 +1734,43 @@ function IntegrationsSettingsPanel() {
     }
   }
 
+  function connectGoogleCalendar() {
+    window.location.href = `${API_BASE}/api/integrations/google-calendar/connect`;
+  }
+
+  async function syncGoogleCalendar() {
+    try {
+      setSyncingGoogleCalendar(true);
+      setMessage("");
+
+      const res = await fetch(
+        `${API_BASE}/api/integrations/google-calendar/reconcile-trips`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 500 }),
+        }
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to sync Google Calendar");
+      }
+
+      const failed = (json.results || []).filter((item) => !item.ok).length;
+      setMessage(
+        `Google Calendar processed ${json.processed || 0} trip${
+          Number(json.processed || 0) === 1 ? "" : "s"
+        }${failed ? ` with ${failed} failure${failed === 1 ? "" : "s"}` : ""}.`
+      );
+      await loadTellerState();
+    } catch (err) {
+      setMessage(err.message || "Failed to sync Google Calendar");
+    } finally {
+      setSyncingGoogleCalendar(false);
+    }
+  }
+
   const latestConnected = connections?.latest_connected_at
     ? new Date(connections.latest_connected_at).toLocaleString()
     : "Never";
@@ -1592,6 +1786,14 @@ function IntegrationsSettingsPanel() {
 
       <div className="settings-form">
         <DimoShareCard config={dimoConfig} loading={loading} />
+
+        <GoogleCalendarCard
+          status={googleCalendarStatus}
+          loading={loading}
+          syncing={syncingGoogleCalendar}
+          onConnect={connectGoogleCalendar}
+          onSync={syncGoogleCalendar}
+        />
 
         <div className="settings-group">
           <div className="settings-group-title">Teller</div>

@@ -1,6 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const { google } = require("googleapis");
+const pool = require("../db");
 const {
   getOAuthClient,
   getAuthUrl,
@@ -20,6 +21,44 @@ const router = express.Router();
 
 function getRouteUserId(req) {
   return req?.auth?.kind === "user" ? req.auth.userId : null;
+}
+
+function getGoogleApiErrorCode(err) {
+  return (
+    err?.response?.data?.error ||
+    err?.errors?.[0]?.reason ||
+    err?.code ||
+    err?.message ||
+    "unknown_error"
+  );
+}
+
+async function getGoogleCalendarSyncStats(connectionId) {
+  if (!connectionId) {
+    return {
+      syncedEvents: 0,
+      syncedTrips: 0,
+      lastSyncedAt: null,
+    };
+  }
+
+  const { rows } = await pool.query(
+    `
+      SELECT
+        COUNT(*) FILTER (WHERE sync_status = 'synced')::int AS synced_events,
+        COUNT(DISTINCT trip_id) FILTER (WHERE sync_status = 'synced')::int AS synced_trips,
+        MAX(last_synced_at) AS last_synced_at
+      FROM trip_google_sync
+      WHERE google_calendar_connection_id = $1
+    `,
+    [connectionId]
+  );
+
+  return {
+    syncedEvents: rows[0]?.synced_events || 0,
+    syncedTrips: rows[0]?.synced_trips || 0,
+    lastSyncedAt: rows[0]?.last_synced_at || null,
+  };
 }
 
 router.post("/sync-trip/:tripId", async (req, res, next) => {
@@ -49,6 +88,79 @@ router.post("/reconcile-trips", async (req, res, next) => {
 
 router.get("/ping", (req, res) => {
   res.send("pong from googleCalendar");
+});
+
+router.get("/status", async (req, res, next) => {
+  try {
+    const userId = getRouteUserId(req);
+    const connection = await getGoogleCalendarConnection(userId);
+
+    if (!connection) {
+      return res.json({
+        configured: false,
+        connected: false,
+        tokenStatus: "missing",
+        selectedCalendar: null,
+        sync: await getGoogleCalendarSyncStats(null),
+      });
+    }
+
+    const selectedCalendar = connection.calendar_id
+      ? {
+          id: connection.calendar_id,
+          summary: connection.calendar_summary,
+        }
+      : null;
+
+    const payload = {
+      configured: true,
+      connected: false,
+      tokenStatus: "unknown",
+      tokenError: null,
+      selectedCalendar,
+      connection: {
+        id: connection.id,
+        userId: connection.user_id,
+        updatedAt: connection.updated_at,
+      },
+      sync: await getGoogleCalendarSyncStats(connection.id),
+    };
+
+    if (!connection.calendar_id) {
+      return res.json({
+        ...payload,
+        tokenStatus: "no_calendar_selected",
+      });
+    }
+
+    const oauth2Client = getOAuthClient();
+    oauth2Client.setCredentials({
+      refresh_token: connection.refresh_token,
+    });
+
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    try {
+      await calendar.calendarList.get({
+        calendarId: connection.calendar_id,
+      });
+
+      return res.json({
+        ...payload,
+        connected: true,
+        tokenStatus: "valid",
+      });
+    } catch (err) {
+      return res.json({
+        ...payload,
+        connected: false,
+        tokenStatus: "invalid",
+        tokenError: getGoogleApiErrorCode(err),
+      });
+    }
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post("/test-event", async (req, res, next) => {

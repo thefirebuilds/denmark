@@ -518,7 +518,7 @@ async function runTelemetryRetention(reason = "interval") {
 function startScheduler() {
   console.log("[scheduler] started");
 
-  const everyEightHoursMs = 8 * 60 * 60 * 1000;
+  const everyFifteenMinutesMs = 15 * 60 * 1000;
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
   const everyFiveMinutesMs = 5 * 60 * 1000;
   const everyTwentyFourHoursMs = 24 * 60 * 60 * 1000;
@@ -638,10 +638,10 @@ function startScheduler() {
     void runTelemetryRetention("interval");
   }, everySevenDaysMs);
 
-  // Google Calendar reconcile every 8 hours
+  // Google Calendar reconcile every 15 minutes
   googleCalendarIntervalHandle = setInterval(() => {
     void runGoogleCalendarReconcile("interval");
-  }, everyEightHoursMs);
+  }, everyFifteenMinutesMs);
 }
 
 function stopScheduler() {

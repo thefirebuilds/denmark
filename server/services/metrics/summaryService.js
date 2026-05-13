@@ -88,10 +88,31 @@ async function fetchFleetCalendarDaysAvailable(client, rangeStart, rangeEnd) {
   if (!rangeStart || !rangeEnd) return 0;
 
   const { rows } = await client.query(`
-    SELECT onboarding_date
-    FROM vehicles
-    WHERE COALESCE(is_active, true) = true
-      AND COALESCE(in_service, true) = true
+    SELECT COALESCE(v.onboarding_date, first_trip.first_trip_start::date) AS onboarding_date
+    FROM vehicles v
+    LEFT JOIN LATERAL (
+      SELECT MIN(t.trip_start)::date AS first_trip_start
+      FROM trips t
+      WHERE t.trip_start IS NOT NULL
+        AND (
+          (
+            v.turo_vehicle_id IS NOT NULL
+            AND t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(v.nickname, '') <> ''
+            AND COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+        )
+        AND (
+          t.canceled_at IS NULL
+          OR COALESCE(t.amount, 0) > 0
+        )
+    ) first_trip ON true
+    WHERE COALESCE(v.is_active, true) = true
+      AND COALESCE(v.in_service, true) = true
   `);
 
   return rows.reduce((sum, vehicle) => {

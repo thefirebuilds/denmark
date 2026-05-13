@@ -138,37 +138,65 @@ router.get("/", async (req, res) => {
 
     const result = await pool.query(`
       SELECT
-        id,
-        vin,
-        nickname,
-        year,
-        make,
-        model,
-        standard_engine,
-        license_plate,
-        license_state,
-        registration_month,
-        registration_year,
-        lockbox_pin,
-        bouncie_vehicle_id,
-        dimo_token_id,
-        turo_vehicle_id,
-        turo_vehicle_name,
-        current_odometer_miles,
-        provider_vehicle_id,
-        external_vehicle_key,
-        rockauto_url,
-        oil_type,
-        oil_capacity_quarts,
-        oil_capacity_liters,
-        onboarding_date,
-        acquisition_cost,
-        retired_at,
-        in_service,
-        is_active
-      FROM vehicles
-      WHERE ($1::boolean = true OR is_active = true)
-      ORDER BY is_active DESC, in_service DESC, nickname NULLS LAST, make NULLS LAST, model NULLS LAST, id ASC
+        v.id,
+        v.vin,
+        v.nickname,
+        v.year,
+        v.make,
+        v.model,
+        v.standard_engine,
+        v.license_plate,
+        v.license_state,
+        v.registration_month,
+        v.registration_year,
+        v.lockbox_pin,
+        v.bouncie_vehicle_id,
+        v.dimo_token_id,
+        v.turo_vehicle_id,
+        v.turo_vehicle_name,
+        v.current_odometer_miles,
+        v.provider_vehicle_id,
+        v.external_vehicle_key,
+        v.rockauto_url,
+        v.oil_type,
+        v.oil_capacity_quarts,
+        v.oil_capacity_liters,
+        v.onboarding_date,
+        first_trip.first_trip_start::date AS first_trip_start,
+        COALESCE(v.onboarding_date, first_trip.first_trip_start::date) AS effective_onboarding_date,
+        CASE
+          WHEN v.onboarding_date IS NOT NULL THEN 'manual'
+          WHEN first_trip.first_trip_start IS NOT NULL THEN 'first_trip'
+          ELSE NULL
+        END AS onboarding_date_source,
+        v.acquisition_cost,
+        v.retired_at,
+        v.in_service,
+        v.is_active
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT MIN(t.trip_start)::date AS first_trip_start
+        FROM trips t
+        WHERE t.trip_start IS NOT NULL
+          AND (
+            (
+              v.turo_vehicle_id IS NOT NULL
+              AND t.turo_vehicle_id IS NOT NULL
+              AND v.turo_vehicle_id = t.turo_vehicle_id
+            )
+            OR (
+              COALESCE(v.nickname, '') <> ''
+              AND COALESCE(t.vehicle_name, '') <> ''
+              AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+            )
+          )
+          AND (
+            t.canceled_at IS NULL
+            OR COALESCE(t.amount, 0) > 0
+          )
+      ) first_trip ON true
+      WHERE ($1::boolean = true OR v.is_active = true)
+      ORDER BY v.is_active DESC, v.in_service DESC, v.nickname NULLS LAST, v.make NULLS LAST, v.model NULLS LAST, v.id ASC
     `, [includeInactive]);
 
     res.json(result.rows);

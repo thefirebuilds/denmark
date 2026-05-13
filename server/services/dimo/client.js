@@ -2,6 +2,7 @@ const {
   getDimoVehicleAuthHeader,
   getDimoDeveloperAuthHeader,
 } = require("./auth");
+const pool = require("../../db");
 
 const TELEMETRY_URL = "https://telemetry-api.dimo.zone/query";
 const IDENTITY_URL = "https://identity-api.dimo.zone/query";
@@ -54,17 +55,6 @@ function cleanString(value) {
   if (value == null) return null;
   const text = String(value).trim();
   return text || null;
-}
-
-function toBooleanOrNull(value) {
-  if (typeof value === "boolean") return value;
-  if (value == null || value === "") return null;
-
-  const normalized = String(value).trim().toLowerCase();
-  if (["true", "1", "yes", "y", "on"].includes(normalized)) return true;
-  if (["false", "0", "no", "n", "off"].includes(normalized)) return false;
-
-  return null;
 }
 
 function normalizeTokenId(tokenId) {
@@ -185,42 +175,41 @@ async function postGraphQL({
   return body;
 }
 
-function getDimoFleetFromEnv() {
-  const raw = process.env.DIMO_FLEET_JSON;
-  if (!raw || !raw.trim()) return [];
+async function getDimoFleetFromDb() {
+  const { rows } = await pool.query(`
+    SELECT
+      id,
+      vin,
+      nickname,
+      make,
+      model,
+      year,
+      standard_engine,
+      dimo_token_id,
+      is_active,
+      in_service
+    FROM vehicles
+    WHERE dimo_token_id IS NOT NULL
+      AND COALESCE(is_active, true) = true
+      AND COALESCE(in_service, true) = true
+    ORDER BY nickname NULLS LAST, make NULLS LAST, model NULLS LAST, id ASC
+  `);
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`Invalid DIMO_FLEET_JSON: ${err.message}`);
-  }
-
-  if (!Array.isArray(parsed)) {
-    throw new Error("Invalid DIMO_FLEET_JSON: expected an array");
-  }
-
-  return parsed.map((item, index) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error(`Invalid DIMO_FLEET_JSON[${index}]: expected an object`);
-    }
-
-    const tokenId = normalizeTokenId(item.tokenId);
-    const inactive = toBooleanOrNull(item.inactive) === true;
-    const explicitActive = toBooleanOrNull(item.active);
-    const active = explicitActive == null ? !inactive : explicitActive && !inactive;
-
-    return {
-      tokenId,
-      active,
-      nickname: cleanString(item.nickname),
-      vin: cleanString(item.vin),
-      make: cleanString(item.make),
-      model: cleanString(item.model),
-      year: item.year == null || item.year === "" ? null : Number(item.year),
-      standard_engine: cleanString(item.standard_engine),
-    };
-  });
+  return rows.map((vehicle) => ({
+    vehicle_id: vehicle.id,
+    tokenId: normalizeTokenId(vehicle.dimo_token_id),
+    dimo_token_id: normalizeTokenId(vehicle.dimo_token_id),
+    active: vehicle.is_active !== false && vehicle.in_service !== false,
+    nickname: cleanString(vehicle.nickname),
+    vin: cleanString(vehicle.vin),
+    make: cleanString(vehicle.make),
+    model: cleanString(vehicle.model),
+    year:
+      vehicle.year == null || vehicle.year === ""
+        ? null
+        : Number(vehicle.year),
+    standard_engine: cleanString(vehicle.standard_engine),
+  }));
 }
 
 function normalizeSharedVehicleNode(node) {
@@ -265,7 +254,7 @@ function mergeDimoFleet(sharedVehicles, localFleet) {
 
       if (!sharedVehicle) {
         console.warn(
-          `DIMO tokenId=${override.tokenId} is in DIMO_FLEET_JSON but was not returned by Identity shared vehicles; skipping`
+          `DIMO tokenId=${override.tokenId} is configured in Denmark but was not returned by Identity shared vehicles; skipping`
         );
         return null;
       }
@@ -325,20 +314,22 @@ async function fetchDimoSharedVehicles({ first = 100 } = {}) {
 async function getDimoFleet() {
   const [sharedVehicles, localFleet] = await Promise.all([
     fetchDimoSharedVehicles(),
-    Promise.resolve(getDimoFleetFromEnv()),
+    getDimoFleetFromDb(),
   ]);
+  const localFleetSource = "database";
 
   const fleet = mergeDimoFleet(sharedVehicles, localFleet);
 
   if (!fleet.length) {
     console.warn(
-      "DIMO fleet discovery returned no pollable vehicles from DIMO_FLEET_JSON"
+      "DIMO fleet discovery returned no pollable vehicles from Denmark vehicle configuration"
     );
   }
 
   return {
     sharedVehicles,
     localFleet,
+    localFleetSource,
     fleet,
   };
 }
@@ -738,7 +729,7 @@ module.exports = {
   fetchDimoVin,
   getSignalsBlockedByPrivileges,
   getDimoFleet,
-  getDimoFleetFromEnv,
+  getDimoFleetFromDb,
   mergeDimoFleet,
   removeSignalsBlockedByPrivileges,
   postGraphQL,

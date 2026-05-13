@@ -1,6 +1,6 @@
 const pool = require("../../db");
 const collectDimoSnapshot = require("./collectDimoSnapshot");
-const { getDimoFleetFromEnv } = require("./client");
+const { getDimoFleetFromDb } = require("./client");
 
 const LIVE_SIGNAL_MAX_AGE_MINUTES = 15;
 
@@ -72,9 +72,12 @@ async function runDimo(reason = "interval") {
 }
 
 async function getDimoStatusFeed() {
-  const activeTokenIds = getDimoFleetFromEnv()
+  const configuredFleet = await getDimoFleetFromDb();
+  const source = "database";
+
+  const activeTokenIds = configuredFleet
     .filter((vehicle) => vehicle.active !== false)
-    .map((vehicle) => Number(vehicle.tokenId))
+    .map((vehicle) => Number(vehicle.tokenId || vehicle.dimo_token_id))
     .filter((tokenId) => Number.isInteger(tokenId) && tokenId > 0);
 
   if (!activeTokenIds.length) {
@@ -328,6 +331,7 @@ async function getDimoStatusFeed() {
         dimo: {
           degraded: Boolean(row.raw_payload?.degraded),
           degraded_reason: row.raw_payload?.degradedReason || null,
+          config_source: source,
           missing_privileges: missingPrivileges,
           blocked_signals: blockedSignals,
           skipped_signals: row.raw_payload?.skippedSignals || [],
