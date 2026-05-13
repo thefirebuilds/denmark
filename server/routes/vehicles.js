@@ -8,9 +8,9 @@ const pool = require("../db");
 const {
   getCombinedVehicleStatusFeed,
   getCachedVehicleStatusFeed,
-  getVehicleStatusFeed,
 } = require("../services/vehicles/statusFeed");
 const { getVehicleLocations } = require("../services/vehicles/locationFeed");
+const { getParkingSpotUsage } = require("../services/vehicles/parkingSpotUsage");
 const {
   generateFleetFmvEstimates,
   generateVehicleFmvEstimate,
@@ -63,6 +63,78 @@ function toNullableDate(value) {
   return String(value).slice(0, 10);
 }
 
+function getAgeMinutes(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+}
+
+function getAgeDays(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.floor((Date.now() - date.getTime()) / 86400000);
+}
+
+function withStatusCompatibilityFields(vehicle) {
+  const telemetry = vehicle?.telemetry || {};
+  const fuelLevel = telemetry.fuel_level;
+  const location = telemetry.location || {};
+  const mil = telemetry.mil || {};
+  const battery = telemetry.battery || {};
+
+  return {
+    ...vehicle,
+    registration: {
+      state: vehicle.license_state || null,
+      month: vehicle.registration_month ?? null,
+      year: vehicle.registration_year ?? null,
+      code:
+        vehicle.registration_month && vehicle.registration_year
+          ? `${String(vehicle.registration_month).padStart(2, "0")}/${vehicle.registration_year}`
+          : null,
+    },
+    oil: {
+      type: vehicle.oil_type || null,
+      capacity_quarts:
+        vehicle.oil_capacity_quarts != null
+          ? Number(vehicle.oil_capacity_quarts)
+          : null,
+      capacity_liters:
+        vehicle.oil_capacity_liters != null
+          ? Number(vehicle.oil_capacity_liters)
+          : null,
+    },
+    telemetry: {
+      ...telemetry,
+      last_comm_age_minutes: getAgeMinutes(telemetry.last_comm),
+      has_fuel_level: fuelLevel !== undefined && fuelLevel !== null,
+      location: {
+        ...location,
+        has_location: location.lat != null && location.lon != null,
+        has_address: Boolean(location.address),
+      },
+      mil: {
+        ...mil,
+        has_dtc:
+          Array.isArray(mil.qualified_dtc_list) &&
+          mil.qualified_dtc_list.length > 0,
+        dtc_count:
+          mil.dtc_count ??
+          (Array.isArray(mil.qualified_dtc_list)
+            ? mil.qualified_dtc_list.length
+            : 0),
+      },
+      battery: {
+        ...battery,
+        age_days: getAgeDays(battery.last_updated),
+        is_stale: getAgeDays(battery.last_updated) > 14,
+      },
+    },
+  };
+}
+
 async function getVehicleColumns(client = pool) {
   const { rows } = await client.query(`
     SELECT column_name
@@ -92,8 +164,8 @@ async function findVehicleBySelector(selector) {
 
 router.get("/status", async (req, res) => {
   try {
-    const feed = await getVehicleStatusFeed();
-    res.json(feed);
+    const feed = await getCombinedVehicleStatusFeed();
+    res.json(feed.map(withStatusCompatibilityFields));
   } catch (err) {
     console.error("Vehicle status error:", err);
     res.status(500).json({ error: "Failed to fetch vehicle status" });
@@ -127,6 +199,25 @@ router.get("/locations", async (req, res) => {
   } catch (err) {
     console.error("GET /api/vehicles/locations failed:", err);
     res.status(500).json({ error: "Failed to fetch vehicle locations" });
+  }
+});
+
+router.get("/parking-spot-usage", async (req, res) => {
+  try {
+    const usage = await getParkingSpotUsage({
+      month: req.query.month,
+      start: req.query.start,
+      end: req.query.end,
+      vehicle: req.query.vehicle,
+      timeZone: req.query.timeZone,
+    });
+
+    res.json(usage);
+  } catch (err) {
+    console.error("GET /api/vehicles/parking-spot-usage failed:", err);
+    res
+      .status(err.status || 500)
+      .json({ error: err.message || "Failed to calculate parking spot usage" });
   }
 });
 

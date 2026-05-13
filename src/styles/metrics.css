@@ -121,6 +121,67 @@
   background: rgba(15, 23, 41, 0.6);
 }
 
+.parking-recommendation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.parking-recommendation-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(42, 57, 93, 0.85);
+  border-radius: 8px;
+  background: rgba(15, 23, 41, 0.6);
+}
+
+.parking-recommendation-card--keep {
+  border-color: rgba(52, 211, 153, 0.26);
+}
+
+.parking-recommendation-card--drop {
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.parking-recommendation-card--resident {
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+.parking-recommendation-card__header,
+.parking-recommendation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.parking-recommendation-list {
+  display: grid;
+  gap: 5px;
+}
+
+.parking-recommendation-row {
+  color: #9eb2d1;
+  font-size: 0.74rem;
+  line-height: 1.2;
+}
+
+.parking-recommendation-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parking-recommendation-row strong {
+  flex: 0 0 auto;
+  color: #eef4ff;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 /* --------------------------------------------------------------
    Shared section headers
 -------------------------------------------------------------- */
@@ -397,6 +458,17 @@
 
 .metric-card--negative .metric-card__value {
   color: #ffd0d0;
+}
+
+.metric-card--warning {
+  border-color: rgba(245, 158, 11, 0.24);
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 34%),
+    linear-gradient(180deg, #121b31 0%, #0f1729 100%);
+}
+
+.metric-card--warning .metric-card__value {
+  color: #fde68a;
 }
 
 /* --------------------------------------------------------------

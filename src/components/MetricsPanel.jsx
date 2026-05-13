@@ -355,6 +355,8 @@ export default function MetricsPanel() {
   const [selectedRange, setSelectedRange] = useState("30d");
   const [summary, setSummary] = useState(null);
   const [businessMetrics, setBusinessMetrics] = useState(null);
+  const [parkingMetrics, setParkingMetrics] = useState(null);
+  const [parkingTransfers, setParkingTransfers] = useState(null);
   const [trends, setTrends] = useState(null);
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -458,6 +460,8 @@ export default function MetricsPanel() {
     }
 
     setBusinessMetrics(null);
+    setParkingMetrics(null);
+    setParkingTransfers(null);
 
     fetch(`${API_BASE}/api/metrics/business/current?${params.toString()}`, {
       headers: { Accept: "application/json" },
@@ -480,6 +484,54 @@ export default function MetricsPanel() {
         console.warn("Business metrics loaded after primary metrics failed:", err);
         if (metricsLoadSeq.current === loadSeq) {
           setBusinessMetrics(null);
+        }
+      });
+
+    fetch(`${API_BASE}/api/metrics/parking?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    })
+      .then(async (parkingRes) => {
+        const parkingText = await parkingRes.text();
+        if (!parkingRes.ok) {
+          throw new Error(
+            `Parking metrics request failed: ${parkingRes.status} ${parkingText}`
+          );
+        }
+        return parkingText ? JSON.parse(parkingText) : null;
+      })
+      .then((parkingData) => {
+        if (metricsLoadSeq.current === loadSeq) {
+          setParkingMetrics(parkingData);
+        }
+      })
+      .catch((err) => {
+        console.warn("Parking metrics loaded after primary metrics failed:", err);
+        if (metricsLoadSeq.current === loadSeq) {
+          setParkingMetrics(null);
+        }
+      });
+
+    fetch(`${API_BASE}/api/metrics/parking/home-transfers?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    })
+      .then(async (transferRes) => {
+        const transferText = await transferRes.text();
+        if (!transferRes.ok) {
+          throw new Error(
+            `Parking transfer request failed: ${transferRes.status} ${transferText}`
+          );
+        }
+        return transferText ? JSON.parse(transferText) : null;
+      })
+      .then((transferData) => {
+        if (metricsLoadSeq.current === loadSeq) {
+          setParkingTransfers(transferData);
+        }
+      })
+      .catch((err) => {
+        console.warn("Parking transfer metrics loaded after primary metrics failed:", err);
+        if (metricsLoadSeq.current === loadSeq) {
+          setParkingTransfers(null);
         }
       });
   }
@@ -1109,6 +1161,24 @@ const mileageStats = useMemo(() => {
     return flags.slice(0, 4);
   }, [businessMetrics]);
 
+  const parkingRecommendationGroups = useMemo(() => {
+    const rows = Array.isArray(parkingMetrics?.vehicles) ? parkingMetrics.vehicles : [];
+    const visibleRows = rows.filter(
+      (vehicle) =>
+        Number(vehicle?.parkingDays ?? 0) > 0 ||
+        vehicle?.actualPlan === "unlimited" ||
+        vehicle?.actualPlan === "resident"
+    );
+
+    return {
+      keep: visibleRows.filter((vehicle) => vehicle.recommendedPlan === "unlimited"),
+      drop: visibleRows.filter((vehicle) => vehicle.recommendedPlan === "pay_per_day"),
+      resident: visibleRows.filter(
+        (vehicle) => vehicle.recommendedPlan === "resident_unlimited"
+      ),
+    };
+  }, [parkingMetrics]);
+
   const derivedStartupTaxTotal = useMemo(
     () =>
       vehicleProfiles.reduce(
@@ -1599,6 +1669,228 @@ const mileageStats = useMemo(() => {
                     : "positive"
                 }
               />
+            </section>
+          ) : null}
+
+          {parkingMetrics?.summary ? (
+            <section className="metrics-section">
+              <div className="metrics-section-header">
+                <div className="metrics-section-title">Parking Economics</div>
+                <div className="metrics-section-subtitle">
+                  Park My Share days valued against unlimited pass and transponder cost
+                </div>
+              </div>
+
+              <div className="metrics-summary-row">
+                <MetricCard
+                  label="Parking Value"
+                  value={formatCurrency(parkingMetrics.summary.parkingValue)}
+                  subtitle={`${formatNumber(
+                    parkingMetrics.summary.fleetVehicleDays
+                  )} vehicle-days at ${formatCurrencyCompact(
+                    parkingMetrics.assumptions?.dayRate
+                  )}/day`}
+                  tone="positive"
+                />
+                <MetricCard
+                  label="Modeled Fixed Cost"
+                  value={formatCurrency(parkingMetrics.summary.fixedPassCost)}
+                  subtitle={`${formatCurrencyCompact(
+                    Number(parkingMetrics.assumptions?.unlimitedMonthly ?? 0) +
+                      Number(parkingMetrics.assumptions?.transponderMonthly ?? 0)
+                  )}/car/mo standard`}
+                  tone={
+                    Number(parkingMetrics.summary.passNetValue ?? 0) >= 0
+                      ? "positive"
+                      : "warning"
+                  }
+                />
+                <MetricCard
+                  label="Pass Net Value"
+                  value={formatSignedCurrency(parkingMetrics.summary.passNetValue)}
+                  subtitle={`Break-even ${formatNumber(
+                    parkingMetrics.assumptions?.standardBreakEvenDays,
+                    1
+                  )} days/mo`}
+                  tone={
+                    Number(parkingMetrics.summary.passNetValue ?? 0) >= 0
+                      ? "positive"
+                      : "warning"
+                  }
+                />
+                <MetricCard
+                  label="Actual Cost"
+                  value={
+                    parkingMetrics.summary.actualParkingExpense == null
+                      ? "--"
+                      : formatCurrency(parkingMetrics.summary.actualParkingExpense)
+                  }
+                  subtitle={`${formatNumber(
+                    parkingMetrics.summary.parkingExpenseCount
+                  )} parking expense records`}
+                  tone={
+                    Number(parkingMetrics.summary.valueVsActualParkingExpense ?? 0) >= 0
+                      ? "positive"
+                      : "warning"
+                  }
+                />
+                <MetricCard
+                  label="Value vs Actual"
+                  value={formatSignedCurrency(
+                    parkingMetrics.summary.valueVsActualParkingExpense
+                  )}
+                  subtitle="Parking value minus expense records"
+                  tone={
+                    Number(parkingMetrics.summary.valueVsActualParkingExpense ?? 0) >= 0
+                      ? "positive"
+                      : "warning"
+                  }
+                />
+                <MetricCard
+                  label="Keep / Drop"
+                  value={`${formatNumber(
+                    Number(parkingMetrics.summary.keepUnlimitedCount ?? 0) +
+                      Number(parkingMetrics.summary.residentCount ?? 0)
+                  )} / ${formatNumber(parkingMetrics.summary.dropUnlimitedCount)}`}
+                  subtitle="Unlimited justified / below break-even"
+                />
+                <MetricCard
+                  label="Home / Parking Trips"
+                  value={formatNumber(parkingTransfers?.summary?.transfers ?? 0)}
+                  subtitle={`${formatNumber(
+                    parkingTransfers?.summary?.homeToParking ?? 0
+                  )} out · ${formatNumber(
+                    parkingTransfers?.summary?.parkingToHome ?? 0
+                  )} home`}
+                />
+                <MetricCard
+                  label="Shuttle Time"
+                  value={`${formatNumber(
+                    parkingTransfers?.summary?.totalHours ?? 0,
+                    1
+                  )} hrs`}
+                  subtitle={`Excludes over ${formatNumber(
+                    parkingTransfers?.summary?.maxTransferHours ??
+                      parkingTransfers?.assumptions?.maxTransferHours ??
+                      0
+                  )} hrs per trip`}
+                />
+                <MetricCard
+                  label="Shuttle Fuel"
+                  value={formatCurrencyCompact(
+                    parkingTransfers?.summary?.estimatedFuelCost ?? 0
+                  )}
+                  subtitle={`${formatNumber(
+                    parkingTransfers?.summary?.estimatedGallons ?? 0,
+                    1
+                  )} gal · ${formatNumber(
+                    parkingTransfers?.summary?.totalMiles ?? 0,
+                    1
+                  )} mi`}
+                />
+              </div>
+
+              {parkingRecommendationGroups.keep.length ||
+              parkingRecommendationGroups.drop.length ||
+              parkingRecommendationGroups.resident.length ? (
+                <div className="parking-recommendation-grid">
+                  {parkingRecommendationGroups.keep.length ? (
+                    <article className="parking-recommendation-card parking-recommendation-card--keep">
+                      <div className="parking-recommendation-card__header">
+                        <div>
+                          <div className="metrics-business-card__title">
+                            Keep Unlimited
+                          </div>
+                          <div className="metrics-business-profile__meta">
+                            Above break-even for this range
+                          </div>
+                        </div>
+                        <div className="vehicle-compare__value vehicle-compare__value--positive">
+                          {formatNumber(parkingRecommendationGroups.keep.length)}
+                        </div>
+                      </div>
+                      <div className="parking-recommendation-list">
+                        {parkingRecommendationGroups.keep.map((vehicle) => (
+                          <div
+                            key={vehicle.vehicleId}
+                            className="parking-recommendation-row"
+                          >
+                            <span>{vehicle.vehicleName}</span>
+                            <strong>
+                              {formatNumber(vehicle.parkingDays)}d ·{" "}
+                              {formatSignedCurrency(vehicle.passNetValue)}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  ) : null}
+
+                  {parkingRecommendationGroups.drop.length ? (
+                    <article className="parking-recommendation-card parking-recommendation-card--drop">
+                      <div className="parking-recommendation-card__header">
+                        <div>
+                          <div className="metrics-business-card__title">
+                            Drop Unlimited
+                          </div>
+                          <div className="metrics-business-profile__meta">
+                            Below break-even; pay-per-day is cheaper
+                          </div>
+                        </div>
+                        <div className="vehicle-compare__value vehicle-compare__value--warning">
+                          {formatNumber(parkingRecommendationGroups.drop.length)}
+                        </div>
+                      </div>
+                      <div className="parking-recommendation-list">
+                        {parkingRecommendationGroups.drop.map((vehicle) => (
+                          <div
+                            key={vehicle.vehicleId}
+                            className="parking-recommendation-row"
+                          >
+                            <span>{vehicle.vehicleName}</span>
+                            <strong>
+                              {formatNumber(vehicle.parkingDays)}d · save{" "}
+                              {formatCurrencyCompact(vehicle.savingsIfPayPerDay)}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  ) : null}
+
+                  {parkingRecommendationGroups.resident.length ? (
+                    <article className="parking-recommendation-card parking-recommendation-card--resident">
+                      <div className="parking-recommendation-card__header">
+                        <div>
+                          <div className="metrics-business-card__title">
+                            Resident Hot Swap
+                          </div>
+                          <div className="metrics-business-profile__meta">
+                            Dedicated car kept at Park My Share
+                          </div>
+                        </div>
+                        <div className="vehicle-compare__value vehicle-compare__value--positive">
+                          {formatNumber(parkingRecommendationGroups.resident.length)}
+                        </div>
+                      </div>
+                      <div className="parking-recommendation-list">
+                        {parkingRecommendationGroups.resident.map((vehicle) => (
+                          <div
+                            key={vehicle.vehicleId}
+                            className="parking-recommendation-row"
+                          >
+                            <span>{vehicle.vehicleName}</span>
+                            <strong>
+                              {formatNumber(vehicle.parkingDays)}d ·{" "}
+                              {formatCurrencyCompact(vehicle.fixedPassCost)}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  ) : null}
+                </div>
+              ) : null}
             </section>
           ) : null}
 

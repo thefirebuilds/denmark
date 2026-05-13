@@ -1,9 +1,8 @@
 // ------------------------------------------------------------
 // /server/services/vehicles/statusFeed.js
-// This service fetches the list of active vehicles from the database,
-// retrieves live telemetry data for those vehicles from the Bouncie API,
-// and combines the data into a unified feed that can be used by the frontend
-// to display the current status of each vehicle in the fleet.
+// This service fetches the canonical fleet from the database, retrieves
+// telemetry from available providers, and combines it into a source-aware feed
+// for the frontend fleet status views.
 // ------------------------------------------------------------
 
 
@@ -128,6 +127,43 @@ function mergeTelemetry(primary, fallback) {
   };
 }
 
+function getTelemetryTimeMs(vehicle) {
+  const telemetry = vehicle?.telemetry || {};
+  const candidates = [
+    telemetry.last_comm,
+    telemetry.timestamps?.location_last_updated,
+    telemetry.timestamps?.ignition_last_updated,
+    telemetry.timestamps?.speed_last_updated,
+    telemetry.timestamps?.vehicle_last_updated,
+    telemetry.timestamps?.captured_at,
+  ];
+
+  for (const value of candidates) {
+    if (!value) continue;
+    const time = new Date(value).getTime();
+    if (Number.isFinite(time)) return time;
+  }
+
+  return 0;
+}
+
+function choosePrimaryTelemetryVehicle(bouncieVehicle, dimoVehicle) {
+  if (!bouncieVehicle) return dimoVehicle || {};
+  if (!dimoVehicle) return bouncieVehicle || {};
+
+  const bouncieTime = getTelemetryTimeMs(bouncieVehicle);
+  const dimoTime = getTelemetryTimeMs(dimoVehicle);
+
+  return dimoTime > bouncieTime ? dimoVehicle : bouncieVehicle;
+}
+
+function getTelemetryProvider(vehicle) {
+  if (!vehicle) return null;
+  if (vehicle.dimo_token_id) return "dimo";
+  if (vehicle.bouncie_vehicle_id || vehicle.bouncie_url) return "bouncie";
+  return null;
+}
+
 function buildLiveVehicleKey(vehicle) {
   return (
     normalizeKey(vehicle?.turo_vehicle_id) ||
@@ -165,12 +201,18 @@ function indexVehicles(vehicles) {
 }
 
 function mergeVehicleTelemetry(baseVehicle, bouncieVehicle, dimoVehicle) {
-  const primary = bouncieVehicle || dimoVehicle || {};
-  const fallback = dimoVehicle && bouncieVehicle ? dimoVehicle : null;
+  const primary = choosePrimaryTelemetryVehicle(bouncieVehicle, dimoVehicle);
+  const fallback =
+    primary === dimoVehicle
+      ? bouncieVehicle || null
+      : dimoVehicle || null;
+  const activeTelemetrySource = getTelemetryProvider(primary);
   const telemetrySource = [
-    bouncieVehicle ? "bouncie" : null,
-    dimoVehicle ? "dimo" : null,
+    activeTelemetrySource,
+    activeTelemetrySource !== "bouncie" && bouncieVehicle ? "bouncie" : null,
+    activeTelemetrySource !== "dimo" && dimoVehicle ? "dimo" : null,
   ].filter(Boolean);
+  const telemetry = mergeTelemetry(primary?.telemetry, fallback?.telemetry);
 
   return {
     ...baseVehicle,
@@ -204,8 +246,17 @@ function mergeVehicleTelemetry(baseVehicle, bouncieVehicle, dimoVehicle) {
     bouncie_url: bouncieVehicle?.bouncie_url || null,
     dimo_token_id: dimoVehicle?.dimo_token_id || null,
     dimo_active: Boolean(dimoVehicle),
+    active_telemetry_source: activeTelemetrySource,
     telemetry_source: telemetrySource,
-    telemetry: mergeTelemetry(primary?.telemetry, fallback?.telemetry),
+    telemetry: telemetry
+      ? {
+          ...telemetry,
+          source: activeTelemetrySource,
+          fallback_sources: telemetrySource.filter(
+            (source) => source !== activeTelemetrySource
+          ),
+        }
+      : null,
   };
 }
 

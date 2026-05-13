@@ -13,6 +13,7 @@ import {
   getBatteryAlert,
   getBatteryStatusLabel,
   getCommAlert,
+  getTelemetrySourceLabel,
   getVehicleEmergencyTone,
   getVehicleLocationLinkData,
   getVehicleStatusLabel,
@@ -393,6 +394,13 @@ export default function FleetSnapshotPanel({
                 {isExpanded ? (
                   <div className="fleet-row-details">
                     <div className="fleet-row-meta">
+                      <div className="fleet-meta-item">
+                        <div className="detail-label">Source</div>
+                        <div className="detail-value detail-value--compact">
+                          {getTelemetrySourceLabel(vehicle)}
+                        </div>
+                      </div>
+
                       <div className="fleet-meta-item">
                         <div className="detail-label">Last Comm</div>
                         <div className="detail-value detail-value--compact">

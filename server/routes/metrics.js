@@ -19,6 +19,12 @@ const {
 const {
   getTrendMetrics,
 } = require("../services/metrics/trendMetricsService");
+const {
+  getParkingEconomics,
+} = require("../services/metrics/parkingMetricsService");
+const {
+  getHomeParkingTransfers,
+} = require("../services/metrics/parkingTransferService");
 
 const router = express.Router();
 
@@ -59,6 +65,32 @@ router.get("/tolls/detail", async (req, res) => {
   } catch (err) {
     console.error("GET /api/metrics/tolls/detail failed:", err);
     return res.status(500).json({ error: "Failed to load toll detail" });
+  }
+});
+
+router.get("/parking", async (req, res) => {
+  try {
+    const data = await getParkingEconomics(req.query.range || "30d");
+    return res.json(data);
+  } catch (err) {
+    const status = err?.status || err?.statusCode || 500;
+    console.error("GET /api/metrics/parking failed:", err);
+    return res.status(status).json({
+      error: status === 500 ? "Failed to load parking metrics" : err.message,
+    });
+  }
+});
+
+router.get("/parking/home-transfers", async (req, res) => {
+  try {
+    const data = await getHomeParkingTransfers(req.query || {});
+    return res.json(data);
+  } catch (err) {
+    const status = err?.status || err?.statusCode || 500;
+    console.error("GET /api/metrics/parking/home-transfers failed:", err);
+    return res.status(status).json({
+      error: status === 500 ? "Failed to load parking transfer metrics" : err.message,
+    });
   }
 });
 

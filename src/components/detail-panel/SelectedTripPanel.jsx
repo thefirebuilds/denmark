@@ -26,6 +26,7 @@ import {
   getMileageStats,
   getNextWorkflowStage,
   getRevenuePerDay,
+  getTelemetrySourceLabel,
   getTripProgressPercent,
   getTripVehicleLabel,
   getVehicleLocationLinkData,
@@ -407,18 +408,6 @@ export default function SelectedTripPanel({
 
 function renderLocationLink(vehicle) {
   const { label, url, title, clickable } = getVehicleLocationLinkData(vehicle);
-
-    console.log(
-  "renderLocationLink direct",
-  vehicle?.nickname,
-  "bouncie_vehicle_id=",
-  vehicle?.bouncie_vehicle_id,
-  "bouncie_url=",
-  vehicle?.bouncie_url,
-  "keys=",
-  Object.keys(vehicle || {})
-);
-
 
   if (!clickable) {
     return <span>{label}</span>;
@@ -828,6 +817,17 @@ function renderLocationLink(vehicle) {
               <strong>
                 {selectedVehicle
                   ? getVehicleStatusLabel(selectedVehicle)
+                  : vehiclesLoading
+                  ? "Loading telemetry…"
+                  : "Awaiting telemetry"}
+              </strong>
+            </div>
+
+            <div className="detail-row">
+              <span>Telemetry source</span>
+              <strong>
+                {selectedVehicle
+                  ? getTelemetrySourceLabel(selectedVehicle)
                   : vehiclesLoading
                   ? "Loading telemetry…"
                   : "Awaiting telemetry"}

@@ -9,7 +9,13 @@ export function getVehicleLocationLinkData(vehicleLike) {
     telemetry,
   });
 
-  const url = buildBouncieVehicleDetailsUrl(vehicle);
+  const activeSource = String(
+    vehicle?.active_telemetry_source || telemetry?.source || ""
+  ).toLowerCase();
+  const url =
+    activeSource && activeSource !== "bouncie"
+      ? ""
+      : buildBouncieVehicleDetailsUrl(vehicle);
   const providerLabel = Array.isArray(vehicle?.telemetry_source)
     ? vehicle.telemetry_source.join(" + ")
     : vehicle?.dimo_token_id
@@ -21,9 +27,35 @@ export function getVehicleLocationLinkData(vehicleLike) {
   return {
     label,
     url,
-    title: url ? "View in Bouncie" : `Location from ${providerLabel}`,
+    title: url
+      ? "View in Bouncie"
+      : `Location from ${activeSource || providerLabel}`,
     clickable: Boolean(url),
   };
+}
+
+export function getTelemetrySourceLabel(vehicleLike) {
+  const vehicle = vehicleLike?.vehicle || vehicleLike;
+  const telemetry = vehicleLike?.telemetry || vehicle?.telemetry;
+  const activeSource = String(
+    vehicle?.active_telemetry_source || telemetry?.source || ""
+  ).toLowerCase();
+
+  function formatSource(source) {
+    const normalized = String(source || "").toLowerCase();
+    if (normalized === "dimo") return "DIMO";
+    if (normalized === "bouncie") return "Bouncie";
+    return source ? String(source) : "";
+  }
+
+  const activeLabel = formatSource(activeSource);
+  if (activeLabel) return activeLabel;
+
+  const sources = Array.isArray(vehicle?.telemetry_source)
+    ? vehicle.telemetry_source
+    : [];
+  const sourceLabel = sources.map(formatSource).filter(Boolean).join(" + ");
+  return sourceLabel || "Telemetry";
 }
 
 function parseAppDate(value) {
