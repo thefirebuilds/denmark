@@ -510,12 +510,32 @@ function buildMessageBody(message) {
     const classification = message?.notification_classification
       ? ` (${message.notification_classification})`
       : "";
+    const noticeText = [
+      message?.notification_title,
+      message?.notification_body,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const isCancellationNotice =
+      message?.notification_classification === "trip_canceled" ||
+      /has cancelled their trip|has canceled their trip|cancelled their trip|canceled their trip/i.test(
+        noticeText
+      );
+    const isCanceledInDenmark =
+      String(message?.trip_workflow_stage || "").toLowerCase() === "canceled" ||
+      String(message?.trip_status || "").toLowerCase() === "canceled";
+    const denmarkAction =
+      isCancellationNotice && isCanceledInDenmark
+        ? `Denmark already marked${
+            message?.reservation_id ? ` reservation #${message.reservation_id}` : " this reservation"
+          } as canceled. `
+        : "";
     const body =
       message?.notification_body ||
       message?.notification_title ||
       "The Android bridge saw a Turo notification, but no matching email/message was found.";
 
-    return `Bridge saw this Turo notification${classification}${
+    return `${denmarkAction}Bridge saw this Turo notification${classification}${
       received ? ` at ${received}` : ""
     }, but the email/message table has no match yet. ${body}`;
   }

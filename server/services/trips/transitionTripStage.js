@@ -7,6 +7,9 @@
 
 const pool = require("../../db");
 const { handleTripStageEntry } = require("./handleTripStageEntry");
+const {
+  syncTripToSelectedGoogleCalendars,
+} = require("../googleCalendar/googleTripSync");
 
 const WORKFLOW_STAGES = [
   "booked",
@@ -62,6 +65,26 @@ function shouldCaptureStartOdometer(currentStage, nextStage) {
 
 function shouldCaptureEndOdometer(currentStage, nextStage) {
   return currentStage === "in_progress" && nextStage !== "in_progress";
+}
+
+function syncCanceledTripToGoogleCalendar(trip) {
+  if (!trip?.id) return;
+
+  void syncTripToSelectedGoogleCalendars(trip.id, { retryDeletedEvents: true })
+    .then((result) => {
+      if (!result.ok) {
+        console.warn(
+          `[google-calendar] canceled trip ${trip.id} calendar cleanup completed with failures`,
+          result.results
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn(
+        `[google-calendar] canceled trip ${trip.id} calendar cleanup failed:`,
+        err.message || err
+      );
+    });
 }
 
 let vehiclesColumnCache = null;
@@ -565,10 +588,16 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
 
     await client.query("COMMIT");
 
-    return {
+    const response = {
       ...updatedTrip,
       allowed_next_stages: getAllowedNextStages(updatedTrip.workflow_stage),
     };
+
+    if (normalizedNextStage === "canceled") {
+      syncCanceledTripToGoogleCalendar(updatedTrip);
+    }
+
+    return response;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

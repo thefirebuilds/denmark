@@ -55,6 +55,14 @@ function classifyMessageType(subject) {
     return "trip_changed";
   }
 
+  if (/^.+ has requested a change to their trip with your .+$/i.test(s)) {
+    return "trip_changed";
+  }
+
+  if (/^you[’']ve confirmed .+ change request with your .+$/i.test(s)) {
+    return "trip_changed";
+  }
+
   if (/^.+[’']s trip with your .+ is booked!$/i.test(s)) {
     return "trip_booked";
   }
@@ -215,24 +223,31 @@ function parseInteger(value) {
 function parseTuroDateTime(value) {
   if (!value) return null;
 
-  const raw = String(value).trim();
+  const raw = String(value)
+    .replace(/[–—-]+$/g, "")
+    .trim();
   if (!raw) return null;
 
-  let dt = DateTime.fromFormat(raw, "M/d/yyyy h:mm a", {
-    zone: "America/Chicago",
-  });
+  const formats = [
+    "M/d/yyyy h:mm a",
+    "M/d/yy h:mm a",
+    "cccc, LLLL d, yyyy, h:mm a",
+    "cccc, LLL d, yyyy, h:mm a",
+    "LLLL d, yyyy, h:mm a",
+    "LLL d, yyyy, h:mm a",
+  ];
 
-  if (!dt.isValid) {
-    dt = DateTime.fromFormat(raw, "M/d/yy h:mm a", {
+  for (const format of formats) {
+    const dt = DateTime.fromFormat(raw, format, {
       zone: "America/Chicago",
     });
+
+    if (dt.isValid) {
+      return dt.toUTC().toISO();
+    }
   }
 
-  if (!dt.isValid) {
-    return null;
-  }
-
-  return dt.toUTC().toISO();
+  return null;
 }
 
 function extractVehicleListingUrlFromHtml(html) {
@@ -485,6 +500,12 @@ function extractTripChangedFields(normalizedTextBody, subject = "", htmlBody = "
   const base = baseExtractFields(normalizedTextBody, subject, htmlBody);
   const text = normalizedTextBody || "";
   const lines = text.split("\n").map((s) => s.trim()).filter(Boolean);
+  const newTripStartRaw =
+    extractMatch(text, /New trip start on\s+(.+?)(?:\n|$)/i) ||
+    extractMatch(text, /New pickup on\s+(.+?)(?:\n|$)/i);
+  const newTripEndRaw =
+    extractMatch(text, /New trip end on\s+(.+?)(?:\n|$)/i) ||
+    extractMatch(text, /New return on\s+(.+?)(?:\n|$)/i);
 
   const changeSummary =
     extractMatch(text, /New trip end on (.+)/i, 0) ||
@@ -518,6 +539,8 @@ function extractTripChangedFields(normalizedTextBody, subject = "", htmlBody = "
 
   return {
     ...base,
+    tripStart: parseTuroDateTime(newTripStartRaw) || base.tripStart,
+    tripEnd: parseTuroDateTime(newTripEndRaw) || base.tripEnd,
     changeType,
     changeSummary: changeSummary || null,
     newTotalEarnings: parseMoney(newTotalEarningsRaw),

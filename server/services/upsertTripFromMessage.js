@@ -8,6 +8,9 @@
 const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("./pushPublicAvailability");
 const { deriveWorkflowStage } = require("./trips/deriveWorkflowStage");
+const {
+  syncTripToSelectedGoogleCalendars,
+} = require("./googleCalendar/googleTripSync");
 
 function normalizeTripStatus(messageType) {
   switch (messageType) {
@@ -28,6 +31,26 @@ function resolveTuroVehicleId(savedMessage) {
     savedMessage.turo_vehicle_id ||
     null
   );
+}
+
+function syncTripToGoogleCalendar(trip, reason, options = {}) {
+  if (!trip?.id) return;
+
+  void syncTripToSelectedGoogleCalendars(trip.id, options)
+    .then((result) => {
+      if (!result.ok) {
+        console.warn(
+          `[google-calendar] trip ${trip.id} calendar sync completed with failures | reason=${reason}`,
+          result.results
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn(
+        `[google-calendar] trip ${trip.id} calendar sync failed | reason=${reason}:`,
+        err.message || err
+      );
+    });
 }
 
 async function upsertTripFromMessage(savedMessage) {
@@ -213,6 +236,14 @@ async function upsertTripFromMessage(savedMessage) {
   const result = await pool.query(query, values);
 
   void pushPublicAvailabilitySnapshotSafe("trip status changed");
+
+  if (isCanceledMessage) {
+    syncTripToGoogleCalendar(result.rows[0], "trip_canceled", {
+      retryDeletedEvents: true,
+    });
+  } else if (["trip_booked", "trip_changed"].includes(savedMessage.message_type)) {
+    syncTripToGoogleCalendar(result.rows[0], savedMessage.message_type);
+  }
 
   return result.rows[0] || null;
 }

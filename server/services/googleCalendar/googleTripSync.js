@@ -1,6 +1,9 @@
 const { google } = require("googleapis");
 const { getOAuthClient } = require("./googleCalendarAuth");
-const { getGoogleCalendarConnection } = require("./googleCalendarStore");
+const {
+  getGoogleCalendarConnection,
+  listGoogleCalendarSyncTargets,
+} = require("./googleCalendarStore");
 const { getTripById, getTripsForGoogleCalendarReconcile } = require("./tripStore");
 const {
   getAllTripGoogleSync,
@@ -56,7 +59,7 @@ async function upsertGoogleEvent({
   return updated.data;
 }
 
-async function syncTripToGoogle(tripId, userId = null) {
+async function syncTripToGoogle(tripId, userId = null, options = {}) {
   const trip = await getTripById(tripId);
   if (!trip) {
     throw new Error(`Trip ${tripId} not found`);
@@ -113,7 +116,11 @@ async function syncTripToGoogle(tripId, userId = null) {
   const desiredTypes = new Set(desiredEvents.map((e) => e.eventType));
 
   for (const existingSync of existingSyncRows) {
-    if (!desiredTypes.has(existingSync.event_type) && existingSync.sync_status !== "deleted") {
+    const shouldDeleteMissingEvent =
+      !desiredTypes.has(existingSync.event_type) &&
+      (options.retryDeletedEvents || existingSync.sync_status !== "deleted");
+
+    if (shouldDeleteMissingEvent) {
       await deleteGoogleEventIfPresent(calendar, connection.calendar_id, existingSync);
       await markTripGoogleSyncDeleted(trip.id, connection.id, existingSync.event_type);
     }
@@ -155,7 +162,47 @@ async function reconcileTripsToGoogle({ userId = null, limit = 500 } = {}) {
   };
 }
 
+async function syncTripToSelectedGoogleCalendars(tripId, options = {}) {
+  const targets = await listGoogleCalendarSyncTargets();
+
+  if (!targets.length) {
+    return {
+      ok: true,
+      tripId,
+      processed: 0,
+      results: [],
+    };
+  }
+
+  const results = [];
+
+  for (const target of targets) {
+    try {
+      const result = await syncTripToGoogle(tripId, target.user_id ?? null, options);
+      results.push({
+        userId: target.user_id ?? null,
+        ok: true,
+        desiredEventTypes: result.desiredEventTypes,
+      });
+    } catch (err) {
+      results.push({
+        userId: target.user_id ?? null,
+        ok: false,
+        error: err.message,
+      });
+    }
+  }
+
+  return {
+    ok: results.every((result) => result.ok),
+    tripId,
+    processed: results.length,
+    results,
+  };
+}
+
 module.exports = {
   syncTripToGoogle,
+  syncTripToSelectedGoogleCalendars,
   reconcileTripsToGoogle,
 };
