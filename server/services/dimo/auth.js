@@ -89,10 +89,23 @@ async function getDimoDeveloperJwt({ forceRefresh = false } = {}) {
   }
 
   const dimo = await getDimoSdk();
-  const developerJwt = await dimo.auth.getDeveloperJwt({
-    client_id: requireEnv("DIMO_CLIENT_ID"),
-    domain: requireEnv("DIMO_REDIRECT_URL"),
+  const clientId = requireEnv("DIMO_CLIENT_ID");
+  const domain = requireEnv("DIMO_REDIRECT_URL");
+  const signerAddress = (process.env.DIMO_SIGNER_ADDRESS || clientId).trim();
+  const challenge = await dimo.auth.generateChallenge({
+    client_id: clientId,
+    domain,
+    address: signerAddress,
+  });
+  const signature = await dimo.auth.signChallenge({
+    message: challenge.challenge,
     private_key: requireEnv("DIMO_API_KEY"),
+  });
+  const developerJwt = await dimo.auth.submitChallenge({
+    client_id: clientId,
+    domain,
+    state: challenge.state,
+    signature,
   });
 
   developerJwtCache = {

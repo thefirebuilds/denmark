@@ -506,7 +506,12 @@ async function upsertDimoVehicle(normalized, client = pool) {
   const assignments = updatableColumns.map((column) => {
     if (column === "updated_at") return "updated_at = NOW()";
     if (column === "current_odometer_miles") {
-      return "current_odometer_miles = COALESCE(EXCLUDED.current_odometer_miles, vehicles.current_odometer_miles)";
+      return `current_odometer_miles = CASE
+        WHEN EXCLUDED.current_odometer_miles IS NULL THEN vehicles.current_odometer_miles
+        WHEN vehicles.current_odometer_miles IS NULL THEN EXCLUDED.current_odometer_miles
+        WHEN EXCLUDED.current_odometer_miles >= vehicles.current_odometer_miles THEN EXCLUDED.current_odometer_miles
+        ELSE vehicles.current_odometer_miles
+      END`;
     }
     return `${column} = COALESCE(EXCLUDED.${column}, vehicles.${column})`;
   });

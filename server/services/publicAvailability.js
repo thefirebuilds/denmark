@@ -335,6 +335,25 @@ function buildVehicleStatus(vehicle, trips, now) {
   const window = getDateWindow();
   const fullWindowUnavailableDates = getDateKeysBetweenInclusive(window.start, window.end);
 
+  if (vehicle.in_service === false) {
+    return {
+      ...buildVehiclePublicMetadata(vehicle),
+      status: "unavailable",
+      label: "Unavailable",
+      nextAvailableDate: null,
+      availableDates: [],
+      unavailableDates: fullWindowUnavailableDates,
+      unavailableRanges: [
+        {
+          start: formatDateKey(window.start),
+          end: formatDateKey(window.end),
+          reason: "maintenance_mode",
+        },
+      ],
+      updatedAt: now.toISOString(),
+    };
+  }
+
   if (activeTrip && isLongTermTrip(activeTrip)) {
     return {
       ...buildVehiclePublicMetadata(vehicle),
@@ -407,7 +426,8 @@ async function getVehicles() {
       vin,
       year,
       make,
-      model
+      model,
+      in_service
     FROM vehicles
     ORDER BY nickname NULLS LAST, id
   `;

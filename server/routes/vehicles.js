@@ -17,6 +17,7 @@ const {
   getLatestVehicleFmvEstimates,
   getVehicleFmvEstimateHistory,
 } = require("../services/vehicles/fmvEstimateService");
+const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
 
 const router = express.Router();
 
@@ -748,6 +749,11 @@ router.patch("/:selector", async (req, res) => {
     }
 
     await client.query("COMMIT");
+
+    if (existing.in_service !== updatedVehicle.in_service) {
+      void pushPublicAvailabilitySnapshotSafe("vehicle service status changed");
+    }
+
     return res.json(updatedVehicle);
   } catch (err) {
     await client.query("ROLLBACK");

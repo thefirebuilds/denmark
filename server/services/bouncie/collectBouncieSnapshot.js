@@ -152,7 +152,12 @@ async function upsertVehicle(client, snapshot) {
         year = EXCLUDED.year,
         standard_engine = EXCLUDED.standard_engine,
         bouncie_vehicle_id = COALESCE(EXCLUDED.bouncie_vehicle_id, vehicles.bouncie_vehicle_id),
-        current_odometer_miles = COALESCE(EXCLUDED.current_odometer_miles, vehicles.current_odometer_miles),
+        current_odometer_miles = CASE
+          WHEN EXCLUDED.current_odometer_miles IS NULL THEN vehicles.current_odometer_miles
+          WHEN vehicles.current_odometer_miles IS NULL THEN EXCLUDED.current_odometer_miles
+          WHEN EXCLUDED.current_odometer_miles >= vehicles.current_odometer_miles THEN EXCLUDED.current_odometer_miles
+          ELSE vehicles.current_odometer_miles
+        END,
         updated_at = NOW()
     `,
     [

@@ -191,7 +191,6 @@ async function getDimoFleetFromDb() {
     FROM vehicles
     WHERE dimo_token_id IS NOT NULL
       AND COALESCE(is_active, true) = true
-      AND COALESCE(in_service, true) = true
     ORDER BY nickname NULLS LAST, make NULLS LAST, model NULLS LAST, id ASC
   `);
 
@@ -199,7 +198,8 @@ async function getDimoFleetFromDb() {
     vehicle_id: vehicle.id,
     tokenId: normalizeTokenId(vehicle.dimo_token_id),
     dimo_token_id: normalizeTokenId(vehicle.dimo_token_id),
-    active: vehicle.is_active !== false && vehicle.in_service !== false,
+    active: vehicle.is_active !== false,
+    in_service: vehicle.in_service !== false,
     nickname: cleanString(vehicle.nickname),
     vin: cleanString(vehicle.vin),
     make: cleanString(vehicle.make),

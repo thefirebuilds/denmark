@@ -542,6 +542,9 @@ async function listVehicleFinancialProfiles(client = pool) {
       v.year,
       v.make,
       v.model,
+      v.is_active,
+      v.in_service,
+      v.retired_at,
       v.current_odometer_miles,
       v.onboarding_date,
       v.acquisition_cost,
@@ -568,8 +571,21 @@ async function listVehicleFinancialProfiles(client = pool) {
       ON se.vehicle_id = v.id
     LEFT JOIN vehicle_financial_profiles vfp
       ON vfp.vehicle_id = v.id
-    WHERE v.is_active = true
-      AND v.in_service = true
+    WHERE COALESCE(v.is_active, false) = true
+      OR v.retired_at IS NOT NULL
+      OR vfp.id IS NOT NULL
+      OR se.vehicle_id IS NOT NULL
+      OR EXISTS (
+        SELECT 1
+        FROM expenses e
+        WHERE e.vehicle_id = v.id
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM trips t
+        WHERE v.turo_vehicle_id IS NOT NULL
+          AND t.turo_vehicle_id = v.turo_vehicle_id
+      )
     ORDER BY COALESCE(v.nickname, v.vin)
   `);
 
@@ -742,8 +758,9 @@ async function upsertVehicleFinancialProfile(vehicleIdInput, input = {}, client 
   return rows[0] || null;
 }
 
-async function fetchVehiclesWithProfiles(client = pool) {
-  const { rows } = await client.query(`
+async function fetchVehiclesWithProfiles(client = pool, startDate = null, endDate = new Date()) {
+  const { rows } = await client.query(
+    `
     WITH startup_expenses AS (
       SELECT
         e.vehicle_id,
@@ -765,6 +782,9 @@ async function fetchVehiclesWithProfiles(client = pool) {
       v.make,
       v.model,
       v.turo_vehicle_id,
+      v.is_active,
+      v.in_service,
+      v.retired_at,
       v.current_odometer_miles,
       v.onboarding_date,
       v.acquisition_cost,
@@ -789,10 +809,40 @@ async function fetchVehiclesWithProfiles(client = pool) {
       ON se.vehicle_id = v.id
     LEFT JOIN vehicle_financial_profiles fp
       ON fp.vehicle_id = v.id
-    WHERE v.is_active = true
-      AND v.in_service = true
+    WHERE COALESCE(v.is_active, false) = true
+      OR EXISTS (
+        SELECT 1
+        FROM expenses e
+        WHERE e.vehicle_id = v.id
+          AND e.date <= $2::date
+          AND ($1::date IS NULL OR e.date >= $1::date)
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM trip_financial_facts tf
+        JOIN trips t
+          ON t.id = tf.trip_id
+        WHERE tf.vehicle_id = v.id
+          AND t.trip_start <= $4::timestamptz
+          AND t.trip_end >= COALESCE($3::timestamptz, t.trip_start)
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM trips t
+        WHERE v.turo_vehicle_id IS NOT NULL
+          AND t.turo_vehicle_id = v.turo_vehicle_id
+          AND t.trip_start <= $4::timestamptz
+          AND t.trip_end >= COALESCE($3::timestamptz, t.trip_start)
+      )
     ORDER BY COALESCE(v.nickname, v.vin)
-  `);
+  `,
+    [
+      startDate ? toDateOnly(startDate) : null,
+      toDateOnly(endDate),
+      startDate || null,
+      endDate,
+    ]
+  );
   return rows;
 }
 
@@ -927,17 +977,19 @@ function allocateExpenseAmount(expense, vehicleMetricsById, tripIdToVehicleId, f
     return allocations;
   }
 
-  const vehicleIds = Array.from(vehicleMetricsById.keys());
+  const allocationEntries = Array.from(vehicleMetricsById.entries()).filter(
+    ([, metric]) => metric?.include_in_shared_allocations !== false
+  );
+  const vehicleIds = allocationEntries.map(([vehicleId]) => vehicleId);
   if (!vehicleIds.length) return allocations;
 
   if (scope === "general" || scope === "shared") {
-    const fleetAvailableDaysBasis = vehicleIds.reduce((sum, vehicleId) => {
-      const metric = vehicleMetricsById.get(vehicleId);
+    const fleetAvailableDaysBasis = allocationEntries.reduce((sum, [, metric]) => {
       return sum + Math.max(0, toNumber(metric?.days_available));
     }, 0);
 
     if (fleetAvailableDaysBasis > 0) {
-      for (const [vehicleId, metric] of vehicleMetricsById.entries()) {
+      for (const [vehicleId, metric] of allocationEntries) {
         const share = safeDivide(
           Math.max(0, toNumber(metric?.days_available)),
           fleetAvailableDaysBasis,
@@ -956,7 +1008,7 @@ function allocateExpenseAmount(expense, vehicleMetricsById, tripIdToVehicleId, f
 
   if (scope === "apportioned") {
     if (fleetMilesBasis > 0) {
-      for (const [vehicleId, metric] of vehicleMetricsById.entries()) {
+      for (const [vehicleId, metric] of allocationEntries) {
         const share = safeDivide(metric.total_miles_basis, fleetMilesBasis, 0);
         allocations.push([vehicleId, total * share]);
       }
@@ -981,13 +1033,13 @@ function describeExpenseMappingIssue(expense, tripIdToVehicleId) {
   if (scope === "direct") {
     if (hasVehicleId) {
       return {
-        reason: "vehicle attribution points to a vehicle outside the active fleet",
-        action: "reassign the vehicle or change the scope if this should be shared",
+        reason: "vehicle attribution does not match a known bookkeeping vehicle",
+        action: "reassign the vehicle or add the vehicle record back to bookkeeping",
       };
     }
     if (hasTripId && !tripMapsToVehicle) {
       return {
-        reason: "trip linkage does not resolve to an active vehicle",
+        reason: "trip linkage does not resolve to a known bookkeeping vehicle",
         action: "fix the linked trip or assign the expense directly to a vehicle",
       };
     }
@@ -1088,7 +1140,7 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
   await syncTripFinancialFacts(client);
   const [settings, vehicles, vehicleOpsPayload, trips, expenses, startupBasisByVehicle] = await Promise.all([
     getBusinessFinancialSettings(client),
-    fetchVehiclesWithProfiles(client),
+    fetchVehiclesWithProfiles(client, startDate, endDate),
     getVehicleMetrics(key),
     fetchTripsForBusinessMetrics(client, startDate, endDate),
     fetchExpensesForBusinessMetrics(client, startDate, endDate),
@@ -1119,6 +1171,9 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
   for (const vehicle of vehicles) {
     const vehicleId = String(vehicle.id);
     const ops = vehicleOpsById.get(vehicleId) || {};
+    const isActive = vehicle.is_active !== false;
+    const isRetired = Boolean(vehicle.retired_at);
+    const includeInSharedAllocations = isActive && !isRetired;
     const placedInServiceDate =
       vehicle.placed_in_service_date ||
       vehicle.onboarding_date ||
@@ -1151,6 +1206,10 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       vehicle_id: vehicle.id,
       vehicle_name: vehicle.nickname || vehicle.vin,
       turo_vehicle_id: vehicle.turo_vehicle_id || null,
+      is_active: isActive,
+      in_service: vehicle.in_service !== false,
+      retired_at: vehicle.retired_at || null,
+      include_in_shared_allocations: includeInSharedAllocations,
       year_make_model: [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" "),
       purchase_price: roundMoney(
         vehicle.purchase_price ??
@@ -1443,10 +1502,12 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     }
   }
 
-  const fleetMilesBasis = Array.from(vehicleMetricsById.values()).reduce(
-    (sum, item) => sum + Number(item.total_miles_basis ?? 0),
-    0
-  );
+  const fleetMilesBasis = Array.from(vehicleMetricsById.values())
+    .filter((item) => item?.include_in_shared_allocations !== false)
+    .reduce(
+      (sum, item) => sum + Number(item.total_miles_basis ?? 0),
+      0
+    );
   const startupExpenseTotalsByVehicle = new Map();
 
   for (const expense of expenses) {

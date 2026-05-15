@@ -352,7 +352,12 @@ async function collectOverdueReturnAlerts() {
     WHERE t.trip_end < NOW() - INTERVAL '30 minutes'
       AND t.trip_end >= NOW() - INTERVAL '24 hours'
       AND COALESCE(t.closed_out, false) = false
-      AND COALESCE(t.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
+      AND COALESCE(t.workflow_stage, '') IN (
+        'booked',
+        'confirmed',
+        'ready_for_handoff',
+        'in_progress'
+      )
       AND COALESCE(t.status, '') <> 'canceled'
     ORDER BY t.trip_end ASC
     LIMIT 10

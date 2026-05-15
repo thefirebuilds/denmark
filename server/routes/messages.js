@@ -2302,7 +2302,7 @@ router.get("/", async (req, res) => {
       ) next_trip ON true
       WHERE
         COALESCE(c.closed_out, false) = false
-          OR
+        AND (
           COALESCE(c.workflow_stage, '') NOT IN ('complete', 'closed')
           OR c.starting_odometer IS NULL
           OR c.ending_odometer IS NULL
@@ -2322,6 +2322,7 @@ router.get("/", async (req, res) => {
               OR next_trip.trip_start > NOW()
             )
           )
+        )
       ORDER BY c.trip_end DESC NULLS LAST, c.trip_id DESC
       LIMIT 25
     `;

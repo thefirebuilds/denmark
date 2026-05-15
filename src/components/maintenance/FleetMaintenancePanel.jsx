@@ -465,6 +465,7 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
         fleetVehicle?.lockboxPin
       ) || "",
     rentable: !summary.blocksRental,
+    in_service: fleetVehicle?.in_service !== false,
     overall_status: overallStatus,
     export_ready: !summary.blocksGuestExport,
     telematics: buildTelematicsStatus(fleetVehicle),
@@ -573,6 +574,8 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
   const [editingRegistration, setEditingRegistration] = useState(false);
   const [savingRegistration, setSavingRegistration] = useState(false);
   const [registrationError, setRegistrationError] = useState("");
+  const [savingMaintenanceMode, setSavingMaintenanceMode] = useState(false);
+  const [maintenanceModeError, setMaintenanceModeError] = useState("");
   const [registrationForm, setRegistrationForm] = useState({
     license_plate: "",
     license_state: "TX",
@@ -1041,6 +1044,8 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
 
   const title = `${vehicle.nickname} • ${vehicle.year} ${vehicle.make} ${vehicle.model}`;
 
+  const maintenanceModeEnabled = selectedFleetVehicle?.in_service === false;
+
   useEffect(() => {
     setBodyNotesText(
       Array.isArray(vehicle.body_notes) ? vehicle.body_notes.join("\n") : ""
@@ -1253,6 +1258,54 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
       setRegistrationError(err.message || "Could not save registration.");
     } finally {
       setSavingRegistration(false);
+    }
+  }
+
+  async function handleToggleMaintenanceMode() {
+    try {
+      if (!selectedFleetVehicle?.vin) {
+        throw new Error("No selected vehicle VIN available.");
+      }
+
+      const nextInService = selectedFleetVehicle.in_service === false;
+
+      setSavingMaintenanceMode(true);
+      setMaintenanceModeError("");
+
+      const res = await fetch(
+        `/api/vehicles/${encodeURIComponent(selectedFleetVehicle.vin)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            in_service: nextInService,
+          }),
+        }
+      );
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      setFleetVehicles((prev) =>
+        prev.map((item) =>
+          String(item.vin || "") === String(selectedFleetVehicle.vin || "")
+            ? {
+                ...item,
+                in_service: body.in_service,
+              }
+            : item
+        )
+      );
+    } catch (err) {
+      console.error("Failed to update maintenance mode:", err);
+      setMaintenanceModeError(err.message || "Could not update maintenance mode.");
+    } finally {
+      setSavingMaintenanceMode(false);
     }
   }
 
@@ -1776,6 +1829,27 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                       </a>
                     </div>
                   ) : null}
+
+                  <div className="message-actions">
+                    <button
+                      type="button"
+                      className="message-action"
+                      disabled={!selectedFleetVehicle?.vin || savingMaintenanceMode}
+                      onClick={handleToggleMaintenanceMode}
+                    >
+                      {savingMaintenanceMode
+                        ? "Saving..."
+                        : maintenanceModeEnabled
+                        ? "End maintenance mode"
+                        : "Start maintenance mode"}
+                    </button>
+                  </div>
+
+                  {maintenanceModeError ? (
+                    <div className="fleet-maintenance-note fleet-maintenance-note--error">
+                      {maintenanceModeError}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div
@@ -1783,6 +1857,8 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                 >
                   {loading
                     ? "Loading…"
+                    : maintenanceModeEnabled
+                    ? "Maintenance mode"
                     : vehicle.overall_status === "pass"
                     ? "Guest-ready"
                     : "Needs review"}
