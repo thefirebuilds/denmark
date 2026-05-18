@@ -224,6 +224,29 @@ function buildTelematicsStatus(fleetVehicle = null) {
   };
 }
 
+function buildTelemetryLocation(fleetVehicle = null) {
+  const location = fleetVehicle?.telemetry?.location || {};
+  const lat = Number(location.lat);
+  const lon = Number(location.lon);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return null;
+  }
+
+  return {
+    lat,
+    lon,
+    label: `${lat.toFixed(5)}, ${lon.toFixed(5)}`,
+    lastUpdated:
+      location.last_updated ||
+      fleetVehicle?.telemetry?.timestamps?.location_last_updated ||
+      fleetVehicle?.telemetry?.timestamps?.vehicle_last_updated ||
+      fleetVehicle?.telemetry?.timestamps?.captured_at ||
+      fleetVehicle?.telemetry?.last_comm ||
+      null,
+  };
+}
+
 function buildMilStatus(fleetVehicle = null) {
   const mil = fleetVehicle?.telemetry?.mil || {};
   const codes = Array.isArray(mil.qualified_dtc_list)
@@ -466,9 +489,11 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
       ) || "",
     rentable: !summary.blocksRental,
     in_service: fleetVehicle?.in_service !== false,
+    map_vehicle_id: fleetVehicle?.id ?? sourceVehicle.id ?? fallbackId,
     overall_status: overallStatus,
     export_ready: !summary.blocksGuestExport,
     telematics: buildTelematicsStatus(fleetVehicle),
+    telemetry_location: buildTelemetryLocation(fleetVehicle),
     mil_status: buildMilStatus(fleetVehicle),
     engine_temperature: buildEngineTemperatureStatus(fleetVehicle),
     engine_rpm: buildEngineRpmStatus(fleetVehicle),
@@ -545,7 +570,10 @@ function sortFleetPlanningCards(cards) {
   });
 }
 
-export default function FleetMaintenancePanel({ selectedVehicleId }) {
+export default function FleetMaintenancePanel({
+  selectedVehicleId,
+  onOpenVehicleMap,
+}) {
   const cardRef = useRef(null);
   const preflightRef = useRef(null);
 
@@ -2109,6 +2137,19 @@ export default function FleetMaintenancePanel({ selectedVehicleId }) {
                     Last call-in:{" "}
                     {vehicle.telematics?.lastCallLabel || "No call-in recorded"}
                   </span>
+                  {vehicle.telemetry_location ? (
+                    <button
+                      type="button"
+                      className="fleet-maintenance-inline-link"
+                      onClick={() =>
+                        onOpenVehicleMap?.(
+                          vehicle.map_vehicle_id || selectedFleetVehicle?.id
+                        )
+                      }
+                    >
+                      Map {vehicle.telemetry_location.label}
+                    </button>
+                  ) : null}
                 </div>
 
                 <div

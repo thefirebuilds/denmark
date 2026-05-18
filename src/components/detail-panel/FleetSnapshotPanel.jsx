@@ -44,6 +44,7 @@ export default function FleetSnapshotPanel({
   vehiclesError,
   highlightedVehicles,
   trips = [],
+  onOpenVehicleMap,
 }) {
   const [expandedVehicles, setExpandedVehicles] = useState({});
 
@@ -285,6 +286,27 @@ export default function FleetSnapshotPanel({
 
   function renderLocationLink(vehicle) {
   const { label, url, title, clickable } = getVehicleLocationLinkData(vehicle);
+
+  if (
+    label &&
+    label !== "—" &&
+    typeof onOpenVehicleMap === "function" &&
+    vehicle?.id != null
+  ) {
+    return (
+      <button
+        type="button"
+        className="detail-inline-link detail-inline-button"
+        title="Open in Fleet Map"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenVehicleMap(vehicle.id);
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
 
   if (!clickable) {
     return <span>{label}</span>;

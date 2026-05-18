@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 72" role="img" aria-label="Kia">
+  <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="90" cy="36" rx="82" ry="29" stroke-width="8"/>
+    <path d="M50 49V23M50 36l25-15M50 36l25 15" stroke-width="8"/>
+    <path d="M88 22v28" stroke-width="8"/>
+    <path d="M110 50l16-29 18 29M118 40h18" stroke-width="8"/>
+  </g>
+</svg>

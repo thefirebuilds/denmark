@@ -7,6 +7,42 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const STALE_AFTER_MS = 15 * 60 * 1000;
 const REFRESH_INTERVAL_MS = 60 * 1000;
 const DEFAULT_CENTER = [30.2672, -97.7431];
+const OVERLAP_RADIUS_MILES = 0.035;
+
+const SPIDER_OFFSETS = [
+  [0, -34],
+  [34, 0],
+  [0, 34],
+  [-34, 0],
+  [25, -25],
+  [25, 25],
+  [-25, 25],
+  [-25, -25],
+  [48, -14],
+  [48, 14],
+  [-48, 14],
+  [-48, -14],
+];
+
+const VEHICLE_PIN_IMAGES = {
+  belle: "/images/map_pins/kiaNew.png",
+  cherry: "/images/map_pins/toyota.png",
+  delavan: "/images/map_pins/hyundai.png",
+  geneva: "/images/map_pins/hyundai.png",
+  stripe: "/images/map_pins/toyota.png",
+  juneau: "/images/map_pins/hyundai.png",
+  winnie: "/images/map_pins/honda.png",
+};
+
+const VEHICLE_PIN_COLORS = {
+  belle: "#dc2626",
+  cherry: "#be123c",
+  delavan: "#2563eb",
+  geneva: "#0f766e",
+  juneau: "#7c3aed",
+  stripe: "#ea580c",
+  winnie: "#0891b2",
+};
 
 function isStale(lastSeen) {
   if (!lastSeen) return true;
@@ -64,6 +100,26 @@ function buildGoogleMapsUrl(lat, lon) {
   return `https://www.google.com/maps?q=${lat},${lon}`;
 }
 
+function distanceMiles(a, b) {
+  const lat1 = Number(a?.lat);
+  const lon1 = Number(a?.lon);
+  const lat2 = Number(b?.lat);
+  const lon2 = Number(b?.lon);
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+
+  const radiusMiles = 3958.7613;
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const rLat1 = toRadians(lat1);
+  const rLat2 = toRadians(lat2);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) ** 2;
+
+  return 2 * radiusMiles * Math.asin(Math.sqrt(h));
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -76,7 +132,14 @@ function escapeHtml(value) {
 function getMarkerLabel(vehicle) {
   const name = String(vehicle?.name || "Vehicle").trim();
   const firstWord = name.split(/\s+/)[0] || name;
-  return firstWord.length > 8 ? `${firstWord.slice(0, 7)}…` : firstWord;
+  return firstWord.length > 10 ? `${firstWord.slice(0, 9)}…` : firstWord;
+}
+
+function getVehiclePinKey(vehicle) {
+  return String(vehicle?.name || "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)[0];
 }
 
 function mapStatusVehicleToLocation(vehicle) {
@@ -87,12 +150,13 @@ function mapStatusVehicleToLocation(vehicle) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
   return {
-    id:
+    id: String(
       vehicle?.id ||
-      vehicle?.vin ||
-      vehicle?.dimo_token_id ||
-      vehicle?.bouncie_vehicle_id ||
-      vehicle?.nickname,
+        vehicle?.vin ||
+        vehicle?.dimo_token_id ||
+        vehicle?.bouncie_vehicle_id ||
+        vehicle?.nickname
+    ),
     name:
       vehicle?.nickname ||
       vehicle?.turo_vehicle_name ||
@@ -156,20 +220,73 @@ async function fetchVehicleLocations() {
   }
 }
 
-function createVehicleIcon(vehicle, stale, selected, running) {
+function buildSpiderOffsets(locations) {
+  const offsets = new Map();
+  const visited = new Set();
+
+  locations.forEach((vehicle) => {
+    if (visited.has(vehicle.id)) return;
+
+    const group = locations.filter(
+      (candidate) => distanceMiles(vehicle, candidate) <= OVERLAP_RADIUS_MILES
+    );
+    group.forEach((item) => visited.add(item.id));
+
+    if (group.length <= 1) {
+      offsets.set(vehicle.id, { x: 0, y: 0, count: 1 });
+      return;
+    }
+
+    group
+      .slice()
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+      .forEach((item, index) => {
+        const [x, y] = SPIDER_OFFSETS[index] || [
+          Math.round(Math.cos(index) * 56),
+          Math.round(Math.sin(index) * 56),
+        ];
+        offsets.set(item.id, { x, y, count: group.length });
+      });
+  });
+
+  return offsets;
+}
+
+function createVehicleIcon(vehicle, stale, selected, running, spiderOffset) {
   const label = escapeHtml(getMarkerLabel(vehicle));
+  const offset = spiderOffset || { x: 0, y: 0, count: 1 };
+  const pinKey = getVehiclePinKey(vehicle);
+  const imageUrl = VEHICLE_PIN_IMAGES[pinKey] || "";
+  const accentColor = VEHICLE_PIN_COLORS[pinKey] || "";
+  const badgeHtml = imageUrl
+    ? `<img class="fleet-map-marker-badge-image" src="${escapeHtml(
+        imageUrl
+      )}" alt="" />`
+    : "";
   return L.divIcon({
-    className: [
-      "fleet-map-marker",
-      running ? "fleet-map-marker--running" : "",
-      stale ? "fleet-map-marker--stale" : "",
-      selected ? "fleet-map-marker--selected" : "",
-    ]
-      .filter(Boolean)
-      .join(" "),
-    html: `<span aria-hidden="true">${label}</span>`,
-    iconSize: [74, 34],
-    iconAnchor: [37, 34],
+    className: "fleet-map-marker-wrap",
+    html: `
+      <div
+        class="${[
+          "fleet-map-marker",
+          pinKey ? `fleet-map-marker--${pinKey}` : "",
+          imageUrl ? "fleet-map-marker--image-badge" : "",
+          offset.count > 1 ? "fleet-map-marker--spidered" : "",
+          running ? "fleet-map-marker--running" : "",
+          stale ? "fleet-map-marker--stale" : "",
+          selected ? "fleet-map-marker--selected" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}"
+        style="--fleet-map-offset-x: ${offset.x}px; --fleet-map-offset-y: ${offset.y}px;${
+          accentColor ? ` --fleet-map-badge-color: ${accentColor};` : ""
+        }"
+      >
+        ${badgeHtml}
+        <span aria-hidden="true">${label}</span>
+      </div>`,
+    iconSize: [118, 72],
+    iconAnchor: [59, 68],
     popupAnchor: [0, -32],
   });
 }
@@ -212,7 +329,7 @@ function MapFocus({ vehicle, locations, focusKey }) {
   return null;
 }
 
-export default function FleetMapPanel() {
+export default function FleetMapPanel({ focusVehicleId = null }) {
   const [locations, setLocations] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -222,6 +339,7 @@ export default function FleetMapPanel() {
   const [focusKey, setFocusKey] = useState(0);
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
   const hasLoadedLocationsRef = useRef(false);
+  const lastFocusVehicleIdRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -273,10 +391,24 @@ export default function FleetMapPanel() {
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const requestedId =
+      focusVehicleId == null || focusVehicleId === ""
+        ? null
+        : String(focusVehicleId);
+    if (!requestedId || requestedId === lastFocusVehicleIdRef.current) return;
+    if (!locations.some((vehicle) => String(vehicle.id) === requestedId)) return;
+
+    lastFocusVehicleIdRef.current = requestedId;
+    setSelectedId(requestedId);
+    setFocusKey((value) => value + 1);
+  }, [focusVehicleId, locations]);
+
   const selectedVehicle = useMemo(
     () => locations.find((vehicle) => vehicle.id === selectedId) || null,
     [locations, selectedId]
   );
+  const spiderOffsets = useMemo(() => buildSpiderOffsets(locations), [locations]);
 
   const center = selectedVehicle
     ? [selectedVehicle.lat, selectedVehicle.lon]
@@ -363,7 +495,8 @@ export default function FleetMapPanel() {
                       vehicle,
                       stale,
                       vehicle.id === selectedId,
-                      running
+                      running,
+                      spiderOffsets.get(vehicle.id)
                     )}
                     eventHandlers={{
                       click: () => toggleSelectedVehicle(vehicle.id),

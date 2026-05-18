@@ -24,7 +24,7 @@ function mapLocationRow(row) {
   if (lat == null || lon == null) return null;
 
   return {
-    id: row.id,
+    id: String(row.id),
     name: row.name || `Vehicle ${row.id}`,
     source: normalizeSource(row.source),
     lat,

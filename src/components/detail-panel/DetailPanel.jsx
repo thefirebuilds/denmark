@@ -51,6 +51,7 @@ export default function DetailPanel({
   editTripRequest,
   onTripUpdated,
   trips,
+  onOpenVehicleMap,
 }) {
   const { vehicles, vehiclesLoading, vehiclesError, highlightedVehicles } =
     useVehicleStatus(60000);
@@ -220,6 +221,7 @@ export default function DetailPanel({
         vehiclesError={vehiclesError}
         highlightedVehicles={highlightedVehicles}
         trips={trips}
+        onOpenVehicleMap={onOpenVehicleMap}
       />
     );
   }
@@ -241,6 +243,7 @@ export default function DetailPanel({
         maintenanceLoading={maintenanceLoading}
         maintenanceError={maintenanceError}
         trips={trips}
+        onOpenVehicleMap={onOpenVehicleMap}
       />
 
       <TripEditModal

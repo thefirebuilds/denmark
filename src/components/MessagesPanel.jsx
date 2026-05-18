@@ -95,6 +95,18 @@ function formatBridgeHeartbeat(heartbeat) {
   return `Bridge heartbeat: ${formatTripTime(heartbeat.received_at)}`;
 }
 
+function formatBridgeTuroNotification(notification) {
+  if (!notification?.received_at) return "Turo notifications: none";
+
+  const age = Number(notification.age_minutes);
+  if (Number.isFinite(age)) {
+    if (age < 90) return `Turo notifications: ${Math.round(age)} min ago`;
+    return `Turo notifications: ${Math.round(age / 60)} hr ago`;
+  }
+
+  return `Turo notifications: ${formatTripTime(notification.received_at)}`;
+}
+
 function formatTripWindow(start, end) {
   const startLabel = formatTripTime(start);
   const endLabel = formatTripTime(end);
@@ -1048,6 +1060,8 @@ export default function MessagesPanel({
   const [newMessageIds, setNewMessageIds] = useState([]);
   const [unreadCount, setUnreadCount] = useState(Number(initialUnreadCount || 0));
   const [bridgeHeartbeat, setBridgeHeartbeat] = useState(null);
+  const [bridgeLastTuroNotification, setBridgeLastTuroNotification] =
+    useState(null);
   const [rawFeedType, setRawFeedType] = useState("");
   const [rawFeedPage, setRawFeedPage] = useState(1);
   const [rawFeed, setRawFeed] = useState({
@@ -1104,6 +1118,7 @@ export default function MessagesPanel({
 
       setUnreadCount(Number(stats.unread || 0));
       setBridgeHeartbeat(stats.bridgeHeartbeat || null);
+      setBridgeLastTuroNotification(stats.bridgeLastTuroNotification || null);
     } catch (err) {
       console.error("Failed loading message stats:", err);
     }
@@ -1934,12 +1949,17 @@ async function handleExportGuestInspectionSheet(message) {
         </div>
 
         <div className="chip">{unreadCount} unread</div>
+        {bridgeHeartbeat?.stale ? (
+          <div className="chip bridge-heartbeat bridge-heartbeat--stale">
+            {formatBridgeHeartbeat(bridgeHeartbeat)}
+          </div>
+        ) : null}
         <div
           className={`chip bridge-heartbeat ${
-            bridgeHeartbeat?.stale ? "bridge-heartbeat--stale" : ""
+            bridgeLastTuroNotification?.stale ? "bridge-heartbeat--stale" : ""
           }`}
         >
-          {formatBridgeHeartbeat(bridgeHeartbeat)}
+          {formatBridgeTuroNotification(bridgeLastTuroNotification)}
         </div>
         {visibleUnmatchedNotificationCount > 0 && (
           <div className="chip notification-gap-chip">

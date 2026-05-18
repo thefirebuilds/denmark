@@ -1136,7 +1136,7 @@ router.get("/stats", async (req, res) => {
             'stale',
               CASE
                 WHEN hb.received_at IS NULL THEN TRUE
-                ELSE hb.received_at < NOW() - INTERVAL '35 minutes'
+                ELSE hb.received_at < NOW() - INTERVAL '25 minutes'
               END
           )
           FROM notification_events hb
@@ -1144,6 +1144,46 @@ router.get("/stats", async (req, res) => {
           ORDER BY hb.received_at DESC NULLS LAST, hb.id DESC
           LIMIT 1
         ) AS bridge_heartbeat,
+        (
+          SELECT jsonb_build_object(
+            'received_at', ne.received_at,
+            'posted_at', ne.posted_at,
+            'device', ne.device,
+            'app', ne.app,
+            'package_name', ne.package_name,
+            'classification', ne.classification,
+            'title', ne.title,
+            'age_minutes',
+              CASE
+                WHEN ne.received_at IS NULL THEN NULL
+                ELSE ROUND((EXTRACT(EPOCH FROM (NOW() - ne.received_at)) / 60.0)::numeric, 1)
+              END,
+            'stale',
+              CASE
+                WHEN ne.received_at IS NULL THEN TRUE
+                ELSE ne.received_at < NOW() - INTERVAL '12 hours'
+              END
+          )
+          FROM notification_events ne
+          WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
+            AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
+            AND (
+              LOWER(COALESCE(ne.app, '')) LIKE '%turo%'
+              OR LOWER(COALESCE(ne.package_name, '')) LIKE '%turo%'
+              OR COALESCE(ne.classification, '') IN (
+                'trip_booked',
+                'trip_changed',
+                'trip_canceled',
+                'trip_cancelled',
+                'guest_message',
+                'payment_notice',
+                'trip_rated',
+                'return_location_check'
+              )
+            )
+          ORDER BY ne.received_at DESC NULLS LAST, ne.id DESC
+          LIMIT 1
+        ) AS bridge_last_turo_notification,
         0 AS unmatched_notification_count
       FROM messages
     `;
@@ -1170,6 +1210,7 @@ router.get("/stats", async (req, res) => {
       total: Number(row.total_count || 0),
       lastReceived: row.last_received,
       bridgeHeartbeat: row.bridge_heartbeat || null,
+      bridgeLastTuroNotification: row.bridge_last_turo_notification || null,
       unmatchedNotifications: Number(row.unmatched_notification_count || 0),
     };
 

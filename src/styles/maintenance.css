@@ -1040,6 +1040,24 @@ select.drawer-input option {
   cursor: not-allowed;
 }
 
+.fleet-maintenance-inline-link {
+  appearance: none;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: #7dd3fc;
+  padding: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fleet-maintenance-inline-link:hover {
+  color: #bae6fd;
+  text-decoration: underline;
+}
+
 .fleet-maintenance-registration-readonly {
   display: flex;
   flex-direction: column;

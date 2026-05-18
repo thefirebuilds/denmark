@@ -160,35 +160,103 @@
   color: #fecaca;
 }
 
+.fleet-map-marker-wrap {
+  background: transparent;
+  border: 0;
+}
+
 .fleet-map-marker {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
   display: grid;
-  place-items: center;
-  width: 68px;
-  height: 26px;
-  border: 1px solid rgba(209, 250, 229, 0.9);
-  border-radius: 999px 999px 999px 6px;
-  background: linear-gradient(180deg, #34d399, #059669);
-  box-shadow: 0 9px 18px rgba(0, 0, 0, 0.28);
-  color: #052e2b;
-  font-size: 0.62rem;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  width: 102px;
+  min-height: 30px;
+  border: 1px solid rgba(167, 243, 208, 0.92);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(236, 253, 245, 0.98), rgba(110, 231, 183, 0.96)),
+    #34d399;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 10px 22px rgba(0, 0, 0, 0.3);
+  color: #042f2e;
+  font-size: 0.58rem;
   font-weight: 900;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   line-height: 1;
-  padding: 0 7px;
+  padding: 4px 8px 4px 5px;
   text-transform: uppercase;
+  transform: translate(
+    calc(-50% + var(--fleet-map-offset-x, 0px)),
+    var(--fleet-map-offset-y, 0px)
+  );
+}
+
+.fleet-map-marker::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 50%, #052e2b 0 2px, transparent 2px),
+    linear-gradient(
+      135deg,
+      var(--fleet-map-badge-color, #10b981),
+      color-mix(in srgb, var(--fleet-map-badge-color, #047857), #000 28%)
+    );
+  box-shadow: 0 0 0 2px rgba(5, 46, 43, 0.12);
+}
+
+.fleet-map-marker--image-badge::before {
+  display: none;
+}
+
+.fleet-map-marker-badge-image {
+  width: 18px;
+  height: 18px;
+  display: block;
+  border: 2px solid var(--fleet-map-badge-color, #10b981);
+  border-radius: 999px;
+  background: #fff;
+  object-fit: contain;
+  box-shadow: 0 0 0 2px rgba(5, 46, 43, 0.12);
+}
+
+.fleet-map-marker--belle {
+  grid-template-columns: 30px minmax(0, 1fr);
+  width: 116px;
+}
+
+.fleet-map-marker--belle .fleet-map-marker-badge-image {
+  width: 30px;
+  height: 16px;
+  border-radius: 6px;
 }
 
 .fleet-map-marker::after {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: -6px;
-  width: 10px;
-  height: 10px;
-  border-right: 1px solid rgba(209, 250, 229, 0.9);
-  border-bottom: 1px solid rgba(209, 250, 229, 0.9);
-  background: inherit;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  border-right: 1px solid rgba(167, 243, 208, 0.92);
+  border-bottom: 1px solid rgba(167, 243, 208, 0.92);
+  background: #6ee7b7;
   transform: translateX(-50%) rotate(45deg);
+  transform-origin: center;
+  z-index: -1;
+}
+
+.fleet-map-marker--spidered {
+  box-shadow:
+    0 0 0 2px rgba(15, 23, 42, 0.9),
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 12px 26px rgba(0, 0, 0, 0.36);
 }
 
 .fleet-map-marker span {
@@ -201,21 +269,49 @@
 }
 
 .fleet-map-marker--stale {
-  border-color: #fed7aa;
-  background: linear-gradient(180deg, #f59e0b, #b45309);
-  color: #fff7ed;
+  border-color: #fde68a;
+  background:
+    linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(251, 191, 36, 0.95)),
+    #f59e0b;
+  color: #451a03;
+}
+
+.fleet-map-marker--stale::before {
+  background:
+    radial-gradient(circle at 50% 50%, #451a03 0 2px, transparent 2px),
+    linear-gradient(135deg, #f59e0b, #b45309);
+}
+
+.fleet-map-marker--stale::after {
+  border-color: #fde68a;
+  background: #fbbf24;
 }
 
 .fleet-map-marker--running {
   border-color: #bfdbfe;
-  background: linear-gradient(180deg, #60a5fa, #2563eb);
-  color: #eff6ff;
+  background:
+    linear-gradient(180deg, rgba(239, 246, 255, 0.98), rgba(96, 165, 250, 0.96)),
+    #60a5fa;
+  color: #172554;
   animation: fleet-map-running-pulse 1.6s ease-in-out infinite;
+}
+
+.fleet-map-marker--running::before {
+  background:
+    radial-gradient(circle at 50% 50%, #172554 0 2px, transparent 2px),
+    linear-gradient(135deg, #60a5fa, #2563eb);
+}
+
+.fleet-map-marker--running::after {
+  border-color: #bfdbfe;
+  background: #60a5fa;
 }
 
 .fleet-map-marker--running.fleet-map-marker--stale {
   border-color: #bfdbfe;
-  background: linear-gradient(180deg, #38bdf8, #1d4ed8);
+  background:
+    linear-gradient(180deg, rgba(240, 249, 255, 0.98), rgba(56, 189, 248, 0.96)),
+    #38bdf8;
 }
 
 .fleet-map-marker--selected {

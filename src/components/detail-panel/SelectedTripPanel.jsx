@@ -116,6 +116,7 @@ export default function SelectedTripPanel({
   maintenanceLoading = false,
   maintenanceError = "",
   trips = [],
+  onOpenVehicleMap,
 }) {
   const [closeoutForm, setCloseoutForm] = useState({
     starting_odometer: "",
@@ -408,6 +409,27 @@ export default function SelectedTripPanel({
 
 function renderLocationLink(vehicle) {
   const { label, url, title, clickable } = getVehicleLocationLinkData(vehicle);
+
+  if (
+    label &&
+    label !== "—" &&
+    typeof onOpenVehicleMap === "function" &&
+    vehicle?.id != null
+  ) {
+    return (
+      <button
+        type="button"
+        className="detail-inline-link detail-inline-button"
+        title="Open in Fleet Map"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenVehicleMap(vehicle.id);
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
 
   if (!clickable) {
     return <span>{label}</span>;

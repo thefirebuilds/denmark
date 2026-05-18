@@ -247,7 +247,7 @@ async function collectBridgeHeartbeatAlerts() {
   `);
   const lastSeen = rows[0]?.last_seen;
   const lastSeenMs = lastSeen ? new Date(lastSeen).getTime() : NaN;
-  const staleMinutes = Number(process.env.BRIDGE_HEARTBEAT_STALE_MINUTES || 45);
+  const staleMinutes = Number(process.env.BRIDGE_HEARTBEAT_STALE_MINUTES || 25);
   const staleMs = staleMinutes * 60 * 1000;
 
   if (Number.isFinite(lastSeenMs) && Date.now() - lastSeenMs <= staleMs) {
@@ -266,6 +266,86 @@ async function collectBridgeHeartbeatAlerts() {
         lastSeen ? formatChicago(lastSeen) : "never"
       }.`,
       details: { lastSeen, staleMinutes },
+    },
+  ];
+}
+
+async function collectBridgeTuroNotificationAlerts() {
+  const { rows } = await pool.query(`
+    WITH latest AS (
+      SELECT
+        MAX(received_at) FILTER (
+          WHERE classification = 'bridge_heartbeat'
+            OR source = 'android_bridge_heartbeat'
+        ) AS last_heartbeat_at,
+        MAX(received_at) FILTER (
+          WHERE COALESCE(classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
+            AND COALESCE(source, '') <> 'android_bridge_heartbeat'
+            AND (
+              LOWER(COALESCE(app, '')) LIKE '%turo%'
+              OR LOWER(COALESCE(package_name, '')) LIKE '%turo%'
+              OR COALESCE(classification, '') IN (
+                'trip_booked',
+                'trip_changed',
+                'trip_canceled',
+                'trip_cancelled',
+                'guest_message',
+                'payment_notice',
+                'trip_rated',
+                'return_location_check'
+              )
+            )
+        ) AS last_turo_notification_at
+      FROM notification_events
+    )
+    SELECT *
+    FROM latest
+  `);
+
+  const row = rows[0] || {};
+  const lastHeartbeatAt = row.last_heartbeat_at;
+  const lastTuroNotificationAt = row.last_turo_notification_at;
+  const lastHeartbeatMs = lastHeartbeatAt ? new Date(lastHeartbeatAt).getTime() : NaN;
+  const lastTuroNotificationMs = lastTuroNotificationAt
+    ? new Date(lastTuroNotificationAt).getTime()
+    : NaN;
+  const heartbeatFreshMinutes = Number(
+    process.env.BRIDGE_HEARTBEAT_STALE_MINUTES || 25
+  );
+  const notificationStaleHours = Number(
+    process.env.BRIDGE_TURO_NOTIFICATION_STALE_HOURS || 12
+  );
+
+  if (
+    !Number.isFinite(lastHeartbeatMs) ||
+    Date.now() - lastHeartbeatMs > heartbeatFreshMinutes * 60 * 1000
+  ) {
+    return [];
+  }
+
+  if (
+    Number.isFinite(lastTuroNotificationMs) &&
+    Date.now() - lastTuroNotificationMs <= notificationStaleHours * 60 * 60 * 1000
+  ) {
+    return [];
+  }
+
+  const hourBucket = new Date();
+  hourBucket.setMinutes(0, 0, 0);
+
+  return [
+    {
+      alertKey: `bridge-turo-notifications-stale:${hourBucket.toISOString()}`,
+      alertType: "bridge_turo_notifications_stale",
+      severity: "urgent",
+      body: `Denmark: Android bridge heartbeat is fresh, but no Turo notifications have arrived since ${
+        lastTuroNotificationAt ? formatChicago(lastTuroNotificationAt) : "never"
+      }. The phone may be signed out of Turo.`,
+      details: {
+        lastHeartbeatAt,
+        lastTuroNotificationAt,
+        notificationStaleHours,
+      },
     },
   ];
 }
@@ -493,6 +573,7 @@ async function collectFleetAlerts() {
   const groups = await Promise.all([
     collectNewTripBookedAlerts(),
     collectBridgeHeartbeatAlerts(),
+    collectBridgeTuroNotificationAlerts(),
     collectDtcAlerts(),
     collectOverdueReturnAlerts(),
     collectReturnedToParkingSpotAlerts(),

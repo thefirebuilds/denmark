@@ -229,6 +229,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState("dispatch");
   const [messageMode, setMessageMode] = useState<"live" | "trip">("live");
   const [selectedVehicleId, setSelectedVehicleId] = useState("belle");
+  const [mapFocusVehicleId, setMapFocusVehicleId] = useState<string | null>(null);
   const [selectedExpenseVehicleId, setSelectedExpenseVehicleId] = useState<number | null>(null);
   const [dispatchSettings, setDispatchSettings] = useState(DEFAULT_DISPATCH_SETTINGS);
   const [layoutMode, setLayoutMode] = useState<"auto" | "desktop" | "mobile">(
@@ -259,6 +260,12 @@ export default function Home() {
   const previousUnreadRef = useRef<number | null>(null);
   const lastChimeAtRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  function openFleetMapForVehicle(vehicleId: string | number | null | undefined) {
+    if (vehicleId == null || vehicleId === "") return;
+    setMapFocusVehicleId(String(vehicleId));
+    setActiveView("fleet-map");
+  }
 
   function returnToStartup(label = "Waiting for backend") {
     setStartup((current) => {
@@ -933,7 +940,10 @@ export default function Home() {
             onSelectVehicle={setSelectedVehicleId}
           />
 
-          <FleetMaintenancePanel selectedVehicleId={selectedVehicleId} />
+          <FleetMaintenancePanel
+            selectedVehicleId={selectedVehicleId}
+            onOpenVehicleMap={openFleetMapForVehicle}
+          />
 
           <MaintenanceQueuePanel selectedVehicleId={selectedVehicleId} />
         </>
@@ -961,7 +971,7 @@ export default function Home() {
           <MarketplacePanel />
         </div>
       ) : activeView === "fleet-map" ? (
-        <FleetMapPanel />
+        <FleetMapPanel focusVehicleId={mapFocusVehicleId} />
       ) : activeView === "settings" ? (
         <SettingsPanel
           dispatchSettings={dispatchSettings}
@@ -996,6 +1006,7 @@ export default function Home() {
             editTripRequest={editTripRequest}
             onTripUpdated={handleTripUpdated}
             trips={trips}
+            onOpenVehicleMap={openFleetMapForVehicle}
           />
         </>
       )}
