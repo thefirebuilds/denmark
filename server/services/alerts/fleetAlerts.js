@@ -358,13 +358,13 @@ async function collectDtcAlerts() {
         service_name,
         vin,
         nickname,
-        captured_at AT TIME ZONE 'America/Chicago' AS captured_at,
-        vehicle_last_updated AT TIME ZONE 'America/Chicago' AS vehicle_last_updated,
+        captured_at,
+        vehicle_last_updated,
         mil_on,
         qualified_dtc_list,
         dtc_count
       FROM vehicle_telemetry_snapshots
-      WHERE (captured_at AT TIME ZONE 'America/Chicago') >= NOW() - INTERVAL '24 hours'
+      WHERE captured_at >= NOW() - INTERVAL '24 hours'
         AND (
           COALESCE(mil_on, false) = true
           OR
@@ -503,15 +503,14 @@ async function collectReturnedToParkingSpotAlerts() {
         s.service_name,
         s.latitude,
         s.longitude,
-        s.vehicle_last_updated AT TIME ZONE 'America/Chicago' AS vehicle_last_updated,
-        s.location_last_updated AT TIME ZONE 'America/Chicago' AS location_last_updated,
-        s.captured_at AT TIME ZONE 'America/Chicago' AS captured_at
+        s.vehicle_last_updated,
+        s.location_last_updated,
+        s.captured_at
       FROM vehicle_telemetry_snapshots s
       WHERE s.latitude IS NOT NULL
         AND s.longitude IS NOT NULL
         AND (
           COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at)
-            AT TIME ZONE 'America/Chicago'
         ) >= t.trip_end - INTERVAL '6 hours'
         AND (
           (
