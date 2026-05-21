@@ -207,6 +207,112 @@ function RevenueExpenseSparkline({ trends, summary }) {
   );
 }
 
+function TripLengthDistributionPanel({ distribution }) {
+  const buckets = Array.isArray(distribution?.buckets)
+    ? distribution.buckets
+    : [];
+  const totalTrips = Number(distribution?.total_trips ?? 0);
+
+  if (!buckets.length || totalTrips <= 0) return null;
+
+  return (
+    <article className="trip-length-panel">
+      <div className="trip-length-panel__header">
+        <div>
+          <div className="metrics-business-card__title">Trip Length Mix</div>
+          <div className="metrics-business-profile__meta">
+            {formatNumber(totalTrips)} trips / avg{" "}
+            {formatNumber(distribution?.average_days ?? 0, 1)} days
+          </div>
+        </div>
+      </div>
+      <div className="trip-length-panel__stack" aria-label="Trip length distribution">
+        {buckets
+          .filter((bucket) => Number(bucket?.trip_count ?? 0) > 0)
+          .map((bucket, index) => {
+            const pct = Number(bucket?.percentage ?? 0);
+            return (
+              <span
+                key={bucket.key || bucket.label}
+                className={`trip-length-panel__stack-segment trip-length-panel__stack-segment--${
+                  index % 8
+                }`}
+                style={{ width: `${Math.max(2, pct * 100)}%` }}
+                title={`${bucket.label}: ${formatPercent(pct, 1)}`}
+              />
+            );
+          })}
+      </div>
+      <div className="trip-length-panel__rows">
+        {buckets.map((bucket, index) => {
+          const pct = Number(bucket?.percentage ?? 0);
+          return (
+            <div className="trip-length-row" key={bucket.key || bucket.label}>
+              <div className="trip-length-row__topline">
+                <span className="trip-length-row__label">
+                  <i
+                    className={`trip-length-row__dot trip-length-panel__stack-segment--${
+                      index % 8
+                    }`}
+                    aria-hidden="true"
+                  />
+                  {bucket.label}
+                </span>
+                <span className="trip-length-row__bar" aria-hidden="true">
+                  <i style={{ width: `${Math.max(2, pct * 100)}%` }} />
+                </span>
+                <strong>
+                  {formatPercent(pct, 1)}
+                  <em>{formatNumber(bucket.trip_count)}</em>
+                </strong>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
+}
+
+function ValuableTripLengthsPanel({ distribution }) {
+  const buckets = Array.isArray(distribution?.top_income_buckets)
+    ? distribution.top_income_buckets
+    : [];
+
+  if (!buckets.length) return null;
+
+  return (
+    <article className="trip-length-panel trip-length-panel--value">
+      <div className="trip-length-panel__header">
+        <div>
+          <div className="metrics-business-card__title">Most Valuable Lengths</div>
+          <div className="metrics-business-profile__meta">
+            Ranked by average income per trip
+          </div>
+        </div>
+      </div>
+      <div className="trip-value-list">
+        {buckets.map((bucket, index) => (
+          <div className="trip-value-row" key={bucket.key || bucket.label}>
+            <div className="trip-value-row__rank">{index + 1}</div>
+            <div className="trip-value-row__body">
+              <div className="trip-value-row__topline">
+                <span>{bucket.label}</span>
+                <strong>{formatCurrencyCompact(bucket.average_trip_income)}</strong>
+              </div>
+              <div className="trip-value-row__meta">
+                {formatNumber(bucket.trip_count)} trips /{" "}
+                {formatCurrencyCompact(bucket.income_per_day)} per day /{" "}
+                {formatCurrencyCompact(bucket.trip_income)} total
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
 function formatConfidenceLabel(value) {
   const text = String(value || "").trim();
   if (!text) return "Confidence: --";
@@ -2421,6 +2527,14 @@ const mileageStats = useMemo(() => {
                 label="Cleaning / Trip"
                 value={`${formatCurrencyCompact(summary.cleaning_cost_per_overlapping_trip)} actual`}
                 subtitle={`${formatCurrencyCompact(summary.cleaning_cost_per_prorated_trip)} effective`}
+              />
+            </div>
+            <div className="trip-length-grid">
+              <TripLengthDistributionPanel
+                distribution={summary.trip_length_distribution}
+              />
+              <ValuableTripLengthsPanel
+                distribution={summary.trip_length_distribution}
               />
             </div>
           </section>

@@ -3,6 +3,7 @@ const collectDimoSnapshot = require("./collectDimoSnapshot");
 const { getDimoFleetFromDb } = require("./client");
 
 const LIVE_SIGNAL_MAX_AGE_MINUTES = 15;
+const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
 
 let dimoInProgress = false;
 
@@ -32,6 +33,79 @@ function firstNonNull(...values) {
     if (value !== null && value !== undefined && value !== "") return value;
   }
   return null;
+}
+
+function hasTimezoneDesignator(value) {
+  return /(?:z|[+-]\d{2}:?\d{2})$/i.test(String(value || "").trim());
+}
+
+function formatChicagoWallTime(date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const part = (type) => parts.find((item) => item.type === type)?.value;
+  const hour = part("hour") === "24" ? "00" : part("hour");
+  return `${part("year")}-${part("month")}-${part("day")}T${hour}:${part(
+    "minute"
+  )}:${part("second")}.000`;
+}
+
+function toNaiveWallTimeString(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const pad = (part, size = 2) => String(part).padStart(size, "0");
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(
+      value.getDate()
+    )}T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(
+      value.getSeconds()
+    )}.${pad(value.getMilliseconds(), 3)}`;
+  }
+
+  const text = String(value).trim();
+  const match = text.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)/
+  );
+  if (match) {
+    const time = match[2].includes(".") ? match[2] : `${match[2]}.000`;
+    return `${match[1]}T${time}`;
+  }
+
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace("Z", "");
+}
+
+function normalizeDisplayTimestamp(value, fallback = null) {
+  if (!value) return fallback;
+  if (typeof value === "string" && hasTimezoneDesignator(value)) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? fallback : formatChicagoWallTime(date);
+  }
+
+  const naiveWallTime = toNaiveWallTimeString(value);
+  if (!naiveWallTime) return fallback;
+
+  const nowWallTime = formatChicagoWallTime(new Date());
+  const naiveWallDate = new Date(naiveWallTime);
+  const nowWallDate = new Date(nowWallTime);
+
+  if (
+    !Number.isNaN(naiveWallDate.getTime()) &&
+    !Number.isNaN(nowWallDate.getTime()) &&
+    naiveWallDate.getTime() > nowWallDate.getTime() + FUTURE_TELEMETRY_GRACE_MS
+  ) {
+    return formatChicagoWallTime(new Date(`${naiveWallTime}Z`));
+  }
+
+  return naiveWallTime;
 }
 
 function getAgeMinutes(value) {
@@ -128,10 +202,26 @@ async function getDimoStatusFeed() {
         engine_rpm,
         throttle_position,
         runtime_minutes,
-        def_level
+        def_level,
+        first_seen.diagnostic_first_reported_at
       FROM vehicle_telemetry_snapshots s
       LEFT JOIN vehicle_telemetry_raw_payloads raw
         ON raw.snapshot_id = s.id
+      LEFT JOIN LATERAL (
+        SELECT MIN(COALESCE(hist.vehicle_last_updated, hist.mil_last_updated, hist.captured_at)) AS diagnostic_first_reported_at
+        FROM vehicle_telemetry_snapshots hist
+        WHERE hist.service_name = s.service_name
+          AND hist.dimo_token_id = s.dimo_token_id
+          AND hist.captured_at >= NOW() - INTERVAL '24 hours'
+          AND (
+            COALESCE(hist.mil_on, false) = true
+            OR COALESCE(hist.dtc_count, 0) > 0
+            OR (
+              jsonb_typeof(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) = 'array'
+              AND jsonb_array_length(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) > 0
+            )
+          )
+      ) first_seen ON true
       WHERE s.service_name = 'dimo'
         AND s.dimo_token_id IS NOT NULL
         AND s.dimo_token_id = ANY($1::bigint[])
@@ -223,27 +313,27 @@ async function getDimoStatusFeed() {
     );
     const altitude = toNumberOrNull(rawSignals.currentLocationAltitude?.value);
     const hdop = toNumberOrNull(coordinates.hdop);
-    const locationLastUpdated = firstNonNull(
+    const locationLastUpdated = normalizeDisplayTimestamp(firstNonNull(
       row.location_last_updated,
       rawSignals.currentLocationCoordinates?.timestamp,
       rawSignals.currentLocationApproximateCoordinates?.timestamp
-    );
-    const headingLastUpdated = firstNonNull(
+    ), row.captured_at);
+    const headingLastUpdated = normalizeDisplayTimestamp(firstNonNull(
       row.heading_last_updated,
       rawSignals.currentLocationHeading?.timestamp
-    );
-    const ignitionLastUpdated = firstNonNull(
+    ), row.captured_at);
+    const ignitionLastUpdated = normalizeDisplayTimestamp(firstNonNull(
       row.ignition_last_updated,
       rawSignals.isIgnitionOn?.timestamp
-    );
-    const speedLastUpdated = firstNonNull(
+    ), row.captured_at);
+    const speedLastUpdated = normalizeDisplayTimestamp(firstNonNull(
       row.speed_last_updated,
       rawSignals.speed?.timestamp
-    );
-    const rpmLastUpdated = firstNonNull(
+    ), row.captured_at);
+    const rpmLastUpdated = normalizeDisplayTimestamp(firstNonNull(
       rawSignals.powertrainCombustionEngineSpeed?.timestamp,
       ignitionLastUpdated
-    );
+    ), row.captured_at);
     const ignitionFresh = isFreshLiveSignal(ignitionLastUpdated);
     const speedFresh = isFreshLiveSignal(speedLastUpdated);
     const rpmFresh = isFreshLiveSignal(rpmLastUpdated);
@@ -264,7 +354,10 @@ async function getDimoStatusFeed() {
       dimo_token_id: row.dimo_token_id,
       telemetry: {
         local_time_zone: row.local_time_zone,
-        last_comm: row.vehicle_last_updated || row.captured_at,
+        last_comm: normalizeDisplayTimestamp(
+          row.vehicle_last_updated || row.captured_at,
+          row.captured_at
+        ),
         odometer: row.odometer,
         fuel_level: row.fuel_level,
         engine_running: ignitionFresh ? row.is_running : null,
@@ -282,10 +375,17 @@ async function getDimoStatusFeed() {
         },
         mil: {
           mil_on: row.mil_on,
-          last_updated: row.mil_last_updated,
+          last_updated: normalizeDisplayTimestamp(
+            row.mil_last_updated || row.vehicle_last_updated,
+            row.captured_at
+          ),
           qualified_dtc_list: row.qualified_dtc_list || [],
           dtc_count: row.dtc_count,
           distance_with_mil: row.distance_with_mil,
+          first_reported_at: normalizeDisplayTimestamp(
+            row.diagnostic_first_reported_at,
+            row.captured_at
+          ),
         },
         battery: {
           status: row.battery_status,

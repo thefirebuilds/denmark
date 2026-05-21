@@ -21,6 +21,8 @@ This is not generic fleet software and it is not a polished SaaS product. It is 
 - Tracks unread message state and message-driven operational notices
 - Accepts Android bridge notifications at `POST /api/notifications/turo`
 - Deduplicates bridge events, stores raw payloads, and applies lightweight classification
+- Supports acknowledging/snoozing operational notices, including vehicle diagnostic notices
+- Filters obvious low-value bridge noise such as partner-offer style notifications
 
 ### Vehicle telemetry
 - Integrates with:
@@ -28,7 +30,9 @@ This is not generic fleet software and it is not a polished SaaS product. It is 
   - DIMO
 - Maintains live status feeds for vehicles
 - Stores telemetry snapshots and signal history
-- Supports odometer and engine-related operational checks, including DIMO RPM investigations
+- Shows a fleet map with last known locations, freshness, stale telemetry, and recent running state
+- Supports odometer, MIL/check-engine, battery, coolant, RPM, and engine-running checks where provider signals are available
+- Tracks DIMO diagnostic first-reported and last-seen timestamps so latched codes are easier to reason about
 
 ### Maintenance and readiness
 - Stores maintenance rules, tasks, and events in Postgres
@@ -41,16 +45,19 @@ This is not generic fleet software and it is not a polished SaaS product. It is 
 - Splits shared/general expense across the active fleet for metrics purposes
 - Imports and audits toll activity with trip matching logic
 - Surfaces trip-summary financial details and vehicle-level metrics
+- Tracks business metrics, fleet utilization, trip-length distribution, and trip-length income performance
 
 ### Calendar and host workflow
 - Syncs trip events into Google Calendar
 - Creates and updates trip-linked calendar events
 - Supports Google auth connection storage and sync metadata
+- Can push public availability snapshots to another system when configured
 
 ### Marketplace and sourcing
 - Ingests vehicle listings for sourcing workflow
 - Stores candidate vehicles and review preferences
 - Supports filtering, hide/ignore behavior, and enrichment work
+- Includes FMV estimate storage and scheduled stale-estimate refresh support
 
 ### Mobile direction
 - Desktop UI remains the primary control surface
@@ -63,6 +70,8 @@ This is not generic fleet software and it is not a polished SaaS product. It is 
 - Backend: Node.js + Express
 - Database: PostgreSQL
 - Local integrations: IMAP, Google Calendar, Bouncie, DIMO, Teller, HCTRA, Android notification bridge
+- Auth: local development bypass or OIDC-backed sessions with permission-gated API routes
+- Scheduler: startup and interval jobs for IMAP, telemetry, tolls, banking, alerts, metrics, FMV, retention, availability, and calendar reconciliation
 
 Code shape today:
 - `src/` contains the React app and operational panels
@@ -79,9 +88,11 @@ What is solid enough for daily use:
 - trip queue and trip detail workflow
 - maintenance queue and vehicle readiness views
 - toll and expense review workflow
-- live Bouncie/DIMO vehicle status views
+- live Bouncie/DIMO vehicle status views and fleet map
 - Google Calendar sync foundations
 - Android bridge ingestion receiver
+- OIDC/session auth foundations and local development bypass
+- business metrics, trip-length metrics, and public availability export foundations
 
 What is still evolving:
 - mobile parity beyond maintenance
@@ -89,7 +100,7 @@ What is still evolving:
 - better shared-expense attribution by historical fleet composition
 - deeper DIMO signal interpretation and anomaly handling
 - stronger notification-to-trip linking
-- more complete docs for every subsystem
+- more complete subsystem-specific setup and recovery docs
 
 ## Known gaps and rough edges
 
@@ -162,11 +173,18 @@ Notes:
 ### Data quality reality
 - Some legacy trip rows still carry stale raw `status` values even when `workflow_stage` and `queue_bucket` are correct.
 - DIMO coverage varies by vehicle and available permissions/signals.
+- DIMO MIL/check-engine state can latch until the device/provider stops reporting it; Denmark records first-reported/last-seen data and supports snooze/acknowledge rather than assuming the app receives ECU clear events.
+- Running-state display is intentionally freshness-gated because provider engine signals can arrive separately from location check-ins.
 - Not every notification, email, or toll event can be perfectly linked on first pass.
 
 ## Install / run
 
-The production install path is Docker Compose pulling the app image from GitHub Container Registry. The VM should not build the app from source, and the container should not initialize the database from `.sql` files at startup. It expects an existing Postgres database and a valid `.env`.
+There are two supported ways to run Denmark:
+
+- Production or VM install: Docker Compose pulls the app image from GitHub Container Registry.
+- Local development: install frontend and backend npm dependencies, run the Express API and Vite dev server separately.
+
+The production container expects an existing Postgres database and a valid `.env`. It does not run schema repaves or migrations at startup.
 
 ### How releases work
 
@@ -188,8 +206,9 @@ Install these on the VM:
 - Docker Engine
 - Docker Compose plugin
 - Git, if you want to pull `docker-compose.yml` and docs from the repo
-- Access to the existing Postgres database
+- Network access to the existing PostgreSQL database
 - A production `.env` file kept on the VM
+- Optional: a reverse proxy or tunnel that terminates HTTPS and forwards to port `5000`
 
 The compose file runs only the app container. It does not run Postgres and it does not run schema migrations.
 
@@ -214,6 +233,8 @@ The VM mainly needs:
 - `docker-compose.yml`
 - `.env`
 
+The repo checkout is convenient for updates and docs, but the app code comes from the published container image.
+
 ### 2. Create the VM `.env`
 
 Create `.env` next to `docker-compose.yml`. Do not commit this file.
@@ -233,6 +254,9 @@ FRONTEND_BASE_URL=https://your-domain.example
 SESSION_SECRET=replace-with-long-random-session-secret
 TOKEN_ENCRYPTION_KEY=replace-with-64-char-hex-or-long-random-secret
 DENMARK_BRIDGE_SECRET=replace-with-shared-secret-for-android-bridge
+AUTH_ENFORCED=true
+AUTH_COOKIE_SECURE=true
+AUTH_OWNER_EMAILS=you@example.com
 ```
 
 Add any integrations you use:
@@ -243,6 +267,19 @@ Add any integrations you use:
 - `IMAP_*`
 - `EZTAG_*`
 - `TELLER_*`
+- `OPENAI_*`, if using FMV enrichment
+- `PUBLIC_AVAILABILITY_*`, if pushing availability to another site
+- `TWILIO_*`, if operational text alerts are enabled in your environment
+
+For login in production, configure OIDC as described above. `FRONTEND_BASE_URL` and `OIDC_REDIRECT_URI` should use the public URL that users open in their browser, for example:
+
+```dotenv
+OIDC_ENABLED=true
+OIDC_PROVIDER_NAME=google
+OIDC_ISSUER_URL=https://accounts.google.com
+OIDC_REDIRECT_URI=https://your-domain.example/api/auth/callback
+OIDC_SCOPES=openid profile email
+```
 
 For DIMO, map known vehicles deliberately in **Settings > Fleet** by saving each
 vehicle's DIMO token ID. Live DIMO polling constructs the fleet shape from the
@@ -277,8 +314,10 @@ docker compose logs -f app
 Basic health check:
 
 ```bash
-curl http://localhost:5000/api/vehicles/live-status
+curl http://localhost:5000/api/health
 ```
+
+`/api/health` is intentionally suitable for deployment checks. Most operational APIs are auth-gated when `AUTH_ENFORCED=true`.
 
 ### 6. Update the VM later
 
@@ -320,6 +359,8 @@ Notes:
 - It drops and recreates the public app schema.
 - It does not include private operational data.
 - It is destructive, so do not point it at a database you still need.
+- Follow-on SQL files live in `server/db/migrations/`. They are targeted changes for existing databases and are not automatically applied by the container.
+- Some runtime support tables are created or verified at startup, including notification events, auth tables, business metrics, income, FMV estimates, and fleet alert deliveries.
 
 ### Local development
 
@@ -331,6 +372,7 @@ Prerequisites:
 - npm
 - PostgreSQL with `psql` on PATH
 - Git
+- A local `.env` copied from `.env.example`
 
 Install dependencies:
 
@@ -341,11 +383,31 @@ npm install
 cd ..
 ```
 
+Create and configure `.env`:
+
+```bash
+cp .env.example .env
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+At minimum, set the Postgres fields, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, `DENMARK_BRIDGE_SECRET`, and either leave `AUTH_ENFORCED=false` for trusted local development or configure OIDC before setting it to `true`.
+
+Create or repave the local database if needed:
+
+```bash
+psql -U postgres -d postgres -f server/db/schema.sql
+```
+
 Start the backend:
 
 ```bash
 cd server
-npm start
+npm run dev
 ```
 
 Start the frontend dev server from another terminal:
@@ -364,6 +426,15 @@ Build the deployable frontend bundle:
 ```bash
 npx vite build
 ```
+
+The Dockerfile uses `npx vite build` directly because the current deployable frontend bundle builds cleanly that way. The root `npm run build` also runs `tsc -b` first and may be stricter than the current JSX-heavy app shape.
+
+Local startup behavior:
+- the backend serves API routes from port `5000`
+- Vite serves the frontend from port `5173`
+- the scheduler starts after startup tables are ready
+- startup jobs are cooldown-gated for 15 minutes to avoid immediately re-running every integration after quick restarts
+- interval jobs include IMAP, Bouncie, DIMO, fleet alerts, tolls, Teller/Mercury, Google Calendar, business metrics, FMV refresh, telemetry retention, and public availability push
 
 ## Android Turo bridge webhook
 
@@ -455,7 +526,7 @@ These are the most obvious next improvements based on the current project shape.
 - document subsystem-specific setup and recovery flows
 - tighten startup/runtime verification for local environments
 - introduce clearer migration application guidance
-- add real authentication and authorization before wider deployment
+- keep hardening authentication, authorization, and deployment defaults before wider exposure
 - continue breaking out reusable API base/config helpers on the frontend where old `localhost` assumptions still linger
 
 ## Design philosophy
@@ -472,3 +543,11 @@ That means:
 ## Status
 
 Actively developed, actively used, and still being shaped around real fleet pain.
+
+## Contact
+
+Best way to reach the maintainer is Discord:
+
+```text
+https://discord.gg/qBnMQm3X
+```

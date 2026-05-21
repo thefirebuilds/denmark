@@ -343,6 +343,237 @@
   gap: 8px;
 }
 
+.trip-length-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
+  gap: 10px;
+  margin-top: 10px;
+  align-items: stretch;
+}
+
+.trip-length-panel {
+  max-width: 720px;
+  padding: 10px 12px;
+  border: 1px solid #22304d;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #101a2f 0%, #0d1526 100%);
+}
+
+.trip-length-panel--value {
+  max-width: none;
+}
+
+.trip-length-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.trip-length-panel__stack {
+  display: flex;
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(53, 80, 127, 0.32);
+}
+
+.trip-length-panel__stack-segment {
+  display: block;
+  min-width: 2px;
+  height: 100%;
+}
+
+.trip-length-panel__stack-segment--0 {
+  background: #54f0b0;
+}
+
+.trip-length-panel__stack-segment--1 {
+  background: #7dd3fc;
+}
+
+.trip-length-panel__stack-segment--2 {
+  background: #93c5fd;
+}
+
+.trip-length-panel__stack-segment--3 {
+  background: #c4b5fd;
+}
+
+.trip-length-panel__stack-segment--4 {
+  background: #f9a8d4;
+}
+
+.trip-length-panel__stack-segment--5 {
+  background: #fcd34d;
+}
+
+.trip-length-panel__stack-segment--6 {
+  background: #fb923c;
+}
+
+.trip-length-panel__stack-segment--7 {
+  background: #f87171;
+}
+
+.trip-length-panel__rows {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.trip-length-row {
+  display: grid;
+  min-width: 0;
+}
+
+.trip-length-row__topline {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.62fr) minmax(90px, 1fr) minmax(70px, auto);
+  align-items: center;
+  gap: 10px;
+  color: #8fa6ca;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.trip-length-row__label,
+.trip-length-row__topline strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trip-length-row__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #dbe7fb;
+  font-weight: 800;
+}
+
+.trip-length-row__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.trip-length-row__bar {
+  position: relative;
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(53, 80, 127, 0.28);
+}
+
+.trip-length-row__bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(84, 240, 176, 0.86), rgba(125, 211, 252, 0.72));
+}
+
+.trip-length-row__topline strong {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 5px;
+  color: #eef4ff;
+  font-weight: 800;
+}
+
+.trip-length-row__topline strong em {
+  color: #7489ae;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.trip-value-list {
+  display: grid;
+  gap: 8px;
+}
+
+.trip-value-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.trip-value-row__rank {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(125, 211, 252, 0.12);
+  color: #bdefff;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.trip-value-row__body {
+  min-width: 0;
+}
+
+.trip-value-row__topline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trip-value-row__topline span {
+  min-width: 0;
+  overflow: hidden;
+  color: #eef4ff;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trip-value-row__topline strong {
+  flex: 0 0 auto;
+  color: #baf7db;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.trip-value-row__meta {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #7489ae;
+  font-size: 0.65rem;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 820px) {
+  .trip-length-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trip-length-panel {
+    max-width: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .trip-length-panel__rows {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* --------------------------------------------------------------
    Metric card
 -------------------------------------------------------------- */

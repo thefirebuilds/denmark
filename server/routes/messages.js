@@ -79,11 +79,116 @@ function invalidateMessageCaches() {
 }
 
 let ensureNotificationAckColumnsPromise = null;
+let ensureDiagnosticSuppressionsPromise = null;
+const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
+
+async function ensureDiagnosticSuppressionsTable() {
+  if (!ensureDiagnosticSuppressionsPromise) {
+    ensureDiagnosticSuppressionsPromise = db
+      .query(`
+        CREATE TABLE IF NOT EXISTS public.vehicle_diagnostic_suppressions (
+          id bigserial PRIMARY KEY,
+          diagnostic_key text NOT NULL UNIQUE,
+          action text NOT NULL DEFAULT 'acknowledged',
+          acknowledged_at timestamptz,
+          snoozed_until timestamptz,
+          reason text,
+          created_at timestamptz DEFAULT now() NOT NULL,
+          updated_at timestamptz DEFAULT now() NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_vehicle_diagnostic_suppressions_snoozed
+          ON public.vehicle_diagnostic_suppressions (snoozed_until);
+      `)
+      .catch((err) => {
+        ensureDiagnosticSuppressionsPromise = null;
+        throw err;
+      });
+  }
+
+  return ensureDiagnosticSuppressionsPromise;
+}
 
 function toNumber(value) {
   if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function normalizeDisplayTimestamp(value, fallback = null) {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  if (date.getTime() > Date.now() + FUTURE_TELEMETRY_GRACE_MS) {
+    return fallback || new Date().toISOString();
+  }
+  return value;
+}
+
+function formatChicagoWallTime(date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const part = (type) => parts.find((item) => item.type === type)?.value;
+  const hour = part("hour") === "24" ? "00" : part("hour");
+  return `${part("year")}-${part("month")}-${part("day")}T${hour}:${part(
+    "minute"
+  )}:${part("second")}.000`;
+}
+
+function toNaiveWallTimeString(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const pad = (part, size = 2) => String(part).padStart(size, "0");
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(
+      value.getDate()
+    )}T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(
+      value.getSeconds()
+    )}.${pad(value.getMilliseconds(), 3)}`;
+  }
+
+  const text = String(value).trim();
+  const match = text.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)/
+  );
+  if (match) {
+    const time = match[2].includes(".") ? match[2] : `${match[2]}.000`;
+    return `${match[1]}T${time}`;
+  }
+
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace("Z", "");
+}
+
+function normalizeDiagnosticDisplayTimestamp(row, value, fallback = null) {
+  const normalized = normalizeDisplayTimestamp(value, fallback);
+  if (!normalized || row?.service_name !== "dimo") return normalized;
+
+  const naiveWallTime = toNaiveWallTimeString(normalized);
+  if (!naiveWallTime) return normalized;
+
+  const nowWallTime = formatChicagoWallTime(new Date());
+  const naiveWallDate = new Date(naiveWallTime);
+  const nowWallDate = new Date(nowWallTime);
+
+  if (
+    !Number.isNaN(naiveWallDate.getTime()) &&
+    !Number.isNaN(nowWallDate.getTime()) &&
+    naiveWallDate.getTime() > nowWallDate.getTime() + FUTURE_TELEMETRY_GRACE_MS
+  ) {
+    return formatChicagoWallTime(new Date(`${naiveWallTime}Z`));
+  }
+
+  return naiveWallTime;
 }
 
 function getReturnLocationConfig() {
@@ -1014,6 +1119,41 @@ function mapMaintenanceNoticeRow(row) {
   };
 }
 
+function getDiagnosticDtcKey({ codes, hasMil, dtcCount }) {
+  if (Array.isArray(codes) && codes.length) return codes.join("-");
+  if (hasMil) return "mil-on-no-codes";
+  return `count-${Number(dtcCount || 1)}`;
+}
+
+function buildDiagnosticKey(row, codes, hasMil) {
+  const source = row.service_name || "telematics";
+  const vehicleKey = row.vin || row.id;
+  return [
+    source,
+    vehicleKey,
+    getDiagnosticDtcKey({ codes, hasMil, dtcCount: row.dtc_count }),
+  ].join(":");
+}
+
+function buildLegacyDiagnosticKeys(row, codes, hasMil) {
+  const source = row.service_name || "telematics";
+  const vehicleKey = row.vin || row.id;
+  const dtcKey = getDiagnosticDtcKey({ codes, hasMil, dtcCount: row.dtc_count });
+  return [
+    row.diagnostic_first_reported_at,
+    row.vehicle_last_updated,
+    row.captured_at,
+  ]
+    .filter(Boolean)
+    .map((timestamp) => {
+      const date = new Date(timestamp);
+      return Number.isNaN(date.getTime())
+        ? null
+        : [source, vehicleKey, dtcKey, date.toISOString()].join(":");
+    })
+    .filter(Boolean);
+}
+
 function mapVehicleDiagnosticNoticeRow(row) {
   const codes = Array.isArray(row.qualified_dtc_list)
     ? row.qualified_dtc_list
@@ -1027,6 +1167,14 @@ function mapVehicleDiagnosticNoticeRow(row) {
     : [];
   const vehicleName = row.vehicle_nickname || row.nickname || row.vin || "vehicle";
   const hasMil = row.mil_on === true;
+  const lastSeen = normalizeDiagnosticDisplayTimestamp(row,
+    row.vehicle_last_updated || row.captured_at,
+    row.captured_at
+  );
+  const firstReported = normalizeDiagnosticDisplayTimestamp(row,
+    row.diagnostic_first_reported_at || row.vehicle_last_updated || row.captured_at,
+    row.captured_at
+  );
   const label = codes.length
     ? codes.join(", ")
     : hasMil
@@ -1034,12 +1182,12 @@ function mapVehicleDiagnosticNoticeRow(row) {
     : `${Number(row.dtc_count || 1)} DTC active`;
 
   return {
-    id: `vehicle-diagnostic:${row.service_name}:${row.vin || row.id}`,
-    messageId: `vehicle-diagnostic:${row.service_name}:${row.vin || row.id}`,
+    id: `vehicle-diagnostic:${buildDiagnosticKey(row, codes, hasMil)}`,
+    messageId: `vehicle-diagnostic:${buildDiagnosticKey(row, codes, hasMil)}`,
     subject: `${vehicleName} needs diagnostic review`,
     status: "read",
-    timestamp: row.vehicle_last_updated || row.captured_at,
-    notification_created_at: row.vehicle_last_updated || row.captured_at,
+    timestamp: lastSeen,
+    notification_created_at: lastSeen,
     type: "vehicle_diagnostic_alert",
     vehicle_name: vehicleName,
     vehicle_nickname: row.vehicle_nickname,
@@ -1049,8 +1197,11 @@ function mapVehicleDiagnosticNoticeRow(row) {
     diagnostic_codes: codes,
     diagnostic_mil_on: hasMil,
     diagnostic_dtc_count: Number(row.dtc_count || codes.length || 0),
-    diagnostic_last_seen: row.vehicle_last_updated || row.captured_at,
-    created_at: row.vehicle_last_updated || row.captured_at,
+    diagnostic_key: buildDiagnosticKey(row, codes, hasMil),
+    diagnostic_legacy_keys: buildLegacyDiagnosticKeys(row, codes, hasMil),
+    diagnostic_first_reported_at: firstReported,
+    diagnostic_last_seen: lastSeen,
+    created_at: lastSeen,
   };
 }
 
@@ -1722,12 +1873,16 @@ router.get("/", async (req, res) => {
           END AS change_request_guest_name,
           substring(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text) from '([^ ]+) changed their trip with your') AS trip_changed_guest_name
         FROM notification_events ne
-        WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
+        WHERE COALESCE(ne.classification, '') NOT IN ('bridge_heartbeat', 'bridge_test', 'partner_offer')
           AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
           AND ne.acknowledged_at IS NULL
           AND ne.received_at >= NOW() - INTERVAL '48 hours'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%partner offer%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%your tint quote is ready%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%review your options and enroll%'
+          AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%as compared to personal insurance%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%has added a driver%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%additional driver%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%added another driver%'
@@ -1963,8 +2118,26 @@ router.get("/", async (req, res) => {
           s.qualified_dtc_list,
           s.dtc_count,
           s.vehicle_last_updated,
-          s.captured_at
+          s.captured_at,
+          first_seen.diagnostic_first_reported_at
         FROM vehicle_telemetry_snapshots s
+        LEFT JOIN LATERAL (
+          SELECT MIN(COALESCE(hist.vehicle_last_updated, hist.mil_last_updated, hist.captured_at)) AS diagnostic_first_reported_at
+          FROM vehicle_telemetry_snapshots hist
+          WHERE hist.vin IS NOT NULL
+            AND hist.vin <> ''
+            AND LOWER(hist.vin) = LOWER(s.vin)
+            AND hist.service_name = s.service_name
+            AND hist.captured_at >= NOW() - INTERVAL '24 hours'
+            AND (
+              COALESCE(hist.mil_on, false) = true
+              OR COALESCE(hist.dtc_count, 0) > 0
+              OR (
+                jsonb_typeof(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) = 'array'
+                AND jsonb_array_length(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) > 0
+              )
+            )
+        ) first_seen ON true
         WHERE s.vin IS NOT NULL
           AND s.vin <> ''
           AND LOWER(s.vin) = LOWER(v.vin)
@@ -2555,6 +2728,53 @@ router.get("/", async (req, res) => {
     const visibleMaintenanceNotices = maintenanceNotices.filter(
       (item) => !prepTaskTripIds.has(Number(item.trip_id))
     );
+    const diagnosticNotices = diagnosticResult.rows.map(mapVehicleDiagnosticNoticeRow);
+    let visibleDiagnosticNotices = diagnosticNotices;
+
+    if (diagnosticNotices.length) {
+      await timeQueueQuery(
+        queueTimings,
+        "diagnosticSuppressionsEnsure",
+        ensureDiagnosticSuppressionsTable()
+      );
+      const suppressionResult = await timeQueueQuery(
+        queueTimings,
+        "diagnosticSuppressions",
+        db.query(
+          `
+            SELECT diagnostic_key
+            FROM public.vehicle_diagnostic_suppressions
+            WHERE diagnostic_key = ANY($1::text[])
+              AND (
+                acknowledged_at IS NOT NULL
+                OR snoozed_until > NOW()
+              )
+          `,
+          [
+            Array.from(
+              new Set(
+                diagnosticNotices.flatMap((item) => [
+                  item.diagnostic_key,
+                  ...(Array.isArray(item.diagnostic_legacy_keys)
+                    ? item.diagnostic_legacy_keys
+                    : []),
+                ])
+              )
+            ),
+          ]
+        )
+      );
+      const suppressedKeys = new Set(
+        suppressionResult.rows.map((row) => row.diagnostic_key)
+      );
+      visibleDiagnosticNotices = diagnosticNotices.filter(
+        (item) =>
+          !suppressedKeys.has(item.diagnostic_key) &&
+          !(Array.isArray(item.diagnostic_legacy_keys)
+            ? item.diagnostic_legacy_keys.some((key) => suppressedKeys.has(key))
+            : false)
+      );
+    }
 
     const queueItems = compactGuestMessageThreads([
       ...attachedHandoffNotices,
@@ -2564,7 +2784,7 @@ router.get("/", async (req, res) => {
       ...overlapResult.rows.map(mapTripOverlapNoticeRow),
       ...visibleMessageRows.map(mapMessageRow),
       ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
-      ...diagnosticResult.rows.map(mapVehicleDiagnosticNoticeRow),
+      ...visibleDiagnosticNotices,
       ...visibleMaintenanceNotices,
     ])
       .sort(compareQueueItems)
@@ -2622,6 +2842,102 @@ router.patch("/notifications/:id/ack", async (req, res) => {
   } catch (err) {
     console.error("ack notification failed:", err);
     res.status(500).json({ error: "failed to acknowledge notification" });
+  }
+});
+
+router.patch("/diagnostics/suppress", async (req, res) => {
+  try {
+    await ensureDiagnosticSuppressionsTable();
+
+    const diagnosticKey =
+      typeof req.body?.diagnostic_key === "string"
+        ? req.body.diagnostic_key.trim()
+        : "";
+    if (!diagnosticKey) {
+      return res.status(400).json({ error: "diagnostic_key is required" });
+    }
+
+    const action = req.body?.action === "snooze" ? "snooze" : "acknowledge";
+    const hours = Math.max(
+      1,
+      Math.min(72, Number(req.body?.hours || 12) || 12)
+    );
+    const reason =
+      typeof req.body?.reason === "string" && req.body.reason.trim()
+        ? req.body.reason.trim().slice(0, 160)
+        : action === "snooze"
+        ? `snoozed for ${hours} hours`
+        : "acknowledged from dispatch queue";
+
+    const result = await db.query(
+      `
+        WITH written AS (
+          INSERT INTO public.vehicle_diagnostic_suppressions (
+            diagnostic_key,
+            action,
+            acknowledged_at,
+            snoozed_until,
+            reason
+          )
+          VALUES (
+            $1,
+            $2,
+            CASE WHEN $2 = 'acknowledge' THEN NOW() ELSE NULL END,
+            CASE WHEN $2 = 'snooze' THEN NOW() + ($3::int * INTERVAL '1 hour') ELSE NULL END,
+            $4
+          )
+          ON CONFLICT (diagnostic_key) DO UPDATE SET
+            action = EXCLUDED.action,
+            acknowledged_at = EXCLUDED.acknowledged_at,
+            snoozed_until = EXCLUDED.snoozed_until,
+            reason = EXCLUDED.reason,
+            updated_at = NOW()
+          RETURNING diagnostic_key, action, acknowledged_at, snoozed_until, reason
+        ),
+        legacy_written AS (
+          INSERT INTO public.vehicle_diagnostic_suppressions (
+            diagnostic_key,
+            action,
+            acknowledged_at,
+            snoozed_until,
+            reason
+          )
+          SELECT
+            legacy_key,
+            $2,
+            CASE WHEN $2 = 'acknowledge' THEN NOW() ELSE NULL END,
+            CASE WHEN $2 = 'snooze' THEN NOW() + ($3::int * INTERVAL '1 hour') ELSE NULL END,
+            $4
+          FROM unnest($5::text[]) AS legacy_key
+          WHERE legacy_key <> $1
+          ON CONFLICT (diagnostic_key) DO UPDATE SET
+            action = EXCLUDED.action,
+            acknowledged_at = EXCLUDED.acknowledged_at,
+            snoozed_until = EXCLUDED.snoozed_until,
+            reason = EXCLUDED.reason,
+            updated_at = NOW()
+        )
+        SELECT diagnostic_key, action, acknowledged_at, snoozed_until, reason
+        FROM written
+      `,
+      [
+        diagnosticKey,
+        action,
+        hours,
+        reason,
+        Array.isArray(req.body?.legacy_keys)
+          ? req.body.legacy_keys
+              .filter((key) => typeof key === "string" && key.trim())
+              .map((key) => key.trim())
+          : [],
+      ]
+    );
+
+    invalidateMessageCaches();
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("suppress diagnostic failed:", err);
+    res.status(500).json({ error: "failed to suppress diagnostic alert" });
   }
 });
 

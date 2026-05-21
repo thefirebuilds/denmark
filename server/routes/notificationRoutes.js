@@ -76,6 +76,19 @@ function classifyTuroNotification(event) {
 
   if (
     includesAny(text, [
+      "partner offer",
+      "your tint quote is ready",
+      "review your options and enroll",
+      "save up to",
+      "as compared to personal insurance",
+      "grow your business",
+    ])
+  ) {
+    return "partner_offer";
+  }
+
+  if (
+    includesAny(text, [
       "earnings payment",
       "your earnings are on the way",
       "cha-ching",

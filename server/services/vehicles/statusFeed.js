@@ -458,6 +458,7 @@ async function getCachedVehicleStatusFeed() {
       latest.address,
       latest.mil_on,
       latest.mil_last_updated,
+      latest.diagnostic_first_reported_at,
       latest.qualified_dtc_list,
       latest.battery_status,
       latest.battery_last_updated,
@@ -486,6 +487,7 @@ async function getCachedVehicleStatusFeed() {
         address,
         mil_on,
         mil_last_updated,
+        first_seen.diagnostic_first_reported_at,
         qualified_dtc_list,
         battery_status,
         battery_last_updated,
@@ -498,6 +500,23 @@ async function getCachedVehicleStatusFeed() {
         coolant_temp,
         raw_payload
       FROM vehicle_telemetry_snapshots s
+      LEFT JOIN LATERAL (
+        SELECT MIN(COALESCE(hist.vehicle_last_updated, hist.mil_last_updated, hist.captured_at)) AS diagnostic_first_reported_at
+        FROM vehicle_telemetry_snapshots hist
+        WHERE hist.service_name = s.service_name
+          AND hist.vin IS NOT NULL
+          AND hist.vin <> ''
+          AND LOWER(hist.vin) = LOWER(s.vin)
+          AND hist.captured_at >= NOW() - INTERVAL '24 hours'
+          AND (
+            COALESCE(hist.mil_on, false) = true
+            OR COALESCE(hist.dtc_count, 0) > 0
+            OR (
+              jsonb_typeof(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) = 'array'
+              AND jsonb_array_length(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) > 0
+            )
+          )
+      ) first_seen ON true
       WHERE s.vin IS NOT NULL
         AND s.vin <> ''
         AND LOWER(s.vin) = LOWER(v.vin)
@@ -531,6 +550,7 @@ async function getCachedVehicleStatusFeed() {
         mil_on:
           typeof vehicle.mil_on === "boolean" ? vehicle.mil_on : null,
         last_updated: vehicle.mil_last_updated || null,
+        first_reported_at: vehicle.diagnostic_first_reported_at || null,
         qualified_dtc_list: Array.isArray(vehicle.qualified_dtc_list)
           ? vehicle.qualified_dtc_list
           : [],

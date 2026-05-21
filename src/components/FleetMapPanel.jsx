@@ -1,6 +1,15 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
-import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import {
+  MapContainer,
+  CircleMarker,
+  Marker,
+  Pane,
+  Polyline,
+  Popup,
+  TileLayer,
+  useMap,
+} from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
@@ -8,6 +17,31 @@ const STALE_AFTER_MS = 15 * 60 * 1000;
 const REFRESH_INTERVAL_MS = 60 * 1000;
 const DEFAULT_CENTER = [30.2672, -97.7431];
 const OVERLAP_RADIUS_MILES = 0.035;
+const MOVING_SPEED_MPH = 2;
+const TRAIL_MINUTES = 90;
+const LOCATION_AWARENESS_MILES = 20;
+const TRAIL_UNDERLAY_OPTIONS = {
+  color: "#0f172a",
+  opacity: 0.28,
+  weight: 8,
+  lineCap: "round",
+  lineJoin: "round",
+};
+const TRAIL_OPTIONS = {
+  color: "#10b981",
+  opacity: 0.82,
+  weight: 4,
+  lineCap: "round",
+  lineJoin: "round",
+};
+const HEATMAP_DAYS = 90;
+const HEATMAP_FOG_OPTIONS = {
+  color: "transparent",
+  fillColor: "#f97316",
+  fillOpacity: 0.068,
+  opacity: 0,
+  weight: 0,
+};
 
 const SPIDER_OFFSETS = [
   [0, -34],
@@ -96,6 +130,119 @@ function formatCoordinate(value) {
   return Number(value).toFixed(5);
 }
 
+function normalizeHeading(value) {
+  const heading = Number(value);
+  if (!Number.isFinite(heading)) return null;
+  return ((heading % 360) + 360) % 360;
+}
+
+function headingToCompass(value) {
+  const heading = normalizeHeading(value);
+  if (heading == null) return null;
+  const directions = [
+    "N",
+    "NE",
+    "E",
+    "SE",
+    "S",
+    "SW",
+    "W",
+    "NW",
+  ];
+  return directions[Math.round(heading / 45) % directions.length];
+}
+
+function formatHeading(value) {
+  const heading = normalizeHeading(value);
+  if (heading == null) return null;
+  const compass = headingToCompass(heading);
+  return `${compass} ${Math.round(heading)}°`;
+}
+
+function HeadingChip({ heading, label }) {
+  const normalizedHeading = normalizeHeading(heading);
+  if (normalizedHeading == null || !label) return null;
+
+  return (
+    <span className="fleet-map-heading-chip" title={`Heading ${label}`}>
+      <span
+        className="fleet-map-heading-chip-icon"
+        style={{ "--fleet-map-heading": `${normalizedHeading}deg` }}
+        aria-hidden="true"
+      />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function normalizeTrailPoints(points) {
+  if (!Array.isArray(points)) return [];
+  return points
+    .map((point) => {
+      const lat = Number(point?.lat);
+      const lon = Number(point?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return [lat, lon];
+    })
+    .filter(Boolean);
+}
+
+function getMovingTrailPositions(vehicle, stale) {
+  const speed = Number(vehicle?.speed);
+  if (stale || !Number.isFinite(speed) || speed <= MOVING_SPEED_MPH) {
+    return [];
+  }
+
+  const positions = normalizeTrailPoints(vehicle?.trail);
+  const current = [Number(vehicle?.lat), Number(vehicle?.lon)];
+  if (!current.every(Number.isFinite)) {
+    return positions.length >= 2 ? positions : [];
+  }
+
+  const last = positions[positions.length - 1];
+  if (!last || distanceMiles({ lat: last[0], lon: last[1] }, vehicle) > 0.003) {
+    positions.push(current);
+  }
+
+  return positions.length >= 2 ? positions : [];
+}
+
+function getNearestHeatmapDistanceMiles(vehicle, heatmapPoints) {
+  if (!vehicle || !Array.isArray(heatmapPoints) || heatmapPoints.length === 0) {
+    return null;
+  }
+
+  const nearest = heatmapPoints.reduce((best, point) => {
+    const distance = distanceMiles(vehicle, point);
+    return distance < best ? distance : best;
+  }, Infinity);
+
+  return Number.isFinite(nearest) ? nearest : null;
+}
+
+function formatDistanceMiles(value) {
+  const miles = Number(value);
+  if (!Number.isFinite(miles)) return null;
+  if (miles < 0.1) return "inside normal area";
+  if (miles < 1) return `${miles.toFixed(1)} mi from normal`;
+  return `${Math.round(miles)} mi from normal`;
+}
+
+function getHeatmapCircle(point) {
+  const intensity = Math.max(0.08, Math.min(1, Number(point?.intensity) || 0));
+  return {
+    center: [Number(point.lat), Number(point.lon)],
+    radius: 20 + Math.round(Math.sqrt(intensity) * 46),
+    pathOptions: {
+      color: intensity > 0.55 ? "#991b1b" : "#ea580c",
+      fillColor: intensity > 0.55 ? "#ef4444" : "#f97316",
+      fillOpacity: 0.136 + intensity * 0.231,
+      opacity: 0.326 + intensity * 0.245,
+      weight: 2,
+    },
+  };
+}
+
 function buildGoogleMapsUrl(lat, lon) {
   return `https://www.google.com/maps?q=${lat},${lon}`;
 }
@@ -142,6 +289,22 @@ function getVehiclePinKey(vehicle) {
     .split(/\s+/)[0];
 }
 
+function normalizeVehicleId(value) {
+  if (value == null || value === "") return null;
+  return String(value);
+}
+
+function vehicleMatchesSelector(vehicle, selector) {
+  const normalized = normalizeVehicleId(selector);
+  if (!normalized || !vehicle) return false;
+  const lowered = normalized.trim().toLowerCase();
+  return (
+    normalizeVehicleId(vehicle.id) === normalized ||
+    getVehiclePinKey(vehicle) === lowered ||
+    String(vehicle.name || "").trim().toLowerCase() === lowered
+  );
+}
+
 function mapStatusVehicleToLocation(vehicle) {
   const location = vehicle?.telemetry?.location || {};
   const lat = Number(location.lat);
@@ -169,6 +332,10 @@ function mapStatusVehicleToLocation(vehicle) {
       "Stored telemetry",
     lat,
     lon,
+    heading:
+      vehicle?.telemetry?.location?.heading == null
+        ? null
+        : Number(vehicle.telemetry.location.heading),
     lastSeen:
       vehicle?.telemetry?.location?.last_updated ||
       vehicle?.telemetry?.timestamps?.vehicle_last_updated ||
@@ -218,6 +385,24 @@ async function fetchVehicleLocations() {
       ? data.map(mapStatusVehicleToLocation).filter(Boolean)
       : [];
   }
+}
+
+async function fetchVehicleHeatmap(vehicleId) {
+  if (!vehicleId) return null;
+  return fetchJson(
+    `/api/vehicles/locations/heatmap?vehicleId=${encodeURIComponent(
+      vehicleId
+    )}&days=${HEATMAP_DAYS}`
+  );
+}
+
+async function fetchVehicleTrail(vehicleId) {
+  if (!vehicleId) return null;
+  return fetchJson(
+    `/api/vehicles/locations/trail?vehicleId=${encodeURIComponent(
+      vehicleId
+    )}&minutes=${TRAIL_MINUTES}`
+  );
 }
 
 function buildSpiderOffsets(locations) {
@@ -338,6 +523,13 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [focusKey, setFocusKey] = useState(0);
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+  const [heatmap, setHeatmap] = useState(null);
+  const [heatmapError, setHeatmapError] = useState("");
+  const [heatmapLoading, setHeatmapLoading] = useState(false);
+  const [heatmapEnabled, setHeatmapEnabled] = useState(true);
+  const [trail, setTrail] = useState(null);
+  const [trailError, setTrailError] = useState("");
+  const [trailLoading, setTrailLoading] = useState(false);
   const hasLoadedLocationsRef = useRef(false);
   const lastFocusVehicleIdRef = useRef(null);
 
@@ -354,7 +546,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
         if (!cancelled) {
           setLocations(nextLocations);
           setSelectedId((current) =>
-            nextLocations.some((vehicle) => vehicle.id === current)
+            nextLocations.some((vehicle) => vehicleMatchesSelector(vehicle, current))
               ? current
               : null
           );
@@ -397,18 +589,135 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
         ? null
         : String(focusVehicleId);
     if (!requestedId || requestedId === lastFocusVehicleIdRef.current) return;
-    if (!locations.some((vehicle) => String(vehicle.id) === requestedId)) return;
+    const requestedVehicle = locations.find((vehicle) =>
+      vehicleMatchesSelector(vehicle, requestedId)
+    );
+    if (!requestedVehicle) return;
 
     lastFocusVehicleIdRef.current = requestedId;
-    setSelectedId(requestedId);
+    setSelectedId(normalizeVehicleId(requestedVehicle.id));
     setFocusKey((value) => value + 1);
   }, [focusVehicleId, locations]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHeatmap() {
+      if (!selectedId || !heatmapEnabled) {
+        setHeatmap(null);
+        setHeatmapError("");
+        setHeatmapLoading(false);
+        return;
+      }
+
+      setHeatmapLoading(true);
+      setHeatmapError("");
+
+      try {
+        const nextHeatmap = await fetchVehicleHeatmap(selectedId);
+        if (!cancelled) {
+          setHeatmap(nextHeatmap);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setHeatmap(null);
+          setHeatmapError(err?.message || "Failed to load heatmap");
+        }
+      } finally {
+        if (!cancelled) {
+          setHeatmapLoading(false);
+        }
+      }
+    }
+
+    loadHeatmap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, heatmapEnabled, refreshKey]);
+
   const selectedVehicle = useMemo(
-    () => locations.find((vehicle) => vehicle.id === selectedId) || null,
+    () =>
+      locations.find((vehicle) => vehicleMatchesSelector(vehicle, selectedId)) ||
+      null,
     [locations, selectedId]
   );
   const spiderOffsets = useMemo(() => buildSpiderOffsets(locations), [locations]);
+  const selectedHeatmapPoints =
+    selectedVehicle && heatmapEnabled && Array.isArray(heatmap?.points)
+      ? heatmap.points
+      : [];
+  const selectedHeatmapDistance = getNearestHeatmapDistanceMiles(
+    selectedVehicle,
+    selectedHeatmapPoints
+  );
+  const selectedHeatmapDistanceLabel = formatDistanceMiles(
+    selectedHeatmapDistance
+  );
+  const selectedOutsideNorm =
+    selectedHeatmapPoints.length >= 8 &&
+    selectedHeatmapDistance != null &&
+    selectedHeatmapDistance > LOCATION_AWARENESS_MILES;
+  const visibleMapVehicles = selectedVehicle ? [selectedVehicle] : locations;
+  const selectedTrailVehicle = selectedVehicle
+    ? { ...selectedVehicle, trail: trail?.points || [] }
+    : null;
+  const selectedTrailPositions = selectedTrailVehicle
+    ? getMovingTrailPositions(
+        selectedTrailVehicle,
+        isStale(selectedTrailVehicle.lastSeen)
+      )
+    : [];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTrail() {
+      const speed = Number(selectedVehicle?.speed);
+      if (
+        !selectedVehicle ||
+        isStale(selectedVehicle.lastSeen) ||
+        !Number.isFinite(speed) ||
+        speed <= MOVING_SPEED_MPH
+      ) {
+        setTrail(null);
+        setTrailError("");
+        setTrailLoading(false);
+        return;
+      }
+
+      setTrailLoading(true);
+      setTrailError("");
+
+      try {
+        const nextTrail = await fetchVehicleTrail(selectedVehicle.id);
+        if (!cancelled) {
+          setTrail(nextTrail);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setTrail(null);
+          setTrailError(err?.message || "Failed to load trail");
+        }
+      } finally {
+        if (!cancelled) {
+          setTrailLoading(false);
+        }
+      }
+    }
+
+    loadTrail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedVehicle?.id,
+    selectedVehicle?.lastSeen,
+    selectedVehicle?.speed,
+    refreshKey,
+  ]);
 
   const center = selectedVehicle
     ? [selectedVehicle.lat, selectedVehicle.lon]
@@ -417,7 +726,10 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
       : DEFAULT_CENTER;
 
   function toggleSelectedVehicle(vehicleId) {
-    setSelectedId((current) => (current === vehicleId ? null : vehicleId));
+    const nextId = normalizeVehicleId(vehicleId);
+    setSelectedId((current) =>
+      normalizeVehicleId(current) === nextId ? null : nextId
+    );
     setFocusKey((value) => value + 1);
   }
 
@@ -434,8 +746,10 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
           <h2>Last known locations</h2>
           <p>
             Stored vehicle telemetry only. Stale means the latest location is
-            older than 15 minutes. Blue markers indicate a vehicle reported as
-            running in the latest stored snapshot.
+            older than 15 minutes. Green markers indicate a vehicle reported as
+            running, while blue markers indicate fresh telemetry. Moving
+            vehicles draw a recent location trail. Selecting a vehicle shows
+            its recent location heatmap.
           </p>
         </div>
         <div className="fleet-map-actions">
@@ -446,6 +760,14 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 ? `Updated ${formatTimestamp(lastRefreshedAt)}`
                 : "Auto-refresh every minute"}
           </span>
+          <label className="fleet-map-toggle">
+            <input
+              type="checkbox"
+              checked={heatmapEnabled}
+              onChange={(event) => setHeatmapEnabled(event.target.checked)}
+            />
+            Heatmap
+          </label>
           <button
             type="button"
             className="fleet-map-refresh"
@@ -484,9 +806,45 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 locations={locations}
                 focusKey={focusKey}
               />
-              {locations.map((vehicle) => {
+              {selectedHeatmapPoints.length ? (
+                <Pane name="fleet-map-heatmap-pane" style={{ zIndex: 430 }}>
+                  {selectedHeatmapPoints.map((point, index) => (
+                    <CircleMarker
+                      key={`${selectedId}-fog-${index}`}
+                      center={[Number(point.lat), Number(point.lon)]}
+                      radius={86}
+                      pathOptions={HEATMAP_FOG_OPTIONS}
+                    />
+                  ))}
+                  {selectedHeatmapPoints.map((point, index) => {
+                    const circle = getHeatmapCircle(point);
+                    return (
+                      <CircleMarker
+                        key={`${selectedId}-heat-${index}`}
+                        center={circle.center}
+                        radius={circle.radius}
+                        pathOptions={circle.pathOptions}
+                      />
+                    );
+                  })}
+                </Pane>
+              ) : null}
+              {selectedTrailPositions.length >= 2 ? (
+                <Fragment key={`${selectedId}-trail`}>
+                  <Polyline
+                    positions={selectedTrailPositions}
+                    pathOptions={TRAIL_UNDERLAY_OPTIONS}
+                  />
+                  <Polyline
+                    positions={selectedTrailPositions}
+                    pathOptions={TRAIL_OPTIONS}
+                  />
+                </Fragment>
+              ) : null}
+              {visibleMapVehicles.map((vehicle) => {
                 const stale = isStale(vehicle.lastSeen);
                 const running = vehicle.isRunning === true;
+                const headingLabel = formatHeading(vehicle.heading);
                 return (
                   <Marker
                     key={vehicle.id}
@@ -494,7 +852,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                     icon={createVehicleIcon(
                       vehicle,
                       stale,
-                      vehicle.id === selectedId,
+                      vehicleMatchesSelector(vehicle, selectedId),
                       running,
                       spiderOffsets.get(vehicle.id)
                     )}
@@ -518,6 +876,9 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                           {formatCoordinate(vehicle.lat)},{" "}
                           {formatCoordinate(vehicle.lon)}
                         </span>
+                        {headingLabel ? (
+                          <span>Heading {headingLabel}</span>
+                        ) : null}
                         <span>
                           {formatLastSeenLabel(vehicle.lastSeenType)}{" "}
                           {formatFreshness(vehicle.lastSeen)}
@@ -557,15 +918,42 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 {locations.length} vehicle{locations.length === 1 ? "" : "s"}
               </span>
             </button>
+            {selectedVehicle ? (
+              <div
+                className={`fleet-map-heatmap-card ${
+                  selectedOutsideNorm ? "fleet-map-heatmap-card--outside" : ""
+                }`}
+              >
+                <strong>{selectedVehicle.name} norm</strong>
+                <span>
+                  {heatmapLoading
+                    ? "Loading heatmap..."
+                    : heatmapError
+                      ? "Heatmap unavailable"
+                      : selectedHeatmapPoints.length
+                        ? `${selectedHeatmapPoints.length} common area${
+                            selectedHeatmapPoints.length === 1 ? "" : "s"
+                          } over ${heatmap?.days || HEATMAP_DAYS} days`
+                        : "Not enough location history yet"}
+                </span>
+                {selectedHeatmapDistanceLabel && !heatmapLoading ? (
+                  <em>
+                    {selectedOutsideNorm ? "Travel awareness: " : ""}
+                    {selectedHeatmapDistanceLabel}
+                  </em>
+                ) : null}
+              </div>
+            ) : null}
             {locations.map((vehicle) => {
               const stale = isStale(vehicle.lastSeen);
               const running = vehicle.isRunning === true;
+              const headingLabel = formatHeading(vehicle.heading);
               return (
                 <button
                   key={vehicle.id}
                   type="button"
                   className={`fleet-map-list-item ${
-                    vehicle.id === selectedId ? "active" : ""
+                    vehicleMatchesSelector(vehicle, selectedId) ? "active" : ""
                   }`}
                   onClick={() => toggleSelectedVehicle(vehicle.id)}
                 >
@@ -582,6 +970,15 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                     {running ? "Running" : stale ? "Stale" : "Fresh"} ·{" "}
                     {formatLastSeenLabel(vehicle.lastSeenType)} ·{" "}
                     {formatFreshness(vehicle.lastSeen)}
+                    {headingLabel ? (
+                      <>
+                        {" · "}
+                        <HeadingChip
+                          heading={vehicle.heading}
+                          label={headingLabel}
+                        />
+                      </>
+                    ) : null}
                   </span>
                 </button>
               );

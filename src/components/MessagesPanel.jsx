@@ -568,7 +568,10 @@ function buildMessageBody(message) {
   if (type === "vehicle_diagnostic_alert") {
     const source = message?.diagnostic_source || "telematics";
     const label = message?.diagnostic_label || "diagnostic warning";
-    return `${message?.vehicle_name || "Vehicle"} reported ${label} from ${source}. Review before the next handoff.`;
+    const firstReported = formatTripTime(message?.diagnostic_first_reported_at);
+    return `${message?.vehicle_name || "Vehicle"} reported ${label} from ${source}${
+      firstReported ? `, first reported ${firstReported}` : ""
+    }. Review before the next handoff.`;
   }
 
   if (type === "guest_message_thread") {
@@ -1077,6 +1080,7 @@ export default function MessagesPanel({
   const [focusingMessageId, setFocusingMessageId] = useState(null);
   const [ackingNotificationId, setAckingNotificationId] = useState(null);
   const [resolvingMaintenanceId, setResolvingMaintenanceId] = useState(null);
+  const [suppressingDiagnosticId, setSuppressingDiagnosticId] = useState(null);
   const [readyingHandoffMessageId, setReadyingHandoffMessageId] = useState(null);
   const [exportingPrepMessageId, setExportingPrepMessageId] = useState(null);
   const [exportingInspectionMessageId, setExportingInspectionMessageId] =
@@ -1291,6 +1295,56 @@ async function handleResolveMaintenance(message) {
     setError(err.message || "Failed to resolve maintenance");
   } finally {
     setResolvingMaintenanceId(null);
+  }
+}
+
+async function handleSuppressDiagnostic(message, action = "acknowledge") {
+  const diagnosticKey = message?.diagnostic_key;
+  if (!diagnosticKey) {
+    setError("No diagnostic alert key found");
+    return;
+  }
+
+  try {
+    setSuppressingDiagnosticId(message.id);
+    setError("");
+
+    const res = await fetch(`${API_BASE}/api/messages/diagnostics/suppress`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        diagnostic_key: diagnosticKey,
+        legacy_keys: Array.isArray(message?.diagnostic_legacy_keys)
+          ? message.diagnostic_legacy_keys
+          : [],
+        action,
+        hours: 12,
+        reason:
+          action === "snooze"
+            ? "snoozed from dispatch queue"
+            : "acknowledged from dispatch queue",
+      }),
+    });
+
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+
+    if (!res.ok) {
+      throw new Error(data?.error || `Failed to update diagnostic (${res.status})`);
+    }
+
+    setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+    setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
+    seenIdsRef.current.delete(message.id);
+    knownQueueItemIdsRef.current.delete(String(message.id));
+    notifyMessageStatsUpdated();
+  } catch (err) {
+    setError(err.message || "Failed to update diagnostic alert");
+  } finally {
+    setSuppressingDiagnosticId(null);
   }
 }
 
@@ -2281,10 +2335,43 @@ async function handleExportGuestInspectionSheet(message) {
                       </strong>
                     </div>
                     <div className="message-maintenance-plan-date">
+                      <span>First reported</span>
+                      <strong>
+                        {formatTripTime(message.diagnostic_first_reported_at) ||
+                          "Unknown"}
+                      </strong>
+                    </div>
+                    <div className="message-maintenance-plan-date">
                       <span>Last seen</span>
                       <strong>
                         {formatTripTime(message.diagnostic_last_seen) || "Unknown"}
                       </strong>
+                    </div>
+                    <div className="message-inline-actions">
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={suppressingDiagnosticId === message.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleSuppressDiagnostic(message, "acknowledge");
+                        }}
+                      >
+                        {suppressingDiagnosticId === message.id
+                          ? "Updating..."
+                          : "Acknowledge"}
+                      </button>
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={suppressingDiagnosticId === message.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleSuppressDiagnostic(message, "snooze");
+                        }}
+                      >
+                        Snooze 12h
+                      </button>
                     </div>
                   </div>
                 )}

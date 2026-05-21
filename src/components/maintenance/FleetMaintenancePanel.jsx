@@ -260,6 +260,7 @@ function buildMilStatus(fleetVehicle = null) {
     : [];
   const count = Number(mil.dtc_count ?? codes.length ?? 0);
   const lastUpdated = mil.last_updated || null;
+  const firstReportedAt = mil.first_reported_at || null;
 
   if (mil.mil_on === true) {
     return {
@@ -269,6 +270,7 @@ function buildMilStatus(fleetVehicle = null) {
         ? `${codes.length} decoded DTC${codes.length === 1 ? "" : "s"} reported`
         : "Check-engine light is on, but no decoded DTCs were reported yet",
       lastUpdated,
+      firstReportedAt,
     };
   }
 
@@ -278,6 +280,7 @@ function buildMilStatus(fleetVehicle = null) {
       label: codes.length ? `DTC: ${codes.join(", ")}` : `${count} DTC active`,
       detail: "Diagnostic trouble code reported by telematics",
       lastUpdated,
+      firstReportedAt,
     };
   }
 
@@ -287,6 +290,7 @@ function buildMilStatus(fleetVehicle = null) {
       label: "MIL clear",
       detail: "No active check-engine light reported",
       lastUpdated,
+      firstReportedAt,
     };
   }
 
@@ -295,6 +299,7 @@ function buildMilStatus(fleetVehicle = null) {
     label: "No MIL reading",
     detail: "No diagnostic status reported yet",
     lastUpdated,
+    firstReportedAt,
   };
 }
 
@@ -2165,8 +2170,13 @@ export default function FleetMaintenancePanel({
                   </span>
                   <span className="fleet-maintenance-registration-subvalue">
                     {vehicle.mil_status?.detail || "No diagnostic status reported"}
+                    {vehicle.mil_status?.firstReportedAt
+                      ? ` - first reported ${formatTelematicsLastCall(
+                          vehicle.mil_status.firstReportedAt
+                        )}`
+                      : ""}
                     {vehicle.mil_status?.lastUpdated
-                      ? ` - ${formatTelematicsLastCall(
+                      ? ` - last seen ${formatTelematicsLastCall(
                           vehicle.mil_status.lastUpdated
                         )}`
                       : ""}

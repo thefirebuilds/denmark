@@ -3,6 +3,64 @@ const { sendSms } = require("./twilioSms");
 
 let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
+const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
+
+function normalizeDisplayTimestamp(value, fallback = null) {
+  if (!value) return fallback;
+  const text = String(value).trim();
+
+  if (/(?:z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+    return value;
+  }
+
+  const match = text.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)/
+  );
+  const naiveWallTime =
+    value instanceof Date
+      ? (() => {
+          if (Number.isNaN(value.getTime())) return null;
+          const pad = (part, size = 2) => String(part).padStart(size, "0");
+          return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(
+            value.getDate()
+          )}T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(
+            value.getSeconds()
+          )}.${pad(value.getMilliseconds(), 3)}`;
+        })()
+      : match
+      ? `${match[1]}T${match[2].includes(".") ? match[2] : `${match[2]}.000`}`
+      : null;
+
+  if (!naiveWallTime) return fallback || value;
+
+  const nowParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const part = (type) => nowParts.find((item) => item.type === type)?.value;
+  const hour = part("hour") === "24" ? "00" : part("hour");
+  const nowWallTime = `${part("year")}-${part("month")}-${part("day")}T${hour}:${part(
+    "minute"
+  )}:${part("second")}.000`;
+
+  const naiveWallDate = new Date(naiveWallTime);
+  const nowWallDate = new Date(nowWallTime);
+  if (
+    !Number.isNaN(naiveWallDate.getTime()) &&
+    !Number.isNaN(nowWallDate.getTime()) &&
+    naiveWallDate.getTime() > nowWallDate.getTime() + FUTURE_TELEMETRY_GRACE_MS
+  ) {
+    return `${naiveWallTime}Z`;
+  }
+
+  return naiveWallTime;
+}
 
 function formatChicago(value) {
   if (!value) return "unknown time";
@@ -353,31 +411,49 @@ async function collectBridgeTuroNotificationAlerts() {
 async function collectDtcAlerts() {
   const { rows } = await pool.query(`
     WITH latest AS (
-      SELECT DISTINCT ON (COALESCE(NULLIF(vin, ''), external_vehicle_key, dimo_token_id::text))
-        id,
-        service_name,
-        vin,
-        nickname,
-        captured_at,
-        vehicle_last_updated,
-        mil_on,
-        qualified_dtc_list,
-        dtc_count
-      FROM vehicle_telemetry_snapshots
-      WHERE captured_at >= NOW() - INTERVAL '24 hours'
+      SELECT DISTINCT ON (COALESCE(NULLIF(latest_snapshot.vin, ''), latest_snapshot.external_vehicle_key, latest_snapshot.dimo_token_id::text))
+        latest_snapshot.id,
+        latest_snapshot.service_name,
+        latest_snapshot.vin,
+        latest_snapshot.nickname,
+        latest_snapshot.captured_at,
+        latest_snapshot.vehicle_last_updated,
+        latest_snapshot.mil_on,
+        latest_snapshot.qualified_dtc_list,
+        latest_snapshot.dtc_count,
+        first_seen.diagnostic_first_reported_at
+      FROM vehicle_telemetry_snapshots latest_snapshot
+      LEFT JOIN LATERAL (
+        SELECT MIN(COALESCE(hist.vehicle_last_updated, hist.mil_last_updated, hist.captured_at)) AS diagnostic_first_reported_at
+        FROM vehicle_telemetry_snapshots hist
+        WHERE hist.service_name = latest_snapshot.service_name
+          AND COALESCE(NULLIF(hist.vin, ''), hist.external_vehicle_key, hist.dimo_token_id::text)
+            = COALESCE(NULLIF(latest_snapshot.vin, ''), latest_snapshot.external_vehicle_key, latest_snapshot.dimo_token_id::text)
+          AND hist.captured_at >= NOW() - INTERVAL '24 hours'
+          AND (
+            COALESCE(hist.mil_on, false) = true
+            OR
+            COALESCE(hist.dtc_count, 0) > 0
+            OR (
+              jsonb_typeof(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) = 'array'
+              AND jsonb_array_length(COALESCE(hist.qualified_dtc_list, '[]'::jsonb)) > 0
+            )
+          )
+      ) first_seen ON true
+      WHERE latest_snapshot.captured_at >= NOW() - INTERVAL '24 hours'
         AND (
-          COALESCE(mil_on, false) = true
+          COALESCE(latest_snapshot.mil_on, false) = true
           OR
-          COALESCE(dtc_count, 0) > 0
+          COALESCE(latest_snapshot.dtc_count, 0) > 0
           OR (
-            jsonb_typeof(COALESCE(qualified_dtc_list, '[]'::jsonb)) = 'array'
-            AND jsonb_array_length(COALESCE(qualified_dtc_list, '[]'::jsonb)) > 0
+            jsonb_typeof(COALESCE(latest_snapshot.qualified_dtc_list, '[]'::jsonb)) = 'array'
+            AND jsonb_array_length(COALESCE(latest_snapshot.qualified_dtc_list, '[]'::jsonb)) > 0
           )
         )
       ORDER BY
-        COALESCE(NULLIF(vin, ''), external_vehicle_key, dimo_token_id::text),
-        COALESCE(vehicle_last_updated, captured_at) DESC NULLS LAST,
-        id DESC
+        COALESCE(NULLIF(latest_snapshot.vin, ''), latest_snapshot.external_vehicle_key, latest_snapshot.dimo_token_id::text),
+        COALESCE(latest_snapshot.vehicle_last_updated, latest_snapshot.captured_at) DESC NULLS LAST,
+        latest_snapshot.id DESC
     )
     SELECT
       latest.*,
@@ -401,14 +477,23 @@ async function collectDtcAlerts() {
       : row.mil_on
       ? "mil-on-no-codes"
       : `count-${row.dtc_count || 1}`;
+    const firstReported = row.diagnostic_first_reported_at
+      ? ` First reported ${formatChicago(
+          normalizeDisplayTimestamp(row.diagnostic_first_reported_at, row.captured_at)
+        )}.`
+      : "";
+    const lastSeen = normalizeDisplayTimestamp(
+      row.vehicle_last_updated || row.captured_at,
+      row.captured_at
+    );
 
     return {
       alertKey: `dtc:${row.service_name}:${row.vin || row.id}:${dtcKey}`,
       alertType: "dtc_received",
       severity: "urgent",
       body: `Denmark: ${vehicle} reported ${codeLabel} from ${row.service_name}. Seen ${formatChicago(
-        row.vehicle_last_updated || row.captured_at
-      )}.`,
+        lastSeen
+      )}.${firstReported}`,
       details: row,
     };
   });

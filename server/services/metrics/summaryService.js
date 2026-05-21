@@ -349,6 +349,91 @@ function getTripScheduledTuroOutputValue(trip, startDate, endDate) {
   );
 }
 
+const TRIP_LENGTH_BUCKETS = [
+  { key: "1_day", label: "1 day", minDays: 1, maxDays: 1 },
+  { key: "2_day", label: "2 day", minDays: 2, maxDays: 2 },
+  { key: "3_day", label: "3 day", minDays: 3, maxDays: 3 },
+  { key: "4_day", label: "4 day", minDays: 4, maxDays: 4 },
+  { key: "5_7_day", label: "5-7 days", minDays: 5, maxDays: 7 },
+  { key: "7_10_day", label: "7-10 days", minDays: 8, maxDays: 10 },
+  { key: "11_20_day", label: "11-20 days", minDays: 11, maxDays: 20 },
+  { key: "20_plus_day", label: "20+ days", minDays: 21, maxDays: null },
+];
+
+function getTripLengthBucket(totalDays) {
+  return TRIP_LENGTH_BUCKETS.find(
+    (bucket) =>
+      totalDays >= bucket.minDays &&
+      (bucket.maxDays == null || totalDays <= bucket.maxDays)
+  );
+}
+
+function buildTripLengthDistribution(trips) {
+  const buckets = TRIP_LENGTH_BUCKETS.map((bucket) => ({
+    key: bucket.key,
+    label: bucket.label,
+    min_days: bucket.minDays,
+    max_days: bucket.maxDays,
+    trip_count: 0,
+    trip_days: 0,
+    trip_income: 0,
+    average_trip_income: 0,
+    income_per_day: 0,
+    percentage: 0,
+  }));
+  const bucketByKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+  let totalTrips = 0;
+  let totalDays = 0;
+  let totalIncome = 0;
+
+  for (const trip of trips || []) {
+    const tripDays = getTripTotalDays(trip?.trip_start, trip?.trip_end);
+    if (!tripDays) continue;
+
+    const bucket = getTripLengthBucket(tripDays);
+    if (!bucket) continue;
+
+    totalTrips += 1;
+    totalDays += tripDays;
+    const tripIncome = getTripTuroOutputValue(trip);
+    totalIncome += tripIncome;
+    const targetBucket = bucketByKey.get(bucket.key);
+    targetBucket.trip_count += 1;
+    targetBucket.trip_days += tripDays;
+    targetBucket.trip_income += tripIncome;
+  }
+
+  const hydratedBuckets = buckets.map((bucket) => {
+    return {
+      ...bucket,
+      trip_days: roundNumber(bucket.trip_days, 1),
+      trip_income: roundMoney(bucket.trip_income),
+      average_trip_income: roundMoney(
+        safeDivide(bucket.trip_income, bucket.trip_count)
+      ),
+      income_per_day: roundMoney(safeDivide(bucket.trip_income, bucket.trip_days)),
+      percentage: roundNumber(safeDivide(bucket.trip_count, totalTrips), 4),
+    };
+  });
+
+  return {
+    total_trips: totalTrips,
+    trip_income: roundMoney(totalIncome),
+    average_days: roundNumber(safeDivide(totalDays, totalTrips), 1),
+    average_trip_income: roundMoney(safeDivide(totalIncome, totalTrips)),
+    buckets: hydratedBuckets,
+    top_income_buckets: hydratedBuckets
+      .filter((bucket) => bucket.trip_count > 0)
+      .sort((a, b) => {
+        const incomeDiff =
+          Number(b.average_trip_income || 0) - Number(a.average_trip_income || 0);
+        if (incomeDiff) return incomeDiff;
+        return Number(b.trip_income || 0) - Number(a.trip_income || 0);
+      })
+      .slice(0, 3),
+  };
+}
+
 function buildIncomeReconciliationBuckets(trips, incomeTransactions, startDate, endDate) {
   const buckets = new Map();
 
@@ -1000,6 +1085,7 @@ async function getSummaryMetrics(rangeKey = "30d") {
       0
     );
     const incomeCategoryVariance = incomeCategoryTotal - scheduledTuroOutputTotal;
+    const tripLengthDistribution = buildTripLengthDistribution(trips);
 
     const tripCountOverlapping = trips.length;
 
@@ -1221,6 +1307,7 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
 
       trip_count_overlapping: tripCountOverlapping,
       trip_count_prorated: roundNumber(tripCountProrated, 2),
+      trip_length_distribution: tripLengthDistribution,
 
       booked_vehicle_days: bookedVehicleDays,
       calendar_days: calendarDays,

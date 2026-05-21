@@ -9,7 +9,11 @@ const {
   getCombinedVehicleStatusFeed,
   getCachedVehicleStatusFeed,
 } = require("../services/vehicles/statusFeed");
-const { getVehicleLocations } = require("../services/vehicles/locationFeed");
+const {
+  getVehicleLocationHeatmap,
+  getVehicleLocationTrail,
+  getVehicleLocations,
+} = require("../services/vehicles/locationFeed");
 const { getParkingSpotUsage } = require("../services/vehicles/parkingSpotUsage");
 const {
   generateFleetFmvEstimates,
@@ -200,6 +204,56 @@ router.get("/locations", async (req, res) => {
   } catch (err) {
     console.error("GET /api/vehicles/locations failed:", err);
     res.status(500).json({ error: "Failed to fetch vehicle locations" });
+  }
+});
+
+router.get("/locations/trail", async (req, res) => {
+  try {
+    if (!req.query.vehicleId) {
+      return res.status(400).json({ error: "vehicleId is required" });
+    }
+
+    const trail = await getVehicleLocationTrail(req.query.vehicleId, {
+      minutes: req.query.minutes,
+    });
+    return res.json(trail);
+  } catch (err) {
+    console.error("GET /api/vehicles/locations/trail failed:", err);
+    return res
+      .status(err.status || 500)
+      .json({ error: err.message || "Failed to fetch vehicle trail" });
+  }
+});
+
+router.get("/locations/heatmap", async (req, res) => {
+  try {
+    if (!req.query.vehicleId) {
+      return res.status(400).json({ error: "vehicleId is required" });
+    }
+
+    const heatmap = await getVehicleLocationHeatmap(req.query.vehicleId, {
+      days: req.query.days,
+    });
+    return res.json(heatmap);
+  } catch (err) {
+    console.error("GET /api/vehicles/locations/heatmap failed:", err);
+    return res
+      .status(err.status || 500)
+      .json({ error: err.message || "Failed to fetch vehicle heatmap" });
+  }
+});
+
+router.get("/locations/:vehicleId/heatmap", async (req, res) => {
+  try {
+    const heatmap = await getVehicleLocationHeatmap(req.params.vehicleId, {
+      days: req.query.days,
+    });
+    res.json(heatmap);
+  } catch (err) {
+    console.error("GET /api/vehicles/locations/:vehicleId/heatmap failed:", err);
+    res
+      .status(err.status || 500)
+      .json({ error: err.message || "Failed to fetch vehicle heatmap" });
   }
 });
 

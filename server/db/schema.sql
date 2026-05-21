@@ -141,6 +141,7 @@ DROP INDEX IF EXISTS public.idx_expenses_trip_id;
 DROP INDEX IF EXISTS public.idx_expenses_updated_at;
 DROP INDEX IF EXISTS public.idx_expenses_vehicle_date;
 DROP INDEX IF EXISTS public.idx_fleet_alert_deliveries_type_sent;
+DROP INDEX IF EXISTS public.idx_vehicle_diagnostic_suppressions_snoozed;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_id_key;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_raw_payloads DROP CONSTRAINT IF EXISTS vehicle_telemetry_raw_payloads_pkey;
@@ -249,6 +250,8 @@ DROP SEQUENCE IF EXISTS public.expenses_id_seq;
 DROP TABLE IF EXISTS public.expenses;
 DROP SEQUENCE IF EXISTS public.fleet_alert_deliveries_id_seq;
 DROP TABLE IF EXISTS public.fleet_alert_deliveries;
+DROP SEQUENCE IF EXISTS public.vehicle_diagnostic_suppressions_id_seq;
+DROP TABLE IF EXISTS public.vehicle_diagnostic_suppressions;
 DROP TABLE IF EXISTS public.app_settings;
 DROP SEQUENCE IF EXISTS public.api_auth_tokens_id_seq;
 DROP TABLE IF EXISTS public.api_auth_tokens;
@@ -557,6 +560,42 @@ CREATE SEQUENCE public.fleet_alert_deliveries_id_seq
 --
 
 ALTER SEQUENCE public.fleet_alert_deliveries_id_seq OWNED BY public.fleet_alert_deliveries.id;
+
+
+--
+-- Name: vehicle_diagnostic_suppressions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vehicle_diagnostic_suppressions (
+    id bigint NOT NULL,
+    diagnostic_key text NOT NULL,
+    action text DEFAULT 'acknowledged'::text NOT NULL,
+    acknowledged_at timestamp with time zone,
+    snoozed_until timestamp with time zone,
+    reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: vehicle_diagnostic_suppressions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.vehicle_diagnostic_suppressions_id_seq
+    AS bigint
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: vehicle_diagnostic_suppressions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.vehicle_diagnostic_suppressions_id_seq OWNED BY public.vehicle_diagnostic_suppressions.id;
 
 
 --
@@ -1611,6 +1650,13 @@ ALTER TABLE ONLY public.fleet_alert_deliveries ALTER COLUMN id SET DEFAULT nextv
 
 
 --
+-- Name: vehicle_diagnostic_suppressions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_diagnostic_suppressions ALTER COLUMN id SET DEFAULT nextval('public.vehicle_diagnostic_suppressions_id_seq'::regclass);
+
+
+--
 -- Name: google_calendar_connections id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1796,6 +1842,22 @@ ALTER TABLE ONLY public.fleet_alert_deliveries
 
 ALTER TABLE ONLY public.fleet_alert_deliveries
     ADD CONSTRAINT fleet_alert_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vehicle_diagnostic_suppressions vehicle_diagnostic_suppressions_diagnostic_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_diagnostic_suppressions
+    ADD CONSTRAINT vehicle_diagnostic_suppressions_diagnostic_key_key UNIQUE (diagnostic_key);
+
+
+--
+-- Name: vehicle_diagnostic_suppressions vehicle_diagnostic_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_diagnostic_suppressions
+    ADD CONSTRAINT vehicle_diagnostic_suppressions_pkey PRIMARY KEY (id);
 
 
 --
@@ -2067,6 +2129,13 @@ CREATE INDEX idx_expenses_vehicle_date ON public.expenses USING btree (vehicle_i
 --
 
 CREATE INDEX idx_fleet_alert_deliveries_type_sent ON public.fleet_alert_deliveries USING btree (alert_type, sent_at DESC);
+
+
+--
+-- Name: idx_vehicle_diagnostic_suppressions_snoozed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_diagnostic_suppressions_snoozed ON public.vehicle_diagnostic_suppressions USING btree (snoozed_until);
 
 
 --

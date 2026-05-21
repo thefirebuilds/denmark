@@ -132,14 +132,49 @@ function parseDtcList(value) {
   }
 }
 
+function hasTimezoneDesignator(value) {
+  return /(?:z|[+-]\d{2}:?\d{2})$/i.test(String(value || "").trim());
+}
+
+function formatChicagoWallTime(date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const part = (type) => parts.find((item) => item.type === type)?.value;
+  const hour = part("hour") === "24" ? "00" : part("hour");
+  return `${part("year")}-${part("month")}-${part("day")}T${hour}:${part(
+    "minute"
+  )}:${part("second")}.000`;
+}
+
+function normalizeDimoTimestamp(value) {
+  const text = cleanString(value);
+  if (!text) return null;
+
+  const parseable = hasTimezoneDesignator(text) ? text : `${text.replace(" ", "T")}Z`;
+  const date = new Date(parseable);
+  if (Number.isNaN(date.getTime())) return text;
+
+  return formatChicagoWallTime(date);
+}
+
 function newestTimestamp(...timestamps) {
   const valid = timestamps
     .filter(Boolean)
-    .map((x) => new Date(x))
-    .filter((d) => !Number.isNaN(d.getTime()));
+    .map((value) => ({ value, date: new Date(value) }))
+    .filter((item) => !Number.isNaN(item.date.getTime()));
 
   if (!valid.length) return null;
-  return new Date(Math.max(...valid.map((d) => d.getTime()))).toISOString();
+  return valid.reduce((latest, item) =>
+    item.date.getTime() > latest.date.getTime() ? item : latest
+  ).value;
 }
 
 function signalValue(signal) {
@@ -152,7 +187,7 @@ function signalValue(signal) {
 
 function signalTimestamp(signal) {
   if (signal == null || typeof signal !== "object") return null;
-  return cleanString(signal.timestamp);
+  return normalizeDimoTimestamp(signal.timestamp);
 }
 
 function extractTypedValue(value) {
@@ -257,7 +292,7 @@ function summarizeRpmHistory(rawHistory) {
     : [];
   const rpmRows = rows
     .map((row) => ({
-      timestamp: cleanString(row?.timestamp),
+      timestamp: normalizeDimoTimestamp(row?.timestamp),
       rpm: toNumber(row?.powertrainCombustionEngineSpeed),
       speed: toNumber(row?.speed),
     }))
@@ -412,7 +447,7 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
     battery_last_updated: null,
 
     vehicle_last_updated: newestTimestamp(
-      cleanString(s.lastSeen),
+      normalizeDimoTimestamp(s.lastSeen),
       signalTimestamp(s.speed),
       signalTimestamp(s.isIgnitionOn),
       signalTimestamp(s.currentLocationCoordinates),
@@ -706,7 +741,7 @@ function buildRawSignalRows({ snapshotId, capturedAt, tokenId, vin, raw }) {
         value_boolean: typed.value_boolean,
         signal_timestamp:
           signalTimestamp(signal) ||
-          (signalName === "lastSeen" ? cleanString(signal) : null),
+          (signalName === "lastSeen" ? normalizeDimoTimestamp(signal) : null),
       };
     });
 }
