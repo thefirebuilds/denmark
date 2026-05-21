@@ -37,6 +37,9 @@ const {
 const {
   ensureBusinessMetricsTables,
 } = require("./services/metrics/businessMetricsService");
+const {
+  ensureVehicleOdometerRollupTable,
+} = require("./services/vehicles/odometerRollupService");
 const { ensureIncomeTables } = require("./services/income/incomeService");
 const { ensureFleetAlertTables } = require("./services/alerts/fleetAlerts");
 const { isAuthEnforced } = require("./auth/config");
@@ -345,6 +348,7 @@ async function initializeStartupTables() {
     ensureNotificationEventsTable(),
     ensureVehicleFmvEstimatesTable(),
     ensureBusinessMetricsTables(),
+    ensureVehicleOdometerRollupTable(),
     ensureIncomeTables(),
     ensureFleetAlertTables(),
     ensureAuthTables(),

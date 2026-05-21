@@ -956,7 +956,11 @@ function renderLocationLink(vehicle) {
             <div className="detail-label">Mileage & Ops</div>
 
             <div className="detail-row">
-              <span>Current odometer</span>
+              <span>
+                {mileageStats.currentIsEstimated
+                  ? "Estimated current odometer"
+                  : "Current odometer"}
+              </span>
               <strong>
                 {mileageStats.current != null ? formatOdometer(mileageStats.current) : "—"}
               </strong>

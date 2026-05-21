@@ -476,6 +476,8 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
       "",
     currentOdometerMiles:
       summary.currentOdometerMiles ?? sourceVehicle.currentOdometerMiles ?? null,
+    currentOdometerSource:
+      summary.currentOdometerSource ?? sourceVehicle.currentOdometerSource ?? null,
     next_service_due: nextServiceDue,
     plate: plate || "—",
     license_plate: plate || "",
@@ -1521,6 +1523,9 @@ export default function FleetMaintenancePanel({
         maintenanceSummary?.currentOdometerMiles ??
         selectedFleetVehicle?.telemetry?.odometer ??
         null,
+      currentOdometerSource:
+        maintenanceSummary?.currentOdometerSource ??
+        (selectedFleetVehicle?.telemetry?.odometer != null ? "telemetry" : null),
       exteriorAirTempF:
         selectedFleetVehicle?.telemetry?.environment?.exterior_air_temp ??
         null,
@@ -1571,6 +1576,10 @@ export default function FleetMaintenancePanel({
         currentOdometerMiles:
           summary?.currentOdometerMiles ??
           summary?.vehicle?.currentOdometerMiles ??
+          null,
+        currentOdometerSource:
+          summary?.currentOdometerSource ??
+          summary?.vehicle?.currentOdometerSource ??
           null,
         exteriorAirTempF: null,
       });

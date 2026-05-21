@@ -35,6 +35,7 @@ const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
 const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
 const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
 const { runFleetAlerts } = require("./alerts/fleetAlerts");
+const { refreshVehicleOdometerRollups } = require("./vehicles/odometerRollupService");
 const pool = require("../db");
 
 let tellerSyncInProgress = false;
@@ -59,6 +60,8 @@ let fmvInProgress = false;
 let fmvIntervalHandle = null;
 let businessMetricsInProgress = false;
 let businessMetricsIntervalHandle = null;
+let odometerRollupInProgress = false;
+let odometerRollupIntervalHandle = null;
 let telemetryRetentionInProgress = false;
 let telemetryRetentionIntervalHandle = null;
 let fleetAlertsIntervalHandle = null;
@@ -71,6 +74,7 @@ const STARTUP_TASKS = [
   "dimo",
   "fmv",
   "businessMetrics",
+  "odometerRollups",
   "telemetryRetention",
   "fleetAlerts",
   "publicAvailability",
@@ -488,6 +492,31 @@ async function runBusinessMetricsSnapshot(reason = "interval") {
   }
 }
 
+async function runVehicleOdometerRollups(reason = "interval") {
+  if (odometerRollupInProgress) {
+    console.log(`[scheduler] odometerRollups skipped | reason=${reason} alreadyRunning=true`);
+    return;
+  }
+
+  odometerRollupInProgress = true;
+  const startedAt = Date.now();
+
+  try {
+    console.log(`[scheduler] odometerRollups start | reason=${reason}`);
+    const result = await refreshVehicleOdometerRollups();
+
+    console.log(
+      `[scheduler] odometerRollups done | reason=${reason} refreshed=${result.refreshed} durationMs=${Date.now() - startedAt}`
+    );
+  } catch (err) {
+    console.error(
+      `[scheduler] odometerRollups failed | reason=${reason} error=${err.message || err}`
+    );
+  } finally {
+    odometerRollupInProgress = false;
+  }
+}
+
 async function runTelemetryRetention(reason = "interval") {
   if (telemetryRetentionInProgress) {
     console.log(
@@ -519,6 +548,7 @@ function startScheduler() {
   console.log("[scheduler] started");
 
   const everyFifteenMinutesMs = 15 * 60 * 1000;
+  const everyHourMs = 60 * 60 * 1000;
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
   const everyFiveMinutesMs = 5 * 60 * 1000;
   const everyTwentyFourHoursMs = 24 * 60 * 60 * 1000;
@@ -567,6 +597,11 @@ function startScheduler() {
       // Business metrics snapshot immediately
       void runStartupTask("businessMetrics", () =>
         runBusinessMetricsSnapshot("startup")
+      );
+
+      // Derived odometer cache immediately after startup.
+      void runStartupTask("odometerRollups", () =>
+        runVehicleOdometerRollups("startup")
       );
 
       // Telemetry raw payload retention is guarded internally, so startup is safe.
@@ -633,6 +668,11 @@ function startScheduler() {
     void runBusinessMetricsSnapshot("interval");
   }, everyTwentyFourHoursMs);
 
+  // Derived odometer cache hourly
+  odometerRollupIntervalHandle = setInterval(() => {
+    void runVehicleOdometerRollups("interval");
+  }, everyHourMs);
+
   // Telemetry raw payload retention weekly
   telemetryRetentionIntervalHandle = setInterval(() => {
     void runTelemetryRetention("interval");
@@ -683,6 +723,11 @@ function stopScheduler() {
   if (businessMetricsIntervalHandle) {
     clearInterval(businessMetricsIntervalHandle);
     businessMetricsIntervalHandle = null;
+  }
+
+  if (odometerRollupIntervalHandle) {
+    clearInterval(odometerRollupIntervalHandle);
+    odometerRollupIntervalHandle = null;
   }
 
   if (telemetryRetentionIntervalHandle) {

@@ -213,7 +213,11 @@ function mergeVehicleTelemetry(baseVehicle, bouncieVehicle, dimoVehicle) {
     activeTelemetrySource !== "dimo" && dimoVehicle ? "dimo" : null,
   ].filter(Boolean);
   const telemetry = mergeTelemetry(primary?.telemetry, fallback?.telemetry);
-
+  const currentOdometerMiles = normalizeOdometer(
+    baseVehicle?.current_odometer_miles ??
+      primary?.current_odometer_miles ??
+      fallback?.current_odometer_miles
+  );
   return {
     ...baseVehicle,
     ...primary,
@@ -248,9 +252,11 @@ function mergeVehicleTelemetry(baseVehicle, bouncieVehicle, dimoVehicle) {
     dimo_active: Boolean(dimoVehicle),
     active_telemetry_source: activeTelemetrySource,
     telemetry_source: telemetrySource,
+    current_odometer_miles: currentOdometerMiles,
     telemetry: telemetry
       ? {
           ...telemetry,
+          odometer: normalizeOdometer(telemetry.odometer),
           source: activeTelemetrySource,
           fallback_sources: telemetrySource.filter(
             (source) => source !== activeTelemetrySource
@@ -533,9 +539,7 @@ async function getCachedVehicleStatusFeed() {
     const telemetry = {
       local_time_zone: vehicle.local_time_zone || null,
       last_comm: vehicle.vehicle_last_updated || vehicle.telemetry_captured_at || null,
-      odometer: normalizeOdometer(
-        vehicle.telemetry_odometer ?? vehicle.current_odometer_miles
-      ),
+      odometer: normalizeOdometer(vehicle.telemetry_odometer),
       fuel_level: normalizeFuel(vehicle.fuel_level),
       engine_running:
         typeof vehicle.is_running === "boolean" ? vehicle.is_running : null,

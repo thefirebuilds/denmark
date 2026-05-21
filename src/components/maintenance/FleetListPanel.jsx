@@ -173,6 +173,9 @@ function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
       maintenanceSummary?.currentOdometerMiles ??
       vehicle?.telemetry?.odometer ??
       null,
+    currentOdometerSource:
+      maintenanceSummary?.currentOdometerSource ??
+      (vehicle?.telemetry?.odometer != null ? "telemetry" : null),
     nextActivitySort: getNextActivitySort(trips),
     nextMaintenanceDue: maintenanceSummary
       ? getNextServiceDue(maintenanceSummary)

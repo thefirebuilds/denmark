@@ -53,7 +53,10 @@ function buildFleetQueueItems(vehicleCard, summary, historyMap = {}) {
     vehicleVin: vehicleCard.vin,
     vehicleNickname: vehicleCard.nickname,
     vehicleLabel: `${vehicleCard.nickname} • ${vehicleCard.year} ${vehicleCard.make} ${vehicleCard.model}`,
-    currentOdometerMiles: vehicleCard.currentOdometerMiles,
+    currentOdometerMiles:
+      summary?.currentOdometerMiles ?? vehicleCard.currentOdometerMiles,
+    currentOdometerSource:
+      summary?.currentOdometerSource ?? vehicleCard.currentOdometerSource ?? null,
     nextAvailableDate: vehicleCard.nextAvailableDate,
     nextOffTrip: vehicleCard.nextOffTrip,
   }));
@@ -219,6 +222,10 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
             model: vehicle.model || "",
             currentOdometerMiles:
               vehicle.current_odometer_miles ?? vehicle.currentOdometerMiles ?? null,
+            currentOdometerSource:
+              vehicle.current_odometer_miles != null || vehicle.currentOdometerMiles != null
+                ? "vehicle"
+                : null,
             nextOffTrip: getEarliestAvailableLabel(trips),
             nextAvailableDate: getEarliestAvailableDate(trips),
           }))
@@ -317,6 +324,9 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
         maintenanceSummary?.currentOdometerMiles ??
         selectedFleetVehicle?.telemetry?.odometer ??
         null,
+      currentOdometerSource:
+        maintenanceSummary?.currentOdometerSource ??
+        (selectedFleetVehicle?.telemetry?.odometer != null ? "telemetry" : null),
       exteriorAirTempF:
         selectedFleetVehicle?.telemetry?.environment?.exterior_air_temp ??
         null,
@@ -368,6 +378,10 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
         currentOdometerMiles:
           summary?.currentOdometerMiles ??
           summary?.vehicle?.currentOdometerMiles ??
+          null,
+        currentOdometerSource:
+          summary?.currentOdometerSource ??
+          summary?.vehicle?.currentOdometerSource ??
           null,
         exteriorAirTempF: null,
       });
@@ -549,7 +563,8 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
                 <div className="maintenance-queue-notes">
                   {getNextIntervalDueText(
                     item,
-                    selectedFleetVehicle?.current_odometer_miles ??
+                    maintenanceSummary?.currentOdometerMiles ??
+                      selectedFleetVehicle?.current_odometer_miles ??
                       selectedFleetVehicle?.currentOdometerMiles ??
                       null
                   )}

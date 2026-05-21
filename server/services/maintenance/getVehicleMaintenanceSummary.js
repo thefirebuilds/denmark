@@ -277,6 +277,13 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
         v.lockbox_pin,
         v.current_odometer_miles,
         latest_maintenance_odometer.odometer_miles AS latest_maintenance_odometer_miles,
+        odometer_rollup.odometer_miles AS rollup_odometer_miles,
+        odometer_rollup.source AS rollup_odometer_source,
+        odometer_rollup.source_trip_id AS rollup_source_trip_id,
+        odometer_rollup.source_reservation_id AS rollup_source_reservation_id,
+        odometer_rollup.source_trip_start AS rollup_source_trip_start,
+        odometer_rollup.estimated_trip_miles AS rollup_estimated_trip_miles,
+        odometer_rollup.calculated_at AS rollup_calculated_at,
         v.is_active
       FROM vehicles v
       LEFT JOIN LATERAL (
@@ -287,6 +294,8 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
         ORDER BY me.performed_at DESC, me.id DESC
         LIMIT 1
       ) latest_maintenance_odometer ON TRUE
+      LEFT JOIN vehicle_odometer_rollups odometer_rollup
+        ON odometer_rollup.vehicle_id = v.id
       WHERE lower(trim(v.vin)) = $1
          OR lower(trim(v.nickname)) = $1
          OR lower(trim(COALESCE(v.license_plate, ''))) = $1
@@ -363,10 +372,24 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
   const maintenanceOdometerMiles = toIntOrNull(
     vehicle.latest_maintenance_odometer_miles
   );
-  const currentOdometerMiles =
-    vehicleOdometerMiles != null && maintenanceOdometerMiles != null
-      ? Math.max(vehicleOdometerMiles, maintenanceOdometerMiles)
-      : vehicleOdometerMiles ?? maintenanceOdometerMiles;
+  const rollupOdometerMiles = toIntOrNull(vehicle.rollup_odometer_miles);
+  const odometerCandidates = [
+    { miles: vehicleOdometerMiles, source: "vehicle" },
+    { miles: maintenanceOdometerMiles, source: "maintenance" },
+    { miles: rollupOdometerMiles, source: vehicle.rollup_odometer_source || "rollup" },
+  ].filter((candidate) => candidate.miles != null);
+  const currentOdometerCandidate =
+    odometerCandidates.length > 0
+      ? odometerCandidates.reduce((best, candidate) =>
+          candidate.miles > best.miles ? candidate : best
+        )
+      : null;
+  const currentOdometerMiles = currentOdometerCandidate?.miles ?? null;
+  const currentOdometerSource = currentOdometerCandidate?.source ?? null;
+  const estimatedTripOdometerMiles =
+    vehicle.rollup_odometer_source === "active_trip_estimate"
+      ? rollupOdometerMiles
+      : null;
 
   const ruleStatuses = rulesResult.rows.map((rule) =>
     getRuleStatus({
@@ -521,9 +544,23 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
       lockboxPin: vehicle.lockbox_pin || null,
       lockbox_pin: vehicle.lockbox_pin || null,
       currentOdometerMiles,
+      currentOdometerSource,
+      estimatedCurrentOdometerMiles: estimatedTripOdometerMiles,
+      estimatedTripMiles:
+        vehicle.rollup_estimated_trip_miles == null
+          ? null
+          : Number(vehicle.rollup_estimated_trip_miles),
+      odometerRollupCalculatedAt: vehicle.rollup_calculated_at || null,
       isActive: vehicle.is_active,
     },
     currentOdometerMiles,
+    currentOdometerSource,
+    estimatedCurrentOdometerMiles: estimatedTripOdometerMiles,
+    estimatedTripMiles:
+      vehicle.rollup_estimated_trip_miles == null
+        ? null
+        : Number(vehicle.rollup_estimated_trip_miles),
+    odometerRollupCalculatedAt: vehicle.rollup_calculated_at || null,
     needsReview:
       hasReviewTask ||
       hasRentalBlockerTask ||

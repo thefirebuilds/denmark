@@ -51,6 +51,15 @@ function findVehicleForTrip(trip, vehicles = []) {
   );
 }
 
+function firstFiniteNumberAtLeast(minimum, ...values) {
+  for (const value of values) {
+    if (value === "" || value == null) continue;
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= minimum) return n;
+  }
+  return null;
+}
+
 function getMilesDriven(trip, vehicles = []) {
   const start = Number(trip?.starting_odometer);
   const end = Number(trip?.ending_odometer);
@@ -65,9 +74,19 @@ function getMilesDriven(trip, vehicles = []) {
   // in-progress trip: fall back to live odometer from vehicle status
   if (isTripInProgress(trip)) {
     const vehicle = findVehicleForTrip(trip, vehicles);
-    const currentOdometer = Number(vehicle?.telemetry?.odometer);
+    const currentOdometer = firstFiniteNumberAtLeast(
+      start,
+      trip?.current_odometer,
+      trip?.latest_odometer,
+      vehicle?.telemetry?.odometer,
+      trip?.estimated_current_odometer,
+      trip?.estimatedCurrentOdometer,
+      vehicle?.current_odometer_miles,
+      vehicle?.currentOdometerMiles,
+      vehicle?.odometerMiles
+    );
 
-    if (Number.isFinite(currentOdometer) && currentOdometer >= start) {
+    if (currentOdometer != null) {
       return currentOdometer - start;
     }
   }

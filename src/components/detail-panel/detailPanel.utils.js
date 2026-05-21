@@ -658,12 +658,24 @@ export function getMileageStats(trip, vehicle) {
     trip?.odometer_end
   );
 
-  const current = firstFiniteNumber(
-    vehicle?.telemetry?.odometer,
-    trip?.current_odometer,
-    trip?.latest_odometer,
-    ending
-  );
+  const currentCandidates = [
+    { value: ending, source: "ending" },
+    { value: trip?.current_odometer, source: "trip" },
+    { value: trip?.latest_odometer, source: "trip" },
+    { value: vehicle?.telemetry?.odometer, source: "telemetry" },
+    { value: trip?.estimated_current_odometer, source: "estimate" },
+    { value: trip?.estimatedCurrentOdometer, source: "estimate" },
+    { value: vehicle?.current_odometer_miles, source: "stored" },
+    { value: vehicle?.currentOdometerMiles, source: "stored" },
+    { value: vehicle?.odometerMiles, source: "stored" },
+  ];
+  const currentCandidate = currentCandidates.find(({ value }) => {
+    if (value === "" || value == null) return false;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return false;
+    return starting == null || n >= starting;
+  });
+  const current = currentCandidate ? Number(currentCandidate.value) : null;
 
   const effectiveEnd = ending ?? current;
 
@@ -684,6 +696,8 @@ export function getMileageStats(trip, vehicle) {
     starting,
     ending,
     current,
+    currentSource: currentCandidate?.source ?? null,
+    currentIsEstimated: currentCandidate?.source === "estimate",
     used,
     remaining,
   };

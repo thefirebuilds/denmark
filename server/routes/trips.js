@@ -442,7 +442,19 @@ const TRIP_SELECT = `
     v.year AS vehicle_year,
     v.make AS vehicle_make,
     v.model AS vehicle_model,
-    v.vin AS vehicle_vin
+    v.vin AS vehicle_vin,
+    CASE
+      WHEN current_odo_rollup.source = 'active_trip_estimate'
+        AND current_odo_rollup.source_trip_id = t.id
+      THEN current_odo_rollup.odometer_miles
+      ELSE NULL
+    END AS estimated_current_odometer,
+    CASE
+      WHEN current_odo_rollup.source = 'active_trip_estimate'
+        AND current_odo_rollup.source_trip_id = t.id
+      THEN current_odo_rollup.estimated_trip_miles::float
+      ELSE NULL
+    END AS estimated_trip_miles
   FROM trip_intelligence ti
   JOIN trips t
     ON t.id = ti.id
@@ -450,6 +462,8 @@ const TRIP_SELECT = `
     ON v.turo_vehicle_id = t.turo_vehicle_id
   LEFT JOIN trip_financial_facts tf
     ON tf.trip_id = t.id
+  LEFT JOIN vehicle_odometer_rollups current_odo_rollup
+    ON current_odo_rollup.vehicle_id = v.id
 `;
 
 router.get("/", async (req, res) => {

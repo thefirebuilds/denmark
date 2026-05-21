@@ -36,6 +36,8 @@ SET row_security = off;
 
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_signal_values DROP CONSTRAINT IF EXISTS vehicle_telemetry_signal_values_snapshot_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_raw_payloads DROP CONSTRAINT IF EXISTS vehicle_telemetry_raw_payloads_snapshot_id_fkey;
+ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_rollups DROP CONSTRAINT IF EXISTS vehicle_odometer_rollups_vehicle_vin_fkey;
+ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_rollups DROP CONSTRAINT IF EXISTS vehicle_odometer_rollups_vehicle_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_history DROP CONSTRAINT IF EXISTS vehicle_odometer_history_vehicle_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_fmv_estimates DROP CONSTRAINT IF EXISTS vehicle_fmv_estimates_vehicle_vin_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_condition_notes DROP CONSTRAINT IF EXISTS vehicle_condition_notes_vehicle_vin_fkey;
@@ -87,6 +89,8 @@ DROP INDEX IF EXISTS public.idx_vehicle_telemetry_raw_payloads_created_at;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_token_signal_time;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_snapshot;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_signal_timestamp;
+DROP INDEX IF EXISTS public.idx_vehicle_odometer_rollups_vin;
+DROP INDEX IF EXISTS public.idx_vehicle_odometer_rollups_source_trip;
 DROP INDEX IF EXISTS public.idx_vehicle_odometer_history_vehicle_time;
 DROP INDEX IF EXISTS public.idx_vehicle_fmv_estimates_vehicle_vin_estimated_at;
 DROP INDEX IF EXISTS public.idx_vehicle_fmv_estimates_snapshot_hash;
@@ -147,6 +151,7 @@ ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_id
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_raw_payloads DROP CONSTRAINT IF EXISTS vehicle_telemetry_raw_payloads_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_snapshots DROP CONSTRAINT IF EXISTS vehicle_telemetry_snapshots_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_signal_values DROP CONSTRAINT IF EXISTS vehicle_telemetry_signal_values_pkey;
+ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_rollups DROP CONSTRAINT IF EXISTS vehicle_odometer_rollups_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_history DROP CONSTRAINT IF EXISTS vehicle_odometer_history_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_condition_notes DROP CONSTRAINT IF EXISTS vehicle_condition_notes_pkey;
 ALTER TABLE IF EXISTS ONLY public.trips DROP CONSTRAINT IF EXISTS trips_reservation_id_key;
@@ -209,6 +214,7 @@ DROP TABLE IF EXISTS public.vehicle_telemetry_raw_payloads;
 DROP TABLE IF EXISTS public.vehicle_telemetry_snapshots;
 DROP SEQUENCE IF EXISTS public.vehicle_telemetry_signal_values_id_seq;
 DROP TABLE IF EXISTS public.vehicle_telemetry_signal_values;
+DROP TABLE IF EXISTS public.vehicle_odometer_rollups;
 DROP SEQUENCE IF EXISTS public.vehicle_odometer_history_id_seq;
 DROP TABLE IF EXISTS public.vehicle_odometer_history;
 DROP TABLE IF EXISTS public.vehicle_fmv_estimates;
@@ -1427,6 +1433,27 @@ CREATE TABLE public.vehicle_odometer_history (
 
 
 --
+-- Name: vehicle_odometer_rollups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vehicle_odometer_rollups (
+    vehicle_id bigint NOT NULL,
+    vehicle_vin text NOT NULL,
+    odometer_miles integer,
+    source text DEFAULT 'unknown'::text NOT NULL,
+    source_trip_id bigint,
+    source_reservation_id bigint,
+    source_trip_start timestamp with time zone,
+    estimated_trip_miles numeric(10,1),
+    confidence text DEFAULT 'derived'::text NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    calculated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: vehicle_odometer_history_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -2069,6 +2096,14 @@ ALTER TABLE ONLY public.vehicle_odometer_history
 
 
 --
+-- Name: vehicle_odometer_rollups vehicle_odometer_rollups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_odometer_rollups
+    ADD CONSTRAINT vehicle_odometer_rollups_pkey PRIMARY KEY (vehicle_id);
+
+
+--
 -- Name: vehicle_telemetry_signal_values vehicle_telemetry_signal_values_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2479,6 +2514,20 @@ CREATE INDEX idx_vehicle_odometer_history_vehicle_time ON public.vehicle_odomete
 
 
 --
+-- Name: idx_vehicle_odometer_rollups_source_trip; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_odometer_rollups_source_trip ON public.vehicle_odometer_rollups USING btree (source_trip_id) WHERE (source_trip_id IS NOT NULL);
+
+
+--
+-- Name: idx_vehicle_odometer_rollups_vin; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_odometer_rollups_vin ON public.vehicle_odometer_rollups USING btree (vehicle_vin);
+
+
+--
 -- Name: idx_vehicle_telemetry_signal_values_signal_timestamp; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2852,6 +2901,22 @@ ALTER TABLE ONLY public.vehicle_fmv_estimates
 
 ALTER TABLE ONLY public.vehicle_odometer_history
     ADD CONSTRAINT vehicle_odometer_history_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE CASCADE;
+
+
+--
+-- Name: vehicle_odometer_rollups vehicle_odometer_rollups_vehicle_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_odometer_rollups
+    ADD CONSTRAINT vehicle_odometer_rollups_vehicle_id_fkey FOREIGN KEY (vehicle_id) REFERENCES public.vehicles(id) ON DELETE CASCADE;
+
+
+--
+-- Name: vehicle_odometer_rollups vehicle_odometer_rollups_vehicle_vin_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_odometer_rollups
+    ADD CONSTRAINT vehicle_odometer_rollups_vehicle_vin_fkey FOREIGN KEY (vehicle_vin) REFERENCES public.vehicles(vin) ON DELETE CASCADE;
 
 
 --
