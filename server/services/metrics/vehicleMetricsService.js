@@ -31,8 +31,11 @@ const {
 const {
   getLatestVehicleFmvEstimates,
 } = require("../vehicles/fmvEstimateService");
+const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
 
 async function fetchActiveVehicles(client) {
+  await ensureVehicleAliasesTable(client);
+
   const { rows } = await client.query(
     `
       SELECT
@@ -46,9 +49,16 @@ async function fetchActiveVehicles(client) {
         current_odometer_miles,
         onboarding_date,
         acquisition_cost,
+        COALESCE(alias_list.aliases, ARRAY[]::text[]) AS aliases,
         is_active,
         in_service
       FROM vehicles
+      LEFT JOIN LATERAL (
+        SELECT array_agg(va.alias ORDER BY va.alias) AS aliases
+        FROM vehicle_aliases va
+        WHERE va.vehicle_id = vehicles.id
+          AND va.active = true
+      ) alias_list ON true
       WHERE is_active = true
         AND in_service = true
       ORDER BY COALESCE(nickname, vin)
@@ -65,6 +75,7 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
         id,
         reservation_id,
         guest_name,
+        vehicle_name,
         turo_vehicle_id,
         trip_start,
         trip_end,
@@ -252,8 +263,13 @@ async function fetchVehicleOdometerAnchors(client, startDate, endDate) {
         SELECT h.odometer_miles, h.recorded_at
         FROM vehicle_odometer_history h
         WHERE h.vehicle_id = v.id
-          AND $1::timestamp IS NOT NULL
-          AND h.recorded_at >= $1::timestamp
+          AND (
+            (
+              $1::timestamp IS NOT NULL
+              AND h.recorded_at >= $1::timestamp
+            )
+            OR $1::timestamp IS NULL
+          )
           AND h.recorded_at <= $2::timestamp
         ORDER BY h.recorded_at ASC
         LIMIT 1
@@ -326,14 +342,21 @@ function hasOpenTripAtRangeEnd(trips, endDate) {
 
 function buildTripVehicleKeyMaps(vehicles) {
   const byTuroVehicleId = new Map();
+  const byVehicleName = new Map();
 
   for (const vehicle of vehicles) {
     if (vehicle.turo_vehicle_id) {
       byTuroVehicleId.set(String(vehicle.turo_vehicle_id), String(vehicle.id));
     }
+
+    const names = [vehicle.nickname, ...(Array.isArray(vehicle.aliases) ? vehicle.aliases : [])];
+    for (const name of names) {
+      const normalized = String(name || "").trim().toLowerCase();
+      if (normalized) byVehicleName.set(normalized, String(vehicle.id));
+    }
   }
 
-  return { byTuroVehicleId };
+  return { byTuroVehicleId, byVehicleName };
 }
 
 function resolveTripVehicleId(trip, maps) {
@@ -342,6 +365,11 @@ function resolveTripVehicleId(trip, maps) {
     maps.byTuroVehicleId.has(String(trip.turo_vehicle_id))
   ) {
     return maps.byTuroVehicleId.get(String(trip.turo_vehicle_id));
+  }
+
+  const normalizedVehicleName = String(trip?.vehicle_name || "").trim().toLowerCase();
+  if (normalizedVehicleName && maps.byVehicleName.has(normalizedVehicleName)) {
+    return maps.byVehicleName.get(normalizedVehicleName);
   }
 
   return null;
@@ -1048,9 +1076,26 @@ async function getVehicleMetrics(rangeKey = "30d") {
       });
 
       metrics.trip_miles = tripsForVehicle.reduce(
-        (sum, trip) => sum + getTripMiles(trip),
+        (sum, trip) =>
+          sum +
+          getTripProratedValue(
+            getTripMiles(trip),
+            trip.trip_start,
+            trip.trip_end,
+            startDate,
+            endDate
+          ),
         0
       );
+
+      const minimumKnownMiles =
+        toNumber(metrics.trip_miles) + toNumber(metrics.closed_trip_off_trip_miles);
+      if (minimumKnownMiles > toNumber(metrics.total_miles)) {
+        metrics.total_miles = roundNumber(minimumKnownMiles, 1);
+        if (String(metrics.mileage_confidence).toLowerCase() === "high") {
+          metrics.mileage_confidence = "medium";
+        }
+      }
 
       metrics.tolls_recovered = roundMoney(
         tripsForVehicle.reduce((sum, trip) => {

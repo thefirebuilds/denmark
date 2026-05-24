@@ -10,6 +10,7 @@ const {
 const {
   upsertGoogleCalendarConnection,
   getGoogleCalendarConnection,
+  markGoogleCalendarConnectionHealth,
   saveSelectedCalendar,
 } = require("../services/googleCalendar/googleCalendarStore");
 const {
@@ -144,6 +145,11 @@ router.get("/status", async (req, res, next) => {
       await calendar.calendarList.get({
         calendarId: connection.calendar_id,
       });
+      await markGoogleCalendarConnectionHealth({
+        connectionId: connection.id,
+        tokenStatus: "valid",
+        tokenError: null,
+      });
 
       return res.json({
         ...payload,
@@ -151,11 +157,18 @@ router.get("/status", async (req, res, next) => {
         tokenStatus: "valid",
       });
     } catch (err) {
+      const tokenError = getGoogleApiErrorCode(err);
+      await markGoogleCalendarConnectionHealth({
+        connectionId: connection.id,
+        tokenStatus: "invalid",
+        tokenError,
+      });
+
       return res.json({
         ...payload,
         connected: false,
         tokenStatus: "invalid",
-        tokenError: getGoogleApiErrorCode(err),
+        tokenError,
       });
     }
   } catch (err) {
@@ -264,6 +277,13 @@ router.get("/callback", async (req, res, next) => {
 
     console.log("Google Calendar auth succeeded");
     console.log("Available calendars:", calendars);
+
+    void reconcileTripsToGoogle({ userId, limit: 500 }).catch((err) => {
+      console.warn(
+        "[google-calendar] reconcile after reconnect failed:",
+        err.message || err
+      );
+    });
 
     const frontendBaseUrl = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
         return res.redirect(

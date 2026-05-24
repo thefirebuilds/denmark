@@ -1,6 +1,9 @@
 const crypto = require("crypto");
 const express = require("express");
 const pool = require("../db");
+const {
+  syncTripToSelectedGoogleCalendars,
+} = require("../services/googleCalendar/googleTripSync");
 
 const router = express.Router();
 
@@ -214,6 +217,7 @@ function extractVehicleName(text) {
   if (!source) return null;
 
   const patterns = [
+    /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+has returned your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\b/i,
     /\babout\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\s+from\s+[A-Z][A-Za-z.'-]+/i,
     /\btrip with your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\b/i,
     /\babout your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})$/i,
@@ -223,7 +227,12 @@ function extractVehicleName(text) {
 
   for (const pattern of patterns) {
     const match = source.match(pattern);
-    if (match) return cleanString(match[1], { maxLength: 120, allowEmpty: false });
+    if (match) {
+      return cleanString(match[2] || match[1], {
+        maxLength: 120,
+        allowEmpty: false,
+      });
+    }
   }
 
   return null;
@@ -234,6 +243,7 @@ function extractGuestName(text) {
   if (!source) return null;
 
   const patterns = [
+    /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+has returned your\b/i,
     /^Your trip with\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+starts soon\b/i,
     /\bfrom\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s*:/i,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+paid\b/i,
@@ -465,6 +475,103 @@ async function upsertTuroNotificationEvent(event) {
   };
 }
 
+async function findTripForReturnedNotification(event) {
+  if (event.classification !== "trip_returned") return null;
+
+  const guestName = cleanString(event.guestName, {
+    maxLength: 120,
+    allowEmpty: false,
+  });
+  const vehicleName = cleanString(event.vehicleName, {
+    maxLength: 120,
+    allowEmpty: false,
+  });
+
+  if (!guestName && !vehicleName && !event.reservationId) return null;
+
+  const eventAt = event.postedAt || new Date().toISOString();
+
+  const result = await pool.query(
+    `
+      SELECT t.id
+      FROM trips t
+      LEFT JOIN vehicles v
+        ON (
+          t.turo_vehicle_id IS NOT NULL
+          AND v.turo_vehicle_id = t.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+        )
+      WHERE COALESCE(t.workflow_stage, '') <> 'canceled'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND (
+          $1::bigint IS NOT NULL
+          AND t.reservation_id = $1::bigint
+          OR (
+            $2::text <> ''
+            AND (
+              LOWER(COALESCE(t.guest_name, '')) = LOWER($2::text)
+              OR LOWER(COALESCE(t.guest_name, '')) LIKE LOWER($2::text) || ' %'
+            )
+            AND t.trip_end BETWEEN $4::timestamptz - INTERVAL '3 days'
+              AND $4::timestamptz + INTERVAL '36 hours'
+            AND (
+              $3::text = ''
+              OR LOWER($3::text) LIKE '%' || LOWER(COALESCE(t.vehicle_name, '')) || '%'
+              OR LOWER(COALESCE(t.vehicle_name, '')) LIKE '%' || LOWER(regexp_replace($3::text, '\\s+\\d{4}$', '')) || '%'
+              OR LOWER($3::text) LIKE '%' || LOWER(COALESCE(v.nickname, '')) || '%'
+              OR LOWER(COALESCE(v.nickname, '')) LIKE '%' || LOWER(regexp_replace($3::text, '\\s+\\d{4}$', '')) || '%'
+            )
+          )
+        )
+      ORDER BY
+        CASE WHEN $1::bigint IS NOT NULL AND t.reservation_id = $1::bigint THEN 0 ELSE 1 END,
+        t.trip_end DESC NULLS LAST,
+        t.id DESC
+      LIMIT 1
+    `,
+    [event.reservationId, guestName || "", vehicleName || "", eventAt]
+  );
+
+  return result.rows[0] || null;
+}
+
+function syncReturnedTripCalendarNotice(event, notificationId) {
+  void findTripForReturnedNotification(event)
+    .then(async (trip) => {
+      if (!trip?.id) return;
+
+      const result = await syncTripToSelectedGoogleCalendars(trip.id, {
+        retryDeletedEvents: true,
+        forceDeleteEventTypes: ["return"],
+      });
+
+      await pool.query(
+        `
+          UPDATE notification_events
+          SET processed_at = NOW()
+          WHERE id = $1
+        `,
+        [notificationId]
+      );
+
+      if (!result.ok) {
+        console.warn(
+          `[notifications/turo] returned trip ${trip.id} calendar return cleanup completed with failures`,
+          result.results
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn(
+        "[notifications/turo] returned trip calendar cleanup failed:",
+        err.message || err
+      );
+    });
+}
+
 router.post("/turo", async (req, res) => {
   const secretHeader = cleanString(req.get("X-Denmark-Bridge-Secret"), {
     maxLength: 500,
@@ -501,6 +608,10 @@ router.post("/turo", async (req, res) => {
     }
 
     const result = await upsertTuroNotificationEvent(event);
+
+    if (result.inserted && result.id && result.classification === "trip_returned") {
+      syncReturnedTripCalendarNotice(event, result.id);
+    }
 
     console.log(
       `[notifications/turo] inserted=${result.inserted} duplicate=${result.duplicate} id=${result.id} class=${result.classification} device=${summarizeForLog(

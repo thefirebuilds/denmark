@@ -1,6 +1,15 @@
 const pool = require("../../db");
 const { encrypt, decrypt } = require("./tokenCrypto");
 
+async function ensureGoogleCalendarConnectionHealthColumns(client = pool) {
+  await client.query(`
+    ALTER TABLE google_calendar_connections
+      ADD COLUMN IF NOT EXISTS token_status text,
+      ADD COLUMN IF NOT EXISTS token_error text,
+      ADD COLUMN IF NOT EXISTS token_checked_at timestamptz
+  `);
+}
+
 async function upsertGoogleCalendarConnection({
   userId = null,
   googleEmail = null,
@@ -31,6 +40,9 @@ async function upsertGoogleCalendarConnection({
             scope_string = COALESCE($4, scope_string),
             calendar_id = COALESCE(calendar_id, $5),
             calendar_summary = COALESCE(calendar_summary, $6),
+            token_status = 'valid',
+            token_error = NULL,
+            token_checked_at = NOW(),
             updated_at = NOW()
         WHERE id = $1
       `,
@@ -55,9 +67,12 @@ async function upsertGoogleCalendarConnection({
         refresh_token_encrypted,
         scope_string,
         calendar_id,
-        calendar_summary
+        calendar_summary,
+        token_status,
+        token_error,
+        token_checked_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, 'valid', NULL, NOW())
       RETURNING id
     `,
     [
@@ -71,6 +86,29 @@ async function upsertGoogleCalendarConnection({
   );
 
   return inserted.rows[0].id;
+}
+
+async function markGoogleCalendarConnectionHealth({
+  connectionId,
+  tokenStatus,
+  tokenError = null,
+}) {
+  if (!connectionId || !tokenStatus) return null;
+
+  const result = await pool.query(
+    `
+      UPDATE google_calendar_connections
+      SET token_status = $2,
+          token_error = $3,
+          token_checked_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [connectionId, tokenStatus, tokenError]
+  );
+
+  return result.rows[0] || null;
 }
 
 async function getFallbackSelectedCalendar(userId = null) {
@@ -165,8 +203,10 @@ async function listGoogleCalendarSyncTargets() {
 }
 
 module.exports = {
+  ensureGoogleCalendarConnectionHealthColumns,
   upsertGoogleCalendarConnection,
   getGoogleCalendarConnection,
+  markGoogleCalendarConnectionHealth,
   saveSelectedCalendar,
   listGoogleCalendarSyncTargets,
 };

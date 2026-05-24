@@ -574,6 +574,12 @@ function buildMessageBody(message) {
     }. Review before the next handoff.`;
   }
 
+  if (type === "google_calendar_reconnect_required") {
+    const calendar = message?.calendar_summary || message?.calendar_id || "Google Calendar";
+    const error = message?.calendar_token_error || "invalid token";
+    return `Denmark cannot update ${calendar}. Google returned ${error}. Reconnect Google Calendar so trip changes can update calendar events.`;
+  }
+
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);
     const latest = message?.latest_guest_message || message?.guest_message || "";
@@ -664,6 +670,10 @@ function buildMessageTitle(message) {
     return message?.vehicle_name || message?.vehicle_nickname || "Vehicle diagnostic";
   }
 
+  if (type === "google_calendar_reconnect_required") {
+    return "Google Calendar reconnect required";
+  }
+
   if (type === "notification_unmatched") {
     return message?.notification_title || "Turo notification missing email";
   }
@@ -692,6 +702,7 @@ function buildMessageSub(message) {
   if (type === "trip_overlap_detected") return "Trip overlap detected";
   if (type === "return_location_check") return "Verify return GPS";
   if (type === "vehicle_diagnostic_alert") return "Diagnostic alert";
+  if (type === "google_calendar_reconnect_required") return "Integration attention";
   if (type === "notification_unmatched") return "Urgent bridge/email mismatch";
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);
@@ -814,6 +825,11 @@ function isReturnLocationCheck(message) {
 function isVehicleDiagnosticAlert(message) {
   const type = message?.type || message?.message_type;
   return type === "vehicle_diagnostic_alert";
+}
+
+function isGoogleCalendarReconnectNotice(message) {
+  const type = message?.type || message?.message_type;
+  return type === "google_calendar_reconnect_required";
 }
 
 function isOperationalTripNotice(message) {
@@ -1346,6 +1362,10 @@ async function handleSuppressDiagnostic(message, action = "acknowledge") {
   } finally {
     setSuppressingDiagnosticId(null);
   }
+}
+
+function handleReconnectGoogleCalendar() {
+  window.location.href = `${API_BASE}/api/integrations/google-calendar/connect`;
 }
 
 async function handleFocusTrip(message) {
@@ -2142,6 +2162,8 @@ async function handleExportGuestInspectionSheet(message) {
             const canReviewUnmatchedNotification = isUnmatchedNotification(message);
             const canVerifyReturnLocation = isReturnLocationCheck(message);
             const canReviewDiagnostic = isVehicleDiagnosticAlert(message);
+            const canReconnectGoogleCalendar =
+              isGoogleCalendarReconnectNotice(message);
             const canReviewGuestThread =
               (message.type || message.message_type) === "guest_message_thread";
             const canConfirmBooking = isBookingConfirmationTask(message);
@@ -2731,6 +2753,7 @@ async function handleExportGuestInspectionSheet(message) {
                   canConfirmBooking ||
                   hasMaintenanceDetails ||
                   canOpenMaintenanceQueue ||
+                  canReconnectGoogleCalendar ||
                   canFocusTrip) && (
                   <div className="message-actions">
                     {canFocusTrip && (
@@ -2756,6 +2779,19 @@ async function handleExportGuestInspectionSheet(message) {
                           : canShowMaintenance || canAdvanceHandoff || canExportInspection
                           ? "View trip"
                           : "Verify details"}
+                      </button>
+                    )}
+
+                    {canReconnectGoogleCalendar && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleReconnectGoogleCalendar();
+                        }}
+                      >
+                        Reconnect Google
                       </button>
                     )}
 

@@ -540,6 +540,9 @@ async function upsertDimoVehicle(normalized, client = pool) {
 
   const assignments = updatableColumns.map((column) => {
     if (column === "updated_at") return "updated_at = NOW()";
+    if (["nickname", "make", "model", "year", "standard_engine"].includes(column)) {
+      return `${column} = COALESCE(vehicles.${column}, EXCLUDED.${column})`;
+    }
     if (column === "current_odometer_miles") {
       return `current_odometer_miles = CASE
         WHEN EXCLUDED.current_odometer_miles IS NULL THEN vehicles.current_odometer_miles

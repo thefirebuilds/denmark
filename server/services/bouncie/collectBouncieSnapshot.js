@@ -146,11 +146,11 @@ async function upsertVehicle(client, snapshot) {
       ON CONFLICT (vin)
       DO UPDATE SET
         imei = EXCLUDED.imei,
-        nickname = EXCLUDED.nickname,
-        make = EXCLUDED.make,
-        model = EXCLUDED.model,
-        year = EXCLUDED.year,
-        standard_engine = EXCLUDED.standard_engine,
+        nickname = COALESCE(vehicles.nickname, EXCLUDED.nickname),
+        make = COALESCE(vehicles.make, EXCLUDED.make),
+        model = COALESCE(vehicles.model, EXCLUDED.model),
+        year = COALESCE(vehicles.year, EXCLUDED.year),
+        standard_engine = COALESCE(vehicles.standard_engine, EXCLUDED.standard_engine),
         bouncie_vehicle_id = COALESCE(EXCLUDED.bouncie_vehicle_id, vehicles.bouncie_vehicle_id),
         current_odometer_miles = CASE
           WHEN EXCLUDED.current_odometer_miles IS NULL THEN vehicles.current_odometer_miles

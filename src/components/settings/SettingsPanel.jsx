@@ -156,6 +156,8 @@ function toPayloadVehicle(form) {
   delete vehicleFields.first_trip_start;
   delete vehicleFields.effective_onboarding_date;
   delete vehicleFields.onboarding_date_source;
+  delete vehicleFields.provider_vehicle_id;
+  delete vehicleFields.external_vehicle_key;
 
   return {
     ...vehicleFields,
@@ -627,23 +629,6 @@ function VehicleConfigFields({ form, update, mode = "edit" }) {
         <input
           value={form.bouncie_vehicle_id || ""}
           onChange={(e) => update("bouncie_vehicle_id", e.target.value)}
-        />
-      </label>
-
-      <label className="settings-field">
-        <span>Provider vehicle ID</span>
-        <input
-          value={form.provider_vehicle_id || ""}
-          onChange={(e) => update("provider_vehicle_id", e.target.value)}
-        />
-      </label>
-
-      <label className="settings-field">
-        <span>External vehicle key</span>
-        <input
-          value={form.external_vehicle_key || ""}
-          onChange={(e) => update("external_vehicle_key", e.target.value)}
-          placeholder="dimo:123456"
         />
       </label>
 
@@ -1757,11 +1742,15 @@ function IntegrationsSettingsPanel() {
         throw new Error(json?.error || "Failed to sync Google Calendar");
       }
 
-      const failed = (json.results || []).filter((item) => !item.ok).length;
+      const failures = (json.results || []).filter((item) => !item.ok);
+      const failed = failures.length;
+      const firstFailure = failures.find((item) => item?.error)?.error;
       setMessage(
         `Google Calendar processed ${json.processed || 0} trip${
           Number(json.processed || 0) === 1 ? "" : "s"
-        }${failed ? ` with ${failed} failure${failed === 1 ? "" : "s"}` : ""}.`
+        }${failed ? ` with ${failed} failure${failed === 1 ? "" : "s"}` : ""}${
+          firstFailure ? `: ${firstFailure}` : ""
+        }.`
       );
       await loadTellerState();
     } catch (err) {

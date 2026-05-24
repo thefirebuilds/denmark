@@ -10,7 +10,18 @@ const {
   upsertTripGoogleSync,
   markTripGoogleSyncDeleted,
 } = require("./tripGoogleSyncStore");
+const { markGoogleCalendarConnectionHealth } = require("./googleCalendarStore");
 const { getDesiredGoogleEventsForTrip } = require("./googleTripEventBuilder");
+
+function getGoogleApiErrorCode(err) {
+  return (
+    err?.response?.data?.error ||
+    err?.errors?.[0]?.reason ||
+    err?.code ||
+    err?.message ||
+    "unknown_error"
+  );
+}
 
 function buildSyncMap(rows) {
   const map = new Map();
@@ -82,48 +93,71 @@ async function syncTripToGoogle(tripId, userId = null, options = {}) {
   const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
   const desiredEvents = getDesiredGoogleEventsForTrip(trip);
+  const forceDeleteEventTypes = new Set(
+    Array.isArray(options.forceDeleteEventTypes)
+      ? options.forceDeleteEventTypes.map((type) => String(type || "").trim()).filter(Boolean)
+      : []
+  );
+  const eventsToSync = desiredEvents.filter(
+    (desired) => !forceDeleteEventTypes.has(desired.eventType)
+  );
+  const desiredTypes = new Set(eventsToSync.map((e) => e.eventType));
   const existingSyncRows = await getAllTripGoogleSync(trip.id, connection.id);
   const existingSyncMap = buildSyncMap(existingSyncRows);
 
   const results = [];
 
-  for (const desired of desiredEvents) {
-    const existingSync = existingSyncMap.get(desired.eventType) || null;
+  try {
+    for (const desired of eventsToSync) {
+      const existingSync = existingSyncMap.get(desired.eventType) || null;
 
-    const event = await upsertGoogleEvent({
-      calendar,
-      calendarId: connection.calendar_id,
-      existingSync,
-      eventPayload: desired.payload,
-    });
+      const event = await upsertGoogleEvent({
+        calendar,
+        calendarId: connection.calendar_id,
+        existingSync,
+        eventPayload: desired.payload,
+      });
 
-    await upsertTripGoogleSync({
-      tripId: trip.id,
-      googleCalendarConnectionId: connection.id,
-      eventType: desired.eventType,
-      googleEventId: event.id,
-      syncStatus: "synced",
-    });
+      await upsertTripGoogleSync({
+        tripId: trip.id,
+        googleCalendarConnectionId: connection.id,
+        eventType: desired.eventType,
+        googleEventId: event.id,
+        syncStatus: "synced",
+      });
 
-    results.push({
-      eventType: desired.eventType,
-      eventId: event.id,
-      htmlLink: event.htmlLink,
-      summary: event.summary,
-    });
-  }
-
-  const desiredTypes = new Set(desiredEvents.map((e) => e.eventType));
-
-  for (const existingSync of existingSyncRows) {
-    const shouldDeleteMissingEvent =
-      !desiredTypes.has(existingSync.event_type) &&
-      (options.retryDeletedEvents || existingSync.sync_status !== "deleted");
-
-    if (shouldDeleteMissingEvent) {
-      await deleteGoogleEventIfPresent(calendar, connection.calendar_id, existingSync);
-      await markTripGoogleSyncDeleted(trip.id, connection.id, existingSync.event_type);
+      results.push({
+        eventType: desired.eventType,
+        eventId: event.id,
+        htmlLink: event.htmlLink,
+        summary: event.summary,
+      });
     }
+
+    for (const existingSync of existingSyncRows) {
+      const shouldDeleteMissingEvent =
+        (!desiredTypes.has(existingSync.event_type) ||
+          forceDeleteEventTypes.has(existingSync.event_type)) &&
+        (options.retryDeletedEvents || existingSync.sync_status !== "deleted");
+
+      if (shouldDeleteMissingEvent) {
+        await deleteGoogleEventIfPresent(calendar, connection.calendar_id, existingSync);
+        await markTripGoogleSyncDeleted(trip.id, connection.id, existingSync.event_type);
+      }
+    }
+
+    await markGoogleCalendarConnectionHealth({
+      connectionId: connection.id,
+      tokenStatus: "valid",
+      tokenError: null,
+    });
+  } catch (err) {
+    await markGoogleCalendarConnectionHealth({
+      connectionId: connection.id,
+      tokenStatus: "invalid",
+      tokenError: getGoogleApiErrorCode(err),
+    });
+    throw err;
   }
 
   return {

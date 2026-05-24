@@ -1,10 +1,12 @@
 const pool = require("../../db");
+const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
 
 async function findVehicleForTrip(clientOrTrip, maybeTrip = null) {
   const client = maybeTrip ? clientOrTrip : pool;
   const trip = maybeTrip || clientOrTrip;
 
   if (!trip) return null;
+  await ensureVehicleAliasesTable(client);
 
   // Best match: direct VIN
   if (trip.vehicle_vin) {
@@ -69,6 +71,13 @@ async function findVehicleForTrip(clientOrTrip, maybeTrip = null) {
           current_odometer_miles
         FROM vehicles
         WHERE LOWER(nickname) = $1
+           OR EXISTS (
+             SELECT 1
+             FROM vehicle_aliases va
+             WHERE va.vehicle_id = vehicles.id
+               AND va.active = true
+               AND lower(trim(va.alias)) = $1
+           )
         LIMIT 1
       `,
       [tripVehicleName]

@@ -32,6 +32,9 @@ const {
   ensureNotificationEventsTable,
 } = require("./routes/notificationRoutes");
 const {
+  ensureGoogleCalendarConnectionHealthColumns,
+} = require("./services/googleCalendar/googleCalendarStore");
+const {
   ensureVehicleFmvEstimatesTable,
 } = require("./services/vehicles/fmvEstimateService");
 const {
@@ -40,6 +43,9 @@ const {
 const {
   ensureVehicleOdometerRollupTable,
 } = require("./services/vehicles/odometerRollupService");
+const {
+  ensureVehicleAliasesTable,
+} = require("./services/vehicles/vehicleAliases");
 const { ensureIncomeTables } = require("./services/income/incomeService");
 const { ensureFleetAlertTables } = require("./services/alerts/fleetAlerts");
 const { isAuthEnforced } = require("./auth/config");
@@ -349,8 +355,10 @@ async function initializeStartupTables() {
     ensureVehicleFmvEstimatesTable(),
     ensureBusinessMetricsTables(),
     ensureVehicleOdometerRollupTable(),
+    ensureVehicleAliasesTable(),
     ensureIncomeTables(),
     ensureFleetAlertTables(),
+    ensureGoogleCalendarConnectionHealthColumns(),
     ensureAuthTables(),
   ]);
 }

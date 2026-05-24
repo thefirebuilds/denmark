@@ -669,6 +669,7 @@ function compactGuestMessageThreads(items) {
 
 function messageQueueRank(item) {
   if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
+  if (item.type === "google_calendar_reconnect_required") return -2;
   if (item.type === "return_location_check") return -2;
   if (item.type === "notification_unmatched") return -2;
   if (item.type === "vehicle_diagnostic_alert") return -2;
@@ -1202,6 +1203,33 @@ function mapVehicleDiagnosticNoticeRow(row) {
     diagnostic_first_reported_at: firstReported,
     diagnostic_last_seen: lastSeen,
     created_at: lastSeen,
+  };
+}
+
+function mapGoogleCalendarReconnectNoticeRow(row) {
+  const checkedAt = row.token_checked_at || row.updated_at || new Date().toISOString();
+  const calendarName = row.calendar_summary || row.calendar_id || "selected calendar";
+  const error = row.token_error || "invalid token";
+
+  return {
+    id: `google-calendar-reconnect:${row.id}`,
+    message_id: `google-calendar-reconnect:${row.id}`,
+    subject: "Google Calendar reconnect required",
+    status: "unread",
+    type: "google_calendar_reconnect_required",
+    message_type: "google_calendar_reconnect_required",
+    timestamp: checkedAt,
+    created_at: checkedAt,
+    message_timestamp: checkedAt,
+    calendar_connection_id: row.id,
+    calendar_summary: row.calendar_summary,
+    calendar_id: row.calendar_id,
+    calendar_token_error: error,
+    calendar_token_checked_at: row.token_checked_at,
+    calendar_last_synced_at: row.last_synced_at,
+    calendar_synced_trips: Number(row.synced_trips || 0),
+    notification_title: "Google Calendar reconnect required",
+    notification_body: `Denmark cannot update ${calendarName}. Google returned ${error}. Reconnect Google Calendar so trip changes can update calendar events.`,
   };
 }
 
@@ -2651,6 +2679,32 @@ router.get("/", async (req, res) => {
       LIMIT 25
     `;
 
+    const googleCalendarReconnectSql = `
+      SELECT
+        gcc.id,
+        gcc.calendar_id,
+        gcc.calendar_summary,
+        gcc.token_status,
+        gcc.token_error,
+        gcc.token_checked_at,
+        gcc.updated_at,
+        sync_stats.synced_trips,
+        sync_stats.last_synced_at
+      FROM google_calendar_connections gcc
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(DISTINCT trip_id) FILTER (WHERE sync_status = 'synced')::int AS synced_trips,
+          MAX(last_synced_at) AS last_synced_at
+        FROM trip_google_sync tgs
+        WHERE tgs.google_calendar_connection_id = gcc.id
+      ) sync_stats ON TRUE
+      WHERE gcc.refresh_token_encrypted IS NOT NULL
+        AND gcc.calendar_id IS NOT NULL
+        AND gcc.token_status = 'invalid'
+      ORDER BY gcc.token_checked_at DESC NULLS LAST, gcc.updated_at DESC NULLS LAST
+      LIMIT 1
+    `;
+
     const [
       handoffResult,
       inspectionExportResult,
@@ -2661,6 +2715,7 @@ router.get("/", async (req, res) => {
       unmatchedNotificationsResult,
       diagnosticResult,
       maintenanceResult,
+      googleCalendarReconnectResult,
     ] = await Promise.all([
       timeQueueQuery(queueTimings, "handoff", db.query(handoffSql)),
       timeQueueQuery(queueTimings, "inspectionExport", db.query(inspectionExportSql)),
@@ -2691,6 +2746,11 @@ router.get("/", async (req, res) => {
             "maintenance",
             db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
           ),
+      timeQueueQuery(
+        queueTimings,
+        "googleCalendarReconnect",
+        db.query(googleCalendarReconnectSql)
+      ),
     ]);
 
     messagesResult.rows.forEach((row) => {
@@ -2777,6 +2837,7 @@ router.get("/", async (req, res) => {
     }
 
     const queueItems = compactGuestMessageThreads([
+      ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
       ...attachedHandoffNotices,
       ...attachedInspectionExportNotices,
       ...closeoutResult.rows.map(mapCloseoutNoticeRow),

@@ -16,6 +16,7 @@ const {
   ACTIVE_TASK_STATUSES,
   closeSatisfiedMaintenanceTasks,
 } = require("./syncMaintenanceTasks");
+const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
 
 function toIntOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -263,6 +264,8 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
   const selector = String(maybeVin || clientOrVin || "").trim();
   const normalizedSelector = selector.toLowerCase();
 
+  await ensureVehicleAliasesTable(client);
+
   const vehicleResult = await client.query(
     `
       SELECT
@@ -299,6 +302,13 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
       WHERE lower(trim(v.vin)) = $1
          OR lower(trim(v.nickname)) = $1
          OR lower(trim(COALESCE(v.license_plate, ''))) = $1
+         OR EXISTS (
+           SELECT 1
+           FROM vehicle_aliases va
+           WHERE va.vehicle_id = v.id
+             AND va.active = true
+             AND lower(trim(va.alias)) = $1
+         )
       LIMIT 1
     `,
     [normalizedSelector]

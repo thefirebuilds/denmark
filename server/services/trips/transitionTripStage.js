@@ -67,24 +67,28 @@ function shouldCaptureEndOdometer(currentStage, nextStage) {
   return currentStage === "in_progress" && nextStage !== "in_progress";
 }
 
-function syncCanceledTripToGoogleCalendar(trip) {
+function syncTripCalendarNotices(trip, reason = "trip") {
   if (!trip?.id) return;
 
   void syncTripToSelectedGoogleCalendars(trip.id, { retryDeletedEvents: true })
     .then((result) => {
       if (!result.ok) {
         console.warn(
-          `[google-calendar] canceled trip ${trip.id} calendar cleanup completed with failures`,
+          `[google-calendar] ${reason} trip ${trip.id} calendar cleanup completed with failures`,
           result.results
         );
       }
     })
     .catch((err) => {
       console.warn(
-        `[google-calendar] canceled trip ${trip.id} calendar cleanup failed:`,
+        `[google-calendar] ${reason} trip ${trip.id} calendar cleanup failed:`,
         err.message || err
       );
     });
+}
+
+function shouldSyncTripCalendarAfterStageChange(stage) {
+  return ["ready_for_handoff", "awaiting_expenses", "complete", "canceled"].includes(stage);
 }
 
 let vehiclesColumnCache = null;
@@ -593,8 +597,8 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       allowed_next_stages: getAllowedNextStages(updatedTrip.workflow_stage),
     };
 
-    if (normalizedNextStage === "canceled") {
-      syncCanceledTripToGoogleCalendar(updatedTrip);
+    if (shouldSyncTripCalendarAfterStageChange(normalizedNextStage)) {
+      syncTripCalendarNotices(updatedTrip, normalizedNextStage);
     }
 
     return response;

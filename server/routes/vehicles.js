@@ -16,6 +16,10 @@ const {
 } = require("../services/vehicles/locationFeed");
 const { getParkingSpotUsage } = require("../services/vehicles/parkingSpotUsage");
 const {
+  addVehicleAlias,
+  ensureVehicleAliasesTable,
+} = require("../services/vehicles/vehicleAliases");
+const {
   generateFleetFmvEstimates,
   generateVehicleFmvEstimate,
   getLatestVehicleFmvEstimates,
@@ -160,6 +164,13 @@ async function findVehicleBySelector(selector) {
     WHERE lower(trim(vin)) = $1
        OR lower(trim(nickname)) = $1
        OR lower(trim(COALESCE(license_plate, ''))) = $1
+       OR EXISTS (
+         SELECT 1
+         FROM vehicle_aliases va
+         WHERE va.vehicle_id = vehicles.id
+           AND va.active = true
+           AND lower(trim(va.alias)) = $1
+       )
     LIMIT 1
   `;
 
@@ -278,6 +289,8 @@ router.get("/parking-spot-usage", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
+    await ensureVehicleAliasesTable();
+
     const includeInactive =
       String(req.query.includeInactive || "").toLowerCase() === "true" ||
       String(req.query.include_inactive || "").toLowerCase() === "true";
@@ -303,6 +316,7 @@ router.get("/", async (req, res) => {
         v.current_odometer_miles,
         v.provider_vehicle_id,
         v.external_vehicle_key,
+        COALESCE(alias_list.aliases, ARRAY[]::text[]) AS aliases,
         v.rockauto_url,
         v.oil_type,
         v.oil_capacity_quarts,
@@ -321,6 +335,12 @@ router.get("/", async (req, res) => {
         v.is_active
       FROM vehicles v
       LEFT JOIN LATERAL (
+        SELECT array_agg(va.alias ORDER BY va.alias) AS aliases
+        FROM vehicle_aliases va
+        WHERE va.vehicle_id = v.id
+          AND va.active = true
+      ) alias_list ON true
+      LEFT JOIN LATERAL (
         SELECT MIN(t.trip_start)::date AS first_trip_start
         FROM trips t
         WHERE t.trip_start IS NOT NULL
@@ -334,6 +354,14 @@ router.get("/", async (req, res) => {
               COALESCE(v.nickname, '') <> ''
               AND COALESCE(t.vehicle_name, '') <> ''
               AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM vehicle_aliases va
+              WHERE va.vehicle_id = v.id
+                AND va.active = true
+                AND COALESCE(t.vehicle_name, '') <> ''
+                AND LOWER(va.alias) = LOWER(t.vehicle_name)
             )
           )
           AND (
@@ -384,6 +412,8 @@ router.post("/fmv-estimates/run", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
+    await ensureVehicleAliasesTable();
+
     const nickname = toNullableText(req.body.nickname);
     const vin = toNullableText(req.body.vin)?.toUpperCase() || null;
 
@@ -404,7 +434,11 @@ router.post("/", async (req, res) => {
         toNullableText(req.body.license_state)?.toUpperCase() || null,
       bouncie_vehicle_id: toNullableText(req.body.bouncie_vehicle_id),
       dimo_token_id: toNullableInt(req.body.dimo_token_id),
-      provider_vehicle_id: toNullableText(req.body.provider_vehicle_id),
+      provider_vehicle_id:
+        toNullableText(req.body.provider_vehicle_id) ||
+        (toNullableInt(req.body.dimo_token_id) != null
+          ? String(toNullableInt(req.body.dimo_token_id))
+          : null),
       external_vehicle_key: toNullableText(req.body.external_vehicle_key),
       imei: toNullableText(req.body.imei),
       turo_vehicle_id: toNullableText(req.body.turo_vehicle_id),
@@ -453,6 +487,8 @@ router.post("/", async (req, res) => {
       `,
       values
     );
+
+    await addVehicleAlias(pool, rows[0].id, rows[0].nickname, "canonical");
 
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -513,6 +549,13 @@ router.patch("/:selector", async (req, res) => {
       WHERE lower(trim(vin)) = $1
          OR lower(trim(nickname)) = $1
          OR lower(trim(COALESCE(license_plate, ''))) = $1
+         OR EXISTS (
+           SELECT 1
+           FROM vehicle_aliases va
+           WHERE va.vehicle_id = vehicles.id
+             AND va.active = true
+             AND lower(trim(va.alias)) = $1
+         )
       LIMIT 1
     `;
 
@@ -522,6 +565,7 @@ router.patch("/:selector", async (req, res) => {
 
   try {
     await client.query("BEGIN");
+    await ensureVehicleAliasesTable(client);
 
     const existing = await findVehicleBySelectorWithClient(
       client,
@@ -616,14 +660,22 @@ router.patch("/:selector", async (req, res) => {
         ? toNullableInt(req.body.dimo_token_id)
         : existing.dimo_token_id;
 
+    const dimoTokenWasProvided = req.body.dimo_token_id !== undefined;
+
     const provider_vehicle_id =
       req.body.provider_vehicle_id !== undefined
         ? toNullableText(req.body.provider_vehicle_id)
+        : dimo_token_id != null
+        ? String(dimo_token_id)
         : existing.provider_vehicle_id;
 
     const external_vehicle_key =
       req.body.external_vehicle_key !== undefined
         ? toNullableText(req.body.external_vehicle_key)
+        : dimo_token_id != null
+        ? `dimo:${dimo_token_id}`
+        : dimoTokenWasProvided
+        ? null
         : existing.external_vehicle_key;
 
     const turo_vehicle_id =
@@ -749,6 +801,13 @@ router.patch("/:selector", async (req, res) => {
 
     const { rows } = await client.query(vehicleQuery, vehicleValues);
     const updatedVehicle = rows[0];
+
+    const oldNickname = toNullableText(existing.nickname);
+    const newNickname = toNullableText(updatedVehicle.nickname);
+    if (oldNickname && oldNickname.toLowerCase() !== newNickname?.toLowerCase()) {
+      await addVehicleAlias(client, updatedVehicle.id, oldNickname, "rename");
+    }
+    await addVehicleAlias(client, updatedVehicle.id, newNickname, "canonical");
 
     if (guestVisibleConditionNotes !== undefined) {
       await client.query(

@@ -233,6 +233,28 @@ function isWaitingExpenses(trip) {
   );
 }
 
+function getNormalizedStage(trip) {
+  return (trip.workflow_stage || trip.status || "").toLowerCase();
+}
+
+function shouldKeepPickupNotice(trip) {
+  const stage = getNormalizedStage(trip);
+  return ![
+    "ready_for_handoff",
+    "ready_for_guest",
+    "in_progress",
+    "turnaround",
+    "awaiting_expenses",
+    "waiting expenses",
+    "complete",
+  ].includes(stage);
+}
+
+function shouldKeepReturnNotice(trip) {
+  const stage = getNormalizedStage(trip);
+  return !["awaiting_expenses", "waiting expenses", "complete"].includes(stage);
+}
+
 function getDesiredGoogleEventsForTrip(trip) {
   if (!trip || isCanceledOrDeleted(trip)) {
     return [];
@@ -245,11 +267,11 @@ function getDesiredGoogleEventsForTrip(trip) {
     return desired;
   }
 
-  if (trip.trip_start) {
+  if (trip.trip_start && shouldKeepPickupNotice(trip)) {
     desired.push(buildPickupEvent(trip));
   }
 
-  if (trip.trip_end) {
+  if (trip.trip_end && shouldKeepReturnNotice(trip)) {
     desired.push(buildReturnEvent(trip));
   }
 
