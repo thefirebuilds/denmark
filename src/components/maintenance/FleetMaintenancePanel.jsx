@@ -247,8 +247,15 @@ function buildTelemetryLocation(fleetVehicle = null) {
   };
 }
 
-function buildMilStatus(fleetVehicle = null) {
-  const mil = fleetVehicle?.telemetry?.mil || {};
+function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
+  const mil = liveDiagnostics?.mil || fleetVehicle?.telemetry?.mil || {};
+  const sourceLabel =
+    liveDiagnostics?.source === "dimo_latest_signals" ||
+    mil.source === "dimo_latest_signals"
+      ? "DIMO latest signals"
+      : null;
+  const sourcedDetail = (detail) =>
+    sourceLabel ? `${detail} from ${sourceLabel}` : detail;
   const codes = Array.isArray(mil.qualified_dtc_list)
     ? mil.qualified_dtc_list
         .map((item) => {
@@ -266,11 +273,14 @@ function buildMilStatus(fleetVehicle = null) {
     return {
       tone: "fail",
       label: codes.length ? `MIL on: ${codes.join(", ")}` : "MIL on",
-      detail: codes.length
-        ? `${codes.length} decoded DTC${codes.length === 1 ? "" : "s"} reported`
-        : "Check-engine light is on, but no decoded DTCs were reported yet",
+      detail: sourcedDetail(
+        codes.length
+          ? `${codes.length} decoded DTC${codes.length === 1 ? "" : "s"} reported`
+          : "Check-engine light is on, but no decoded DTCs were reported yet"
+      ),
       lastUpdated,
       firstReportedAt,
+      sourceLabel,
     };
   }
 
@@ -278,9 +288,10 @@ function buildMilStatus(fleetVehicle = null) {
     return {
       tone: "fail",
       label: codes.length ? `DTC: ${codes.join(", ")}` : `${count} DTC active`,
-      detail: "Diagnostic trouble code reported by telematics",
+      detail: sourcedDetail("Diagnostic trouble code reported by telematics"),
       lastUpdated,
       firstReportedAt,
+      sourceLabel,
     };
   }
 
@@ -288,18 +299,20 @@ function buildMilStatus(fleetVehicle = null) {
     return {
       tone: "pass",
       label: "MIL clear",
-      detail: "No active check-engine light reported",
+      detail: sourcedDetail("No active check-engine light reported"),
       lastUpdated,
       firstReportedAt,
+      sourceLabel,
     };
   }
 
   return {
     tone: "unknown",
     label: "No MIL reading",
-    detail: "No diagnostic status reported yet",
+    detail: sourcedDetail("No diagnostic status reported yet"),
     lastUpdated,
     firstReportedAt,
+    sourceLabel,
   };
 }
 
@@ -382,7 +395,12 @@ function buildEngineRpmStatus(fleetVehicle = null) {
   };
 }
 
-function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null) {
+function mapMaintenanceSummaryToVehicle(
+  summary,
+  fallbackId,
+  fleetVehicle = null,
+  liveDiagnostics = null
+) {
   if (!summary?.vehicle) return null;
 
   const sourceVehicle = summary.vehicle;
@@ -501,7 +519,7 @@ function mapMaintenanceSummaryToVehicle(summary, fallbackId, fleetVehicle = null
     export_ready: !summary.blocksGuestExport,
     telematics: buildTelematicsStatus(fleetVehicle),
     telemetry_location: buildTelemetryLocation(fleetVehicle),
-    mil_status: buildMilStatus(fleetVehicle),
+    mil_status: buildMilStatus(fleetVehicle, liveDiagnostics),
     engine_temperature: buildEngineTemperatureStatus(fleetVehicle),
     engine_rpm: buildEngineRpmStatus(fleetVehicle),
     body_condition: notes.length ? "documented" : "good",
@@ -643,10 +661,20 @@ export default function FleetMaintenancePanel({
   const [selectedInspectionItem, setSelectedInspectionItem] = useState(null);
   const [inspectionDrawerOpen, setInspectionDrawerOpen] = useState(false);
   const [inspectionVehicle, setInspectionVehicle] = useState(null);
+  const [liveDimoDiagnostics, setLiveDimoDiagnostics] = useState(null);
+  const [liveDimoDiagnosticsError, setLiveDimoDiagnosticsError] = useState("");
 
   const selectedFleetVehicle = useMemo(() => {
     return findFleetVehicleBySelectedId(fleetVehicles, selectedVehicleId);
   }, [fleetVehicles, selectedVehicleId]);
+
+  const selectedDimoToken = selectedFleetVehicle?.dimo_token_id || null;
+  const currentLiveDimoDiagnostics =
+    liveDimoDiagnostics &&
+    selectedDimoToken &&
+    String(liveDimoDiagnostics.tokenId) === String(selectedDimoToken)
+      ? liveDimoDiagnostics
+      : null;
 
   const liveVehicle = useMemo(() => {
     if (!maintenanceSummary) return null;
@@ -654,9 +682,15 @@ export default function FleetMaintenancePanel({
     return mapMaintenanceSummaryToVehicle(
       maintenanceSummary,
       normalizeVehicleKey(selectedVehicleId),
-      selectedFleetVehicle
+      selectedFleetVehicle,
+      currentLiveDimoDiagnostics
     );
-  }, [maintenanceSummary, selectedVehicleId, selectedFleetVehicle]);
+  }, [
+    maintenanceSummary,
+    selectedVehicleId,
+    selectedFleetVehicle,
+    currentLiveDimoDiagnostics,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -720,6 +754,51 @@ export default function FleetMaintenancePanel({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLiveDimoDiagnostics() {
+      if (!selectedDimoToken) {
+        setLiveDimoDiagnostics(null);
+        setLiveDimoDiagnosticsError("");
+        return;
+      }
+
+      try {
+        setLiveDimoDiagnostics(null);
+        setLiveDimoDiagnosticsError("");
+
+        const res = await fetch(
+          `/api/dimo/vehicles/${encodeURIComponent(
+            selectedDimoToken
+          )}/latest-diagnostics`
+        );
+
+        const body = await res.json().catch(() => null);
+        if (!res.ok) {
+          throw new Error(body?.error || `HTTP ${res.status}`);
+        }
+
+        if (!cancelled) {
+          setLiveDimoDiagnostics(body);
+        }
+      } catch (err) {
+        console.warn("DIMO latest diagnostics unavailable:", err);
+        if (!cancelled) {
+          setLiveDimoDiagnosticsError(
+            err.message || "DIMO latest diagnostics unavailable"
+          );
+        }
+      }
+    }
+
+    loadLiveDimoDiagnostics();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDimoToken]);
 
   const loadMaintenanceTemplates = useCallback(async () => {
     try {
@@ -977,10 +1056,31 @@ export default function FleetMaintenancePanel({
   }, [vehicleTrips]);
 
   const vehicle = useMemo(() => {
-    if (liveVehicle) return liveVehicle;
+    const withDiagnosticsFallbackNotice = (candidate) => {
+      if (
+        !candidate ||
+        !selectedDimoToken ||
+        currentLiveDimoDiagnostics ||
+        !liveDimoDiagnosticsError
+      ) {
+        return candidate;
+      }
+
+      return {
+        ...candidate,
+        mil_status: {
+          ...(candidate.mil_status || {}),
+          detail: `${
+            candidate.mil_status?.detail || "No diagnostic status reported"
+          }; DIMO latest unavailable, showing cached status`,
+        },
+      };
+    };
+
+    if (liveVehicle) return withDiagnosticsFallbackNotice(liveVehicle);
 
     if (selectedFleetVehicle) {
-      return {
+      return withDiagnosticsFallbackNotice({
         id: normalizeVehicleKey(
           selectedFleetVehicle.nickname || selectedFleetVehicle.vin
         ),
@@ -1019,14 +1119,14 @@ export default function FleetMaintenancePanel({
         overall_status: "attention",
         export_ready: false,
         telematics: buildTelematicsStatus(selectedFleetVehicle),
-        mil_status: buildMilStatus(selectedFleetVehicle),
+        mil_status: buildMilStatus(selectedFleetVehicle, currentLiveDimoDiagnostics),
         engine_temperature: buildEngineTemperatureStatus(selectedFleetVehicle),
         engine_rpm: buildEngineRpmStatus(selectedFleetVehicle),
         body_condition: "unknown",
         body_notes: ["Loading live maintenance summary…"],
         inspection_items: [],
         outstanding_items: [],
-      };
+      });
     }
 
     return {
@@ -1071,6 +1171,9 @@ export default function FleetMaintenancePanel({
     selectedVehicleId,
     liveVehicle,
     selectedFleetVehicle,
+    selectedDimoToken,
+    currentLiveDimoDiagnostics,
+    liveDimoDiagnosticsError,
     fleetLoadError,
     fleetLoading,
     summaryLoadError,

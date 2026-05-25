@@ -146,7 +146,19 @@ async function upsertVehicle(client, snapshot) {
       ON CONFLICT (vin)
       DO UPDATE SET
         imei = EXCLUDED.imei,
-        nickname = COALESCE(vehicles.nickname, EXCLUDED.nickname),
+        nickname = COALESCE(
+          (
+            SELECT va.alias
+            FROM vehicle_aliases va
+            WHERE va.vehicle_id = vehicles.id
+              AND va.active = true
+              AND va.source = 'canonical'
+            ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
+            LIMIT 1
+          ),
+          vehicles.nickname,
+          EXCLUDED.nickname
+        ),
         make = COALESCE(vehicles.make, EXCLUDED.make),
         model = COALESCE(vehicles.model, EXCLUDED.model),
         year = COALESCE(vehicles.year, EXCLUDED.year),

@@ -540,6 +540,21 @@ async function upsertDimoVehicle(normalized, client = pool) {
 
   const assignments = updatableColumns.map((column) => {
     if (column === "updated_at") return "updated_at = NOW()";
+    if (column === "nickname") {
+      return `nickname = COALESCE(
+        (
+          SELECT va.alias
+          FROM vehicle_aliases va
+          WHERE va.vehicle_id = vehicles.id
+            AND va.active = true
+            AND va.source = 'canonical'
+          ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
+          LIMIT 1
+        ),
+        vehicles.nickname,
+        EXCLUDED.nickname
+      )`;
+    }
     if (["nickname", "make", "model", "year", "standard_engine"].includes(column)) {
       return `${column} = COALESCE(vehicles.${column}, EXCLUDED.${column})`;
     }

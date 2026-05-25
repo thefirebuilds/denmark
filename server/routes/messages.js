@@ -2,6 +2,9 @@
 const router = express.Router();
 const db = require("../db");
 const tripAutomationRules = require("../config/tripAutomationRules.json");
+const {
+  ensureVehicleAliasesTable,
+} = require("../services/vehicles/vehicleAliases");
 
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
@@ -1555,6 +1558,7 @@ router.get("/", async (req, res) => {
 
     if (!fast) {
       await ensureNotificationAckColumns();
+      await ensureVehicleAliasesTable();
       await timeQueueQuery(
         queueTimings,
         "returnLocationAutoAck",
@@ -2211,13 +2215,14 @@ router.get("/", async (req, res) => {
       open_vehicle_tasks AS (
         SELECT
           COALESCE(
-            NULLIF(v.turo_vehicle_id, ''),
+            NULLIF(resolved_vehicle.turo_vehicle_id, ''),
             NULLIF(CAST(related_trip.turo_vehicle_id AS text), ''),
+            NULLIF(resolved_vehicle.vin, ''),
             NULLIF(mt.vehicle_vin, ''),
-            LOWER(NULLIF(COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
+            LOWER(NULLIF(COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
           ) AS vehicle_key,
-          COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin) AS vehicle_name,
-          mt.vehicle_vin,
+          COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin) AS vehicle_name,
+          COALESCE(resolved_vehicle.vin, mt.vehicle_vin) AS vehicle_vin,
           COUNT(*) AS open_task_count,
           MAX(mt.created_at) AS latest_task_created_at,
           jsonb_agg(
@@ -2245,21 +2250,52 @@ router.get("/", async (req, res) => {
               mt.id DESC
           ) AS tasks
         FROM active_maintenance_tasks mt
-        LEFT JOIN vehicles v
-          ON v.vin = mt.vehicle_vin
         LEFT JOIN trips related_trip
           ON related_trip.id = mt.related_trip_id
-        WHERE COALESCE(v.is_active, true) = true
-          AND COALESCE(v.in_service, true) = true
+        LEFT JOIN LATERAL (
+          SELECT v.*
+          FROM vehicles v
+          WHERE (
+              COALESCE(mt.vehicle_vin, '') <> ''
+              AND v.vin = mt.vehicle_vin
+            )
+            OR (
+              related_trip.turo_vehicle_id IS NOT NULL
+              AND v.turo_vehicle_id = related_trip.turo_vehicle_id
+            )
+            OR (
+              COALESCE(related_trip.vehicle_name, '') <> ''
+              AND LOWER(v.nickname) = LOWER(related_trip.vehicle_name)
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM vehicle_aliases va
+              WHERE va.vehicle_id = v.id
+                AND va.active = true
+                AND COALESCE(related_trip.vehicle_name, '') <> ''
+                AND LOWER(va.alias) = LOWER(related_trip.vehicle_name)
+            )
+          ORDER BY
+            CASE
+              WHEN COALESCE(mt.vehicle_vin, '') <> '' AND v.vin = mt.vehicle_vin THEN 1
+              WHEN related_trip.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = related_trip.turo_vehicle_id THEN 2
+              WHEN COALESCE(related_trip.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(related_trip.vehicle_name) THEN 3
+              ELSE 4
+            END
+          LIMIT 1
+        ) resolved_vehicle ON true
+        WHERE COALESCE(resolved_vehicle.is_active, true) = true
+          AND COALESCE(resolved_vehicle.in_service, true) = true
         GROUP BY
           COALESCE(
-            NULLIF(v.turo_vehicle_id, ''),
+            NULLIF(resolved_vehicle.turo_vehicle_id, ''),
             NULLIF(CAST(related_trip.turo_vehicle_id AS text), ''),
+            NULLIF(resolved_vehicle.vin, ''),
             NULLIF(mt.vehicle_vin, ''),
-            LOWER(NULLIF(COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
+            LOWER(NULLIF(COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
           ),
-          COALESCE(v.nickname, related_trip.vehicle_name, mt.vehicle_vin),
-          mt.vehicle_vin
+          COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin),
+          COALESCE(resolved_vehicle.vin, mt.vehicle_vin)
       ),
       scheduled_vehicle_tasks AS (
         SELECT
@@ -2311,6 +2347,14 @@ router.get("/", async (req, res) => {
                 COALESCE(active.vehicle_name, '') <> ''
                 AND LOWER(active.vehicle_name) = LOWER(open_vehicle_tasks.vehicle_name)
               )
+              OR EXISTS (
+                SELECT 1
+                FROM vehicle_aliases va
+                WHERE va.vehicle_id = active_v.id
+                  AND va.active = true
+                  AND COALESCE(active.vehicle_name, '') <> ''
+                  AND LOWER(va.alias) = LOWER(open_vehicle_tasks.vehicle_name)
+              )
             )
           ORDER BY active.trip_start ASC NULLS LAST, active.id ASC
           LIMIT 1
@@ -2344,6 +2388,14 @@ router.get("/", async (req, res) => {
               OR (
                 COALESCE(upcoming.vehicle_name, '') <> ''
                 AND LOWER(upcoming.vehicle_name) = LOWER(open_vehicle_tasks.vehicle_name)
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM vehicle_aliases va
+                WHERE va.vehicle_id = upcoming_v.id
+                  AND va.active = true
+                  AND COALESCE(upcoming.vehicle_name, '') <> ''
+                  AND LOWER(va.alias) = LOWER(open_vehicle_tasks.vehicle_name)
               )
             )
           ORDER BY upcoming.trip_start ASC NULLS LAST, upcoming.id ASC

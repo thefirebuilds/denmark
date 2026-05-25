@@ -7,6 +7,11 @@ require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
 const express = require("express");
 const session = require("express-session");
+const {
+  getLogEntries,
+  installConsoleLogBuffer,
+} = require("./services/serverLogBuffer");
+installConsoleLogBuffer();
 const authRoutes = require("./routes/auth");
 const startScheduler = require("./services/scheduler");
 
@@ -221,6 +226,16 @@ app.use((err, req, res, next) => {
 
 app.get("/api/startup/status", defaultCors, requirePermission("settings.read"), (req, res) => {
   res.json(startScheduler.getStartupStatus());
+});
+
+app.get("/api/server/logs", defaultCors, requirePermission("settings.read"), (req, res) => {
+  res.json({
+    generated_at: new Date().toISOString(),
+    entries: getLogEntries({
+      limit: req.query.limit,
+      afterId: req.query.afterId,
+    }),
+  });
 });
 
 app.use(

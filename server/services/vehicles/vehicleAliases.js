@@ -30,6 +30,41 @@ async function createVehicleAliasesTable(client) {
     CREATE INDEX IF NOT EXISTS idx_vehicle_aliases_vehicle_id
     ON public.vehicle_aliases (vehicle_id)
   `);
+
+  await client.query(`
+    INSERT INTO public.vehicle_aliases (
+      vehicle_id,
+      alias,
+      source,
+      active,
+      created_at,
+      updated_at
+    )
+    SELECT v.id, v.nickname, 'canonical', true, NOW(), NOW()
+    FROM public.vehicles v
+    WHERE COALESCE(v.nickname, '') <> ''
+    ON CONFLICT DO NOTHING
+  `);
+
+  await client.query(`
+    INSERT INTO public.vehicle_aliases (
+      vehicle_id,
+      alias,
+      source,
+      active,
+      created_at,
+      updated_at
+    )
+    SELECT DISTINCT v.id, t.vehicle_name, 'turo_trip_name', true, NOW(), NOW()
+    FROM public.trips t
+    JOIN public.vehicles v
+      ON (
+        t.turo_vehicle_id IS NOT NULL
+        AND v.turo_vehicle_id = t.turo_vehicle_id
+      )
+    WHERE COALESCE(t.vehicle_name, '') <> ''
+    ON CONFLICT DO NOTHING
+  `);
 }
 
 async function ensureVehicleAliasesTable(client = pool) {

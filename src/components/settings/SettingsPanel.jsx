@@ -196,6 +196,7 @@ function SectionList({ activeSection, onChange }) {
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
     { key: "database", title: "Database", sub: "Backup and restore" },
     { key: "telemetry", title: "Telemetry", sub: "Coming next" },
+    { key: "logs", title: "Logs", sub: "Server console tail" },
     { key: "maintenance", title: "Maintenance", sub: "Template defaults" },
     { key: "integrations", title: "Integrations", sub: "External systems" },
   ];
@@ -1288,10 +1289,20 @@ function ExpenseSettingsPanel() {
   );
 }
 
-function DimoShareCard({ config, loading }) {
+function DimoShareCard({ config, status = [], loading }) {
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const shareTarget = String(config?.shareTarget || "").trim();
+  const vehicles = Array.isArray(status) ? status : [];
+  const vehiclesWithTelemetry = vehicles.filter((vehicle) => {
+    const telemetry = vehicle?.telemetry || {};
+    return (
+      telemetry.odometer != null ||
+      telemetry.location?.lat != null ||
+      telemetry.location?.lon != null ||
+      Number(telemetry.dimo?.available_signals_count || 0) > 0
+    );
+  }).length;
 
   useEffect(() => {
     let cancelled = false;
@@ -1343,9 +1354,10 @@ function DimoShareCard({ config, loading }) {
       <div className="settings-dimo-share-copy">
         <div className="settings-group-title">DIMO vehicle sharing</div>
         <div className="settings-empty-state">
-          In the DIMO mobile app, open a vehicle, choose permission sharing,
-          then scan this QR or paste the share target below. Denmark only exposes
-          the public Developer License target here, never DIMO JWTs or private keys.
+          In the DIMO mobile app, open a vehicle, add a new individual under
+          sharing, turn on indefinite sharing, then scan this QR or paste the
+          share target below. Denmark only exposes the public Developer License
+          target here, never DIMO JWTs or private keys.
         </div>
 
         <div className="settings-dimo-instructions">
@@ -1387,7 +1399,44 @@ function DimoShareCard({ config, loading }) {
                 : "Not configured"}
             </span>
           </div>
+          <div className="settings-vehicle-row">
+            <strong>Configured vehicles</strong>
+            <span>
+              {loading
+                ? "Loading..."
+                : `${vehicles.length} configured, ${vehiclesWithTelemetry} with telemetry`}
+            </span>
+          </div>
         </div>
+
+        {vehicles.length ? (
+          <div className="settings-vehicle-list">
+            {vehicles.map((vehicle) => {
+              const dimo = vehicle?.telemetry?.dimo || {};
+              const missing = Array.isArray(dimo.missing_privileges)
+                ? dimo.missing_privileges
+                : [];
+              const signalCount = Number(dimo.available_signals_count || 0);
+              const label =
+                vehicle.nickname ||
+                [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") ||
+                vehicle.vin ||
+                `DIMO ${vehicle.dimo_token_id}`;
+              const statusText = missing.length
+                ? `Missing ${missing.join(", ")}`
+                : signalCount > 0
+                ? `${signalCount} signals`
+                : "No DIMO signals";
+
+              return (
+                <div key={vehicle.dimo_token_id || vehicle.vin || label} className="settings-vehicle-row">
+                  <strong>{label}</strong>
+                  <span>{statusText}</span>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div className="settings-form-actions">
           <button
@@ -1518,6 +1567,7 @@ function IntegrationsSettingsPanel() {
   const [connections, setConnections] = useState(null);
   const [mercuryConfig, setMercuryConfig] = useState(null);
   const [dimoConfig, setDimoConfig] = useState(null);
+  const [dimoStatus, setDimoStatus] = useState([]);
   const [googleCalendarStatus, setGoogleCalendarStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
@@ -1536,12 +1586,14 @@ function IntegrationsSettingsPanel() {
         connectionsRes,
         mercuryConfigRes,
         dimoConfigRes,
+        dimoStatusRes,
         googleCalendarStatusRes,
       ] = await Promise.all([
         fetch(`${API_BASE}/api/teller/connect/config`),
         fetch(`${API_BASE}/api/teller/connections`),
         fetch(`${API_BASE}/api/teller/mercury/config`),
         fetch(`${API_BASE}/api/dimo/config`),
+        fetch(`${API_BASE}/api/dimo/status`),
         fetch(`${API_BASE}/api/integrations/google-calendar/status`),
       ]);
 
@@ -1549,6 +1601,7 @@ function IntegrationsSettingsPanel() {
       const connectionsJson = await connectionsRes.json().catch(() => ({}));
       const mercuryConfigJson = await mercuryConfigRes.json().catch(() => ({}));
       const dimoConfigJson = await dimoConfigRes.json().catch(() => ({}));
+      const dimoStatusJson = await dimoStatusRes.json().catch(() => []);
       const googleCalendarStatusJson = await googleCalendarStatusRes
         .json()
         .catch(() => ({}));
@@ -1573,6 +1626,12 @@ function IntegrationsSettingsPanel() {
         throw new Error(dimoConfigJson?.error || "Failed to load DIMO config");
       }
 
+      if (!dimoStatusRes.ok) {
+        throw new Error(
+          dimoStatusJson?.error || "Failed to load DIMO vehicle status"
+        );
+      }
+
       if (!googleCalendarStatusRes.ok) {
         throw new Error(
           googleCalendarStatusJson?.error ||
@@ -1584,6 +1643,7 @@ function IntegrationsSettingsPanel() {
       setConnections(connectionsJson);
       setMercuryConfig(mercuryConfigJson);
       setDimoConfig(dimoConfigJson);
+      setDimoStatus(Array.isArray(dimoStatusJson) ? dimoStatusJson : []);
       setGoogleCalendarStatus(googleCalendarStatusJson);
     } catch (err) {
       setMessage(err.message || "Failed to load integrations");
@@ -1774,7 +1834,11 @@ function IntegrationsSettingsPanel() {
       </div>
 
       <div className="settings-form">
-        <DimoShareCard config={dimoConfig} loading={loading} />
+        <DimoShareCard
+          config={dimoConfig}
+          status={dimoStatus}
+          loading={loading}
+        />
 
         <GoogleCalendarCard
           status={googleCalendarStatus}
@@ -1869,6 +1933,221 @@ function IntegrationsSettingsPanel() {
   );
 }
 
+function TelemetrySettingsPanel() {
+  const [dimoDebug, setDimoDebug] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadDimoDebug() {
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/dimo/debug/fleet`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load DIMO debug fleet");
+      }
+
+      setDimoDebug(json);
+    } catch (err) {
+      setMessage(err.message || "Failed to load DIMO debug fleet");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadDimoDebug();
+  }, []);
+
+  const sharedCount = dimoDebug?.sharedReturned?.length || 0;
+  const configuredCount = dimoDebug?.configuredLocal?.length || 0;
+  const pollableCount = dimoDebug?.pollableFleet?.length || 0;
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Telemetry</h2>
+          <span>DIMO fleet troubleshooting</span>
+        </div>
+        <button
+          type="button"
+          className="settings-action-btn secondary"
+          disabled={loading}
+          onClick={loadDimoDebug}
+        >
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">DIMO fleet intersection</div>
+          <div className="settings-empty-state">
+            This shows what DIMO returns as shared, what Denmark has configured
+            locally, and the intersection Denmark will actually poll.
+          </div>
+
+          <div className="settings-fleet-summary">
+            <div>
+              <strong>{loading && !dimoDebug ? "..." : sharedCount}</strong>
+              <span>shared returned</span>
+            </div>
+            <div>
+              <strong>{loading && !dimoDebug ? "..." : configuredCount}</strong>
+              <span>configured local</span>
+            </div>
+            <div>
+              <strong>{loading && !dimoDebug ? "..." : pollableCount}</strong>
+              <span>pollable</span>
+            </div>
+          </div>
+
+          {message ? <span className="settings-message">{message}</span> : null}
+          {dimoDebug?.sharedError ? (
+            <span className="settings-message">
+              DIMO shared vehicle fetch failed: {dimoDebug.sharedError}
+            </span>
+          ) : null}
+
+          <pre className="settings-json-view">
+            {dimoDebug
+              ? JSON.stringify(dimoDebug, null, 2)
+              : loading
+                ? "Loading DIMO debug fleet..."
+                : "No DIMO debug payload loaded."}
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function formatLogTimestamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatLogLine(entry) {
+  const level = String(entry?.level || "log").toUpperCase().padEnd(5, " ");
+  return `[${formatLogTimestamp(entry?.at)}] ${level} ${entry?.message || ""}`;
+}
+
+function ServerLogsSettingsPanel() {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [liveFollow, setLiveFollow] = useState(true);
+  const logRef = useRef(null);
+
+  async function loadLogs({ append = false } = {}) {
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const lastId = append ? entries[entries.length - 1]?.id : null;
+      const params = new URLSearchParams({ limit: append ? "250" : "500" });
+      if (append && lastId) params.set("afterId", String(lastId));
+
+      const res = await fetch(`${API_BASE}/api/server/logs?${params}`, {
+        credentials: "include",
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load server logs");
+      }
+
+      const nextEntries = Array.isArray(json.entries) ? json.entries : [];
+      setEntries((current) =>
+        append
+          ? [...current, ...nextEntries].slice(-500)
+          : nextEntries
+      );
+    } catch (err) {
+      setMessage(err.message || "Failed to load server logs");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadLogs();
+  }, []);
+
+  useEffect(() => {
+    if (!liveFollow) return undefined;
+    const interval = window.setInterval(() => {
+      loadLogs({ append: true });
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [liveFollow, entries]);
+
+  useEffect(() => {
+    if (!liveFollow || !logRef.current) return;
+    logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [entries, liveFollow]);
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Logs</h2>
+          <span>server console tail</span>
+        </div>
+        <div className="settings-form-actions">
+          <label className="settings-checkbox-row settings-log-follow">
+            <input
+              type="checkbox"
+              checked={liveFollow}
+              onChange={(event) => setLiveFollow(event.target.checked)}
+            />
+            <span>Live follow</span>
+          </label>
+          <button
+            type="button"
+            className="settings-action-btn secondary"
+            disabled={loading}
+            onClick={() => loadLogs()}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Node output</div>
+          <div className="settings-empty-state">
+            This mirrors the backend process console from the current server
+            runtime. It keeps the latest 1,000 lines in memory and resets when
+            the backend restarts.
+          </div>
+
+          {message ? <span className="settings-message">{message}</span> : null}
+
+          <pre ref={logRef} className="settings-json-view settings-log-view">
+            {entries.length
+              ? entries.map(formatLogLine).join("\n")
+              : loading
+                ? "Loading server logs..."
+                : "No server log entries captured yet."}
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SettingsHelpPanel({ activeSection }) {
   const copy = useMemo(() => {
     if (activeSection === "dispatch") {
@@ -1908,6 +2187,22 @@ function SettingsHelpPanel({ activeSection }) {
         title: "Banking setup",
         body:
           "Teller uses bank enrollments, while Mercury uses its direct API token. Both land in the same Inbox review and expense matching flow.",
+      };
+    }
+
+    if (activeSection === "telemetry") {
+      return {
+        title: "Telemetry debug",
+        body:
+          "DIMO polling requires a vehicle to appear in both the DIMO shared vehicle response and Denmark's local fleet settings. The pollable list is that intersection.",
+      };
+    }
+
+    if (activeSection === "logs") {
+      return {
+        title: "Server logs",
+        body:
+          "This is a live tail of the backend console for the current Node process. Restarting the server clears the in-memory buffer.",
       };
     }
 
@@ -1954,6 +2249,10 @@ export default function SettingsPanel({
         <DatabaseSettingsPanel />
       ) : activeSection === "integrations" ? (
         <IntegrationsSettingsPanel />
+      ) : activeSection === "telemetry" ? (
+        <TelemetrySettingsPanel />
+      ) : activeSection === "logs" ? (
+        <ServerLogsSettingsPanel />
       ) : (
         <section className="panel settings-main-panel">
           <div className="panel-header">

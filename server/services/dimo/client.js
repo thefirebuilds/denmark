@@ -180,7 +180,18 @@ async function getDimoFleetFromDb() {
     SELECT
       id,
       vin,
-      nickname,
+      COALESCE(
+        (
+          SELECT va.alias
+          FROM vehicle_aliases va
+          WHERE va.vehicle_id = vehicles.id
+            AND va.active = true
+            AND va.source = 'canonical'
+          ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
+          LIMIT 1
+        ),
+        nickname
+      ) AS nickname,
       make,
       model,
       year,

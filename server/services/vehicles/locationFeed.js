@@ -18,6 +18,10 @@ function isFreshTimestamp(value, maxAgeMs = RUNNING_FRESH_MS) {
   return ageMs <= maxAgeMs;
 }
 
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function normalizeSource(value) {
   const source = String(value || "").trim();
   if (!source) return "Stored telemetry";
@@ -59,6 +63,11 @@ function mapLocationRow(row) {
   return {
     id: String(row.id),
     name: row.name || `Vehicle ${row.id}`,
+    vin: row.vin || null,
+    make: row.make || null,
+    model: row.model || null,
+    year: row.year || null,
+    nickname: row.name || null,
     source: normalizeSource(row.source),
     lat,
     lon,
@@ -69,6 +78,18 @@ function mapLocationRow(row) {
     runningLastSeen,
     speed: toNumber(row.speed),
     googleMapsUrl: buildGoogleMapsUrl(lat, lon),
+    telemetryDiagnostics: {
+      provider: row.source || null,
+      latestPollAt: row.latest_poll_at || null,
+      locationSignalAt: row.location_signal_at || row.last_seen || null,
+      availableSignalsCount: toNumber(row.available_signals_count),
+      fetchedSignals: toArray(row.fetched_signals),
+      skippedSignals: toArray(row.skipped_signals),
+      blockedSignals: toArray(row.blocked_signals),
+      missingPrivileges: toArray(row.missing_privileges),
+      degradedReason: row.degraded_reason || null,
+      locationIssue: row.location_issue || null,
+    },
   };
 }
 
@@ -90,7 +111,12 @@ async function getStoredVehicleLocations(client = pool) {
   const { rows } = await client.query(`
     SELECT
       v.id,
+      v.vin,
+      v.make,
+      v.model,
+      v.year,
       COALESCE(
+        canonical_alias.alias,
         NULLIF(trim(v.nickname), ''),
         NULLIF(trim(v.turo_vehicle_name), ''),
         NULLIF(trim(CONCAT_WS(' ', v.year, v.make, v.model)), ''),
@@ -103,6 +129,28 @@ async function getStoredVehicleLocations(client = pool) {
       latest.heading,
       latest.is_running,
       latest.speed,
+      latest.captured_at AT TIME ZONE 'UTC' AS latest_poll_at,
+      latest.available_signals_count,
+      latest.fetched_signals,
+      latest.skipped_signals,
+      latest.blocked_signals,
+      latest.missing_privileges,
+      latest.degraded_reason,
+      latest.location_last_updated AT TIME ZONE 'UTC' AS location_signal_at,
+      CASE
+        WHEN latest.service_name = 'dimo'
+          AND latest.location_last_updated IS NOT NULL
+          AND latest.captured_at - latest.location_last_updated > INTERVAL '15 minutes'
+          THEN 'dimo_location_signal_stale'
+        WHEN latest.service_name = 'dimo'
+          AND latest.missing_privileges ? 'GetLocationHistory'
+          THEN 'missing_privilege:GetLocationHistory'
+        WHEN latest.service_name = 'dimo'
+          AND NOT (latest.fetched_signals ? 'currentLocationCoordinates')
+          AND NOT (latest.fetched_signals ? 'currentLocationApproximateCoordinates')
+          THEN 'dimo_location_signal_not_fetched'
+        ELSE NULL
+      END AS location_issue,
       COALESCE(
         latest.location_last_updated AT TIME ZONE 'UTC',
         latest.vehicle_last_updated AT TIME ZONE 'UTC',
@@ -121,6 +169,15 @@ async function getStoredVehicleLocations(client = pool) {
       END AS last_seen_type
     FROM vehicles v
     LEFT JOIN LATERAL (
+      SELECT va.alias
+      FROM vehicle_aliases va
+      WHERE va.vehicle_id = v.id
+        AND va.active = true
+        AND va.source = 'canonical'
+      ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
+      LIMIT 1
+    ) canonical_alias ON true
+    LEFT JOIN LATERAL (
       SELECT
         s.service_name,
         s.latitude,
@@ -131,22 +188,36 @@ async function getStoredVehicleLocations(client = pool) {
         s.location_last_updated,
         s.ignition_last_updated,
         s.vehicle_last_updated,
-        s.captured_at
+        s.captured_at,
+        COALESCE(raw.raw_payload, s.raw_payload) AS raw_payload,
+        ((COALESCE(raw.raw_payload, s.raw_payload) ->> 'availableSignalsCount')::int) AS available_signals_count,
+        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'fetchedSignals', '[]'::jsonb) AS fetched_signals,
+        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'skippedSignals', '[]'::jsonb) AS skipped_signals,
+        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'blockedSignals', '[]'::jsonb) AS blocked_signals,
+        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'missingPrivileges', '[]'::jsonb) AS missing_privileges,
+        COALESCE(raw.raw_payload, s.raw_payload) ->> 'degradedReason' AS degraded_reason,
+        s.location_last_updated AS location_signal_at
       FROM vehicle_telemetry_snapshots s
-      WHERE (
-          s.vin IS NOT NULL
-          AND s.vin <> ''
-          AND LOWER(s.vin) = LOWER(v.vin)
-        )
-        OR (
-          s.dimo_token_id IS NOT NULL
-          AND v.dimo_token_id IS NOT NULL
-          AND s.dimo_token_id = v.dimo_token_id
-        )
-        OR (
-          s.external_vehicle_key IS NOT NULL
-          AND v.external_vehicle_key IS NOT NULL
-          AND s.external_vehicle_key = v.external_vehicle_key
+      LEFT JOIN vehicle_telemetry_raw_payloads raw
+        ON raw.snapshot_id = s.id
+      WHERE s.latitude IS NOT NULL
+        AND s.longitude IS NOT NULL
+        AND (
+          (
+            s.vin IS NOT NULL
+            AND s.vin <> ''
+            AND LOWER(s.vin) = LOWER(v.vin)
+          )
+          OR (
+            s.dimo_token_id IS NOT NULL
+            AND v.dimo_token_id IS NOT NULL
+            AND s.dimo_token_id = v.dimo_token_id
+          )
+          OR (
+            s.external_vehicle_key IS NOT NULL
+            AND v.external_vehicle_key IS NOT NULL
+            AND s.external_vehicle_key = v.external_vehicle_key
+          )
         )
       ORDER BY COALESCE(
         s.location_last_updated,

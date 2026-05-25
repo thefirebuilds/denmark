@@ -178,6 +178,23 @@ async function findVehicleBySelector(selector) {
   return rows[0] || null;
 }
 
+function selectCanonicalNicknameSql() {
+  return `
+    COALESCE(
+      (
+        SELECT va.alias
+        FROM vehicle_aliases va
+        WHERE va.vehicle_id = v.id
+          AND va.active = true
+          AND va.source = 'canonical'
+        ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
+        LIMIT 1
+      ),
+      v.nickname
+    )
+  `;
+}
+
 router.get("/status", async (req, res) => {
   try {
     const feed = await getCombinedVehicleStatusFeed();
@@ -299,7 +316,7 @@ router.get("/", async (req, res) => {
       SELECT
         v.id,
         v.vin,
-        v.nickname,
+        ${selectCanonicalNicknameSql()} AS nickname,
         v.year,
         v.make,
         v.model,
@@ -370,7 +387,7 @@ router.get("/", async (req, res) => {
           )
       ) first_trip ON true
       WHERE ($1::boolean = true OR v.is_active = true)
-      ORDER BY v.is_active DESC, v.in_service DESC, v.nickname NULLS LAST, v.make NULLS LAST, v.model NULLS LAST, v.id ASC
+      ORDER BY v.is_active DESC, v.in_service DESC, ${selectCanonicalNicknameSql()} NULLS LAST, v.make NULLS LAST, v.model NULLS LAST, v.id ASC
     `, [includeInactive]);
 
     res.json(result.rows);
@@ -806,6 +823,18 @@ router.patch("/:selector", async (req, res) => {
     const newNickname = toNullableText(updatedVehicle.nickname);
     if (oldNickname && oldNickname.toLowerCase() !== newNickname?.toLowerCase()) {
       await addVehicleAlias(client, updatedVehicle.id, oldNickname, "rename");
+    }
+    if (newNickname) {
+      await client.query(
+        `
+          UPDATE vehicle_aliases
+          SET active = false, updated_at = NOW()
+          WHERE vehicle_id = $1
+            AND source = 'canonical'
+            AND lower(trim(alias)) <> lower(trim($2))
+        `,
+        [updatedVehicle.id, newNickname]
+      );
     }
     await addVehicleAlias(client, updatedVehicle.id, newNickname, "canonical");
 

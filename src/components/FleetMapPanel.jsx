@@ -63,8 +63,13 @@ const VEHICLE_PIN_IMAGES = {
   cherry: "/images/map_pins/toyota.png",
   delavan: "/images/map_pins/hyundai.png",
   geneva: "/images/map_pins/hyundai.png",
-  stripe: "/images/map_pins/toyota.png",
+  honda: "/images/map_pins/honda.png",
+  hyundai: "/images/map_pins/hyundai.png",
   juneau: "/images/map_pins/hyundai.png",
+  kia: "/images/map_pins/kiaNew.png",
+  neenah: "/images/map_pins/toyota.png",
+  stripe: "/images/map_pins/toyota.png",
+  toyota: "/images/map_pins/toyota.png",
   winnie: "/images/map_pins/honda.png",
 };
 
@@ -73,8 +78,13 @@ const VEHICLE_PIN_COLORS = {
   cherry: "#be123c",
   delavan: "#2563eb",
   geneva: "#0f766e",
+  honda: "#0891b2",
+  hyundai: "#2563eb",
   juneau: "#7c3aed",
+  kia: "#dc2626",
+  neenah: "#be123c",
   stripe: "#ea580c",
+  toyota: "#be123c",
   winnie: "#0891b2",
 };
 
@@ -124,6 +134,35 @@ function formatLastSeenLabel(type) {
   if (type === "location_fix") return "Location fix";
   if (type === "vehicle_update") return "Telemetry check-in";
   return "Telemetry snapshot";
+}
+
+function formatTelemetryIssue(vehicle) {
+  const diagnostic = vehicle?.telemetryDiagnostics || {};
+  const issue = String(diagnostic.locationIssue || "");
+  const provider = String(diagnostic.provider || vehicle?.source || "Telemetry");
+  const missing = Array.isArray(diagnostic.missingPrivileges)
+    ? diagnostic.missingPrivileges
+    : [];
+
+  if (issue === "dimo_location_signal_stale") {
+    return `${provider} GPS signal is stale; latest poll ${formatFreshness(
+      diagnostic.latestPollAt
+    )}, GPS fix ${formatFreshness(diagnostic.locationSignalAt || vehicle?.lastSeen)}`;
+  }
+
+  if (issue.startsWith("missing_privilege:")) {
+    return `${provider} is missing ${issue.replace("missing_privilege:", "")}`;
+  }
+
+  if (issue === "dimo_location_signal_not_fetched") {
+    return `${provider} did not fetch a location signal in the latest poll`;
+  }
+
+  if (missing.length) {
+    return `${provider} missing ${missing.join(", ")}`;
+  }
+
+  return null;
 }
 
 function formatCoordinate(value) {
@@ -289,6 +328,32 @@ function getVehiclePinKey(vehicle) {
     .split(/\s+/)[0];
 }
 
+function getVehicleMakeKey(vehicle) {
+  return String(vehicle?.make || "")
+    .trim()
+    .toLowerCase();
+}
+
+function getVehiclePinImageUrl(vehicle) {
+  const explicit =
+    vehicle?.mapPinImageUrl || vehicle?.imageUrl || vehicle?.photoUrl || "";
+  if (explicit) return explicit;
+
+  return (
+    VEHICLE_PIN_IMAGES[getVehiclePinKey(vehicle)] ||
+    VEHICLE_PIN_IMAGES[getVehicleMakeKey(vehicle)] ||
+    ""
+  );
+}
+
+function getVehiclePinAccentColor(vehicle) {
+  return (
+    VEHICLE_PIN_COLORS[getVehiclePinKey(vehicle)] ||
+    VEHICLE_PIN_COLORS[getVehicleMakeKey(vehicle)] ||
+    ""
+  );
+}
+
 function normalizeVehicleId(value) {
   if (value == null || value === "") return null;
   return String(value);
@@ -326,6 +391,10 @@ function mapStatusVehicleToLocation(vehicle) {
       [vehicle?.year, vehicle?.make, vehicle?.model].filter(Boolean).join(" ") ||
       vehicle?.vin ||
       "Vehicle",
+    make: vehicle?.make || null,
+    model: vehicle?.model || null,
+    year: vehicle?.year || null,
+    vin: vehicle?.vin || null,
     source:
       vehicle?.telemetry?.source ||
       vehicle?.telemetry_source?.[0] ||
@@ -441,8 +510,8 @@ function createVehicleIcon(vehicle, stale, selected, running, spiderOffset) {
   const label = escapeHtml(getMarkerLabel(vehicle));
   const offset = spiderOffset || { x: 0, y: 0, count: 1 };
   const pinKey = getVehiclePinKey(vehicle);
-  const imageUrl = VEHICLE_PIN_IMAGES[pinKey] || "";
-  const accentColor = VEHICLE_PIN_COLORS[pinKey] || "";
+  const imageUrl = getVehiclePinImageUrl(vehicle);
+  const accentColor = getVehiclePinAccentColor(vehicle);
   const badgeHtml = imageUrl
     ? `<img class="fleet-map-marker-badge-image" src="${escapeHtml(
         imageUrl
@@ -845,6 +914,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 const stale = isStale(vehicle.lastSeen);
                 const running = vehicle.isRunning === true;
                 const headingLabel = formatHeading(vehicle.heading);
+                const telemetryIssue = formatTelemetryIssue(vehicle);
                 return (
                   <Marker
                     key={vehicle.id}
@@ -886,6 +956,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                         <span className="fleet-map-absolute-time">
                           {formatTimestamp(vehicle.lastSeen)}
                         </span>
+                        {telemetryIssue ? <em>{telemetryIssue}</em> : null}
                         {stale ? <em>Stale location</em> : null}
                         <a
                           href={vehicle.googleMapsUrl}
@@ -948,6 +1019,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
               const stale = isStale(vehicle.lastSeen);
               const running = vehicle.isRunning === true;
               const headingLabel = formatHeading(vehicle.heading);
+              const telemetryIssue = formatTelemetryIssue(vehicle);
               return (
                 <button
                   key={vehicle.id}
@@ -970,6 +1042,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                     {running ? "Running" : stale ? "Stale" : "Fresh"} ·{" "}
                     {formatLastSeenLabel(vehicle.lastSeenType)} ·{" "}
                     {formatFreshness(vehicle.lastSeen)}
+                    {telemetryIssue ? ` · ${telemetryIssue}` : ""}
                     {headingLabel ? (
                       <>
                         {" · "}

@@ -11,6 +11,9 @@ const express = require("express");
 const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
 const { evaluateCloseoutCompleteness } = require("../services/trips/closeoutState");
+const {
+  ensureVehicleAliasesTable,
+} = require("../services/vehicles/vehicleAliases");
 
 const {
   transitionTripStage,
@@ -1104,6 +1107,8 @@ router.patch("/:id/stage", async (req, res) => {
 
 router.get("/:id/messages", async (req, res) => {
   try {
+    await ensureVehicleAliasesTable();
+
     const tripId = Number(req.params.id);
 
     if (!Number.isInteger(tripId) || tripId <= 0) {
@@ -1212,8 +1217,8 @@ router.get("/:id/messages", async (req, res) => {
         t.trip_end,
         t.workflow_stage,
         t.status AS trip_status,
-        COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin) AS vehicle_name,
-        mt.vehicle_vin,
+        COALESCE(resolved_vehicle.nickname, t.vehicle_name, mt.vehicle_vin) AS vehicle_name,
+        COALESCE(resolved_vehicle.vin, mt.vehicle_vin) AS vehicle_vin,
         COALESCE(
           (
             SELECT MIN(active.trip_end)
@@ -1237,6 +1242,14 @@ router.get("/:id/messages", async (req, res) => {
                 OR (
                   COALESCE(t.vehicle_name, '') <> ''
                   AND LOWER(COALESCE(active.vehicle_name, '')) = LOWER(t.vehicle_name)
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM vehicle_aliases va
+                  WHERE va.vehicle_id = active_v.id
+                    AND va.active = true
+                    AND COALESCE(active.vehicle_name, '') <> ''
+                    AND LOWER(va.alias) = LOWER(t.vehicle_name)
                 )
               )
           ),
@@ -1270,8 +1283,38 @@ router.get("/:id/messages", async (req, res) => {
       FROM active_maintenance_tasks mt
       JOIN trips t
         ON t.id = mt.related_trip_id
-      LEFT JOIN vehicles v
-        ON v.vin = mt.vehicle_vin
+      LEFT JOIN LATERAL (
+        SELECT v.*
+        FROM vehicles v
+        WHERE (
+            COALESCE(mt.vehicle_vin, '') <> ''
+            AND v.vin = mt.vehicle_vin
+          )
+          OR (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM vehicle_aliases va
+            WHERE va.vehicle_id = v.id
+              AND va.active = true
+              AND COALESCE(t.vehicle_name, '') <> ''
+              AND LOWER(va.alias) = LOWER(t.vehicle_name)
+          )
+        ORDER BY
+          CASE
+            WHEN COALESCE(mt.vehicle_vin, '') <> '' AND v.vin = mt.vehicle_vin THEN 1
+            WHEN t.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = t.turo_vehicle_id THEN 2
+            WHEN COALESCE(t.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(t.vehicle_name) THEN 3
+            ELSE 4
+          END
+        LIMIT 1
+      ) resolved_vehicle ON true
       WHERE mt.related_trip_id = $1
         AND t.trip_end > NOW()
       GROUP BY
@@ -1283,8 +1326,8 @@ router.get("/:id/messages", async (req, res) => {
         t.workflow_stage,
         t.status,
         t.turo_vehicle_id,
-        COALESCE(v.nickname, t.vehicle_name, mt.vehicle_vin),
-        mt.vehicle_vin
+        COALESCE(resolved_vehicle.nickname, t.vehicle_name, mt.vehicle_vin),
+        COALESCE(resolved_vehicle.vin, mt.vehicle_vin)
     `;
 
     const handoffQuery = `
