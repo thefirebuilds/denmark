@@ -269,6 +269,7 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
   const vehicleResult = await client.query(
     `
       SELECT
+        v.id,
         v.vin,
         v.nickname,
         v.year,
@@ -287,6 +288,9 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
         odometer_rollup.source_trip_start AS rollup_source_trip_start,
         odometer_rollup.estimated_trip_miles AS rollup_estimated_trip_miles,
         odometer_rollup.calculated_at AS rollup_calculated_at,
+        onboarding_trip.starting_odometer AS onboarding_odometer_miles,
+        turo_mileage.total_turo_miles,
+        turo_mileage.counted_turo_mileage_trips,
         v.is_active
       FROM vehicles v
       LEFT JOIN LATERAL (
@@ -299,6 +303,72 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
       ) latest_maintenance_odometer ON TRUE
       LEFT JOIN vehicle_odometer_rollups odometer_rollup
         ON odometer_rollup.vehicle_id = v.id
+      LEFT JOIN LATERAL (
+        SELECT t.starting_odometer
+        FROM trips t
+        WHERE t.starting_odometer IS NOT NULL
+          AND (
+            (
+              v.turo_vehicle_id IS NOT NULL
+              AND t.turo_vehicle_id IS NOT NULL
+              AND t.turo_vehicle_id::text = v.turo_vehicle_id::text
+            )
+            OR lower(trim(COALESCE(t.vehicle_name, ''))) = lower(trim(COALESCE(v.nickname, '')))
+            OR EXISTS (
+              SELECT 1
+              FROM vehicle_aliases va_trip
+              WHERE va_trip.vehicle_id = v.id
+                AND va_trip.active = true
+                AND lower(trim(va_trip.alias)) = lower(trim(COALESCE(t.vehicle_name, '')))
+            )
+          )
+          AND (
+            t.canceled_at IS NULL
+            OR COALESCE(t.amount, 0) > 0
+          )
+        ORDER BY t.trip_start ASC NULLS LAST, t.id ASC
+        LIMIT 1
+      ) onboarding_trip ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(
+            SUM(
+              CASE
+                WHEN t.starting_odometer IS NOT NULL
+                 AND t.ending_odometer IS NOT NULL
+                 AND t.ending_odometer >= t.starting_odometer
+                THEN t.ending_odometer - t.starting_odometer
+                ELSE 0
+              END
+            ),
+            0
+          ) AS total_turo_miles,
+          COUNT(*) FILTER (
+            WHERE t.starting_odometer IS NOT NULL
+              AND t.ending_odometer IS NOT NULL
+              AND t.ending_odometer >= t.starting_odometer
+          )::int AS counted_turo_mileage_trips
+        FROM trips t
+        WHERE (
+            (
+              v.turo_vehicle_id IS NOT NULL
+              AND t.turo_vehicle_id IS NOT NULL
+              AND t.turo_vehicle_id::text = v.turo_vehicle_id::text
+            )
+            OR lower(trim(COALESCE(t.vehicle_name, ''))) = lower(trim(COALESCE(v.nickname, '')))
+            OR EXISTS (
+              SELECT 1
+              FROM vehicle_aliases va_trip
+              WHERE va_trip.vehicle_id = v.id
+                AND va_trip.active = true
+                AND lower(trim(va_trip.alias)) = lower(trim(COALESCE(t.vehicle_name, '')))
+            )
+          )
+          AND (
+            t.canceled_at IS NULL
+            OR COALESCE(t.amount, 0) > 0
+          )
+      ) turo_mileage ON TRUE
       WHERE lower(trim(v.vin)) = $1
          OR lower(trim(v.nickname)) = $1
          OR lower(trim(COALESCE(v.license_plate, ''))) = $1
@@ -400,6 +470,13 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
     vehicle.rollup_odometer_source === "active_trip_estimate"
       ? rollupOdometerMiles
       : null;
+  const onboardingOdometerMiles = toIntOrNull(vehicle.onboarding_odometer_miles);
+  const totalTuroMiles =
+    vehicle.total_turo_miles == null ? null : Number(vehicle.total_turo_miles);
+  const countedTuroMileageTrips =
+    vehicle.counted_turo_mileage_trips == null
+      ? 0
+      : Number(vehicle.counted_turo_mileage_trips);
 
   const ruleStatuses = rulesResult.rows.map((rule) =>
     getRuleStatus({
@@ -555,6 +632,9 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
       lockbox_pin: vehicle.lockbox_pin || null,
       currentOdometerMiles,
       currentOdometerSource,
+      onboardingOdometerMiles,
+      totalTuroMiles,
+      countedTuroMileageTrips,
       estimatedCurrentOdometerMiles: estimatedTripOdometerMiles,
       estimatedTripMiles:
         vehicle.rollup_estimated_trip_miles == null
@@ -565,6 +645,9 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
     },
     currentOdometerMiles,
     currentOdometerSource,
+    onboardingOdometerMiles,
+    totalTuroMiles,
+    countedTuroMileageTrips,
     estimatedCurrentOdometerMiles: estimatedTripOdometerMiles,
     estimatedTripMiles:
       vehicle.rollup_estimated_trip_miles == null

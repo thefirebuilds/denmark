@@ -274,7 +274,6 @@ async function attachMarketplaceDuplicateMeta(rows) {
   );
 
   const prepared = sourceResult.rows
-    .filter((item) => hasMarketplaceEnrichmentSignal(item))
     .filter((item) => !looksLikeNonComparablePricingText(item))
     .map((item) => {
       const inferred = inferVehicleFromDescription(marketplaceTextSource(item));
@@ -297,9 +296,19 @@ async function attachMarketplaceDuplicateMeta(rows) {
         location,
         distance: Number.isFinite(distance) ? distance : null,
         tokens,
+        hasEnrichmentSignal: hasMarketplaceEnrichmentSignal(item),
       };
     })
-    .filter((item) => item.make && Number.isInteger(item.year));
+    .filter((item) => {
+      if (!item.make || !Number.isInteger(item.year)) return false;
+      if (item.hasEnrichmentSignal) return true;
+      return Boolean(
+        item.model &&
+          item.price != null &&
+          item.miles != null &&
+          (item.location || item.distance != null || item.tokens.size >= 2)
+      );
+    });
 
   const byKey = new Map();
   for (const item of prepared) {
@@ -438,7 +447,9 @@ function normalizeMarketplaceUrl(u) {
   if (!u) return null;
   try {
     const url = new URL(u);
-    const m = url.pathname.match(/\/marketplace\/item\/(\d+)\//);
+    const m =
+      url.pathname.match(/\/marketplace\/item\/(\d+)\//) ||
+      url.pathname.match(/\/marketplace\/(\d+)\/?$/);
     if (m) return `${url.origin}/marketplace/item/${m[1]}/`;
     return `${url.origin}${url.pathname}`;
   } catch {

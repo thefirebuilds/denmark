@@ -40,6 +40,7 @@ export default function OffTripMilesDrawer({
   const [drafts, setDrafts] = useState({});
   const [savingKey, setSavingKey] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [expandedVehicles, setExpandedVehicles] = useState({});
 
   const reviewSeed = useMemo(() => {
     const next = {};
@@ -61,6 +62,7 @@ export default function OffTripMilesDrawer({
     setDrafts(reviewSeed);
     setSaveError("");
     setSavingKey("");
+    setExpandedVehicles({});
   }, [reviewSeed, open]);
 
   useEffect(() => {
@@ -119,6 +121,27 @@ export default function OffTripMilesDrawer({
     }
   }
 
+  function toggleVehicle(vehicleId) {
+    setExpandedVehicles((prev) => ({
+      ...prev,
+      [vehicleId]: !prev[vehicleId],
+    }));
+  }
+
+  const segmentsByVehicle = new Map();
+  for (const segment of audit?.segments || []) {
+    const vehicleId = String(segment.vehicle_id);
+    if (!segmentsByVehicle.has(vehicleId)) segmentsByVehicle.set(vehicleId, []);
+    segmentsByVehicle.get(vehicleId).push(segment);
+  }
+
+  const skippedByVehicle = new Map();
+  for (const trip of audit?.skipped_trips || []) {
+    const vehicleId = String(trip.vehicle_id);
+    if (!skippedByVehicle.has(vehicleId)) skippedByVehicle.set(vehicleId, []);
+    skippedByVehicle.get(vehicleId).push(trip);
+  }
+
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
@@ -141,8 +164,10 @@ export default function OffTripMilesDrawer({
             <div className="metrics-audit-empty">Loading off-trip audit...</div>
           ) : error ? (
             <div className="metrics-audit-empty">Failed to load audit: {error}</div>
-          ) : !audit?.segments?.length ? (
-            <div className="metrics-audit-empty">No off-trip mileage segments in this range.</div>
+          ) : !audit?.segments?.length && !audit?.skipped_trips?.length ? (
+            <div className="metrics-audit-empty">
+              No off-trip mileage segments or unallocated mileage clues in this range.
+            </div>
           ) : (
             <>
               <section className="metrics-audit-summary">
@@ -182,25 +207,88 @@ export default function OffTripMilesDrawer({
                 </div>
               </section>
 
+              {audit.skipped_trips?.length ? (
+                <section className="metrics-audit-section">
+                  <div className="metrics-audit-callout">
+                    <strong>Unallocated mileage clues</strong>
+                    <span>
+                      Excluded trips are usually open trips, missing odometer
+                      readings, or odometer regressions. Those miles can sit in
+                      the unallocated bucket until the trip is closed or reviewed.
+                    </span>
+                  </div>
+                </section>
+              ) : null}
+
               <section className="metrics-audit-section">
                 <div className="metrics-audit-section-title">By vehicle</div>
                 <div className="metrics-audit-vehicle-list">
-                  {audit.vehicles.map((vehicle) => (
-                    <div key={vehicle.vehicle_id} className="metrics-audit-vehicle-item">
-                      <div>
-                        <div className="metrics-audit-vehicle-name">{vehicle.nickname}</div>
-                        <div className="metrics-audit-vehicle-meta">
-                          {vehicle.label} - {formatNumber(vehicle.segment_count)} segments
-                          {vehicle.skipped_trip_count
-                            ? ` - ${formatNumber(vehicle.skipped_trip_count)} skipped`
-                            : ""}
-                        </div>
+                  {audit.vehicles.map((vehicle) => {
+                    const vehicleId = String(vehicle.vehicle_id);
+                    const vehicleSegments = segmentsByVehicle.get(vehicleId) || [];
+                    const vehicleSkipped = skippedByVehicle.get(vehicleId) || [];
+                    const isExpanded = Boolean(expandedVehicles[vehicleId]);
+
+                    return (
+                      <div key={vehicle.vehicle_id} className="metrics-audit-vehicle-shell">
+                        <button
+                          type="button"
+                          className="metrics-audit-vehicle-item metrics-audit-vehicle-button"
+                          onClick={() => toggleVehicle(vehicleId)}
+                        >
+                          <div>
+                            <div className="metrics-audit-vehicle-name">
+                              {vehicle.nickname}
+                            </div>
+                            <div className="metrics-audit-vehicle-meta">
+                              {vehicle.label} - {formatNumber(vehicle.segment_count)} segments
+                              {vehicle.skipped_trip_count
+                                ? ` - ${formatNumber(vehicle.skipped_trip_count)} skipped`
+                                : ""}
+                            </div>
+                          </div>
+                          <div className="metrics-audit-vehicle-miles">
+                            {formatNumber(vehicle.off_trip_miles, 1)} mi
+                            <span className="metrics-audit-expand-indicator">
+                              {isExpanded ? "Hide" : "Dates"}
+                            </span>
+                          </div>
+                        </button>
+
+                        {isExpanded ? (
+                          <div className="metrics-audit-vehicle-detail-list">
+                            {vehicleSegments.map((segment) => (
+                              <div
+                                key={`${segment.audit_key || segment.next_trip_id}-${segment.next_trip_start}`}
+                                className="metrics-audit-vehicle-detail-row"
+                              >
+                                <span>
+                                  {formatDateTime(segment.previous_trip_end)} to{" "}
+                                  {formatDateTime(segment.next_trip_start)}
+                                </span>
+                                <strong>{formatNumber(segment.off_trip_miles, 1)} mi</strong>
+                              </div>
+                            ))}
+
+                            {vehicleSkipped.map((trip) => (
+                              <div
+                                key={`${trip.audit_key || trip.trip_id}-${trip.trip_start}`}
+                                className="metrics-audit-vehicle-detail-row metrics-audit-vehicle-detail-row--skipped"
+                              >
+                                <span>
+                                  {formatDateTime(trip.trip_start)} to{" "}
+                                  {formatDateTime(trip.trip_end)} - {trip.reason || "excluded"}
+                                </span>
+                                <strong>
+                                  {trip.associated_open_trip ? "Open trip" : "Excluded"}
+                                </strong>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="metrics-audit-vehicle-miles">
-                        {formatNumber(vehicle.off_trip_miles, 1)} mi
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
 

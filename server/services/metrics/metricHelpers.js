@@ -154,6 +154,14 @@ function getDateRange(rangeKey = "30d") {
   const todayEnd = endOfDay(now);
 
   switch (String(rangeKey).toLowerCase()) {
+    case "7":
+    case "7d":
+      return {
+        key: "7d",
+        startDate: addDays(todayStart, -6),
+        endDate: todayEnd,
+      };
+
     case "30":
     case "30d":
       return {

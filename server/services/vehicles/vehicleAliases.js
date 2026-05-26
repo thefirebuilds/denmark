@@ -101,6 +101,20 @@ async function addVehicleAlias(client, vehicleId, alias, source = "manual") {
     `,
     [vehicleId, normalizedAlias, source]
   );
+
+  await client.query(
+    `
+      UPDATE public.vehicle_aliases
+      SET source = $3, active = true, updated_at = NOW()
+      WHERE vehicle_id = $1
+        AND lower(trim(alias)) = lower(trim($2))
+        AND (
+          active = false
+          OR COALESCE(source, '') <> COALESCE($3, '')
+        )
+    `,
+    [vehicleId, normalizedAlias, source]
+  );
 }
 
 module.exports = {

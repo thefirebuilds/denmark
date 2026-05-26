@@ -15,6 +15,7 @@ const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "";
 
 const RANGE_OPTIONS = [
+  { value: "7d", label: "7D" },
   { value: "30d", label: "30D" },
   { value: "90d", label: "90D" },
   { value: "ytd", label: "YTD" },
@@ -287,7 +288,7 @@ function ValuableTripLengthsPanel({ distribution }) {
         <div>
           <div className="metrics-business-card__title">Most Valuable Lengths</div>
           <div className="metrics-business-profile__meta">
-            Ranked by average income per trip
+            Ranked by income per booked day
           </div>
         </div>
       </div>
@@ -298,11 +299,12 @@ function ValuableTripLengthsPanel({ distribution }) {
             <div className="trip-value-row__body">
               <div className="trip-value-row__topline">
                 <span>{bucket.label}</span>
-                <strong>{formatCurrencyCompact(bucket.average_trip_income)}</strong>
+                <strong>{formatCurrencyCompact(bucket.income_per_day)}/day</strong>
               </div>
               <div className="trip-value-row__meta">
                 {formatNumber(bucket.trip_count)} trips /{" "}
-                {formatCurrencyCompact(bucket.income_per_day)} per day /{" "}
+                {formatCurrencyCompact(bucket.income_per_mile)} per mile /{" "}
+                {formatCurrencyCompact(bucket.average_trip_income)} avg trip /{" "}
                 {formatCurrencyCompact(bucket.trip_income)} total
               </div>
             </div>
@@ -454,6 +456,129 @@ function getCapitalRecoveryPct(vehicle) {
 
   if (basis <= 0) return 0;
   return recovered / basis;
+}
+
+function getRangeRecoveryFactor(range) {
+  const value = String(range || "").toLowerCase();
+  if (value === "7d") return 7 / 30.4375;
+  if (value === "30d") return 1;
+  if (value === "90d") return 3;
+  if (value === "ytd") {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 1);
+    const days = Math.max(1, (now.getTime() - start.getTime()) / 86400000 + 1);
+    return days / 30.4375;
+  }
+  return null;
+}
+
+function formatBreakEvenDate(value) {
+  if (!value) return "--";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function CapitalBasisProgress({ stats, selectedRange }) {
+  const basis = Number(stats?.basis ?? 0);
+  const recovered = Number(stats?.recovered ?? 0);
+  const remaining = Number(stats?.remaining ?? 0);
+  const monthlyRecovery = Number(stats?.monthlyRecovery ?? 0);
+  const vehicleCount = Number(stats?.vehicleCount ?? 0);
+  const progress = basis > 0 ? Math.max(0, Math.min(1, recovered / basis)) : 0;
+  const progressPct = Math.round(progress * 100);
+  const displayRemaining = remaining > 0 ? remaining : Math.max(0, basis - recovered);
+  const hasBasis = basis > 0 || recovered > 0 || remaining > 0;
+  const monthsToBreakEven =
+    displayRemaining > 0 && monthlyRecovery > 0
+      ? displayRemaining / monthlyRecovery
+      : null;
+  const breakEvenDate =
+    displayRemaining <= 0 && hasBasis
+      ? "paid-off"
+      : monthsToBreakEven != null
+      ? new Date(Date.now() + monthsToBreakEven * 30.4375 * 86400000)
+      : null;
+  const rangeFactor = getRangeRecoveryFactor(selectedRange);
+  const rangeRecovery =
+    rangeFactor != null && monthlyRecovery > 0 ? monthlyRecovery * rangeFactor : null;
+  const rangeLabel =
+    selectedRange === "7d"
+      ? "7D pace"
+      : selectedRange === "30d"
+      ? "30D pace"
+      : selectedRange === "90d"
+      ? "90D pace"
+      : selectedRange === "ytd"
+      ? "YTD pace"
+      : "Period pace";
+
+  return (
+    <section className="capital-basis-progress" aria-label="Capital basis recovery progress">
+      <div className="capital-basis-progress__header">
+        <div>
+          <div className="capital-basis-progress__eyebrow">Capital Basis</div>
+          <div className="capital-basis-progress__title">
+            {hasBasis
+              ? `${formatCurrency(recovered)} recovered of ${formatCurrency(basis)} spent`
+              : "No capital basis tracked yet"}
+          </div>
+        </div>
+        <div className="capital-basis-progress__percent">
+          {hasBasis ? `${progressPct}%` : "--"}
+        </div>
+      </div>
+
+      <div className="capital-basis-progress__track">
+        <div
+          className="capital-basis-progress__fill"
+          style={{ width: `${progressPct}%` }}
+        />
+      </div>
+
+      <div className="capital-basis-progress__footer">
+        <span>
+          <strong>{formatCurrency(recovered)}</strong>
+          Recovered
+        </span>
+        <span>
+          <strong>{formatCurrency(displayRemaining)}</strong>
+          Remaining
+        </span>
+        <span>
+          <strong>{formatNumber(vehicleCount)}</strong>
+          Vehicles tracked
+        </span>
+      </div>
+
+      <div className="capital-basis-progress__ticker">
+        <span>
+          <strong>
+            {breakEvenDate === "paid-off"
+              ? "Paid off"
+              : breakEvenDate
+              ? formatBreakEvenDate(breakEvenDate)
+              : "Need pace"}
+          </strong>
+          Expected break even
+        </span>
+        <span>
+          <strong>{formatCurrencyCompact(monthlyRecovery)}</strong>
+          Monthly pace
+        </span>
+        <span>
+          <strong>
+            {rangeRecovery == null ? "--" : formatCurrencyCompact(rangeRecovery)}
+          </strong>
+          {rangeLabel}
+        </span>
+      </div>
+    </section>
+  );
 }
 
 export default function MetricsPanel() {
@@ -1225,6 +1350,38 @@ export default function MetricsPanel() {
     return next;
   }, [vehicles, summary, sortBy, filterBy]);
 
+  const capitalBasisStats = useMemo(() => {
+    return vehicles.reduce(
+      (totals, vehicle) => {
+        const basis = Number(vehicle?.capital_basis ?? 0);
+        const recovered = Number(vehicle?.capital_recovered ?? 0);
+        const remaining = Number(vehicle?.capital_remaining ?? 0);
+
+        if (basis > 0 || recovered > 0 || remaining > 0) {
+          totals.vehicleCount += 1;
+        }
+
+        totals.basis += Number.isFinite(basis) ? basis : 0;
+        totals.recovered += Number.isFinite(recovered) ? recovered : 0;
+        totals.remaining += Number.isFinite(remaining) ? remaining : 0;
+        totals.monthlyRecovery += Number.isFinite(
+          Number(vehicle?.capital_recovery_rate_monthly ?? 0)
+        )
+          ? Number(vehicle?.capital_recovery_rate_monthly ?? 0)
+          : 0;
+
+        return totals;
+      },
+      {
+        basis: 0,
+        recovered: 0,
+        remaining: 0,
+        monthlyRecovery: 0,
+        vehicleCount: 0,
+      }
+    );
+  }, [vehicles]);
+
 const mileageStats = useMemo(() => {
   const totalMiles = vehicles.reduce(
     (sum, vehicle) => sum + Number(vehicle?.total_miles ?? 0),
@@ -1240,6 +1397,14 @@ const mileageStats = useMemo(() => {
     (sum, vehicle) => sum + Number(vehicle?.off_trip_miles ?? 0),
     0
   );
+  const explicitUnallocatedMiles = vehicles.reduce(
+    (sum, vehicle) => sum + Number(vehicle?.unallocated_miles ?? 0),
+    0
+  );
+  const unallocatedMiles =
+    explicitUnallocatedMiles > 0
+      ? Math.max(0, explicitUnallocatedMiles - offTripMiles)
+      : Math.max(0, totalMiles - tripMiles - offTripMiles);
 
   const revenue = Number(summary?.revenue ?? 0);
   const expenses = Number(summary?.expenses ?? 0);
@@ -1250,6 +1415,7 @@ const mileageStats = useMemo(() => {
     totalMiles,
     tripMiles,
     offTripMiles,
+    unallocatedMiles,
     revenuePerTripMile: safeDivide(revenue, tripMiles),
     profitPerTripMile: safeDivide(netProfit, tripMiles),
     expensePerMile: safeDivide(expenses, totalMiles),
@@ -1258,6 +1424,7 @@ const mileageStats = useMemo(() => {
     profitPerTotalMile: safeDivide(netProfit, totalMiles),
     tripMileUtilization: safeDivide(tripMiles, totalMiles),
     offTripShare: safeDivide(offTripMiles, totalMiles),
+    unallocatedShare: safeDivide(unallocatedMiles, totalMiles),
     bookedMilesPerTrip: safeDivide(tripMiles, trips),
   };
 }, [vehicles, summary]);
@@ -2644,6 +2811,18 @@ const mileageStats = useMemo(() => {
               />
 
               <MetricCard
+                label="Unallocated Miles"
+                value={`${formatNumber(mileageStats.unallocatedMiles)} mi`}
+                tone={
+                  mileageStats.unallocatedShare >= 0.25
+                    ? "warning"
+                    : "default"
+                }
+                subtitle={`${formatPercent(mileageStats.unallocatedShare, 0)} of total miles; usually open trips or incomplete odometer coverage`}
+                onClick={() => setOffTripAuditOpen(true)}
+              />
+
+              <MetricCard
                 label="Rev / Trip Mile"
                 value={formatCurrencyCompact(mileageStats.revenuePerTripMile)}
                 subtitle={`${formatCurrencyCompact(mileageStats.revenuePerTotalMile)} / total mile`}
@@ -2760,6 +2939,11 @@ const mileageStats = useMemo(() => {
                 Compare fleet performance across the selected range
               </div>
             </div>
+
+            <CapitalBasisProgress
+              stats={capitalBasisStats}
+              selectedRange={selectedRange}
+            />
 
             <div className="metrics-toolbar">
               <div className="metrics-toolbar__group">

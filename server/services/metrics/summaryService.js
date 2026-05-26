@@ -14,6 +14,7 @@ const {
   getTripProratedCount,
   getTripProratedValue,
   getTripRecognizedTollRevenueValue,
+  getTripMiles,
   getTripTotalDays,
   isCleaningExpense,
   isTollExpense,
@@ -377,8 +378,10 @@ function buildTripLengthDistribution(trips) {
     trip_count: 0,
     trip_days: 0,
     trip_income: 0,
+    trip_miles: 0,
     average_trip_income: 0,
     income_per_day: 0,
+    income_per_mile: 0,
     percentage: 0,
   }));
   const bucketByKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
@@ -396,22 +399,26 @@ function buildTripLengthDistribution(trips) {
     totalTrips += 1;
     totalDays += tripDays;
     const tripIncome = getTripTuroOutputValue(trip);
+    const tripMiles = getTripMiles(trip);
     totalIncome += tripIncome;
     const targetBucket = bucketByKey.get(bucket.key);
     targetBucket.trip_count += 1;
     targetBucket.trip_days += tripDays;
     targetBucket.trip_income += tripIncome;
+    targetBucket.trip_miles += tripMiles;
   }
 
   const hydratedBuckets = buckets.map((bucket) => {
     return {
       ...bucket,
       trip_days: roundNumber(bucket.trip_days, 1),
+      trip_miles: roundNumber(bucket.trip_miles, 1),
       trip_income: roundMoney(bucket.trip_income),
       average_trip_income: roundMoney(
         safeDivide(bucket.trip_income, bucket.trip_count)
       ),
       income_per_day: roundMoney(safeDivide(bucket.trip_income, bucket.trip_days)),
+      income_per_mile: roundMoney(safeDivide(bucket.trip_income, bucket.trip_miles)),
       percentage: roundNumber(safeDivide(bucket.trip_count, totalTrips), 4),
     };
   });
@@ -426,9 +433,12 @@ function buildTripLengthDistribution(trips) {
       .filter((bucket) => bucket.trip_count > 0)
       .sort((a, b) => {
         const incomeDiff =
-          Number(b.average_trip_income || 0) - Number(a.average_trip_income || 0);
+          Number(b.income_per_day || 0) - Number(a.income_per_day || 0);
         if (incomeDiff) return incomeDiff;
-        return Number(b.trip_income || 0) - Number(a.trip_income || 0);
+        const mileDiff =
+          Number(b.income_per_mile || 0) - Number(a.income_per_mile || 0);
+        if (mileDiff) return mileDiff;
+        return Number(b.average_trip_income || 0) - Number(a.average_trip_income || 0);
       })
       .slice(0, 3),
   };

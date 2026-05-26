@@ -190,7 +190,7 @@ async function getDimoFleetFromDb() {
           ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
           LIMIT 1
         ),
-        nickname
+        NULLIF(trim(nickname), '')
       ) AS nickname,
       make,
       model,

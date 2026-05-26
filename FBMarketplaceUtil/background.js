@@ -6,6 +6,7 @@ const API_BASES = [
 ];
 
 const AUTO_ENRICH_FLAG = "fcg_enrich=1";
+const AVAILABILITY_CHECK_FLAG = "fcg_check_available=1";
 const APP_URL_PATTERNS = ["http://localhost/*", "http://127.0.0.1/*"];
 const enrichQueueState = {
   pending: [],
@@ -17,6 +18,9 @@ const enrichQueueState = {
   currentUrl: null,
   currentWatchdogTimer: null,
   sourceWindowId: null,
+  minDelayMs: 0,
+  maxDelayMs: 0,
+  availabilityOnly: false,
   error: "",
 };
 
@@ -60,7 +64,9 @@ function normalizeListingUrl(u) {
   if (!u) return null;
   try {
     const url = new URL(u);
-    const m = url.pathname.match(/\/marketplace\/item\/(\d+)\//);
+    const m =
+      url.pathname.match(/\/marketplace\/item\/(\d+)\//) ||
+      url.pathname.match(/\/marketplace\/(\d+)\/?$/);
     if (m) return `${url.origin}/marketplace/item/${m[1]}/`;
     return `${url.origin}${url.pathname}`;
   } catch {
@@ -71,9 +77,10 @@ function normalizeListingUrl(u) {
 function buildEnrichUrl(u) {
   const normalized = normalizeListingUrl(u);
   if (!normalized) return null;
-  return normalized.includes("#")
-    ? `${normalized}&${AUTO_ENRICH_FLAG}`
-    : `${normalized}#${AUTO_ENRICH_FLAG}`;
+  const flag = enrichQueueState.availabilityOnly
+    ? AVAILABILITY_CHECK_FLAG
+    : AUTO_ENRICH_FLAG;
+  return normalized.includes("#") ? `${normalized}&${flag}` : `${normalized}#${flag}`;
 }
 
 function clearCurrentWatchdog() {
@@ -93,10 +100,10 @@ async function finishCurrentEnrichTab(success, tabId = enrichQueueState.currentT
 
     if (tabId) {
       chrome.tabs.remove(tabId, () => {
-        void openNextEnrichTab();
+        void scheduleNextEnrichTab();
       });
     } else {
-      await openNextEnrichTab();
+      await scheduleNextEnrichTab();
     }
     return;
   }
@@ -107,6 +114,24 @@ async function finishCurrentEnrichTab(success, tabId = enrichQueueState.currentT
   enrichQueueState.currentTabId = null;
   enrichQueueState.currentUrl = null;
   await broadcastQueueStatus();
+}
+
+async function scheduleNextEnrichTab() {
+  const minDelayMs = Math.max(0, Number(enrichQueueState.minDelayMs || 0));
+  const maxDelayMs = Math.max(minDelayMs, Number(enrichQueueState.maxDelayMs || 0));
+  const delayMs =
+    maxDelayMs > 0
+      ? minDelayMs + Math.floor(Math.random() * (maxDelayMs - minDelayMs + 1))
+      : 0;
+
+  if (!delayMs) {
+    await openNextEnrichTab();
+    return;
+  }
+
+  setTimeout(() => {
+    void openNextEnrichTab();
+  }, delayMs);
 }
 
 async function inspectUnavailableListingTab(tabId) {
@@ -124,8 +149,10 @@ async function inspectUnavailableListingTab(tabId) {
           .filter(Boolean)
           .slice(0, 5);
         const unavailable =
-          /This Listing Isn't Available Anymore/i.test(bodyText) ||
-          /This Listing Isnt Available Anymore/i.test(bodyText) ||
+          /This Listing Isn['’]?t Available Anymore/i.test(bodyText) ||
+          /Listing Isn['’]?t Available/i.test(bodyText) ||
+          /Listing Is No Longer Available/i.test(bodyText) ||
+          /This listing is no longer available/i.test(bodyText) ||
           /It may have been sold or expired/i.test(bodyText);
 
         const diagnostic = {
@@ -147,7 +174,12 @@ async function inspectUnavailableListingTab(tabId) {
   const diagnostic = results?.[0]?.result || null;
   console.log("[fcg-auto-enrich] background inspect result:", diagnostic);
 
-  if (!diagnostic?.unavailable) return;
+  if (!diagnostic?.unavailable) {
+    if (enrichQueueState.availabilityOnly) {
+      await finishCurrentEnrichTab(true, tabId);
+    }
+    return;
+  }
 
   const ignored = await postJsonWithFallback("/api/marketplace/listings/ignoreByUrl", {
     url: enrichQueueState.currentUrl || diagnostic.url,
@@ -268,7 +300,9 @@ chrome.action.onClicked.addListener(async (tab) => {
         if (!u) return null;
         try {
           const url = new URL(u);
-          const m = url.pathname.match(/\/marketplace\/item\/(\d+)\//);
+          const m =
+            url.pathname.match(/\/marketplace\/item\/(\d+)\//) ||
+            url.pathname.match(/\/marketplace\/(\d+)\/?$/);
           if (m) return `${url.origin}/marketplace/item/${m[1]}/`;
           return `${url.origin}${url.pathname}`;
         } catch {
@@ -417,6 +451,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     enrichQueueState.currentTabId = null;
     enrichQueueState.currentUrl = null;
     enrichQueueState.sourceWindowId = sender?.tab?.windowId || null;
+    enrichQueueState.minDelayMs = Math.max(0, Number(message.minDelayMs || 0));
+    enrichQueueState.maxDelayMs = Math.max(
+      enrichQueueState.minDelayMs,
+      Number(message.maxDelayMs || message.minDelayMs || 0)
+    );
+    enrichQueueState.availabilityOnly = Boolean(message.availabilityOnly);
     enrichQueueState.error = urls.length ? "" : "No visible listings to enrich";
 
     void broadcastQueueStatus();

@@ -41,7 +41,8 @@ async function fetchActiveVehicles(client) {
       SELECT
         id,
         vin,
-        nickname,
+        COALESCE(canonical_alias.alias, nickname) AS nickname,
+        nickname AS stored_nickname,
         make,
         model,
         year,
@@ -54,6 +55,15 @@ async function fetchActiveVehicles(client) {
         in_service
       FROM vehicles
       LEFT JOIN LATERAL (
+        SELECT va.alias
+        FROM vehicle_aliases va
+        WHERE va.vehicle_id = vehicles.id
+          AND va.active = true
+          AND lower(COALESCE(va.source, '')) = 'canonical'
+        ORDER BY va.updated_at DESC, va.id DESC
+        LIMIT 1
+      ) canonical_alias ON true
+      LEFT JOIN LATERAL (
         SELECT array_agg(va.alias ORDER BY va.alias) AS aliases
         FROM vehicle_aliases va
         WHERE va.vehicle_id = vehicles.id
@@ -61,7 +71,7 @@ async function fetchActiveVehicles(client) {
       ) alias_list ON true
       WHERE is_active = true
         AND in_service = true
-      ORDER BY COALESCE(nickname, vin)
+      ORDER BY COALESCE(canonical_alias.alias, nickname, vin)
     `
   );
 
@@ -489,7 +499,7 @@ function calculateTripOffTripMiles(trips) {
   };
 }
 
-function calculateTripOffTripAudit(trips) {
+function calculateTripOffTripAudit(trips, endDate = null) {
   const odometerTrips = (trips || [])
     .filter((trip) => toNumber(trip?.starting_odometer, null) != null)
     .slice()
@@ -548,6 +558,24 @@ function calculateTripOffTripAudit(trips) {
     }
 
     if (endOdometer == null) {
+      const associatedOpenTrip = isTripActiveAtRangeEnd(trip, endDate);
+      skippedTrips.push({
+        trip_id: trip?.id ?? null,
+        reservation_id: trip?.reservation_id ?? null,
+        guest_name: trip?.guest_name ?? null,
+        trip_start: trip?.trip_start ?? null,
+        trip_end: trip?.trip_end ?? null,
+        starting_odometer: startOdometer,
+        ending_odometer: null,
+        reason: associatedOpenTrip
+          ? "open trip at range end"
+          : "missing ending odometer",
+        associated_open_trip: associatedOpenTrip,
+        anchor_previous_reservation_id: lastClosedTrip?.reservation_id ?? null,
+        anchor_previous_guest_name: lastClosedTrip?.guest_name ?? null,
+        anchor_previous_trip_end: lastClosedTrip?.trip_end ?? null,
+        anchor_previous_ending_odometer: lastKnownOdometer,
+      });
       continue;
     }
 
@@ -1415,7 +1443,7 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
     for (const vehicle of vehicles) {
       const vehicleId = String(vehicle.id);
       const tripsForVehicle = vehicleTrips.get(vehicleId) || [];
-      const audit = calculateTripOffTripAudit(tripsForVehicle);
+      const audit = calculateTripOffTripAudit(tripsForVehicle, endDate);
       const segments = audit.segments;
       const skippedTrips = audit.skippedTrips;
       const totalMiles = segments.reduce(
@@ -1423,7 +1451,7 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
         0
       );
 
-      if (!segments.length) continue;
+      if (!segments.length && !skippedTrips.length) continue;
 
       const vehicleLabel = [vehicle.year, vehicle.make, vehicle.model]
         .filter(Boolean)

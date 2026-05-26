@@ -1326,6 +1326,7 @@ router.get("/:id/messages", async (req, res) => {
         t.workflow_stage,
         t.status,
         t.turo_vehicle_id,
+        mt.vehicle_vin,
         COALESCE(resolved_vehicle.nickname, t.vehicle_name, mt.vehicle_vin),
         COALESCE(resolved_vehicle.vin, mt.vehicle_vin)
     `;

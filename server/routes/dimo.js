@@ -90,7 +90,8 @@ router.get("/vehicles/:tokenId/latest-diagnostics", async (req, res) => {
     const raw = await fetchDimoSignalsLatest(tokenId);
     const signals = raw?.data?.signalsLatest || {};
     const dtcCount = toNumber(signalValue(signals.obdStatusDTCCount));
-    const dtcList = parseDtcList(signalValue(signals.obdDTCList));
+    const dtcList =
+      dtcCount === 0 ? [] : parseDtcList(signalValue(signals.obdDTCList));
 
     res.json({
       tokenId,

@@ -416,6 +416,7 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
     signalValue(s.currentLocationCoordinates) ||
     signalValue(s.currentLocationApproximateCoordinates) ||
     {};
+  const dtcCount = toNumber(signalValue(s.obdStatusDTCCount));
 
   return {
     service_name: "dimo",
@@ -479,7 +480,8 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
     },
 
     local_time_zone: "America/Chicago",
-    qualified_dtc_list: parseDtcList(signalValue(s.obdDTCList)),
+    qualified_dtc_list:
+      dtcCount === 0 ? [] : parseDtcList(signalValue(s.obdDTCList)),
 
     dimo_token_id: vehicleConfig.tokenId,
     provider_vehicle_id: String(vehicleConfig.tokenId),
@@ -496,7 +498,7 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
     battery_voltage_last_updated: signalTimestamp(s.lowVoltageBatteryCurrentVoltage),
     obd_plugged_in: toBool(signalValue(s.obdIsPluggedIn)),
     obd_plugged_in_last_updated: signalTimestamp(s.obdIsPluggedIn),
-    dtc_count: toNumber(signalValue(s.obdStatusDTCCount)),
+    dtc_count: dtcCount,
     distance_with_mil: toNumber(signalValue(s.obdDistanceWithMIL)),
     coolant_temp: toNumber(signalValue(s.powertrainCombustionEngineECT)),
     engine_rpm: rpmForStorage,

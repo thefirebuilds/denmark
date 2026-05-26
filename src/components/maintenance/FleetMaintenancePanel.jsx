@@ -249,6 +249,11 @@ function buildTelemetryLocation(fleetVehicle = null) {
 
 function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
   const mil = liveDiagnostics?.mil || fleetVehicle?.telemetry?.mil || {};
+  const count =
+    mil.dtc_count === null || mil.dtc_count === undefined || mil.dtc_count === ""
+      ? null
+      : Number(mil.dtc_count);
+  const dtcCountIsZero = Number.isFinite(count) && count === 0;
   const sourceLabel =
     liveDiagnostics?.source === "dimo_latest_signals" ||
     mil.source === "dimo_latest_signals"
@@ -256,7 +261,7 @@ function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
       : null;
   const sourcedDetail = (detail) =>
     sourceLabel ? `${detail} from ${sourceLabel}` : detail;
-  const codes = Array.isArray(mil.qualified_dtc_list)
+  const codes = !dtcCountIsZero && Array.isArray(mil.qualified_dtc_list)
     ? mil.qualified_dtc_list
         .map((item) => {
           if (typeof item === "string") return item;
@@ -265,7 +270,6 @@ function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
         .map((item) => String(item || "").trim().toUpperCase())
         .filter(Boolean)
     : [];
-  const count = Number(mil.dtc_count ?? codes.length ?? 0);
   const lastUpdated = mil.last_updated || null;
   const firstReportedAt = mil.first_reported_at || null;
 
@@ -496,6 +500,16 @@ function mapMaintenanceSummaryToVehicle(
       summary.currentOdometerMiles ?? sourceVehicle.currentOdometerMiles ?? null,
     currentOdometerSource:
       summary.currentOdometerSource ?? sourceVehicle.currentOdometerSource ?? null,
+    onboardingOdometerMiles:
+      summary.onboardingOdometerMiles ??
+      sourceVehicle.onboardingOdometerMiles ??
+      null,
+    totalTuroMiles:
+      summary.totalTuroMiles ?? sourceVehicle.totalTuroMiles ?? null,
+    countedTuroMileageTrips:
+      summary.countedTuroMileageTrips ??
+      sourceVehicle.countedTuroMileageTrips ??
+      null,
     next_service_due: nextServiceDue,
     plate: plate || "—",
     license_plate: plate || "",
@@ -1102,6 +1116,9 @@ export default function FleetMaintenancePanel({
           text: "Unknown",
         },
         currentOdometerMiles: null,
+        onboardingOdometerMiles: null,
+        totalTuroMiles: null,
+        countedTuroMileageTrips: null,
         plate: selectedFleetVehicle.license_plate || "—",
         license_plate: selectedFleetVehicle.license_plate || "",
         license_state: selectedFleetVehicle.license_state || "TX",
@@ -1145,6 +1162,9 @@ export default function FleetMaintenancePanel({
         text: "Unknown",
       },
       currentOdometerMiles: null,
+      onboardingOdometerMiles: null,
+      totalTuroMiles: null,
+      countedTuroMileageTrips: null,
       plate: "—",
       registration_expires: "—",
       rentable: false,
@@ -2236,6 +2256,31 @@ export default function FleetMaintenancePanel({
                   </span>
                   <span className="fleet-maintenance-meta-value">
                     {vehicle.body_condition}
+                  </span>
+                </div>
+
+                <div className="fleet-maintenance-meta-item">
+                  <span className="fleet-maintenance-meta-label">
+                    Onboarding odometer
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    {formatMiles(vehicle.onboardingOdometerMiles)}
+                  </span>
+                </div>
+
+                <div className="fleet-maintenance-meta-item">
+                  <span className="fleet-maintenance-meta-label">
+                    Total Turo miles
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    {formatMiles(vehicle.totalTuroMiles)}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    {vehicle.countedTuroMileageTrips
+                      ? `${Number(
+                          vehicle.countedTuroMileageTrips
+                        ).toLocaleString("en-US")} trips with odometers`
+                      : "No closed trip odometers counted"}
                   </span>
                 </div>
 

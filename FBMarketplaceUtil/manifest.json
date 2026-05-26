@@ -30,7 +30,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.facebook.com/marketplace/item/*"],
+      "matches": ["https://www.facebook.com/marketplace/*"],
       "js": ["content_detail.js"],
       "run_at": "document_idle"
     },

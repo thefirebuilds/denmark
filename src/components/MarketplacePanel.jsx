@@ -18,6 +18,13 @@ const FILTER_STATUS_OPTIONS = [
   "candidate",
 ];
 const DECISION_STATUS_OPTIONS = ["new", "watch", "contacted", "candidate"];
+const LAST_SEEN_FILTER_OPTIONS = [
+  { value: "all", label: "Any last seen", minDays: 0 },
+  { value: "1d", label: "Seen 1+ days ago", minDays: 1 },
+  { value: "3d", label: "Seen 3+ days ago", minDays: 3 },
+  { value: "7d", label: "Seen 7+ days ago", minDays: 7 },
+  { value: "14d", label: "Seen 14+ days ago", minDays: 14 },
+];
 const SORT_TOGGLE_MAP = {
   year: ["yearDesc", "yearAsc"],
   price: ["priceAsc", "priceDesc"],
@@ -39,6 +46,7 @@ const DEFAULT_FILTERS = {
 };
 const MARKETPLACE_FETCH_LIMIT = 1000;
 const MARKETPLACE_VISIBLE_LIMIT = 100;
+const MARKETPLACE_AVAILABILITY_REFRESH_LIMIT = 3;
 const RATING_TOOLTIP =
   "10-point rating based on peer-relative price, newer year, lower mileage, distance from Buda, and interior signal. Tan/beige/grey interiors get -1, black gets +0.5, leather gets +1. Listings flagged as suspect are heavily penalized.";
 const ENRICH_URL_FLAG = "fcg_enrich=1";
@@ -57,6 +65,12 @@ function parseDateValue(value) {
   if (!value) return 0;
   const ts = new Date(value).getTime();
   return Number.isFinite(ts) ? ts : 0;
+}
+
+function getLastSeenAgeDays(item) {
+  const lastSeen = parseDateValue(item?.last_seen_at || item?.created_at);
+  if (!lastSeen) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (Date.now() - lastSeen) / 86400000);
 }
 
 function formatMoney(value, fallback = "—") {
@@ -578,6 +592,7 @@ export default function MarketplacePanel() {
   const [totalListingsCount, setTotalListingsCount] = useState(0);
   const [selectedId, setSelectedId] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [lastSeenFilter, setLastSeenFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
   const [search, setSearch] = useState("");
   const [priceMin, setPriceMin] = useState(DEFAULT_FILTERS.minPrice);
@@ -796,6 +811,12 @@ export default function MarketplacePanel() {
   const maxPriceFilter = useMemo(() => toNumberOrNull(priceMax), [priceMax]);
   const minMilesFilter = useMemo(() => toNumberOrNull(milesMin), [milesMin]);
   const maxMilesFilter = useMemo(() => toNumberOrNull(milesMax), [milesMax]);
+  const lastSeenMinDays = useMemo(
+    () =>
+      LAST_SEEN_FILTER_OPTIONS.find((option) => option.value === lastSeenFilter)
+        ?.minDays || 0,
+    [lastSeenFilter]
+  );
 
 async function loadListings({ preserveSelection = true } = {}) {
     setLoading(true);
@@ -961,6 +982,7 @@ async function loadListings({ preserveSelection = true } = {}) {
 
       const status = item.decision_status || "new";
       const fresh = isFresh(item);
+      const lastSeenAgeDays = getLastSeenAgeDays(item);
       const ignoreHaystack = buildIgnoreHaystack(item);
       const haystack = buildSearchHaystack(item);
       const outlierLabel = item?.cohort_meta?.outlierLabel || null;
@@ -975,6 +997,7 @@ async function loadListings({ preserveSelection = true } = {}) {
         return false;
       }
       if (freshOnly && !fresh && item.id !== selectedId) return false;
+      if (lastSeenMinDays > 0 && lastSeenAgeDays < lastSeenMinDays) return false;
 
       const numericPrice = toNumberOrNull(item.price_numeric);
       if (minPriceFilter !== null && (numericPrice === null || numericPrice < minPriceFilter)) {
@@ -1084,6 +1107,7 @@ async function loadListings({ preserveSelection = true } = {}) {
     sortBy,
     search,
     freshOnly,
+    lastSeenMinDays,
     ignoreKeywords,
     minPriceFilter,
     maxPriceFilter,
@@ -1141,6 +1165,10 @@ async function loadListings({ preserveSelection = true } = {}) {
   }, [displayListings]);
   const visibleUnenrichedCount = useMemo(
     () => displayListings.filter((item) => item?.url && !hasMarketplaceEnrichment(item)).length,
+    [displayListings]
+  );
+  const availabilityRefreshCount = useMemo(
+    () => displayListings.filter((item) => item?.url && !item.hidden).length,
     [displayListings]
   );
 
@@ -1394,7 +1422,12 @@ async function loadListings({ preserveSelection = true } = {}) {
 
     window.dispatchEvent(
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
-        detail: { urls },
+        detail: {
+          urls,
+          minDelayMs: 18000,
+          maxDelayMs: 42000,
+          availabilityOnly: true,
+        },
       })
     );
   }
@@ -1417,7 +1450,63 @@ async function loadListings({ preserveSelection = true } = {}) {
 
     window.dispatchEvent(
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
-        detail: { urls },
+        detail: {
+          urls,
+          minDelayMs: 18000,
+          maxDelayMs: 42000,
+        },
+      })
+    );
+  }
+
+  function refreshLimitedAvailability() {
+    const selectedItem =
+      selected && selected.url && !selected.hidden ? [selected] : [];
+    const candidates = [...selectedItem, ...displayListings]
+      .filter((item) => item?.url && !item.hidden)
+      .sort((a, b) => {
+        if (selected && a.id === selected.id) return -1;
+        if (selected && b.id === selected.id) return 1;
+
+        const aLastSeen = parseDateValue(a.last_seen_at || a.created_at);
+        const bLastSeen = parseDateValue(b.last_seen_at || b.created_at);
+        return aLastSeen - bLastSeen;
+      });
+
+    const urls = Array.from(new Set(candidates.map((item) => item.url))).slice(
+      0,
+      MARKETPLACE_AVAILABILITY_REFRESH_LIMIT
+    );
+
+    if (!extensionReady) {
+      setEnrichVisibleStatus({
+        running: false,
+        total: 0,
+        completed: 0,
+        failed: 0,
+        error: "Reload the Chrome extension and refresh this page to enable availability checks.",
+      });
+      return;
+    }
+
+    if (!urls.length) {
+      setEnrichVisibleStatus({
+        running: false,
+        total: 0,
+        completed: 0,
+        failed: 0,
+        error: "No visible listings are available to check.",
+      });
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent(ENRICH_VISIBLE_EVENT, {
+        detail: {
+          urls,
+          minDelayMs: 18000,
+          maxDelayMs: 42000,
+        },
       })
     );
   }
@@ -1563,6 +1652,7 @@ async function loadListings({ preserveSelection = true } = {}) {
 
   function clearMarketplaceFilters() {
     setStatusFilter("all");
+    setLastSeenFilter("all");
     setSearch("");
     setPriceMin(DEFAULT_FILTERS.minPrice);
     setPriceMax(DEFAULT_FILTERS.maxPrice);
@@ -1718,6 +1808,22 @@ async function loadListings({ preserveSelection = true } = {}) {
               ))}
             </select>
 
+            <select
+              className="marketplace-input marketplace-input--compact marketplace-filter-control"
+              value={lastSeenFilter}
+              onChange={(e) => {
+                setLastSeenFilter(e.target.value);
+                if (e.target.value !== "all") setSortBy("oldest");
+              }}
+              title="Show listings that have not been seen in a while."
+            >
+              {LAST_SEEN_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+
             <input
               className="marketplace-input marketplace-input--compact marketplace-filter-control marketplace-price-filter"
               inputMode="numeric"
@@ -1778,7 +1884,7 @@ async function loadListings({ preserveSelection = true } = {}) {
               type="button"
               className="marketplace-action"
               onClick={clearMarketplaceFilters}
-              title="Clear status, search, price bounds, and fresh-only filters."
+              title="Clear status, last-seen, search, price bounds, and fresh-only filters."
             >
               Clear filters
             </button>
@@ -1853,6 +1959,30 @@ async function loadListings({ preserveSelection = true } = {}) {
                   : extensionReady
                     ? `Enrich visible (${visibleUnenrichedCount})`
                     : `Enrich visible (${visibleUnenrichedCount}, setup)`}
+              </button>
+
+              <button
+                type="button"
+                className="marketplace-action"
+                onClick={refreshLimitedAvailability}
+                disabled={
+                  Boolean(enrichVisibleStatus?.running) ||
+                  availabilityRefreshCount === 0
+                }
+                title={
+                  extensionReady
+                    ? `Open up to ${MARKETPLACE_AVAILABILITY_REFRESH_LIMIT} visible listings one at a time to confirm whether Facebook still shows them.`
+                    : "Chrome extension bridge not detected yet. Reload the extension and refresh this page."
+                }
+              >
+                {enrichVisibleStatus?.running
+                  ? "Checking..."
+                  : extensionReady
+                    ? `Check available (${Math.min(
+                        availabilityRefreshCount,
+                        MARKETPLACE_AVAILABILITY_REFRESH_LIMIT
+                      )})`
+                    : "Check available (setup)"}
               </button>
 
               <button

@@ -190,7 +190,7 @@ function selectCanonicalNicknameSql() {
         ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
         LIMIT 1
       ),
-      v.nickname
+      NULLIF(trim(v.nickname), '')
     )
   `;
 }

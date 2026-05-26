@@ -14,6 +14,7 @@ export const MARKETPLACE_INVALID_LISTING_TERMS = [
   "rebuilt",
   "rebuild",
   "reconstructed",
+  "reconstruido",
   "total loss",
   "turbo",
   "recommended down payment",
@@ -133,8 +134,17 @@ export const MARKETPLACE_VEHICLE_CATALOG = [
   },
   {
     make: "Mazda",
-    aliases: ["mazda"],
-    models: ["3", "6", "CX-5", "Mazda3", "Mazda2", "Mazda6", "Miata"],
+    aliases: ["mazda", "mazda2", "mazda3", "mazda5","mazda6"],
+    models: [
+      { name: "Mazda3", aliases: ["Mazda3", "Mazda 3"] },
+      { name: "Mazda6", aliases: ["Mazda6", "Mazda 6"] },
+      { name: "Mazda5", aliases: ["Mazda5", "Mazda 5"] },
+      { name: "Miata", aliases: ["Mx-5", "Mx5"] },
+      "CX-3",
+      "CX-5",
+      "CX-9",
+      "Mazda2",
+    ],
   },
     {
     make: "Scion",

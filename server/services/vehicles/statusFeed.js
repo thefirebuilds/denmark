@@ -476,9 +476,19 @@ async function getCachedVehicleStatusFeed() {
       latest.engine_rpm,
       latest.coolant_temp,
       COALESCE(latest_raw.raw_payload, latest.raw_payload) AS raw_payload,
+      canonical_alias.alias AS canonical_nickname,
       NULL::jsonb AS engine_temp_range,
       NULL::jsonb AS engine_rpm_range
     FROM vehicles v
+    LEFT JOIN LATERAL (
+      SELECT va.alias
+      FROM vehicle_aliases va
+      WHERE va.vehicle_id = v.id
+        AND va.active = true
+        AND va.source = 'canonical'
+      ORDER BY va.updated_at DESC, va.created_at DESC, va.id DESC
+      LIMIT 1
+    ) canonical_alias ON true
     LEFT JOIN LATERAL (
       SELECT
         id,
@@ -555,12 +565,13 @@ async function getCachedVehicleStatusFeed() {
           typeof vehicle.mil_on === "boolean" ? vehicle.mil_on : null,
         last_updated: vehicle.mil_last_updated || null,
         first_reported_at: vehicle.diagnostic_first_reported_at || null,
-        qualified_dtc_list: Array.isArray(vehicle.qualified_dtc_list)
+        qualified_dtc_list:
+          Number(vehicle.dtc_count ?? 0) === 0
+            ? []
+            : Array.isArray(vehicle.qualified_dtc_list)
           ? vehicle.qualified_dtc_list
           : [],
-        dtc_count: Array.isArray(vehicle.qualified_dtc_list)
-          ? vehicle.qualified_dtc_list.length
-          : 0,
+        dtc_count: Number(vehicle.dtc_count ?? 0),
       },
       battery: {
         status: vehicle.battery_status || null,
@@ -592,7 +603,7 @@ async function getCachedVehicleStatusFeed() {
 
     return {
       ...vehicle,
-      nickname: toTitleCase(vehicle.nickname || null),
+      nickname: toTitleCase(vehicle.canonical_nickname || vehicle.nickname || null),
       make: toTitleCase(vehicle.make || null),
       model: toTitleCase(vehicle.model || null),
       current_odometer_miles: normalizeOdometer(

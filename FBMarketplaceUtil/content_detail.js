@@ -1,7 +1,13 @@
 // denmark/FBCarScraper/content_detail.js
 
 (() => {
-  if (!location.pathname.includes("/marketplace/item/")) return;
+  if (
+    !location.pathname.includes("/marketplace/item/") &&
+    !location.hash.includes("fcg_enrich=1") &&
+    !location.hash.includes("fcg_check_available=1")
+  ) {
+    return;
+  }
 
   const API_BASES = [
     "http://127.0.0.1:5000",
@@ -13,22 +19,27 @@
   const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const AUTO_ENRICH_FLAG = "fcg_enrich=1";
+  const AVAILABILITY_CHECK_FLAG = "fcg_check_available=1";
   const AUTO_ENRICH_READY_PATTERNS = [
     /Listed\s+.+?\s+in\s+[A-Za-z .'-]+,\s*[A-Z]{2}/i,
     /\b(?:19\d{2}|20\d{2})\s+[A-Za-z0-9][^$]{2,120}?\s+\$\s?\d[\d,]*/i,
     /\$\s?\d[\d,]*/,
   ];
   const UNAVAILABLE_PAGE_PATTERNS = [
-    /This Listing Isn't Available Anymore/i,
-    /This Listing Isnt Available Anymore/i,
+    /This Listing Isn['’]?t Available Anymore/i,
+    /Listing Isn['’]?t Available/i,
+    /Listing Is No Longer Available/i,
+    /This listing is no longer available/i,
     /It may have been sold or expired/i,
   ];
 
   function normalizeUrl(u) {
     if (!u) return null;
-    try {
-      const url = new URL(u);
-      const m = url.pathname.match(/\/marketplace\/item\/(\d+)\//);
+  try {
+    const url = new URL(u);
+      const m =
+        url.pathname.match(/\/marketplace\/item\/(\d+)\//) ||
+        url.pathname.match(/\/marketplace\/(\d+)\/?$/);
       if (m) return `${url.origin}/marketplace/item/${m[1]}/`;
       return `${url.origin}${url.pathname}`;
     } catch {
@@ -122,6 +133,10 @@
 
   function isAutoEnrichMode() {
     return location.hash.includes(AUTO_ENRICH_FLAG);
+  }
+
+  function isAvailabilityCheckMode() {
+    return location.hash.includes(AVAILABILITY_CHECK_FLAG);
   }
 
   function isUnavailableListingPage(text = "") {
@@ -553,6 +568,44 @@
     }
   }
 
+  async function maybeAutoAvailabilityCheck() {
+    if (!isAvailabilityCheckMode()) return;
+
+    const key = `fcg_availability_check:${normalizeUrl(location.href)}`;
+    if (sessionStorage.getItem(key) === "done") return;
+
+    sessionStorage.setItem(key, "done");
+
+    await waitForListingReady(7000);
+    stopExtraPageLoading();
+    await sleep(500);
+
+    let ok = true;
+    if (isUnavailableListingPage()) {
+      logAutoEnrichDiagnostics("availability-check-unavailable");
+      ok = await ignoreListing();
+    } else {
+      logAutoEnrichDiagnostics("availability-check-still-available");
+    }
+
+    const cleanHash = location.hash
+      .replace(AVAILABILITY_CHECK_FLAG, "")
+      .replace(/^#&?/, "#")
+      .replace(/&&+/g, "&")
+      .replace(/#$/, "");
+
+    history.replaceState(null, "", `${location.pathname}${location.search}${cleanHash}`);
+
+    try {
+      await chrome.runtime.sendMessage({
+        type: "fcg-auto-enrich-result",
+        success: ok,
+      });
+    } catch (err) {
+      console.warn("[availability-check] result notify failed:", err);
+    }
+  }
+
   function ensureButtons() {
     if (!document.getElementById("fcg-enrich-btn")) {
       const btn = document.createElement("button");
@@ -612,6 +665,7 @@
   ensureButtons();
   const obs = new MutationObserver(() => ensureButtons());
   obs.observe(document.documentElement, { childList: true, subtree: true });
+  void maybeAutoAvailabilityCheck();
   void maybeAutoEnrich();
 
   console.log("[content_detail] loaded for", normalizeUrl(location.href));

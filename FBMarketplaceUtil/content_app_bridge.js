@@ -13,10 +13,16 @@
 
   window.addEventListener(START_EVENT, async (event) => {
     const urls = Array.isArray(event.detail?.urls) ? event.detail.urls : [];
+    const minDelayMs = Number(event.detail?.minDelayMs || 0);
+    const maxDelayMs = Number(event.detail?.maxDelayMs || minDelayMs || 0);
+    const availabilityOnly = Boolean(event.detail?.availabilityOnly);
     try {
       const response = await chrome.runtime.sendMessage({
         type: "fcg-start-enrich-queue",
         urls,
+        minDelayMs,
+        maxDelayMs,
+        availabilityOnly,
       });
       if (response) emitStatus(response);
     } catch (err) {
