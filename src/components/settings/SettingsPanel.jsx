@@ -26,6 +26,10 @@ const DEFAULT_DISPATCH_SETTINGS = {
 };
 
 const DEFAULT_VISIBLE_BUCKETS = DEFAULT_DISPATCH_SETTINGS.visibleBuckets;
+const DEFAULT_BRIDGE_ALERT_SETTINGS = {
+  heartbeatStaleMinutes: 25,
+  turoNotificationStaleHours: 12,
+};
 
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority queue" },
@@ -141,6 +145,22 @@ function mergeDispatchSettings(settings) {
   return merged;
 }
 
+function mergeBridgeAlertSettings(settings) {
+  const heartbeatStaleMinutes = Number(settings?.heartbeatStaleMinutes);
+  const turoNotificationStaleHours = Number(settings?.turoNotificationStaleHours);
+
+  return {
+    heartbeatStaleMinutes:
+      Number.isFinite(heartbeatStaleMinutes) && heartbeatStaleMinutes >= 5
+        ? Math.min(heartbeatStaleMinutes, 240)
+        : DEFAULT_BRIDGE_ALERT_SETTINGS.heartbeatStaleMinutes,
+    turoNotificationStaleHours:
+      Number.isFinite(turoNotificationStaleHours) && turoNotificationStaleHours >= 1
+        ? Math.min(turoNotificationStaleHours, 168)
+        : DEFAULT_BRIDGE_ALERT_SETTINGS.turoNotificationStaleHours,
+  };
+}
+
 function moveItem(items, index, direction) {
   const nextIndex = index + direction;
   if (nextIndex < 0 || nextIndex >= items.length) return items;
@@ -192,6 +212,7 @@ function toPayloadVehicle(form) {
 function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
+    { key: "alerts", title: "Alerts", sub: "Bridge warning timing" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
     { key: "database", title: "Database", sub: "Backup and restore" },
@@ -406,6 +427,163 @@ function DispatchSettingsPanel({ settings, onSaved }) {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {message && !saving && message !== "Saved" ? (
+          <div className="settings-message">{message}</div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function AlertSettingsPanel() {
+  const [form, setForm] = useState(DEFAULT_BRIDGE_ALERT_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const dirtyRef = useRef(false);
+  const saveSeqRef = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSettings() {
+      try {
+        setLoading(true);
+        const res = await fetch(`${API_BASE}/api/settings/alerts.bridge`);
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(json?.error || "Failed to load alert settings");
+        }
+
+        if (cancelled) return;
+        dirtyRef.current = false;
+        setForm(mergeBridgeAlertSettings(json.value));
+        setMessage("");
+      } catch (err) {
+        if (!cancelled) {
+          setMessage(err.message || "Failed to load alert settings");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!dirtyRef.current) return undefined;
+
+    const payload = mergeBridgeAlertSettings(form);
+    const saveSeq = saveSeqRef.current + 1;
+    saveSeqRef.current = saveSeq;
+
+    setSaving(true);
+    setMessage("Saving...");
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/settings/alerts.bridge`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: payload }),
+        });
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(json?.error || "Failed to save alert settings");
+        }
+
+        if (saveSeq !== saveSeqRef.current) return;
+
+        dirtyRef.current = false;
+        setForm(mergeBridgeAlertSettings(json.value || payload));
+        setMessage("Saved");
+      } catch (err) {
+        if (saveSeq === saveSeqRef.current) {
+          setMessage(err.message || "Failed to save alert settings");
+        }
+      } finally {
+        if (saveSeq === saveSeqRef.current) {
+          setSaving(false);
+        }
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [form]);
+
+  function updateNumberField(key, value) {
+    dirtyRef.current = true;
+    setForm((current) =>
+      mergeBridgeAlertSettings({
+        ...current,
+        [key]: value === "" ? "" : Number(value),
+      })
+    );
+  }
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Alerts</h2>
+          <span>bridge warning timing</span>
+        </div>
+        <div className="settings-autosave-state">
+          {loading ? "Loading..." : saving ? "Saving..." : message || "Autosaves"}
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Android bridge</div>
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Turo notification warning</span>
+              <input
+                type="number"
+                min="1"
+                max="168"
+                step="1"
+                value={form.turoNotificationStaleHours}
+                onChange={(event) =>
+                  updateNumberField(
+                    "turoNotificationStaleHours",
+                    event.target.value
+                  )
+                }
+              />
+              <small className="settings-field-note">
+                Hours with a fresh bridge heartbeat but no Turo notifications before
+                Denmark warns that the phone may be logged out.
+              </small>
+            </label>
+
+            <label className="settings-field">
+              <span>Heartbeat stale warning</span>
+              <input
+                type="number"
+                min="5"
+                max="240"
+                step="5"
+                value={form.heartbeatStaleMinutes}
+                onChange={(event) =>
+                  updateNumberField("heartbeatStaleMinutes", event.target.value)
+                }
+              />
+              <small className="settings-field-note">
+                Minutes without an Android bridge heartbeat before the bridge itself
+                is considered stale.
+              </small>
+            </label>
           </div>
         </div>
 
@@ -2166,6 +2344,14 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
+    if (activeSection === "alerts") {
+      return {
+        title: "Bridge alerts",
+        body:
+          "The Turo notification warning only fires while the Android bridge heartbeat is still fresh. Denmark sends one SMS per stale episode, then waits for a new Turo notification before alerting again.",
+      };
+    }
+
     if (activeSection === "database") {
       return {
         title: "Database safety",
@@ -2241,6 +2427,8 @@ export default function SettingsPanel({
           settings={dispatchSettings}
           onSaved={onDispatchSettingsSaved}
         />
+      ) : activeSection === "alerts" ? (
+        <AlertSettingsPanel />
       ) : activeSection === "fleet" ? (
         <FleetSettingsPanel />
       ) : activeSection === "expenses" ? (

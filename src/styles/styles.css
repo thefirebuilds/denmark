@@ -796,6 +796,68 @@ body {
   gap: 8px;
 }
 
+.message-invoice-summary {
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  background: #111c31;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.message-invoice-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.message-invoice-row {
+  display: grid;
+  grid-template-columns: 0.78fr 1fr;
+  gap: 3px 10px;
+  border-top: 1px solid rgba(143, 162, 191, 0.14);
+  padding-top: 6px;
+  align-items: baseline;
+}
+
+.message-invoice-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.message-invoice-row span {
+  color: #8fa2bf;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.message-invoice-row strong {
+  color: #dbeafe;
+  font-size: 0.84rem;
+  text-align: right;
+}
+
+.message-invoice-row em {
+  grid-column: 1 / -1;
+  color: #aab8cd;
+  font-size: 0.76rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.message-invoice-row--success strong {
+  color: #bbf7d0;
+}
+
+.message-invoice-row--warning strong,
+.message-invoice-row--warning em {
+  color: #fecaca;
+}
+
+.message-invoice-row--note strong {
+  color: #fde68a;
+}
+
 .message-notification-gap-detail {
   border-color: rgba(248, 113, 113, 0.46);
   background: rgba(127, 29, 29, 0.22);

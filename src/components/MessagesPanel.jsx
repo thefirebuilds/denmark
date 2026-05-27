@@ -212,6 +212,14 @@ function formatMoney(value) {
   return `$${n.toFixed(2)}`;
 }
 
+function formatSignedMoney(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+  return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
 function formatHoursDuration(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
@@ -601,11 +609,12 @@ function buildMessageBody(message) {
     return message.guest_message;
   }
 
-  if (type === "trip_changed") {
-    if (message?.new_trip_end) {
-      return `New trip end: ${formatTripTime(message.new_trip_end)}`;
-    }
+  if (isReimbursementInvoiceMessage(message)) {
+    return "Reimbursement invoice received";
+  }
 
+  if (type === "trip_changed") {
+    return buildTripChangedDetail(message) || "Trip details changed";
   }
 
   if (type === "trip_booked") {
@@ -897,6 +906,177 @@ function buildFuelCloseoutDetail(message) {
     : "";
 
   return `Fuel is ${level}${source}; refill to full${nextGuest}${nextTrip}.`;
+}
+
+function buildTripChangedDetail(message) {
+  const parts = [];
+
+  if (message?.new_trip_end) {
+    parts.push(`New trip end: ${formatTripTime(message.new_trip_end)}`);
+  }
+
+  const newTotal = Number(message?.new_total_earnings ?? message?.amount);
+  if (Number.isFinite(newTotal)) {
+    const delta = Number(message?.additional_earnings ?? message?.earnings_delta);
+    if (Number.isFinite(delta) && Math.abs(delta) >= 0.005) {
+      parts.push(`Additional earnings: ${formatSignedMoney(delta)}`);
+    }
+
+    parts.push(`New total: ${formatMoney(newTotal)}`);
+  }
+
+  return parts.join(" - ");
+}
+
+function buildReimbursementInvoiceDetail(message) {
+  const invoice = message?.reimbursement_invoice;
+  if (!invoice) {
+    const amount = formatMoney(message?.amount);
+    return amount ? `Invoice amount captured: ${amount}` : "";
+  }
+
+  const parts = [];
+  const lineItems = [];
+  const discrepancies = Array.isArray(invoice.discrepancies)
+    ? invoice.discrepancies
+    : [];
+  const notes = Array.isArray(invoice.notes) ? invoice.notes : [];
+
+  if (invoice.tolls != null) lineItems.push(`tolls ${formatMoney(invoice.tolls)}`);
+  if (invoice.refueling != null) {
+    lineItems.push(`refuel ${formatMoney(invoice.refueling)}`);
+  }
+  if (invoice.refueling_convenience_fee != null) {
+    lineItems.push(`fee ${formatMoney(invoice.refueling_convenience_fee)}`);
+  }
+
+  const total = formatMoney(invoice.total_charge ?? message?.amount);
+  if (total) {
+    parts.push(`Invoice total ${total}${lineItems.length ? ` (${lineItems.join(", ")})` : ""}`);
+  }
+
+  if (discrepancies.length) {
+    const discrepancyText = discrepancies
+      .slice(0, 2)
+      .map((item) => {
+        const invoiceAmount = formatMoney(item.invoice);
+        const expectedAmount = formatMoney(item.expected);
+        const delta = formatSignedMoney(item.delta);
+        return `${item.label || "Amount"} ${invoiceAmount} vs ${expectedAmount}${
+          delta ? ` (${delta})` : ""
+        }`;
+      })
+      .join("; ");
+    parts.push(`Discrepancy: ${discrepancyText}`);
+  } else if (invoice.expected_total != null && invoice.total_charge != null) {
+    parts.push("Matches trip reimbursement fields");
+  }
+
+  const attributedTollNote = notes.find((item) => item.field === "attributed_tolls");
+  if (attributedTollNote) {
+    const count = Number(attributedTollNote.toll_count || 0);
+    const countText = count > 0 ? `${count} attributed toll${count === 1 ? "" : "s"} ` : "";
+    parts.push(
+      `Note: ${countText}${formatMoney(attributedTollNote.attributed)} vs charged ${formatMoney(
+        attributedTollNote.charged
+      )}`
+    );
+  }
+
+  return parts.join(" - ");
+}
+
+function buildReimbursementInvoiceRows(message) {
+  const invoice = message?.reimbursement_invoice;
+  if (!invoice) return [];
+
+  const rows = [];
+  const invoiceParts = [];
+  if (invoice.tolls != null) invoiceParts.push(`Tolls ${formatMoney(invoice.tolls)}`);
+  if (invoice.refueling != null) {
+    invoiceParts.push(`Refuel ${formatMoney(invoice.refueling)}`);
+  }
+  if (invoice.refueling_convenience_fee != null) {
+    invoiceParts.push(`Fee ${formatMoney(invoice.refueling_convenience_fee)}`);
+  }
+
+  rows.push({
+    key: "invoice-total",
+    label: "Invoice total",
+    value: formatMoney(invoice.total_charge ?? message?.amount) || "Unknown",
+    detail: invoiceParts.join(" / "),
+    tone: "neutral",
+  });
+
+  const discrepancies = Array.isArray(invoice.discrepancies)
+    ? invoice.discrepancies
+    : [];
+
+  if (discrepancies.length) {
+    discrepancies.slice(0, 2).forEach((item, index) => {
+      rows.push({
+        key: `discrepancy-${item.field || index}`,
+        label: item.label || "Discrepancy",
+        value: `${formatMoney(item.invoice)} vs ${formatMoney(item.expected)}`,
+        detail: `${item.source || "Trip record"} ${formatSignedMoney(item.delta)}`,
+        tone: "warning",
+      });
+    });
+  } else if (invoice.expected_total != null && invoice.total_charge != null) {
+    rows.push({
+      key: "trip-match",
+      label: "Trip check",
+      value: "Matches recorded charges",
+      detail: `Trip expected ${formatMoney(invoice.expected_total)}`,
+      tone: "success",
+    });
+  }
+
+  const attributedTollNote = Array.isArray(invoice.notes)
+    ? invoice.notes.find((item) => item.field === "attributed_tolls")
+    : null;
+  if (attributedTollNote) {
+    const count = Number(attributedTollNote.toll_count || 0);
+    rows.push({
+      key: "attributed-tolls",
+      label: "Toll exposure",
+      value: `${formatMoney(attributedTollNote.charged)} charged`,
+      detail: `${formatMoney(attributedTollNote.attributed)} attributed${
+        count > 0 ? ` across ${count} toll${count === 1 ? "" : "s"}` : ""
+      }`,
+      tone: "note",
+    });
+  }
+
+  return rows;
+}
+
+function ReimbursementInvoiceSummary({ message }) {
+  const rows = buildReimbursementInvoiceRows(message);
+  if (!rows.length) return null;
+
+  return (
+    <div className="message-invoice-summary">
+      <div className="message-booking-title">
+        Invoice audit
+        <span>
+          {message.reimbursement_invoice_has_discrepancy ? "Review" : "Matched"}
+        </span>
+      </div>
+      <div className="message-invoice-rows">
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            className={`message-invoice-row message-invoice-row--${row.tone}`}
+          >
+            <span>{row.label}</span>
+            <strong>{row.value}</strong>
+            {row.detail ? <em>{row.detail}</em> : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function buildTollCloseoutDetail(message) {
@@ -2235,6 +2415,7 @@ async function handleExportGuestInspectionSheet(message) {
             const closeoutPendingCount = closeoutActionItems.filter(
               (item) => item.pending
             ).length;
+            const canShowInvoiceSummary = isReimbursementInvoiceMessage(message);
 
             return (
               <article
@@ -2273,6 +2454,10 @@ async function handleExportGuestInspectionSheet(message) {
                 </div>
 
                 <div className="message-body">{buildMessageBody(message)}</div>
+
+                {canShowInvoiceSummary && (
+                  <ReimbursementInvoiceSummary message={message} />
+                )}
 
                 {(canReviewUnmatchedNotification || canVerifyReturnLocation) && (
                   <div className="message-booking-task message-notification-gap-detail">

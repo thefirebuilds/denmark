@@ -4,6 +4,42 @@ const { sendSms } = require("./twilioSms");
 let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
 const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
+const DEFAULT_BRIDGE_ALERT_SETTINGS = {
+  heartbeatStaleMinutes: 25,
+  turoNotificationStaleHours: 12,
+};
+
+function coerceNumber(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+async function getBridgeAlertSettings() {
+  const { rows } = await pool.query(
+    "SELECT value FROM app_settings WHERE key = 'alerts.bridge' LIMIT 1"
+  );
+  const value = rows[0]?.value || {};
+
+  return {
+    heartbeatStaleMinutes: coerceNumber(
+      value.heartbeatStaleMinutes ??
+        value.heartbeat_stale_minutes ??
+        process.env.BRIDGE_HEARTBEAT_STALE_MINUTES,
+      DEFAULT_BRIDGE_ALERT_SETTINGS.heartbeatStaleMinutes,
+      5,
+      240
+    ),
+    turoNotificationStaleHours: coerceNumber(
+      value.turoNotificationStaleHours ??
+        value.turo_notification_stale_hours ??
+        process.env.BRIDGE_TURO_NOTIFICATION_STALE_HOURS,
+      DEFAULT_BRIDGE_ALERT_SETTINGS.turoNotificationStaleHours,
+      1,
+      168
+    ),
+  };
+}
 
 function normalizeDisplayTimestamp(value, fallback = null) {
   if (!value) return fallback;
@@ -297,6 +333,7 @@ async function collectNewTripBookedAlerts() {
 }
 
 async function collectBridgeHeartbeatAlerts() {
+  const bridgeSettings = await getBridgeAlertSettings();
   const { rows } = await pool.query(`
     SELECT MAX(received_at) AS last_seen
     FROM notification_events
@@ -305,7 +342,7 @@ async function collectBridgeHeartbeatAlerts() {
   `);
   const lastSeen = rows[0]?.last_seen;
   const lastSeenMs = lastSeen ? new Date(lastSeen).getTime() : NaN;
-  const staleMinutes = Number(process.env.BRIDGE_HEARTBEAT_STALE_MINUTES || 25);
+  const staleMinutes = bridgeSettings.heartbeatStaleMinutes;
   const staleMs = staleMinutes * 60 * 1000;
 
   if (Number.isFinite(lastSeenMs) && Date.now() - lastSeenMs <= staleMs) {
@@ -329,6 +366,7 @@ async function collectBridgeHeartbeatAlerts() {
 }
 
 async function collectBridgeTuroNotificationAlerts() {
+  const bridgeSettings = await getBridgeAlertSettings();
   const { rows } = await pool.query(`
     WITH latest AS (
       SELECT
@@ -367,12 +405,8 @@ async function collectBridgeTuroNotificationAlerts() {
   const lastTuroNotificationMs = lastTuroNotificationAt
     ? new Date(lastTuroNotificationAt).getTime()
     : NaN;
-  const heartbeatFreshMinutes = Number(
-    process.env.BRIDGE_HEARTBEAT_STALE_MINUTES || 25
-  );
-  const notificationStaleHours = Number(
-    process.env.BRIDGE_TURO_NOTIFICATION_STALE_HOURS || 12
-  );
+  const heartbeatFreshMinutes = bridgeSettings.heartbeatStaleMinutes;
+  const notificationStaleHours = bridgeSettings.turoNotificationStaleHours;
 
   if (
     !Number.isFinite(lastHeartbeatMs) ||
@@ -388,12 +422,30 @@ async function collectBridgeTuroNotificationAlerts() {
     return [];
   }
 
-  const hourBucket = new Date();
-  hourBucket.setMinutes(0, 0, 0);
+  const alreadySent = await pool.query(
+    `
+      SELECT 1
+      FROM public.fleet_alert_deliveries
+      WHERE alert_type = 'bridge_turo_notifications_stale'
+        AND sent_at > COALESCE($1::timestamptz, '-infinity'::timestamptz)
+      LIMIT 1
+    `,
+    [lastTuroNotificationAt || null]
+  );
+
+  if (alreadySent.rowCount > 0) {
+    return [];
+  }
+
+  const staleSince = Number.isFinite(lastTuroNotificationMs)
+    ? new Date(lastTuroNotificationMs + notificationStaleHours * 60 * 60 * 1000)
+    : null;
 
   return [
     {
-      alertKey: `bridge-turo-notifications-stale:${hourBucket.toISOString()}`,
+      alertKey: `bridge-turo-notifications-stale:${
+        lastTuroNotificationAt ? new Date(lastTuroNotificationAt).toISOString() : "never"
+      }:${notificationStaleHours}h`,
       alertType: "bridge_turo_notifications_stale",
       severity: "urgent",
       body: `Denmark: Android bridge heartbeat is fresh, but no Turo notifications have arrived since ${
@@ -403,6 +455,7 @@ async function collectBridgeTuroNotificationAlerts() {
         lastHeartbeatAt,
         lastTuroNotificationAt,
         notificationStaleHours,
+        staleSince,
       },
     },
   ];
@@ -506,14 +559,57 @@ async function collectOverdueReturnAlerts() {
       t.reservation_id,
       t.vehicle_name,
       v.nickname AS vehicle_nickname,
+      v.vin AS vehicle_vin,
       t.guest_name,
       t.trip_end,
       t.workflow_stage,
-      t.status
+      t.status,
+      latest.service_name,
+      latest.latitude,
+      latest.longitude,
+      latest.vehicle_last_updated,
+      latest.location_last_updated,
+      latest.captured_at
     FROM trips t
     LEFT JOIN vehicles v
       ON t.turo_vehicle_id IS NOT NULL
       AND v.turo_vehicle_id = t.turo_vehicle_id
+    LEFT JOIN LATERAL (
+      SELECT
+        s.service_name,
+        s.latitude,
+        s.longitude,
+        s.vehicle_last_updated,
+        s.location_last_updated,
+        s.captured_at
+      FROM vehicle_telemetry_snapshots s
+      WHERE s.latitude IS NOT NULL
+        AND s.longitude IS NOT NULL
+        AND (
+          s.captured_at >= t.trip_end - INTERVAL '6 hours'
+          OR COALESCE(s.location_last_updated, s.vehicle_last_updated) >= t.trip_end - INTERVAL '6 hours'
+        )
+        AND (
+          (
+            v.vin IS NOT NULL
+            AND s.vin IS NOT NULL
+            AND LOWER(s.vin) = LOWER(v.vin)
+          )
+          OR (
+            v.nickname IS NOT NULL
+            AND s.nickname IS NOT NULL
+            AND LOWER(s.nickname) = LOWER(v.nickname)
+          )
+          OR (
+            t.vehicle_name IS NOT NULL
+            AND s.nickname IS NOT NULL
+            AND LOWER(s.nickname) = LOWER(t.vehicle_name)
+          )
+        )
+      ORDER BY COALESCE(s.captured_at, s.location_last_updated, s.vehicle_last_updated) DESC NULLS LAST,
+        s.id DESC
+      LIMIT 1
+    ) latest ON true
     WHERE t.trip_end < NOW() - INTERVAL '30 minutes'
       AND t.trip_end >= NOW() - INTERVAL '24 hours'
       AND COALESCE(t.closed_out, false) = false
@@ -528,19 +624,32 @@ async function collectOverdueReturnAlerts() {
     LIMIT 10
   `);
 
-  return rows.map((row) => {
-    const vehicle = row.vehicle_nickname || row.vehicle_name || "vehicle";
-    const guest = row.guest_name || "guest";
-    return {
-      alertKey: `return-overdue:${row.id}`,
-      alertType: "return_overdue",
-      severity: "urgent",
-      body: `Denmark: ${vehicle} return is overdue from ${guest}. Due ${formatChicago(
-        row.trip_end
-      )}.`,
-      details: row,
-    };
-  });
+  const parking = getParkingSpotConfig();
+
+  return rows
+    .map((row) => {
+      if (parking.enabled) {
+        const lat = toNumber(row.latitude);
+        const lon = toNumber(row.longitude);
+        if (lat != null && lon != null) {
+          const milesAway = distanceMiles(lat, lon, parking.lat, parking.lon);
+          if (milesAway <= parking.radiusMiles) return null;
+        }
+      }
+
+      const vehicle = row.vehicle_nickname || row.vehicle_name || "vehicle";
+      const guest = row.guest_name || "guest";
+      return {
+        alertKey: `return-overdue:${row.id}`,
+        alertType: "return_overdue",
+        severity: "urgent",
+        body: `Denmark: ${vehicle} return is overdue from ${guest}. Due ${formatChicago(
+          row.trip_end
+        )}.`,
+        details: row,
+      };
+    })
+    .filter(Boolean);
 }
 
 async function collectReturnedToParkingSpotAlerts() {
@@ -595,8 +704,9 @@ async function collectReturnedToParkingSpotAlerts() {
       WHERE s.latitude IS NOT NULL
         AND s.longitude IS NOT NULL
         AND (
-          COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at)
-        ) >= t.trip_end - INTERVAL '6 hours'
+          s.captured_at >= t.trip_end - INTERVAL '6 hours'
+          OR COALESCE(s.location_last_updated, s.vehicle_last_updated) >= t.trip_end - INTERVAL '6 hours'
+        )
         AND (
           (
             t.vehicle_vin IS NOT NULL
@@ -614,7 +724,7 @@ async function collectReturnedToParkingSpotAlerts() {
             AND LOWER(s.nickname) = LOWER(t.vehicle_name)
           )
         )
-      ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
+      ORDER BY COALESCE(s.captured_at, s.location_last_updated, s.vehicle_last_updated) DESC NULLS LAST,
         s.id DESC
       LIMIT 1
     ) latest ON true

@@ -41,6 +41,171 @@ function parseSubject(subject) {
   return { type: "unknown" };
 }
 
+function toMoneyNumber(value) {
+  if (value == null || value === "") return null;
+  const number = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+}
+
+function roundMoney(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+}
+
+function moneyDelta(actual, expected) {
+  const left = toMoneyNumber(actual);
+  const right = toMoneyNumber(expected);
+  if (left == null || right == null) return null;
+  return roundMoney(left - right);
+}
+
+function extractInvoiceAmount(text, label) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`(?:^|\\n)\\s*${escapedLabel}\\s*-\\s*\\$([0-9,]+(?:\\.\\d{2})?)`, "i"),
+    new RegExp(`(?:^|\\n)\\s*${escapedLabel}\\s*\\n\\s*\\$([0-9,]+(?:\\.\\d{2})?)`, "i"),
+  ];
+
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    const amount = toMoneyNumber(match?.[1]);
+    if (amount != null) return amount;
+  }
+
+  return null;
+}
+
+function buildReimbursementInvoiceSummary(row) {
+  const type = String(row.message_type || "").toLowerCase();
+  const text = String(row.normalized_text_body || "");
+  const subject = String(row.subject || "");
+
+  if (
+    type !== "reimbursement_invoice" &&
+    !/reimbursement invoice/i.test(subject) &&
+    !/Total charge/i.test(text)
+  ) {
+    return null;
+  }
+
+  const tolls = extractInvoiceAmount(text, "Tolls");
+  const refueling = extractInvoiceAmount(text, "Refueling");
+  const refuelingFee = extractInvoiceAmount(text, "Refueling convenience fee");
+  const totalCharge = extractInvoiceAmount(text, "Total charge");
+  const fuelTotal = roundMoney((refueling || 0) + (refuelingFee || 0));
+  const lineItemTotal = roundMoney(
+    (tolls || 0) + (refueling || 0) + (refuelingFee || 0)
+  );
+  const hasKnownInvoiceLineItem =
+    tolls != null || refueling != null || refuelingFee != null;
+  const expectedTolls =
+    tolls == null
+      ? null
+      : toMoneyNumber(row.trip_record_toll_charged_total) ??
+        toMoneyNumber(row.trip_record_toll_total);
+  const expectedFuel =
+    refueling == null && refuelingFee == null
+      ? null
+      : toMoneyNumber(row.trip_record_fuel_reimbursement_total);
+  const expectedTotal =
+    expectedTolls != null || expectedFuel != null
+      ? roundMoney((expectedTolls || 0) + (expectedFuel || 0))
+      : null;
+  const discrepancies = [];
+  const notes = [];
+
+  const totalLineDelta = moneyDelta(totalCharge, lineItemTotal);
+  if (
+    hasKnownInvoiceLineItem &&
+    totalLineDelta != null &&
+    Math.abs(totalLineDelta) >= 0.01
+  ) {
+    discrepancies.push({
+      field: "total_charge",
+      label: "Total charge",
+      invoice: totalCharge,
+      expected: lineItemTotal,
+      delta: totalLineDelta,
+      source: "invoice line items",
+    });
+  }
+
+  const tollDelta = moneyDelta(tolls, expectedTolls);
+  if (tollDelta != null && Math.abs(tollDelta) >= 0.01) {
+    discrepancies.push({
+      field: "tolls",
+      label: "Tolls",
+      invoice: tolls,
+      expected: expectedTolls,
+      delta: tollDelta,
+      source: row.trip_record_toll_charged_total != null
+        ? "trip charged tolls"
+        : "trip toll total",
+    });
+  }
+
+  const fuelDelta = moneyDelta(fuelTotal, expectedFuel);
+  if (fuelDelta != null && Math.abs(fuelDelta) >= 0.01) {
+    discrepancies.push({
+      field: "fuel",
+      label: "Fuel",
+      invoice: fuelTotal,
+      expected: expectedFuel,
+      delta: fuelDelta,
+      source: "trip fuel reimbursement",
+    });
+  }
+
+  const tripTotalDelta = moneyDelta(totalCharge, expectedTotal);
+  if (tripTotalDelta != null && Math.abs(tripTotalDelta) >= 0.01) {
+    discrepancies.push({
+      field: "invoice_total",
+      label: "Invoice total",
+      invoice: totalCharge,
+      expected: expectedTotal,
+      delta: tripTotalDelta,
+      source: "trip charged tolls + fuel",
+    });
+  }
+
+  const attributedTolls = toMoneyNumber(row.trip_record_toll_total);
+  const chargedTolls = toMoneyNumber(row.trip_record_toll_charged_total);
+  const attributedDelta = moneyDelta(attributedTolls, chargedTolls);
+  if (attributedDelta != null && Math.abs(attributedDelta) >= 0.01) {
+    notes.push({
+      field: "attributed_tolls",
+      label: "Attributed tolls",
+      attributed: attributedTolls,
+      charged: chargedTolls,
+      delta: attributedDelta,
+      toll_count: row.trip_record_toll_count == null
+        ? null
+        : Number(row.trip_record_toll_count),
+    });
+  }
+
+  return {
+    tolls,
+    refueling,
+    refueling_convenience_fee: refuelingFee,
+    fuel_total: fuelTotal,
+    line_item_total: lineItemTotal,
+    total_charge: totalCharge,
+    expected_tolls: expectedTolls,
+    expected_fuel: expectedFuel,
+    expected_total: expectedTotal,
+    trip_toll_total: attributedTolls,
+    trip_toll_charged_total: chargedTolls,
+    trip_toll_count: row.trip_record_toll_count == null
+      ? null
+      : Number(row.trip_record_toll_count),
+    trip_toll_review_status: row.trip_record_toll_review_status || null,
+    discrepancies,
+    notes,
+    has_discrepancy: discrepancies.length > 0,
+  };
+}
+
 const OPEN_MAINTENANCE_TASK_STATUSES = [
   "open",
   "scheduled",
@@ -791,6 +956,13 @@ function compareQueueItems(a, b) {
 
 function mapMessageRow(row) {
   const isBookingTask = isActionableBookingMessage(row);
+  const reimbursementInvoice = buildReimbursementInvoiceSummary(row);
+  const newTotalEarnings =
+    row.new_total_earnings == null ? null : Number(row.new_total_earnings);
+  const priorTripAmount =
+    row.prior_trip_amount == null ? null : Number(row.prior_trip_amount);
+  const earningsDelta =
+    row.earnings_delta == null ? null : Number(row.earnings_delta);
 
   return {
     id: row.id,
@@ -800,6 +972,10 @@ function mapMessageRow(row) {
     timestamp: row.message_timestamp,
     notification_created_at: row.created_at || row.message_timestamp,
     amount: row.amount,
+    new_total_earnings: Number.isFinite(newTotalEarnings) ? newTotalEarnings : null,
+    prior_trip_amount: Number.isFinite(priorTripAmount) ? priorTripAmount : null,
+    additional_earnings: Number.isFinite(earningsDelta) ? earningsDelta : null,
+    earnings_delta: Number.isFinite(earningsDelta) ? earningsDelta : null,
     type: row.message_type,
     guest_message: row.guest_message,
     guest_name: row.guest_name,
@@ -820,6 +996,9 @@ function mapMessageRow(row) {
     trip_record_start: row.trip_record_start,
     trip_record_end: row.trip_record_end,
     trip_record_amount: row.trip_record_amount,
+    reimbursement_invoice: reimbursementInvoice,
+    reimbursement_invoice_has_discrepancy:
+      reimbursementInvoice?.has_discrepancy === true,
     trip_record_mileage_included: row.trip_record_mileage_included,
     trip_record_reservation_id: row.trip_record_reservation_id,
     pickup_location: row.pickup_location,
@@ -1318,7 +1497,17 @@ router.get("/stats", async (req, res) => {
             'stale',
               CASE
                 WHEN hb.received_at IS NULL THEN TRUE
-                ELSE hb.received_at < NOW() - INTERVAL '25 minutes'
+                ELSE hb.received_at < NOW() - (
+                  COALESCE(
+                    (
+                      SELECT (settings.value->>'heartbeatStaleMinutes')::numeric
+                      FROM app_settings settings
+                      WHERE settings.key = 'alerts.bridge'
+                      LIMIT 1
+                    ),
+                    25
+                  ) * INTERVAL '1 minute'
+                )
               END
           )
           FROM notification_events hb
@@ -1343,7 +1532,17 @@ router.get("/stats", async (req, res) => {
             'stale',
               CASE
                 WHEN ne.received_at IS NULL THEN TRUE
-                ELSE ne.received_at < NOW() - INTERVAL '12 hours'
+                ELSE ne.received_at < NOW() - (
+                  COALESCE(
+                    (
+                      SELECT (settings.value->>'turoNotificationStaleHours')::numeric
+                      FROM app_settings settings
+                      WHERE settings.key = 'alerts.bridge'
+                      LIMIT 1
+                    ),
+                    12
+                  ) * INTERVAL '1 hour'
+                )
               END
           )
           FROM notification_events ne
@@ -1595,6 +1794,14 @@ router.get("/", async (req, res) => {
         trip_record_start,
         trip_record_end,
         trip_record_amount,
+        trip_record_fuel_reimbursement_total,
+        trip_record_toll_count,
+        trip_record_toll_total,
+        trip_record_toll_charged_total,
+        trip_record_toll_review_status,
+        new_total_earnings,
+        prior_trip_amount,
+        earnings_delta,
         trip_record_mileage_included,
         trip_record_reservation_id,
         normalized_text_body,
@@ -1635,6 +1842,19 @@ router.get("/", async (req, res) => {
           t.trip_start AS trip_record_start,
           t.trip_end AS trip_record_end,
           t.amount AS trip_record_amount,
+          t.fuel_reimbursement_total AS trip_record_fuel_reimbursement_total,
+          t.toll_count AS trip_record_toll_count,
+          t.toll_total AS trip_record_toll_total,
+          t.toll_charged_total AS trip_record_toll_charged_total,
+          t.toll_review_status AS trip_record_toll_review_status,
+          earnings.new_total_earnings,
+          prior_trip.amount AS prior_trip_amount,
+          CASE
+            WHEN earnings.new_total_earnings IS NOT NULL
+             AND prior_trip.amount IS NOT NULL
+            THEN earnings.new_total_earnings - prior_trip.amount
+            ELSE NULL
+          END AS earnings_delta,
           t.mileage_included AS trip_record_mileage_included,
           t.reservation_id AS trip_record_reservation_id,
           m.normalized_text_body,
@@ -1654,6 +1874,32 @@ router.get("/", async (req, res) => {
             AND t.reservation_id IS NOT NULL
             AND m.reservation_id = t.reservation_id
           )
+        LEFT JOIN LATERAL (
+          SELECT NULLIF(
+            substring(
+              COALESCE(m.normalized_text_body, '')
+              from 'Your new total earnings will be \$([0-9,]+(?:\.[0-9]{2})?)'
+            ),
+            ''
+          )::numeric AS new_total_earnings
+        ) earnings ON true
+        LEFT JOIN LATERAL (
+          SELECT previous.amount
+          FROM messages previous
+          WHERE previous.reservation_id = m.reservation_id
+            AND previous.id <> m.id
+            AND previous.amount IS NOT NULL
+            AND previous.message_type IN ('trip_booked', 'trip_changed')
+            AND (
+              previous.created_at < m.created_at
+              OR (
+                previous.created_at = m.created_at
+                AND previous.id < m.id
+              )
+            )
+          ORDER BY previous.created_at DESC, previous.id DESC
+          LIMIT 1
+        ) prior_trip ON true
         LEFT JOIN vehicles v
           ON (
             t.turo_vehicle_id IS NOT NULL
@@ -1817,6 +2063,19 @@ router.get("/", async (req, res) => {
         t.trip_start AS trip_record_start,
         t.trip_end AS trip_record_end,
         t.amount AS trip_record_amount,
+        t.fuel_reimbursement_total AS trip_record_fuel_reimbursement_total,
+        t.toll_count AS trip_record_toll_count,
+        t.toll_total AS trip_record_toll_total,
+        t.toll_charged_total AS trip_record_toll_charged_total,
+        t.toll_review_status AS trip_record_toll_review_status,
+        earnings.new_total_earnings,
+        prior_trip.amount AS prior_trip_amount,
+        CASE
+          WHEN earnings.new_total_earnings IS NOT NULL
+           AND prior_trip.amount IS NOT NULL
+          THEN earnings.new_total_earnings - prior_trip.amount
+          ELSE NULL
+        END AS earnings_delta,
         t.mileage_included AS trip_record_mileage_included,
         t.reservation_id AS trip_record_reservation_id,
         m.normalized_text_body,
@@ -1831,6 +2090,32 @@ router.get("/", async (req, res) => {
       FROM messages m
       LEFT JOIN trips t
         ON t.id = m.trip_id
+      LEFT JOIN LATERAL (
+        SELECT NULLIF(
+          substring(
+            COALESCE(m.normalized_text_body, '')
+            from 'Your new total earnings will be \$([0-9,]+(?:\.[0-9]{2})?)'
+          ),
+          ''
+        )::numeric AS new_total_earnings
+      ) earnings ON true
+      LEFT JOIN LATERAL (
+        SELECT previous.amount
+        FROM messages previous
+        WHERE previous.reservation_id = m.reservation_id
+          AND previous.id <> m.id
+          AND previous.amount IS NOT NULL
+          AND previous.message_type IN ('trip_booked', 'trip_changed')
+          AND (
+            previous.created_at < m.created_at
+            OR (
+              previous.created_at = m.created_at
+              AND previous.id < m.id
+            )
+          )
+        ORDER BY previous.created_at DESC, previous.id DESC
+        LIMIT 1
+      ) prior_trip ON true
       LEFT JOIN vehicles v
         ON t.turo_vehicle_id IS NOT NULL
         AND v.turo_vehicle_id = t.turo_vehicle_id

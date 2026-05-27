@@ -51,6 +51,10 @@ const DEFAULT_SETTINGS = {
   "expenses.categories": {
     categories: DEFAULT_EXPENSE_CATEGORIES,
   },
+  "alerts.bridge": {
+    heartbeatStaleMinutes: 25,
+    turoNotificationStaleHours: 12,
+  },
 };
 
 function normalizeKey(value) {
@@ -101,6 +105,23 @@ function mergeSettings(key, value) {
 
     return {
       categories: categories.length ? categories : DEFAULT_EXPENSE_CATEGORIES,
+    };
+  }
+
+  if (key === "alerts.bridge") {
+    const defaults = defaultForKey(key);
+    const heartbeatStaleMinutes = Number(value.heartbeatStaleMinutes);
+    const turoNotificationStaleHours = Number(value.turoNotificationStaleHours);
+
+    return {
+      heartbeatStaleMinutes:
+        Number.isFinite(heartbeatStaleMinutes) && heartbeatStaleMinutes >= 5
+          ? Math.min(heartbeatStaleMinutes, 240)
+          : defaults.heartbeatStaleMinutes,
+      turoNotificationStaleHours:
+        Number.isFinite(turoNotificationStaleHours) && turoNotificationStaleHours >= 1
+          ? Math.min(turoNotificationStaleHours, 168)
+          : defaults.turoNotificationStaleHours,
     };
   }
 
