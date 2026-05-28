@@ -177,6 +177,30 @@ Notes:
 - Running-state display is intentionally freshness-gated because provider engine signals can arrive separately from location check-ins.
 - Not every notification, email, or toll event can be perfectly linked on first pass.
 
+## Help test and shape Denmark
+
+Denmark is at the stage where real operators can make it much better.
+
+If you run cars on Turo, manage a small fleet, build host-side tools, or just like working on messy real-world operations software, you are invited to test the app and help decide what it should become.
+
+Good ways to help:
+- try the app against a real or practice fleet workflow
+- report where the queue, messages, trip state, or metrics feel wrong
+- share examples of Turo emails, Android notifications, toll cases, reimbursement invoices, and telemetry edge cases that Denmark should understand better
+- help improve setup docs, migrations, deployment notes, and recovery playbooks
+- propose features that would save actual host time, not just look good in a demo
+- contribute code, tests, parsers, integrations, or UI cleanup
+
+This project may eventually become a hosted product, a self-hosted operator toolkit, a developer community around fleet automation, or some mix of those. The next step is not pretending that answer is obvious. The next step is getting more hands and more workflows into the loop.
+
+The Discord is the center of that loop:
+
+```text
+https://discord.gg/qBnMQm3X
+```
+
+Bring bugs, screenshots, awkward edge cases, feature ideas, or questions about running it locally. The most valuable feedback right now is specific: what broke, what was confusing, what saved time, and what would make Denmark worth trusting for more of your day.
+
 ## Install / run
 
 There are two supported ways to run Denmark:
@@ -546,7 +570,7 @@ Actively developed, actively used, and still being shaped around real fleet pain
 
 ## Contact
 
-Best way to reach the maintainer is Discord:
+Best way to reach the maintainer and the Denmark community is Discord:
 
 ```text
 https://discord.gg/qBnMQm3X

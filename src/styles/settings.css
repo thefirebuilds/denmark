@@ -10,6 +10,14 @@
   grid-area: details;
 }
 
+.settings-maintenance-stack {
+  grid-area: messages;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 16px;
+}
+
 .settings-section-list,
 .settings-form,
 .settings-vehicle-list,

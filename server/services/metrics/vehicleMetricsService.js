@@ -769,6 +769,9 @@ function projectPayoff({
   capitalBasis,
   capitalRecovered,
   capitalRemaining,
+  capitalBookedFuture,
+  capitalRemainingAfterBooked,
+  capitalBookedFutureLastTripEnd,
   tripIncome,
   tripCountOverlapping,
   startDate,
@@ -811,6 +814,32 @@ function projectPayoff({
     };
   }
 
+  const bookedFuture = toNumber(capitalBookedFuture);
+  const remainingAfterBooked = toNumber(capitalRemainingAfterBooked, capitalRemaining);
+  const bookedLastEnd = capitalBookedFutureLastTripEnd
+    ? new Date(capitalBookedFutureLastTripEnd)
+    : null;
+  const bookedLastEndValid =
+    bookedLastEnd && !Number.isNaN(bookedLastEnd.getTime()) ? bookedLastEnd : null;
+
+  if (bookedFuture > 0 && remainingAfterBooked <= 0 && bookedLastEndValid) {
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const projectedDays = Math.max(
+      1,
+      Math.ceil((bookedLastEndValid.getTime() - today.getTime()) / 86400000)
+    );
+
+    return {
+      capital_recovery_rate_monthly: roundMoney(lifetimeDailyRecovery * 30),
+      projected_recovery_rate_monthly: roundMoney(bookedFuture),
+      projected_payoff_days: projectedDays,
+      projected_payoff_date: bookedLastEndValid.toISOString(),
+      projected_payoff_status: "projected_booked",
+      payoff_confidence: "high",
+    };
+  }
+
   if (recentDailyRecovery > 0 && tripCountOverlapping >= 2) {
     chosenDailyRecovery = recentDailyRecovery;
     projectedPayoffStatus = "projected_recent";
@@ -834,13 +863,27 @@ function projectPayoff({
     };
   }
 
-  const projectedDays = Math.max(
+  const projectedRemaining =
+    bookedFuture > 0 ? Math.max(remainingAfterBooked, 0) : toNumber(capitalRemaining);
+  const paceDays = Math.max(
     1,
-    Math.ceil(toNumber(capitalRemaining) / chosenDailyRecovery)
+    Math.ceil(projectedRemaining / chosenDailyRecovery)
   );
 
   const anchor = new Date();
   anchor.setHours(12, 0, 0, 0);
+  let projectedDays = paceDays;
+
+  if (bookedFuture > 0 && bookedLastEndValid && remainingAfterBooked > 0) {
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const bookedDays = Math.max(
+      0,
+      Math.ceil((bookedLastEndValid.getTime() - today.getTime()) / 86400000)
+    );
+    projectedDays = bookedDays + paceDays;
+  }
+
   anchor.setDate(anchor.getDate() + projectedDays);
 
   let payoffConfidence = "medium";
@@ -943,7 +986,21 @@ async function getVehicleMetrics(rangeKey = "30d") {
         onboarding_expenses: roundMoney(toNumber(capital.onboarding_expenses)),
         capital_basis: roundMoney(toNumber(capital.capital_basis)),
         capital_recovered: roundMoney(toNumber(capital.capital_recovered)),
+        capital_recovered_trip_count: Number(
+          capital.capital_recovered_trip_count || 0
+        ),
+        capital_booked_future: roundMoney(toNumber(capital.capital_booked_future)),
+        capital_booked_future_trip_count: Number(
+          capital.capital_booked_future_trip_count || 0
+        ),
+        capital_booked_future_first_trip_start:
+          capital.capital_booked_future_first_trip_start || null,
+        capital_booked_future_last_trip_end:
+          capital.capital_booked_future_last_trip_end || null,
         capital_remaining: roundMoney(toNumber(capital.capital_remaining)),
+        capital_remaining_after_booked: roundMoney(
+          toNumber(capital.capital_remaining_after_booked)
+        ),
         capital_recovery_pct: roundNumber(
           toNumber(capital.capital_recovery_pct),
           1
@@ -1259,7 +1316,11 @@ async function getVehicleMetrics(rangeKey = "30d") {
       metrics.onboarding_expenses = roundMoney(metrics.onboarding_expenses);
       metrics.capital_basis = roundMoney(metrics.capital_basis);
       metrics.capital_recovered = roundMoney(metrics.capital_recovered);
+      metrics.capital_booked_future = roundMoney(metrics.capital_booked_future);
       metrics.capital_remaining = roundMoney(metrics.capital_remaining);
+      metrics.capital_remaining_after_booked = roundMoney(
+        metrics.capital_remaining_after_booked
+      );
       metrics.capital_recovery_pct = roundNumber(
         metrics.capital_recovery_pct,
         1
@@ -1350,6 +1411,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
         capitalBasis: metrics.capital_basis,
         capitalRecovered: metrics.capital_recovered,
         capitalRemaining: metrics.capital_remaining,
+        capitalBookedFuture: metrics.capital_booked_future,
+        capitalRemainingAfterBooked: metrics.capital_remaining_after_booked,
+        capitalBookedFutureLastTripEnd: metrics.capital_booked_future_last_trip_end,
         tripIncome: metrics.trip_income,
         tripCountOverlapping: metrics.trip_count_overlapping,
         startDate,

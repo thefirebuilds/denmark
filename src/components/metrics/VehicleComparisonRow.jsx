@@ -90,6 +90,16 @@ function getRecoveryPercentValue(vehicle) {
   return Math.max(0, Math.min(1, recovered / basis));
 }
 
+function getBookedRecoveryPercentValue(vehicle) {
+  const basis = Number(vehicle?.capital_basis ?? 0);
+  if (basis <= 0) return getRecoveryPercentValue(vehicle);
+
+  const recovered = Number(vehicle?.capital_recovered ?? 0);
+  const booked = Number(vehicle?.capital_booked_future ?? 0);
+
+  return Math.max(0, Math.min(1, (recovered + booked) / basis));
+}
+
 function formatRecoveryPercent(vehicle) {
   return `${Math.round(getRecoveryPercentValue(vehicle) * 100)}%`;
 }
@@ -148,6 +158,7 @@ function getProjectedStatusLabel(status) {
   const value = String(status || "").toLowerCase();
   if (value === "projected_recent") return "Recent pace";
   if (value === "projected_blended") return "Blended pace";
+  if (value === "projected_booked") return "Booked payoff";
   if (value === "paid_off") return "Paid off";
   if (value === "insufficient_data") return "Insufficient data";
   return value ? value.replaceAll("_", " ") : "Unknown";
@@ -204,6 +215,10 @@ export default function VehicleComparisonRow({
     Number(vehicle?.capital_remaining ?? 0) > 0;
 
   const recoveryPercentValue = getRecoveryPercentValue(vehicle);
+  const bookedRecoveryPercentValue = getBookedRecoveryPercentValue(vehicle);
+  const hasBookedFutureRecovery =
+    Number(vehicle?.capital_booked_future || 0) > 0 &&
+    bookedRecoveryPercentValue > recoveryPercentValue;
   const payoffTimelineProgress = getTimelineProgress(vehicle);
   const payoffPaceTone = getPayoffPaceTone(
     recoveryPercentValue,
@@ -546,6 +561,15 @@ export default function VehicleComparisonRow({
 
                   <div className="vehicle-compare__payoff-track-wrap">
                     <div className={`vehicle-compare__payoff-track vehicle-compare__payoff-track--${payoffPaceTone}`}>
+                      {hasBookedFutureRecovery ? (
+                        <div
+                          className="vehicle-compare__payoff-track-fill vehicle-compare__payoff-track-fill--booked"
+                          style={{
+                            width: `${Math.round(bookedRecoveryPercentValue * 100)}%`,
+                          }}
+                          title="Recovered plus booked future earnings"
+                        />
+                      ) : null}
                       <div
                         className="vehicle-compare__payoff-track-fill"
                         style={{
@@ -600,6 +624,11 @@ export default function VehicleComparisonRow({
                     <div className="vehicle-compare__payoff-chip">
                       {formatCurrencyCompact(vehicle?.capital_recovery_rate_monthly)}/mo recovered
                     </div>
+                    {Number(vehicle?.capital_booked_future || 0) > 0 ? (
+                      <div className="vehicle-compare__payoff-chip">
+                        {formatCurrencyCompact(vehicle.capital_booked_future)} booked
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -624,6 +653,17 @@ export default function VehicleComparisonRow({
                       {formatCurrency(vehicle?.capital_remaining)}
                     </div>
                   </div>
+
+                  {Number(vehicle?.capital_booked_future || 0) > 0 ? (
+                    <div className="vehicle-compare__detail-stat">
+                      <div className="vehicle-compare__detail-label">
+                        Booked Future
+                      </div>
+                      <div className="vehicle-compare__detail-value">
+                        {formatCurrency(vehicle?.capital_booked_future)}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="vehicle-compare__detail-stat">
                     <div className="vehicle-compare__detail-label">Recovery %</div>

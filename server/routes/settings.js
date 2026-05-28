@@ -5,6 +5,11 @@
 
 const express = require("express");
 const pool = require("../db");
+const { getPublicAvailability } = require("../services/publicAvailability");
+const {
+  getPublicAvailabilityExportConfig,
+  pushPublicAvailabilitySnapshot,
+} = require("../services/pushPublicAvailability");
 
 const router = express.Router();
 
@@ -146,6 +151,52 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("GET /api/settings failed:", err);
     res.status(500).json({ error: "Failed to load settings" });
+  }
+});
+
+router.get("/public-availability-export", async (req, res) => {
+  try {
+    const config = getPublicAvailabilityExportConfig();
+    const vehicles = await getPublicAvailability();
+    const sampleVehicle = vehicles[0] || null;
+
+    res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      vehicleCount: vehicles.length,
+      ...config,
+      sampleVehicle,
+    });
+  } catch (err) {
+    console.error("GET /api/settings/public-availability-export failed:", err);
+    res.status(500).json({ error: "Failed to load public availability export info" });
+  }
+});
+
+router.post("/public-availability-export/push", async (req, res) => {
+  try {
+    const config = getPublicAvailabilityExportConfig();
+
+    if (!config.push.enabled) {
+      return res.status(400).json({
+        error: "Missing one or more PUBLIC_AVAILABILITY_* environment variables",
+        configured: config.push.configured,
+      });
+    }
+
+    const result = await pushPublicAvailabilitySnapshot();
+
+    res.json({
+      ok: true,
+      pushedAt: new Date().toISOString(),
+      result,
+    });
+  } catch (err) {
+    console.error("POST /api/settings/public-availability-export/push failed:", err);
+    res.status(502).json({
+      error: err.message || "Failed to push public availability export",
+      details: err.details || null,
+    });
   }
 });
 

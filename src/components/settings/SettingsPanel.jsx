@@ -212,13 +212,11 @@ function toPayloadVehicle(form) {
 function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
-    { key: "alerts", title: "Alerts", sub: "Bridge warning timing" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
-    { key: "database", title: "Database", sub: "Backup and restore" },
-    { key: "telemetry", title: "Telemetry", sub: "Coming next" },
+    { key: "website", title: "Website", sub: "Public availability export" },
+    { key: "maintenance", title: "Maintenance", sub: "Alerts, backups, telemetry" },
     { key: "logs", title: "Logs", sub: "Server console tail" },
-    { key: "maintenance", title: "Maintenance", sub: "Template defaults" },
     { key: "integrations", title: "Integrations", sub: "External systems" },
   ];
 
@@ -2111,6 +2109,205 @@ function IntegrationsSettingsPanel() {
   );
 }
 
+function PublicExportSettingsPanel() {
+  const [exportInfo, setExportInfo] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadExportInfo(options = {}) {
+    try {
+      setLoading(true);
+      if (!options.keepMessage) {
+        setMessage("");
+      }
+
+      const res = await fetch(`${API_BASE}/api/settings/public-availability-export`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load website export info");
+      }
+
+      setExportInfo(json);
+    } catch (err) {
+      setMessage(err.message || "Failed to load website export info");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function pushExportNow() {
+    try {
+      setPushing(true);
+      setMessage("");
+
+      const res = await fetch(
+        `${API_BASE}/api/settings/public-availability-export/push`,
+        {
+          method: "POST",
+        }
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const details = json?.details;
+        const detailText = details?.status
+          ? ` (${details.status}${
+              details.bodyPreview ? `: ${details.bodyPreview}` : ""
+            })`
+          : "";
+        throw new Error(
+          `${json?.error || "Failed to push website export"}${detailText}`
+        );
+      }
+
+      setMessage(
+        `Pushed availability snapshot at ${new Date(
+          json.pushedAt || Date.now()
+        ).toLocaleString()}.`
+      );
+      await loadExportInfo({ keepMessage: true });
+    } catch (err) {
+      setMessage(err.message || "Failed to push website export");
+    } finally {
+      setPushing(false);
+    }
+  }
+
+  useEffect(() => {
+    loadExportInfo();
+  }, []);
+
+  const pushEnabled = Boolean(exportInfo?.push?.enabled);
+  const pullEndpoint = exportInfo?.pull?.endpoint || "/api/public/availability";
+  const cadence = Array.isArray(exportInfo?.cadence) ? exportInfo.cadence : [];
+  const vehicleShape = exportInfo?.vehicleShape || {};
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Website</h2>
+          <span>public availability export</span>
+        </div>
+        <div className="settings-form-actions">
+          <button
+            type="button"
+            className="settings-action-btn"
+            disabled={loading || pushing || !pushEnabled}
+            onClick={pushExportNow}
+          >
+            {pushing ? "Pushing..." : "Push Now"}
+          </button>
+          <button
+            type="button"
+            className="settings-action-btn secondary"
+            disabled={loading || pushing}
+            onClick={loadExportInfo}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">How the website gets data</div>
+          <div className="settings-empty-state">
+            Denmark builds the availability JSON from the local database. A
+            website can pull the live endpoint, and Denmark can also push the
+            same snapshot to an external ingest URL when availability changes.
+          </div>
+
+          <div className="settings-fleet-summary">
+            <div>
+              <strong>{loading && !exportInfo ? "..." : exportInfo?.vehicleCount ?? 0}</strong>
+              <span>vehicles exported</span>
+            </div>
+            <div>
+              <strong>{pushEnabled ? "On" : "Off"}</strong>
+              <span>push ingest</span>
+            </div>
+            <div>
+              <strong>Live</strong>
+              <span>pull endpoint</span>
+            </div>
+          </div>
+
+          {message ? <span className="settings-message">{message}</span> : null}
+
+          <div className="settings-vehicle-list">
+            <div className="settings-vehicle-row">
+              <strong>Pull URL</strong>
+              <span>{pullEndpoint}</span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Pull shape</strong>
+              <span>ok, updatedAt, vehicles[]</span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Push URL</strong>
+              <span>{exportInfo?.push?.ingestUrl || "Not configured"}</span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Push auth</strong>
+              <span>
+                {pushEnabled
+                  ? "Bearer token plus HMAC signature"
+                  : "Missing one or more PUBLIC_AVAILABILITY_* env vars"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">How often it updates</div>
+          <div className="settings-vehicle-list">
+            {cadence.length ? (
+              cadence.map((item) => (
+                <div
+                  key={`${item.mode}-${item.trigger}`}
+                  className="settings-vehicle-row"
+                >
+                  <strong>{item.trigger}</strong>
+                  <span>{item.mode}: {item.note}</span>
+                </div>
+              ))
+            ) : (
+              <div className="settings-empty-state">
+                No cadence details loaded yet.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Vehicle shape</div>
+          <pre className="settings-json-view">
+            {Object.keys(vehicleShape).length
+              ? JSON.stringify(vehicleShape, null, 2)
+              : loading
+                ? "Loading export shape..."
+                : "No export shape loaded."}
+          </pre>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Live sample</div>
+          <pre className="settings-json-view">
+            {exportInfo?.sampleVehicle
+              ? JSON.stringify(exportInfo.sampleVehicle, null, 2)
+              : loading
+                ? "Loading sample vehicle..."
+                : "No sample vehicle available."}
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TelemetrySettingsPanel() {
   const [dimoDebug, setDimoDebug] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2201,6 +2398,16 @@ function TelemetrySettingsPanel() {
         </div>
       </div>
     </section>
+  );
+}
+
+function MaintenanceSettingsPanel() {
+  return (
+    <div className="settings-maintenance-stack">
+      <AlertSettingsPanel />
+      <DatabaseSettingsPanel />
+      <TelemetrySettingsPanel />
+    </div>
   );
 }
 
@@ -2344,19 +2551,11 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
-    if (activeSection === "alerts") {
+    if (activeSection === "website") {
       return {
-        title: "Bridge alerts",
+        title: "Website export",
         body:
-          "The Turo notification warning only fires while the Android bridge heartbeat is still fresh. Denmark sends one SMS per stale episode, then waits for a new Turo notification before alerting again.",
-      };
-    }
-
-    if (activeSection === "database") {
-      return {
-        title: "Database safety",
-        body:
-          "Backups are full JSON snapshots of the local public schema. Restore is intentionally destructive: it clears current tables and reloads the backup.",
+          "The public site is fed by JSON from Denmark, not by direct database access. The pull endpoint is live JSON; the push path posts signed snapshots when availability-relevant records change.",
       };
     }
 
@@ -2376,11 +2575,11 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
-    if (activeSection === "telemetry") {
+    if (activeSection === "maintenance") {
       return {
-        title: "Telemetry debug",
+        title: "Maintenance ops",
         body:
-          "DIMO polling requires a vehicle to appear in both the DIMO shared vehicle response and Denmark's local fleet settings. The pollable list is that intersection.",
+          "Operational maintenance settings now collect bridge alert timing, database backup and restore, and DIMO telemetry debug output in one place.",
       };
     }
 
@@ -2427,18 +2626,16 @@ export default function SettingsPanel({
           settings={dispatchSettings}
           onSaved={onDispatchSettingsSaved}
         />
-      ) : activeSection === "alerts" ? (
-        <AlertSettingsPanel />
       ) : activeSection === "fleet" ? (
         <FleetSettingsPanel />
       ) : activeSection === "expenses" ? (
         <ExpenseSettingsPanel />
-      ) : activeSection === "database" ? (
-        <DatabaseSettingsPanel />
+      ) : activeSection === "website" ? (
+        <PublicExportSettingsPanel />
       ) : activeSection === "integrations" ? (
         <IntegrationsSettingsPanel />
-      ) : activeSection === "telemetry" ? (
-        <TelemetrySettingsPanel />
+      ) : activeSection === "maintenance" ? (
+        <MaintenanceSettingsPanel />
       ) : activeSection === "logs" ? (
         <ServerLogsSettingsPanel />
       ) : (

@@ -2406,6 +2406,21 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
+.vehicle-compare__payoff-track-fill--booked {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(250, 204, 21, 0.42) 0,
+      rgba(250, 204, 21, 0.42) 5px,
+      rgba(250, 204, 21, 0.2) 5px,
+      rgba(250, 204, 21, 0.2) 10px
+    ),
+    linear-gradient(90deg, rgba(180, 83, 9, 0.5), rgba(250, 204, 21, 0.38));
+  box-shadow:
+    0 0 12px rgba(250, 204, 21, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
 .vehicle-compare__payoff-track-marker {
   position: absolute;
   top: 50%;

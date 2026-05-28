@@ -3,7 +3,14 @@ const pool = require("../db");
 const LONG_TERM_DAYS = 28;
 const AVAILABILITY_WINDOW_DAYS = 90;
 const MIN_PUBLIC_BOOKING_GAP_HOURS = 48;
+const PUBLIC_ADVANCE_NOTICE_HOURS = Number(
+  process.env.PUBLIC_AVAILABILITY_ADVANCE_NOTICE_HOURS || 12
+);
 const PUBLIC_TIME_ZONE = "America/Chicago";
+const DAILY_RATE_LOOKBACK_DAYS = Number(
+  process.env.PUBLIC_AVAILABILITY_RATE_LOOKBACK_DAYS || 180
+);
+const PUBLIC_RATE_GUEST_PRICE_MULTIPLIER = 1.15;
 
 const VEHICLE_IMAGE_BY_NICKNAME = {
   geneva: "/images/geneva.jpg",
@@ -84,6 +91,73 @@ function addDays(date, days) {
 function diffDays(start, end) {
   if (!start || !end) return 0;
   return (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+}
+
+function getTripCalendarDays(trip) {
+  if (!trip?.start || !trip?.end) return 0;
+
+  const startKey = formatDateKey(trip.start);
+  const endKey = formatDateKey(trip.end);
+  if (!startKey || !endKey) return 0;
+
+  return getDateKeysBetweenInclusive(
+    parseDateKeyToUtcMidday(startKey),
+    parseDateKeyToUtcMidday(endKey)
+  ).length;
+}
+
+function percentile(sortedValues, percentileValue) {
+  if (!sortedValues.length) return null;
+  if (sortedValues.length === 1) return sortedValues[0];
+
+  const index = (sortedValues.length - 1) * percentileValue;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+
+  if (lower === upper) return sortedValues[lower];
+
+  const weight = index - lower;
+  return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
+}
+
+function getTypicalRateBand(rates) {
+  if (rates.length < 4) {
+    return {
+      bandRates: rates,
+      sampleSize: rates.length,
+      filteredOutlierCount: 0,
+      method: "full_sample",
+    };
+  }
+
+  const q1 = percentile(rates, 0.25);
+  const q3 = percentile(rates, 0.75);
+  const iqr = q3 - q1;
+  const lowerFence = iqr > 0 ? q1 - iqr * 1.5 : q1;
+  const upperFence = iqr > 0 ? q3 + iqr * 1.5 : q3;
+  const withoutOutliers = rates.filter(
+    (rate) => rate >= lowerFence && rate <= upperFence
+  );
+  const usableRates = withoutOutliers.length >= 3 ? withoutOutliers : rates;
+
+  if (usableRates.length < 5) {
+    return {
+      bandRates: usableRates,
+      sampleSize: usableRates.length,
+      filteredOutlierCount: rates.length - usableRates.length,
+      method: "iqr",
+    };
+  }
+
+  return {
+    bandRates: [
+      percentile(usableRates, 0.2),
+      percentile(usableRates, 0.8),
+    ].sort((a, b) => a - b),
+    sampleSize: usableRates.length,
+    filteredOutlierCount: rates.length - usableRates.length,
+    method: "iqr_middle_60",
+  };
 }
 
 function normalizeTrip(row) {
@@ -188,6 +262,59 @@ function buildVehiclePublicMetadata(vehicle) {
     displayName,
     imageUrl,
     imageAlt: imageUrl ? `${displayName} rental car` : null,
+  };
+}
+
+function getTypicalDailyRate(trips, now) {
+  const lookbackStart = new Date(
+    now.getTime() - DAILY_RATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
+  );
+  const rates = trips
+    .filter((trip) => {
+      if (!trip?.start || !trip?.end) return false;
+      if (trip.end > now) return false;
+      if (trip.end < lookbackStart) return false;
+      if (trip.canceledAt || trip.deletedAt) return false;
+      if (trip.status === "canceled" || trip.status === "cancelled") return false;
+      if (
+        trip.workflowStage === "canceled" ||
+        trip.workflowStage === "cancelled" ||
+        trip.workflowStage === "deleted"
+      ) {
+        return false;
+      }
+      return Number(trip.amount || 0) > 0;
+    })
+    .map((trip) => {
+      const days = getTripCalendarDays(trip);
+      if (!days) return null;
+      const rate = Number(trip.amount || 0) / days;
+      return Number.isFinite(rate) && rate > 0 ? rate : null;
+    })
+    .filter((rate) => rate != null)
+    .sort((a, b) => a - b);
+
+  if (!rates.length) return null;
+
+  const typicalBand = getTypicalRateBand(rates);
+  const low = Math.round(
+    typicalBand.bandRates[0] * PUBLIC_RATE_GUEST_PRICE_MULTIPLIER
+  );
+  const high = Math.round(
+    typicalBand.bandRates[typicalBand.bandRates.length - 1] *
+      PUBLIC_RATE_GUEST_PRICE_MULTIPLIER
+  );
+
+  return {
+    low,
+    high,
+    label: low === high ? `Typical rate: $${low}/day` : `Typical rate: $${low}-$${high}/day`,
+    sampleSize: typicalBand.sampleSize,
+    rawSampleSize: rates.length,
+    filteredOutlierCount: typicalBand.filteredOutlierCount,
+    lookbackDays: DAILY_RATE_LOOKBACK_DAYS,
+    method: typicalBand.method,
+    guestPriceMultiplier: PUBLIC_RATE_GUEST_PRICE_MULTIPLIER,
   };
 }
 
@@ -324,6 +451,18 @@ function buildAvailabilityCalendar(trips) {
   };
 }
 
+function getHoursBetween(start, end) {
+  if (!start || !end) return null;
+  return (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+}
+
+function getFirstAvailableDateAfter(calendar, date) {
+  const cutoffKey = formatDateKey(date);
+  if (!cutoffKey) return null;
+
+  return calendar.availableDates.find((key) => key > cutoffKey) || null;
+}
+
 function buildVehicleStatus(vehicle, trips, now) {
   const activeTrip = trips.find((trip) => isTripActiveNow(trip, now));
   const futureTrips = trips
@@ -331,7 +470,25 @@ function buildVehicleStatus(vehicle, trips, now) {
     .sort((a, b) => a.start - b.start);
 
   const calendar = buildAvailabilityCalendar(trips);
+  const typicalDailyRate = getTypicalDailyRate(trips, now);
   const nextAvailableDateKey = calendar.availableDates[0] || null;
+  const nextBookedTrip = futureTrips[0] || null;
+  const nextBookedStartKey = nextBookedTrip?.start
+    ? formatDateKey(nextBookedTrip.start)
+    : null;
+  const nextAvailabilityAfterBookingKey = nextBookedTrip?.end
+    ? getFirstAvailableDateAfter(calendar, nextBookedTrip.end)
+    : null;
+  const hoursUntilNextBooking = nextBookedTrip?.start
+    ? getHoursBetween(now, nextBookedTrip.start)
+    : null;
+  const hasShortPreBookingWindow =
+    hoursUntilNextBooking != null &&
+    hoursUntilNextBooking >= 0 &&
+    hoursUntilNextBooking < Math.max(
+      PUBLIC_ADVANCE_NOTICE_HOURS,
+      MIN_PUBLIC_BOOKING_GAP_HOURS
+    );
   const window = getDateWindow();
   const fullWindowUnavailableDates = getDateKeysBetweenInclusive(window.start, window.end);
 
@@ -351,6 +508,7 @@ function buildVehicleStatus(vehicle, trips, now) {
         },
       ],
       updatedAt: now.toISOString(),
+      typicalDailyRate,
     };
   }
 
@@ -370,6 +528,7 @@ function buildVehicleStatus(vehicle, trips, now) {
         },
       ],
       updatedAt: now.toISOString(),
+      typicalDailyRate,
     };
   }
 
@@ -385,22 +544,57 @@ function buildVehicleStatus(vehicle, trips, now) {
       unavailableDates: calendar.unavailableDates,
       unavailableRanges: calendar.unavailableRanges,
       updatedAt: now.toISOString(),
+      typicalDailyRate,
     };
   }
 
   if (calendar.availableDates.length) {
+    if (hasShortPreBookingWindow && nextBookedStartKey) {
+      return {
+        ...buildVehiclePublicMetadata(vehicle),
+        status: "available_until_next_booking",
+        label: `Next Booking: ${formatPublicDate(parseDateKeyToUtcMidday(nextBookedStartKey))}`,
+        nextAvailableDate: nextAvailabilityAfterBookingKey || nextAvailableDateKey,
+        nextAvailableLabel: nextAvailabilityAfterBookingKey
+          ? `Next Availability: ${formatPublicDate(
+              parseDateKeyToUtcMidday(nextAvailabilityAfterBookingKey)
+            )}`
+          : null,
+        availableDates: calendar.availableDates,
+        unavailableDates: calendar.unavailableDates,
+        unavailableRanges: calendar.unavailableRanges,
+        updatedAt: now.toISOString(),
+        nextBookedStart: nextBookedStartKey,
+        nextBookedLabel: `Next Booking: ${formatPublicDate(
+          parseDateKeyToUtcMidday(nextBookedStartKey)
+        )}`,
+        publicAdvanceNoticeHours: PUBLIC_ADVANCE_NOTICE_HOURS,
+        shortPreBookingWindow: true,
+        typicalDailyRate,
+      };
+    }
+
     return {
       ...buildVehiclePublicMetadata(vehicle),
       status: "available_now",
       label: "Available Now",
       nextAvailableDate: nextAvailableDateKey,
+      nextAvailableLabel: nextAvailableDateKey
+        ? `Next Availability: ${formatPublicDate(
+            parseDateKeyToUtcMidday(nextAvailableDateKey)
+          )}`
+        : null,
       availableDates: calendar.availableDates,
       unavailableDates: calendar.unavailableDates,
       unavailableRanges: calendar.unavailableRanges,
       updatedAt: now.toISOString(),
-      nextBookedStart: futureTrips[0]?.start
-        ? formatDateKey(futureTrips[0].start)
+      nextBookedStart: nextBookedStartKey,
+      nextBookedLabel: nextBookedStartKey
+        ? `Next Booking: ${formatPublicDate(parseDateKeyToUtcMidday(nextBookedStartKey))}`
         : null,
+      publicAdvanceNoticeHours: PUBLIC_ADVANCE_NOTICE_HOURS,
+      shortPreBookingWindow: false,
+      typicalDailyRate,
     };
   }
 
@@ -413,6 +607,7 @@ function buildVehicleStatus(vehicle, trips, now) {
     unavailableDates: calendar.unavailableDates,
     unavailableRanges: calendar.unavailableRanges,
     updatedAt: now.toISOString(),
+    typicalDailyRate,
   };
 }
 
@@ -445,6 +640,7 @@ async function getRelevantTrips() {
       workflow_stage,
       trip_start,
       trip_end,
+      amount,
       closed_out,
       closed_out_at,
       completed_at,
@@ -456,11 +652,12 @@ async function getRelevantTrips() {
       AND (
         trip_end >= NOW() - INTERVAL '7 days'
         OR trip_start >= NOW() - INTERVAL '7 days'
+        OR trip_end >= NOW() - ($1::int * INTERVAL '1 day')
       )
     ORDER BY trip_start ASC
   `;
 
-  const { rows } = await pool.query(sql);
+  const { rows } = await pool.query(sql, [DAILY_RATE_LOOKBACK_DAYS]);
   return rows.map(normalizeTrip);
 }
 
