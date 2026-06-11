@@ -1,4 +1,7 @@
 const pool = require("../db");
+const {
+  ensureVehicleAliasesTable,
+} = require("./vehicles/vehicleAliases");
 
 const LONG_TERM_DAYS = 28;
 const AVAILABILITY_WINDOW_DAYS = 90;
@@ -632,29 +635,64 @@ async function getVehicles() {
 }
 
 async function getRelevantTrips() {
+  await ensureVehicleAliasesTable();
+
   const sql = `
     SELECT
-      id,
-      guest_name,
-      status,
-      workflow_stage,
-      trip_start,
-      trip_end,
-      amount,
-      closed_out,
-      closed_out_at,
-      completed_at,
-      canceled_at,
-      deleted_at,
-      turo_vehicle_id
-    FROM trips
-    WHERE deleted_at IS NULL
-      AND (
-        trip_end >= NOW() - INTERVAL '7 days'
-        OR trip_start >= NOW() - INTERVAL '7 days'
-        OR trip_end >= NOW() - ($1::int * INTERVAL '1 day')
+      t.id,
+      resolved_vehicle.id AS vehicle_id,
+      t.guest_name,
+      t.status,
+      t.workflow_stage,
+      t.trip_start,
+      t.trip_end,
+      t.amount,
+      t.closed_out,
+      t.closed_out_at,
+      t.completed_at,
+      t.canceled_at,
+      t.deleted_at,
+      COALESCE(t.turo_vehicle_id, resolved_vehicle.turo_vehicle_id) AS turo_vehicle_id
+    FROM trips t
+    LEFT JOIN LATERAL (
+      SELECT v.id, v.turo_vehicle_id
+      FROM vehicles v
+      WHERE (
+        t.turo_vehicle_id IS NOT NULL
+        AND v.turo_vehicle_id = t.turo_vehicle_id
       )
-    ORDER BY trip_start ASC
+      OR (
+        COALESCE(t.vehicle_name, '') <> ''
+        AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+      )
+      OR (
+        COALESCE(t.vehicle_name, '') <> ''
+        AND LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER(t.vehicle_name)
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM vehicle_aliases va
+        WHERE va.vehicle_id = v.id
+          AND va.active = true
+          AND COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(va.alias) = LOWER(t.vehicle_name)
+      )
+      ORDER BY
+        CASE
+          WHEN t.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = t.turo_vehicle_id THEN 1
+          WHEN COALESCE(t.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(t.vehicle_name) THEN 2
+          WHEN COALESCE(t.vehicle_name, '') <> '' AND LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER(t.vehicle_name) THEN 3
+          ELSE 4
+        END
+      LIMIT 1
+    ) resolved_vehicle ON true
+    WHERE t.deleted_at IS NULL
+      AND (
+        t.trip_end >= NOW() - INTERVAL '7 days'
+        OR t.trip_start >= NOW() - INTERVAL '7 days'
+        OR t.trip_end >= NOW() - ($1::int * INTERVAL '1 day')
+      )
+    ORDER BY t.trip_start ASC
   `;
 
   const { rows } = await pool.query(sql, [DAILY_RATE_LOOKBACK_DAYS]);

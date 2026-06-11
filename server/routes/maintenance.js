@@ -116,7 +116,13 @@ router.delete("/vehicles/:vin/maintenance-events/:eventId", async (req, res) => 
 router.get("/vehicles/:vin/maintenance-summary", async (req, res) => {
   try {
     const vin = String(req.params.vin || "").trim();
-    const summary = await getVehicleMaintenanceSummary(vin);
+    const refreshOdometerRollup =
+      String(req.query.refreshOdometer || req.query.refresh_odometer || "true")
+        .toLowerCase() !== "false" &&
+      String(req.query.refreshOdometer || req.query.refresh_odometer || "true") !== "0";
+    const summary = await getVehicleMaintenanceSummary(vin, null, {
+      refreshOdometerRollup,
+    });
     res.json(summary);
   } catch (err) {
     console.error(

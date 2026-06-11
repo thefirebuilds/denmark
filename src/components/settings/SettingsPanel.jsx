@@ -30,6 +30,13 @@ const DEFAULT_BRIDGE_ALERT_SETTINGS = {
   heartbeatStaleMinutes: 25,
   turoNotificationStaleHours: 12,
 };
+const DEFAULT_MARKETPLACE_FILTERS = {
+  minPrice: "",
+  maxPrice: "",
+  minMiles: "",
+  maxMiles: "",
+};
+const DEFAULT_MARKETPLACE_IGNORE_KEYWORDS = "nissan leaf";
 
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority queue" },
@@ -214,6 +221,7 @@ function SectionList({ activeSection, onChange }) {
     { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
+    { key: "marketplace", title: "Marketplace", sub: "Search defaults and screening" },
     { key: "website", title: "Website", sub: "Public availability export" },
     { key: "maintenance", title: "Maintenance", sub: "Alerts, backups, telemetry" },
     { key: "logs", title: "Logs", sub: "Server console tail" },
@@ -1646,6 +1654,296 @@ function DimoShareCard({ config, status = [], loading }) {
   );
 }
 
+function MarketplaceSettingsPanel() {
+  const [overview, setOverview] = useState(null);
+  const [filters, setFilters] = useState(DEFAULT_MARKETPLACE_FILTERS);
+  const [ignoreText, setIgnoreText] = useState(DEFAULT_MARKETPLACE_IGNORE_KEYWORDS);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadMarketplaceSettings() {
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/marketplace/preferences/overview`, {
+        headers: { Accept: "application/json" },
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load marketplace settings");
+      }
+
+      setOverview(json);
+      setFilters({
+        minPrice: json?.filters?.minPrice ?? "",
+        maxPrice: json?.filters?.maxPrice ?? "",
+        minMiles: json?.filters?.minMiles ?? "",
+        maxMiles: json?.filters?.maxMiles ?? "",
+      });
+      setIgnoreText(json?.ignoreKeywords?.text || DEFAULT_MARKETPLACE_IGNORE_KEYWORDS);
+    } catch (err) {
+      setMessage(err.message || "Failed to load marketplace settings");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMarketplaceSettings();
+  }, []);
+
+  function updateFilter(key, value) {
+    setFilters((current) => ({
+      ...current,
+      [key]: String(value || "").replace(/[^\d]/g, ""),
+    }));
+  }
+
+  async function saveMarketplaceSettings() {
+    try {
+      setSaving(true);
+      setMessage("");
+
+      const [ignoreRes, filtersRes] = await Promise.all([
+        fetch(`${API_BASE}/api/marketplace/preferences/ignore-keywords`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ text: ignoreText }),
+        }),
+        fetch(`${API_BASE}/api/marketplace/preferences/filters`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(filters),
+        }),
+      ]);
+
+      const [ignoreJson, filtersJson] = await Promise.all([
+        ignoreRes.json().catch(() => ({})),
+        filtersRes.json().catch(() => ({})),
+      ]);
+
+      if (!ignoreRes.ok) {
+        throw new Error(ignoreJson?.error || "Failed to save ignored phrases");
+      }
+
+      if (!filtersRes.ok) {
+        throw new Error(filtersJson?.error || "Failed to save marketplace filters");
+      }
+
+      setIgnoreText(ignoreJson?.text || DEFAULT_MARKETPLACE_IGNORE_KEYWORDS);
+      setFilters({
+        minPrice: filtersJson?.minPrice ?? "",
+        maxPrice: filtersJson?.maxPrice ?? "",
+        minMiles: filtersJson?.minMiles ?? "",
+        maxMiles: filtersJson?.maxMiles ?? "",
+      });
+      setMessage("Saved marketplace settings.");
+      await loadMarketplaceSettings();
+    } catch (err) {
+      setMessage(err.message || "Failed to save marketplace settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const counts = overview?.counts || {};
+  const screeningRules = overview?.screeningRules || {};
+  const invalidTerms = Array.isArray(overview?.invalidListingTerms)
+    ? overview.invalidListingTerms
+    : [];
+  const vehicleCatalog = Array.isArray(overview?.vehicleCatalog)
+    ? overview.vehicleCatalog
+    : [];
+  const knownCities = Array.isArray(overview?.homeLocation?.knownCities)
+    ? overview.homeLocation.knownCities
+    : [];
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Marketplace</h2>
+          <span>search defaults and screening rules</span>
+        </div>
+        <div className="settings-form-actions">
+          <button
+            type="button"
+            className="settings-action-btn"
+            disabled={loading || saving}
+            onClick={saveMarketplaceSettings}
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+          <button
+            type="button"
+            className="settings-action-btn secondary"
+            disabled={loading || saving}
+            onClick={loadMarketplaceSettings}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Current defaults</div>
+          <div className="settings-fleet-summary">
+            <div>
+              <strong>{loading && !overview ? "..." : counts.vehicleMakes ?? 0}</strong>
+              <span>makes cataloged</span>
+            </div>
+            <div>
+              <strong>{loading && !overview ? "..." : counts.ignoredPhrases ?? 0}</strong>
+              <span>ignored phrases</span>
+            </div>
+            <div>
+              <strong>{overview?.homeLocation?.label || "Buda, TX"}</strong>
+              <span>home location</span>
+            </div>
+          </div>
+          {message ? <span className="settings-message">{message}</span> : null}
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Default listing filters</div>
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Minimum price</span>
+              <input
+                value={filters.minPrice}
+                inputMode="numeric"
+                onChange={(event) => updateFilter("minPrice", event.target.value)}
+                placeholder="No minimum"
+              />
+            </label>
+            <label className="settings-field">
+              <span>Maximum price</span>
+              <input
+                value={filters.maxPrice}
+                inputMode="numeric"
+                onChange={(event) => updateFilter("maxPrice", event.target.value)}
+                placeholder="No maximum"
+              />
+            </label>
+            <label className="settings-field">
+              <span>Minimum miles</span>
+              <input
+                value={filters.minMiles}
+                inputMode="numeric"
+                onChange={(event) => updateFilter("minMiles", event.target.value)}
+                placeholder="No minimum"
+              />
+            </label>
+            <label className="settings-field">
+              <span>Maximum miles</span>
+              <input
+                value={filters.maxMiles}
+                inputMode="numeric"
+                onChange={(event) => updateFilter("maxMiles", event.target.value)}
+                placeholder="No maximum"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Ignored phrases</div>
+          <textarea
+            className="settings-textarea"
+            value={ignoreText}
+            onChange={(event) => setIgnoreText(event.target.value)}
+            rows={8}
+          />
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Baked screening rules</div>
+          <div className="settings-vehicle-list">
+            <div className="settings-vehicle-row">
+              <strong>Useful price</strong>
+              <span>
+                {screeningRules.minUsefulPrice ?? "none"} -{" "}
+                {screeningRules.maxUsefulPrice ?? "none"}
+              </span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Comparable price</strong>
+              <span>
+                {screeningRules.minComparablePrice ?? "none"} -{" "}
+                {screeningRules.maxComparablePrice ?? "none"}
+              </span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Year and mileage</strong>
+              <span>
+                {screeningRules.minUsefulYear ?? "none"}+ / under{" "}
+                {screeningRules.maxUsefulMiles ?? "none"} miles
+              </span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Excluded fuel</strong>
+              <span>{(screeningRules.excludedFuelTypes || []).join(", ") || "None"}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Home location distance map</div>
+          <div className="settings-empty-state">
+            The current marketplace distance scoring is still anchored to Buda,
+            Texas. These are the known cities the estimator recognizes.
+          </div>
+          <div className="settings-chip-list">
+            {knownCities.map((city) => (
+              <span key={city} className="settings-chip">
+                {city}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Invalid listing phrases</div>
+          <div className="settings-chip-list">
+            {invalidTerms.map((term) => (
+              <span key={term} className="settings-chip">
+                {term}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Available vehicle types</div>
+          <div className="settings-vehicle-list">
+            {vehicleCatalog.map((make) => (
+              <div key={make.make} className="settings-vehicle-row">
+                <strong>{make.make}</strong>
+                <span>
+                  {(make.models || [])
+                    .map((model) => (typeof model === "string" ? model : model.name))
+                    .filter(Boolean)
+                    .join(", ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function GoogleCalendarCard({
   status,
   loading,
@@ -2559,6 +2857,14 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
+    if (activeSection === "marketplace") {
+      return {
+        title: "Marketplace defaults",
+        body:
+          "This section collects marketplace defaults that affect listing intake and review. Some values are still code-defined so they are visible here before being migrated into editable preferences.",
+      };
+    }
+
     if (activeSection === "expenses") {
       return {
         title: "Expense setup",
@@ -2630,6 +2936,8 @@ export default function SettingsPanel({
         <FleetSettingsPanel />
       ) : activeSection === "expenses" ? (
         <ExpenseSettingsPanel />
+      ) : activeSection === "marketplace" ? (
+        <MarketplaceSettingsPanel />
       ) : activeSection === "website" ? (
         <PublicExportSettingsPanel />
       ) : activeSection === "integrations" ? (

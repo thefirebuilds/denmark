@@ -888,6 +888,57 @@ router.get("/preferences/filters", async (req, res) => {
   }
 });
 
+router.get("/preferences/overview", async (req, res) => {
+  try {
+    const catalog = await getMarketplaceCatalogModule();
+    const ignored = formatIgnoreKeywordsPreference(
+      (await loadMarketplacePreference("ignore_keywords"))?.keywords
+    );
+    const filters = formatMarketplaceFiltersPreference(
+      await loadMarketplacePreference("filters")
+    );
+    const invalidListingTerms = Array.isArray(catalog?.MARKETPLACE_INVALID_LISTING_TERMS)
+      ? catalog.MARKETPLACE_INVALID_LISTING_TERMS
+      : DEFAULT_MARKETPLACE_INVALID_LISTING_TERMS;
+    const vehicleCatalog = Array.isArray(catalog?.MARKETPLACE_VEHICLE_CATALOG)
+      ? catalog.MARKETPLACE_VEHICLE_CATALOG
+      : [];
+    const knownTexasCities = catalog?.TEXAS_CITY_DISTANCE_FROM_BUDA
+      ? Object.keys(catalog.TEXAS_CITY_DISTANCE_FROM_BUDA).sort()
+      : [];
+
+    return res.json({
+      ok: true,
+      homeLocation: {
+        label: "Buda, TX",
+        distanceReference: "TEXAS_CITY_DISTANCE_FROM_BUDA",
+        knownCityCount: knownTexasCities.length,
+        knownCities: knownTexasCities,
+        status: "code-defined",
+      },
+      ignoreKeywords: ignored,
+      filters,
+      screeningRules: DEFAULT_MARKETPLACE_SCREENING_RULES,
+      invalidListingTerms,
+      vehicleCatalog,
+      counts: {
+        ignoredPhrases: ignored.keywords.length,
+        invalidListingTerms: invalidListingTerms.length,
+        vehicleMakes: vehicleCatalog.length,
+        vehicleModels: vehicleCatalog.reduce((total, make) => {
+          return total + (Array.isArray(make.models) ? make.models.length : 0);
+        }, 0),
+      },
+    });
+  } catch (err) {
+    console.error("[marketplace.getPreferencesOverview] failed:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "marketplace preferences overview failed",
+    });
+  }
+});
+
 router.put("/preferences/filters", async (req, res) => {
   try {
     const preference = formatMarketplaceFiltersPreference(req.body || {});

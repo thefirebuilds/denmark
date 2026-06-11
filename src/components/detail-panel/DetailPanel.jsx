@@ -151,7 +151,7 @@ export default function DetailPanel({
     setEditingTripId(null);
   }
 
-  async function handleAdvanceStage(trip, nextStage) {
+  async function handleAdvanceStage(trip, nextStage, force = false) {
     if (!trip?.id || !nextStage) return;
 
     setStageSaving(true);
@@ -163,7 +163,7 @@ export default function DetailPanel({
         },
         body: JSON.stringify({
           workflow_stage: nextStage,
-          force: false,
+          force,
         }),
       });
 

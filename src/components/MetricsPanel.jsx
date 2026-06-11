@@ -1403,7 +1403,7 @@ const mileageStats = useMemo(() => {
   );
   const unallocatedMiles =
     explicitUnallocatedMiles > 0
-      ? Math.max(0, explicitUnallocatedMiles - offTripMiles)
+      ? Math.max(0, explicitUnallocatedMiles)
       : Math.max(0, totalMiles - tripMiles - offTripMiles);
 
   const revenue = Number(summary?.revenue ?? 0);

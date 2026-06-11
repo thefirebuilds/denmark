@@ -11,6 +11,9 @@ const { deriveWorkflowStage } = require("./trips/deriveWorkflowStage");
 const {
   syncTripToSelectedGoogleCalendars,
 } = require("./googleCalendar/googleTripSync");
+const {
+  ensureVehicleAliasesTable,
+} = require("./vehicles/vehicleAliases");
 
 function normalizeTripStatus(messageType) {
   switch (messageType) {
@@ -25,12 +28,51 @@ function normalizeTripStatus(messageType) {
   }
 }
 
-function resolveTuroVehicleId(savedMessage) {
-  return (
+async function resolveTuroVehicleId(savedMessage) {
+  const explicitVehicleId =
     savedMessage.vehicle_listing_id ||
     savedMessage.turo_vehicle_id ||
-    null
+    null;
+
+  if (explicitVehicleId) {
+    return explicitVehicleId;
+  }
+
+  const vehicleName = String(savedMessage.vehicle_name || "").trim();
+  if (!vehicleName) {
+    return null;
+  }
+
+  await ensureVehicleAliasesTable();
+
+  const { rows } = await pool.query(
+    `
+      SELECT v.turo_vehicle_id
+      FROM vehicles v
+      WHERE COALESCE(v.turo_vehicle_id, '') <> ''
+        AND (
+          LOWER(v.nickname) = LOWER($1)
+          OR LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER($1)
+          OR EXISTS (
+            SELECT 1
+            FROM vehicle_aliases va
+            WHERE va.vehicle_id = v.id
+              AND va.active = true
+              AND LOWER(va.alias) = LOWER($1)
+          )
+        )
+      ORDER BY
+        CASE
+          WHEN LOWER(v.nickname) = LOWER($1) THEN 1
+          WHEN LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER($1) THEN 2
+          ELSE 3
+        END
+      LIMIT 1
+    `,
+    [vehicleName]
   );
+
+  return rows[0]?.turo_vehicle_id || null;
 }
 
 function syncTripToGoogleCalendar(trip, reason, options = {}) {
@@ -59,7 +101,7 @@ async function upsertTripFromMessage(savedMessage) {
   }
 
   const tripStatus = normalizeTripStatus(savedMessage.message_type);
-  const turoVehicleId = resolveTuroVehicleId(savedMessage);
+  const turoVehicleId = await resolveTuroVehicleId(savedMessage);
 
   if (!tripStatus) {
     const existing = await pool.query(
@@ -115,6 +157,8 @@ async function upsertTripFromMessage(savedMessage) {
       status,
       amount,
       mileage_included,
+      starting_odometer,
+      ending_odometer,
       trip_details_url,
       guest_profile_url,
       created_from_message_id,
@@ -130,8 +174,13 @@ async function upsertTripFromMessage(savedMessage) {
       closed_out_at
     )
     VALUES (
-      $1, $2, $3, $4, $5,
-      $6, $7, $8, $9, $10,
+      $1, $2, $3,
+      CASE WHEN $16 THEN NOW() ELSE $4 END,
+      CASE WHEN $16 THEN NOW() ELSE $5 END,
+      $6, $7, $8,
+      CASE WHEN $16 THEN 0 ELSE NULL END,
+      CASE WHEN $16 THEN 0 ELSE NULL END,
+      $9, $10,
       $11, $12, $13, $14, $15, NOW(), NOW(), NOW(),
       CASE WHEN $16 THEN NOW() ELSE NULL END,
       CASE WHEN $16 THEN TRUE ELSE FALSE END,
@@ -141,10 +190,30 @@ async function upsertTripFromMessage(savedMessage) {
     DO UPDATE SET
       vehicle_name = COALESCE(EXCLUDED.vehicle_name, trips.vehicle_name),
       guest_name = COALESCE(EXCLUDED.guest_name, trips.guest_name),
-      trip_start = COALESCE(EXCLUDED.trip_start, trips.trip_start),
-      trip_end = COALESCE(EXCLUDED.trip_end, trips.trip_end),
+      trip_start = CASE
+        WHEN EXCLUDED.status = 'canceled' THEN NOW()
+        WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.trip_start
+        ELSE COALESCE(EXCLUDED.trip_start, trips.trip_start)
+      END,
+      trip_end = CASE
+        WHEN EXCLUDED.status = 'canceled' THEN NOW()
+        WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.trip_end
+        ELSE COALESCE(EXCLUDED.trip_end, trips.trip_end)
+      END,
       amount = COALESCE(EXCLUDED.amount, trips.amount),
-      mileage_included = COALESCE(EXCLUDED.mileage_included, trips.mileage_included),
+      mileage_included = CASE
+        WHEN EXCLUDED.status = 'canceled' THEN 0
+        WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.mileage_included
+        ELSE COALESCE(EXCLUDED.mileage_included, trips.mileage_included)
+      END,
+      starting_odometer = CASE
+        WHEN EXCLUDED.status = 'canceled' THEN 0
+        ELSE trips.starting_odometer
+      END,
+      ending_odometer = CASE
+        WHEN EXCLUDED.status = 'canceled' THEN 0
+        ELSE trips.ending_odometer
+      END,
       trip_details_url = COALESCE(EXCLUDED.trip_details_url, trips.trip_details_url),
       guest_profile_url = COALESCE(EXCLUDED.guest_profile_url, trips.guest_profile_url),
       turo_vehicle_id = COALESCE(EXCLUDED.turo_vehicle_id, trips.turo_vehicle_id),
@@ -152,12 +221,16 @@ async function upsertTripFromMessage(savedMessage) {
 
       workflow_stage = CASE
         WHEN EXCLUDED.status = 'canceled' THEN 'canceled'
+        WHEN trips.canceled_at IS NOT NULL THEN 'canceled'
         WHEN trips.workflow_stage IS NULL THEN EXCLUDED.workflow_stage
         ELSE trips.workflow_stage
       END,
 
       stage_updated_at = CASE
         WHEN EXCLUDED.status = 'canceled'
+          AND COALESCE(trips.workflow_stage, '') <> 'canceled'
+        THEN NOW()
+        WHEN trips.canceled_at IS NOT NULL
           AND COALESCE(trips.workflow_stage, '') <> 'canceled'
         THEN NOW()
         WHEN trips.workflow_stage IS NULL
@@ -167,6 +240,7 @@ async function upsertTripFromMessage(savedMessage) {
 
       status = CASE
         WHEN trips.status = 'canceled' THEN 'canceled'
+        WHEN trips.canceled_at IS NOT NULL THEN 'canceled'
         WHEN EXCLUDED.status = 'canceled' THEN 'canceled'
         WHEN trips.status = 'acknowledged' THEN 'acknowledged'
         ELSE EXCLUDED.status
@@ -174,6 +248,7 @@ async function upsertTripFromMessage(savedMessage) {
 
       needs_review = CASE
         WHEN trips.status = 'canceled' THEN FALSE
+        WHEN trips.canceled_at IS NOT NULL THEN FALSE
         WHEN EXCLUDED.status = 'canceled' THEN FALSE
         ELSE TRUE
       END,
@@ -204,6 +279,8 @@ async function upsertTripFromMessage(savedMessage) {
       status,
       amount, 
       mileage_included,
+      starting_odometer,
+      ending_odometer,
       workflow_stage,
       stage_updated_at,
       needs_review,

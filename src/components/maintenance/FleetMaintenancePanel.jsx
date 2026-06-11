@@ -27,6 +27,7 @@ import {
   buildInspectionHistoryMap,
   buildQueueItemsFromSummary,
   mapRuleStatusToInspectionItem,
+  getActiveTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
   getNextUpcomingTrip,
@@ -564,6 +565,7 @@ function getStatusIcon(status) {
 function buildFleetPlanningCard(vehicle, trips, summary) {
   const historyMap = buildInspectionHistoryMap(summary);
   const queueItems = buildQueueItemsFromSummary(summary, historyMap);
+  const activeTrip = getActiveTrip(trips);
 
   const blockingItems = queueItems.filter(
     (item) =>
@@ -582,19 +584,58 @@ function buildFleetPlanningCard(vehicle, trips, summary) {
     year: vehicle.year || "—",
     make: vehicle.make || "",
     model: vehicle.model || "",
+    currentOdometerMiles:
+      summary?.currentOdometerMiles ??
+      summary?.vehicle?.currentOdometerMiles ??
+      vehicle.current_odometer_miles ??
+      vehicle.currentOdometerMiles ??
+      null,
     nextAvailableDate: getEarliestAvailableDate(trips),
-    nextOffTrip: getEarliestAvailableLabel(trips),
+    nextOffTrip: activeTrip ? getEarliestAvailableLabel(trips) : "Available now",
     totalOpenItems: queueItems.length,
     blockingCount: blockingItems.length,
     attentionCount: attentionItems.length,
-    topItems: queueItems.slice(0, 4),
+    items: queueItems,
   };
+}
+
+function getPlanningDate(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date();
+  return date;
+}
+
+function getPlanningDateSortValue(value) {
+  const date = getPlanningDate(value);
+  if (date.getFullYear() >= 9000) return Number.NEGATIVE_INFINITY;
+  return date.getTime();
+}
+
+function getPlanningDateKey(value) {
+  const date = getPlanningDate(value);
+  if (date.getFullYear() >= 9000) return "overdue";
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getPlanningDateLabel(value) {
+  const date = getPlanningDate(value);
+  if (date.getFullYear() >= 9000) return "Overdue";
+
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function sortFleetPlanningCards(cards) {
   return [...cards].sort((a, b) => {
-    const aDate = new Date(a.nextAvailableDate || 0).getTime();
-    const bDate = new Date(b.nextAvailableDate || 0).getTime();
+    const aDate = getPlanningDateSortValue(a.nextAvailableDate);
+    const bDate = getPlanningDateSortValue(b.nextAvailableDate);
     if (aDate !== bDate) return aDate - bDate;
 
     if (b.blockingCount !== a.blockingCount) {
@@ -607,6 +648,64 @@ function sortFleetPlanningCards(cards) {
 
     return String(a.nickname || "").localeCompare(String(b.nickname || ""));
   });
+}
+
+function sortFleetPlanningItems(items) {
+  return [...(items || [])].sort((a, b) => {
+    const aBlocks =
+      a?.task?.blocks_rental ||
+      a?.task?.blocks_guest_export ||
+      a?.blocksRentalWhenOverdue ||
+      a?.blocksGuestExportWhenOverdue;
+    const bBlocks =
+      b?.task?.blocks_rental ||
+      b?.task?.blocks_guest_export ||
+      b?.blocksRentalWhenOverdue ||
+      b?.blocksGuestExportWhenOverdue;
+
+    if (Boolean(bBlocks) !== Boolean(aBlocks)) {
+      return Number(Boolean(bBlocks)) - Number(Boolean(aBlocks));
+    }
+
+    return String(a.title || "").localeCompare(String(b.title || ""));
+  });
+}
+
+function groupFleetPlanningCardsByDate(cards) {
+  const groups = new Map();
+
+  for (const card of cards || []) {
+    if (!card || !Array.isArray(card.items) || card.items.length === 0) continue;
+
+    const key = getPlanningDateKey(card.nextAvailableDate);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        label: getPlanningDateLabel(card.nextAvailableDate),
+        nextAvailableDate: card.nextAvailableDate,
+        vehicles: [],
+      });
+    }
+
+    groups.get(key).vehicles.push({
+      ...card,
+      items: sortFleetPlanningItems(card.items),
+    });
+  }
+
+  return Array.from(groups.values())
+    .sort((a, b) => {
+      const dateDiff =
+        getPlanningDateSortValue(a.nextAvailableDate) -
+        getPlanningDateSortValue(b.nextAvailableDate);
+      if (dateDiff !== 0) return dateDiff;
+      return String(a.label || "").localeCompare(String(b.label || ""));
+    })
+    .map((group) => ({
+      ...group,
+      vehicles: sortFleetPlanningCards(group.vehicles),
+    }));
 }
 
 export default function FleetMaintenancePanel({
@@ -689,6 +788,11 @@ export default function FleetMaintenancePanel({
     String(liveDimoDiagnostics.tokenId) === String(selectedDimoToken)
       ? liveDimoDiagnostics
       : null;
+
+  const fleetPlanningGroups = useMemo(
+    () => groupFleetPlanningCardsByDate(fleetPlanningCards),
+    [fleetPlanningCards]
+  );
 
   const liveVehicle = useMemo(() => {
     if (!maintenanceSummary) return null;
@@ -945,7 +1049,8 @@ export default function FleetMaintenancePanel({
         const vehicleTripPairs = await Promise.all(
           vehicles.map(async (vehicle) => {
             const vehicleId = normalizeVehicleKey(
-              vehicle.nickname ||
+              vehicle.turo_vehicle_id ||
+                vehicle.nickname ||
                 vehicle.vin ||
                 vehicle.id ||
                 vehicle.dimo_token_id ||
@@ -978,7 +1083,7 @@ export default function FleetMaintenancePanel({
               const summaryRes = await fetch(
                 `/api/vehicles/${encodeURIComponent(
                   vehicle.vin
-                )}/maintenance-summary`
+                )}/maintenance-summary?refreshOdometer=0`
               );
 
               if (!summaryRes.ok) {
@@ -988,7 +1093,7 @@ export default function FleetMaintenancePanel({
               const summary = await summaryRes.json();
               const card = buildFleetPlanningCard(vehicle, trips, summary);
 
-              if (!cancelled && card) {
+              if (!cancelled && card?.totalOpenItems > 0) {
                 setFleetPlanningCards((current) =>
                   sortFleetPlanningCards([
                     ...current.filter((item) => item.id !== card.id),
@@ -1879,6 +1984,51 @@ export default function FleetMaintenancePanel({
               </div>
             </div>
           ) : (
+            <>
+              <div className="maintenance-queue-date-list fleet-planning-queue">
+                {fleetPlanningGroups.map((dateGroup) => (
+                  <section key={dateGroup.key} className="maintenance-queue-date-group">
+                    <div className="maintenance-queue-date-title">{dateGroup.label}</div>
+
+                    {dateGroup.vehicles.map((card) => (
+                      <div key={card.id} className="maintenance-queue-vehicle-group">
+                        <div className="maintenance-queue-vehicle-title">
+                          <span>{card.nickname}</span>
+                          <small>{card.nextOffTrip || "Available now"}</small>
+                        </div>
+
+                        <ul className="maintenance-queue-task-list">
+                          {card.items.map((it) => (
+                            <li key={it.id || it.title} className="maintenance-queue-task">
+                              <button
+                                type="button"
+                                className="maintenance-queue-task-button"
+                                onClick={() =>
+                                  it.linkedRuleCode
+                                    ? handleOpenFleetInspection(card.vin, it.linkedRuleCode)
+                                    : window.alert(
+                                        "This task is not linked to a specific inspection rule yet."
+                                      )
+                                }
+                              >
+                                <span>{it.title}</span>
+                                <small>
+                                  {getNextIntervalDueText(
+                                    it,
+                                    card.currentOdometerMiles
+                                  )}
+                                </small>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </section>
+                ))}
+              </div>
+
+              {/* Legacy compact card grid kept out of the rendered queue.
             <div className="fleet-planning-grid">
               {fleetPlanningCards.map((card) => (
                 <article
@@ -1965,6 +2115,8 @@ export default function FleetMaintenancePanel({
                 </article>
               ))}
             </div>
+              */}
+            </>
           )
         ) : (
           <>

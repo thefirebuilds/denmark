@@ -405,6 +405,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
           trip_start,
           trip_end,
           status,
+          mileage_included,
           workflow_stage,
           stage_updated_at,
           needs_review,
@@ -432,6 +433,55 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
     const currentStage = trip.workflow_stage;
 
     if (currentStage === normalizedNextStage) {
+      if (normalizedNextStage === "canceled") {
+        const transitionTimestamp = toIsoTimestamp(options.changedAt);
+        const repairResult = await client.query(
+          `
+            UPDATE trips
+            SET
+              status = 'canceled',
+              trip_start = $2::timestamptz,
+              trip_end = $2::timestamptz,
+              mileage_included = 0,
+              starting_odometer = 0,
+              ending_odometer = 0,
+              needs_review = FALSE,
+              canceled_at = COALESCE(canceled_at, $2::timestamptz),
+              closed_out = TRUE,
+              closed_out_at = COALESCE(closed_out_at, $2::timestamptz),
+              updated_at = NOW()
+            WHERE id = $1
+            RETURNING
+              id,
+              reservation_id,
+              vehicle_name,
+              guest_name,
+              trip_start,
+              trip_end,
+              status,
+              mileage_included,
+              workflow_stage,
+              stage_updated_at,
+              needs_review,
+              turo_vehicle_id,
+              expense_status,
+              completed_at,
+              closed_out,
+              closed_out_at,
+              canceled_at,
+              starting_odometer,
+              ending_odometer
+          `,
+          [normalizedTripId, transitionTimestamp]
+        );
+
+        await client.query("COMMIT");
+        return {
+          ...repairResult.rows[0],
+          allowed_next_stages: getAllowedNextStages(currentStage),
+        };
+      }
+
       await client.query("ROLLBACK");
       return {
         ...trip,
@@ -482,7 +532,18 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       workflow_stage = $2,
       stage_updated_at = $5::timestamptz,
 
+      trip_start = CASE
+        WHEN $2 = 'canceled' THEN $5::timestamptz
+        ELSE trip_start
+      END,
+
+      trip_end = CASE
+        WHEN $2 = 'canceled' THEN $5::timestamptz
+        ELSE trip_end
+      END,
+
       status = CASE
+        WHEN $2 = 'canceled' THEN 'canceled'
         WHEN $2 = 'confirmed'
           AND status IN ('booked_unconfirmed', 'updated_unconfirmed')
           THEN 'booked'
@@ -490,19 +551,31 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       END,
 
       needs_review = CASE
+        WHEN $2 = 'canceled' THEN FALSE
         WHEN $2 = 'confirmed' THEN FALSE
         ELSE needs_review
       END,
 
-      starting_odometer = COALESCE(
-        starting_odometer,
-        $3::integer
-      ),
+      mileage_included = CASE
+        WHEN $2 = 'canceled' THEN 0
+        ELSE mileage_included
+      END,
 
-      ending_odometer = COALESCE(
-        ending_odometer,
-        $4::integer
-      ),
+      starting_odometer = CASE
+        WHEN $2 = 'canceled' THEN 0
+        ELSE COALESCE(
+          starting_odometer,
+          $3::integer
+        )
+      END,
+
+      ending_odometer = CASE
+        WHEN $2 = 'canceled' THEN 0
+        ELSE COALESCE(
+          ending_odometer,
+          $4::integer
+        )
+      END,
 
       completed_at = CASE
         WHEN $2 = 'complete' AND completed_at IS NULL THEN $5::timestamptz
@@ -510,11 +583,13 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       END,
 
       closed_out = CASE
+        WHEN $2 = 'canceled' THEN TRUE
         WHEN $2 = 'complete' THEN TRUE
         ELSE closed_out
       END,
 
       closed_out_at = CASE
+        WHEN $2 = 'canceled' AND closed_out_at IS NULL THEN $5::timestamptz
         WHEN $2 = 'complete' AND closed_out_at IS NULL THEN $5::timestamptz
         ELSE closed_out_at
       END,
@@ -539,6 +614,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       trip_start,
       trip_end,
       status,
+      mileage_included,
       workflow_stage,
       stage_updated_at,
       needs_review,

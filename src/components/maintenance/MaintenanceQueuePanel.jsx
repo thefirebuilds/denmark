@@ -14,6 +14,7 @@ import {
   getNextIntervalDueText,
   sortQueue,
   getPriorityScore,
+  getActiveTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
 } from "../../utils/maintUtils";
@@ -41,6 +42,100 @@ function sortFleetPlanningQueue(items) {
       String(b.vehicleNickname || "")
     );
   });
+}
+
+function getAvailabilityDate(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date();
+  return date;
+}
+
+function getAvailabilitySortValue(value) {
+  const date = getAvailabilityDate(value);
+  if (date.getFullYear() >= 9000) return Number.NEGATIVE_INFINITY;
+  return date.getTime();
+}
+
+function getAvailabilityDateKey(value) {
+  const date = getAvailabilityDate(value);
+  if (date.getFullYear() >= 9000) return "overdue";
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getAvailabilityDateLabel(value) {
+  const date = getAvailabilityDate(value);
+  if (date.getFullYear() >= 9000) return "Overdue";
+
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function groupFleetItemsByAvailabilityDate(items) {
+  const dateGroups = new Map();
+
+  for (const item of items || []) {
+    const dateKey = getAvailabilityDateKey(item.nextAvailableDate);
+
+    if (!dateGroups.has(dateKey)) {
+      dateGroups.set(dateKey, {
+        key: dateKey,
+        label: getAvailabilityDateLabel(item.nextAvailableDate),
+        nextAvailableDate: item.nextAvailableDate,
+        vehicles: new Map(),
+      });
+    }
+
+    const dateGroup = dateGroups.get(dateKey);
+    const vehicleKey =
+      item.vehicleVin || item.vehicleId || item.vehicleNickname || "unknown";
+
+    if (!dateGroup.vehicles.has(vehicleKey)) {
+      dateGroup.vehicles.set(vehicleKey, {
+        key: vehicleKey,
+        label: item.vehicleNickname || "Unknown vehicle",
+        availability: item.nextOffTrip || "Available now",
+        nextAvailableDate: item.nextAvailableDate,
+        items: [],
+      });
+    }
+
+    dateGroup.vehicles.get(vehicleKey).items.push(item);
+  }
+
+  return Array.from(dateGroups.values())
+    .sort((a, b) => {
+      const dateDiff =
+        getAvailabilitySortValue(a.nextAvailableDate) -
+        getAvailabilitySortValue(b.nextAvailableDate);
+      if (dateDiff !== 0) return dateDiff;
+      return String(a.label).localeCompare(String(b.label));
+    })
+    .map((dateGroup) => ({
+      ...dateGroup,
+      vehicles: Array.from(dateGroup.vehicles.values())
+        .sort((a, b) => {
+          const dateDiff =
+            getAvailabilitySortValue(a.nextAvailableDate) -
+            getAvailabilitySortValue(b.nextAvailableDate);
+          if (dateDiff !== 0) return dateDiff;
+          return String(a.label).localeCompare(String(b.label));
+        })
+        .map((vehicleGroup) => ({
+          ...vehicleGroup,
+          items: [...vehicleGroup.items].sort((a, b) => {
+            const scoreDiff = getPlanningScore(b) - getPlanningScore(a);
+            if (scoreDiff !== 0) return scoreDiff;
+            return String(a.title || "").localeCompare(String(b.title || ""));
+          }),
+        })),
+    }));
 }
 
 function buildFleetQueueItems(vehicleCard, summary, historyMap = {}) {
@@ -93,6 +188,11 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
   const queueItems = useMemo(() => {
     return sortQueue(buildQueueItemsFromSummary(maintenanceSummary, historyMap));
   }, [maintenanceSummary, historyMap]);
+
+  const fleetPlanningGroups = useMemo(
+    () => groupFleetItemsByAvailabilityDate(fleetPlanningItems),
+    [fleetPlanningItems]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +285,8 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
         const vehicleTripPairs = await Promise.all(
           vehicles.map(async (vehicle) => {
             const vehicleId = normalizeVehicleKey(
-              vehicle.nickname ||
+              vehicle.turo_vehicle_id ||
+                vehicle.nickname ||
                 vehicle.vin ||
                 vehicle.id ||
                 vehicle.dimo_token_id ||
@@ -226,7 +327,9 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
               vehicle.current_odometer_miles != null || vehicle.currentOdometerMiles != null
                 ? "vehicle"
                 : null,
-            nextOffTrip: getEarliestAvailableLabel(trips),
+            nextOffTrip: getActiveTrip(trips)
+              ? getEarliestAvailableLabel(trips)
+              : "Available now",
             nextAvailableDate: getEarliestAvailableDate(trips),
           }))
           .filter((v) => v.vin);
@@ -241,7 +344,7 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
               const summaryRes = await fetch(
                 `/api/vehicles/${encodeURIComponent(
                   vehicleCard.vin
-                )}/maintenance-summary`
+                )}/maintenance-summary?refreshOdometer=0`
               );
 
               if (!summaryRes.ok) {
@@ -482,54 +585,45 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
               <div className="detail-value">No open maintenance items across the fleet.</div>
             </div>
           ) : (
-            <div className="maintenance-queue-list">
-              {fleetPlanningItems.map((item) => (
-                <div key={item.id} className="maintenance-queue-card">
-                  <div className="maintenance-queue-card-head">
-                    <div className="maintenance-queue-title">{item.title}</div>
-                    <div
-                      className={`maintenance-priority priority-${getPriorityScore(
-                        item.priority
-                      )}`}
-                    >
-                      {String(item.priority || "normal").toUpperCase()}
+            <div className="maintenance-queue-date-list">
+              {fleetPlanningGroups.map((dateGroup) => (
+                <section key={dateGroup.key} className="maintenance-queue-date-group">
+                  <div className="maintenance-queue-date-title">{dateGroup.label}</div>
+                  {dateGroup.vehicles.map((vehicleGroup) => (
+                    <div key={vehicleGroup.key} className="maintenance-queue-vehicle-group">
+                      <div className="maintenance-queue-vehicle-title">
+                        <span>{vehicleGroup.label}</span>
+                        <small>{vehicleGroup.availability || "Available now"}</small>
+                      </div>
+                      <ul className="maintenance-queue-task-list">
+                        {vehicleGroup.items.map((item) => (
+                          <li key={item.id} className="maintenance-queue-task">
+                            {item.linkedRuleCode ? (
+                              <button
+                                type="button"
+                                className="maintenance-queue-task-button"
+                                onClick={() => handleOpenFleetInspectionItem(item)}
+                              >
+                                <span>{item.title}</span>
+                                <small>
+                                  {getNextIntervalDueText(
+                                    item,
+                                    item.currentOdometerMiles
+                                  )}
+                                </small>
+                              </button>
+                            ) : (
+                              <div className="maintenance-queue-task-static">
+                                <span>{item.title}</span>
+                                <small>No mapped action</small>
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  </div>
-
-                  <div className="maintenance-queue-type">{item.type}</div>
-
-                  <div className="maintenance-queue-notes">
-                    <strong>{item.vehicleLabel}</strong>
-                  </div>
-
-                  <div className="maintenance-queue-notes">
-                    Available for maintenance: {item.nextOffTrip || "Unknown"}
-                  </div>
-
-                  <div className="maintenance-queue-notes">
-                    {getNextIntervalDueText(item, item.currentOdometerMiles)}
-                  </div>
-
-                  {item.notes ? (
-                    <div className="maintenance-queue-notes">{item.notes}</div>
-                  ) : null}
-
-                  {item.linkedRuleCode ? (
-                    <div className="message-actions">
-                      <button
-                        type="button"
-                        className="message-action"
-                        onClick={() => handleOpenFleetInspectionItem(item)}
-                      >
-                        Enter result
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="maintenance-queue-notes">
-                      No inspection action is mapped for this task yet.
-                    </div>
-                  )}
-                </div>
+                  ))}
+                </section>
               ))}
             </div>
           )
@@ -545,50 +639,39 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
           </div>
         ) : (
           <div className="maintenance-queue-list">
+            <div className="maintenance-queue-vehicle-group">
+              <div className="maintenance-queue-vehicle-title">
+                {selectedFleetVehicle?.nickname || "Selected vehicle"}
+              </div>
+            </div>
             {queueItems.map((item) => (
-              <div key={item.id} className="maintenance-queue-card">
-                <div className="maintenance-queue-card-head">
-                  <div className="maintenance-queue-title">{item.title}</div>
-                  <div
-                    className={`maintenance-priority priority-${getPriorityScore(
-                      item.priority
-                    )}`}
-                  >
-                    {String(item.priority || "normal").toUpperCase()}
-                  </div>
-                </div>
-
-                <div className="maintenance-queue-type">{item.type}</div>
-
-                <div className="maintenance-queue-notes">
-                  {getNextIntervalDueText(
-                    item,
-                    maintenanceSummary?.currentOdometerMiles ??
-                      selectedFleetVehicle?.current_odometer_miles ??
-                      selectedFleetVehicle?.currentOdometerMiles ??
-                      null
-                  )}
-                </div>
-
-                {item.notes ? (
-                  <div className="maintenance-queue-notes">{item.notes}</div>
-                ) : null}
-
+              <div key={item.id} className="maintenance-queue-card maintenance-queue-card--compact">
                 {item.linkedRuleCode ? (
-                  <div className="message-actions">
-                    <button
-                      type="button"
-                      className="message-action"
-                      onClick={() =>
-                        handleOpenInspectionItemFromRuleCode(item.linkedRuleCode)
-                      }
-                    >
-                      Enter result
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="maintenance-queue-task-button"
+                    onClick={() =>
+                      handleOpenInspectionItemFromRuleCode(item.linkedRuleCode)
+                    }
+                  >
+                    <span>{item.title}</span>
+                    <small>
+                      {selectedFleetVehicle?.nickname || "Selected vehicle"} ·{" "}
+                      {getNextIntervalDueText(
+                        item,
+                        maintenanceSummary?.currentOdometerMiles ??
+                          selectedFleetVehicle?.current_odometer_miles ??
+                          selectedFleetVehicle?.currentOdometerMiles ??
+                          null
+                      )}
+                    </small>
+                  </button>
                 ) : (
-                  <div className="maintenance-queue-notes">
-                    No inspection action is mapped for this task yet.
+                  <div className="maintenance-queue-task-static">
+                    <span>{item.title}</span>
+                    <small>
+                      {selectedFleetVehicle?.nickname || "Selected vehicle"} · No mapped action
+                    </small>
                   </div>
                 )}
               </div>

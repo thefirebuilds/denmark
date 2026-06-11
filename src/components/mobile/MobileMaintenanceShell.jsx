@@ -66,7 +66,7 @@ export default function MobileMaintenanceShell({
             onSelectVehicle={handleSelectVehicle}
           />
         ) : activeSection === "queue" ? (
-          <MaintenanceQueuePanel selectedVehicleId={selectedVehicleId} />
+          <MaintenanceQueuePanel selectedVehicleId={null} />
         ) : (
           <FleetMaintenancePanel selectedVehicleId={selectedVehicleId} />
         )}

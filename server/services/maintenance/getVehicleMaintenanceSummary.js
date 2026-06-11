@@ -17,6 +17,9 @@ const {
   closeSatisfiedMaintenanceTasks,
 } = require("./syncMaintenanceTasks");
 const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
+const {
+  refreshVehicleOdometerRollups,
+} = require("../vehicles/odometerRollupService");
 
 function toIntOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -259,10 +262,15 @@ function buildPriorityCounts(tasks) {
   );
 }
 
-async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
+async function getVehicleMaintenanceSummary(
+  clientOrVin,
+  maybeVin = null,
+  options = {}
+) {
   const client = maybeVin ? clientOrVin : pool;
   const selector = String(maybeVin || clientOrVin || "").trim();
   const normalizedSelector = selector.toLowerCase();
+  const refreshOdometerRollup = options.refreshOdometerRollup !== false;
 
   await ensureVehicleAliasesTable(client);
 
@@ -393,6 +401,31 @@ async function getVehicleMaintenanceSummary(clientOrVin, maybeVin = null) {
   }
 
   const vin = vehicle.vin;
+
+  if (refreshOdometerRollup) {
+    await refreshVehicleOdometerRollups({ client, vehicleVin: vin });
+
+    const refreshedRollupResult = await client.query(
+      `
+        SELECT
+          odometer_miles AS rollup_odometer_miles,
+          source AS rollup_odometer_source,
+          source_trip_id AS rollup_source_trip_id,
+          source_reservation_id AS rollup_source_reservation_id,
+          source_trip_start AS rollup_source_trip_start,
+          estimated_trip_miles AS rollup_estimated_trip_miles,
+          calculated_at AS rollup_calculated_at
+        FROM vehicle_odometer_rollups
+        WHERE vehicle_id = $1
+        LIMIT 1
+      `,
+      [vehicle.id]
+    );
+
+    if (refreshedRollupResult.rows[0]) {
+      Object.assign(vehicle, refreshedRollupResult.rows[0]);
+    }
+  }
 
   await ensureDefaultMaintenanceRulesForVehicle(client, vehicle.vin);
 

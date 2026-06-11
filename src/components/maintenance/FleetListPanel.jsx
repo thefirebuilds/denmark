@@ -9,19 +9,55 @@
 import { useEffect, useState } from "react";
 import {
   normalizeVehicleKey,
+  getActiveTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
+  getNextUpcomingTrip,
   getNextServiceDue,
 } from "../../utils/maintUtils";
 
 function getVehicleRouteKey(vehicle) {
   return normalizeVehicleKey(
-    vehicle?.nickname ||
+    vehicle?.turo_vehicle_id ||
+      vehicle?.nickname ||
       vehicle?.vin ||
       vehicle?.id ||
       vehicle?.dimo_token_id ||
       vehicle?.bouncie_vehicle_id
   );
+}
+
+function normalizeMatchValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getVehicleTripKeys(vehicle) {
+  return [
+    vehicle?.turo_vehicle_id,
+    vehicle?.vin,
+    vehicle?.nickname,
+    vehicle?.turo_vehicle_name,
+    vehicle?.vehicle_name,
+    ...(Array.isArray(vehicle?.aliases) ? vehicle.aliases : []),
+  ]
+    .map(normalizeMatchValue)
+    .filter(Boolean);
+}
+
+function tripMatchesVehicle(vehicle, trip) {
+  const vehicleKeys = getVehicleTripKeys(vehicle);
+  if (!vehicleKeys.length) return false;
+
+  const tripKeys = [
+    trip?.turo_vehicle_id,
+    trip?.vehicle_vin,
+    trip?.vehicle_nickname,
+    trip?.vehicle_name,
+  ]
+    .map(normalizeMatchValue)
+    .filter(Boolean);
+
+  return tripKeys.some((tripKey) => vehicleKeys.includes(tripKey));
 }
 
 function getNextActivitySort(trips = []) {
@@ -32,18 +68,28 @@ function getNextActivitySort(trips = []) {
     .map((trip) => {
       const bucket = String(trip?.queue_bucket || "").toLowerCase();
       const stage = String(trip?.workflow_stage || "").toLowerCase();
+      const status = String(trip?.status || "").toLowerCase();
       const startMs = trip?.trip_start ? new Date(trip.trip_start).getTime() : NaN;
       const endMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+      const overlapsNow =
+        Number.isFinite(startMs) &&
+        Number.isFinite(endMs) &&
+        startMs <= now &&
+        endMs >= now;
 
-      if (bucket === "in_progress" || stage === "in_progress") {
+      if (
+        bucket === "in_progress" ||
+        stage === "in_progress" ||
+        ["active", "started", "trip_started", "in_progress"].includes(status) ||
+        overlapsNow
+      ) {
         return Number.isFinite(endMs) ? endMs : Number.POSITIVE_INFINITY;
       }
 
       if (
-        bucket === "unconfirmed" ||
-        bucket === "upcoming" ||
-        stage === "ready_for_handoff" ||
-        stage === "confirmed"
+        ["unconfirmed", "upcoming"].includes(bucket) ||
+        ["booked", "confirmed", "ready_for_handoff"].includes(stage) ||
+        ["booked", "confirmed"].includes(status)
       ) {
         return Number.isFinite(startMs) ? startMs : Number.POSITIVE_INFINITY;
       }
@@ -135,10 +181,10 @@ function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
   const serviceDue = vehicle?.service_due;
   const batteryStatus = vehicle?.telemetry?.battery?.status;
   const batteryStale = vehicle?.telemetry?.battery?.is_stale;
-  const hasActiveTrip = trips.some((trip) => trip?.queue_bucket === "in_progress");
-  const hasUpcomingTrip = trips.some((trip) =>
-    ["unconfirmed", "upcoming"].includes(trip?.queue_bucket)
-  );
+  const activeTrip = getActiveTrip(trips);
+  const nextUpcomingTrip = getNextUpcomingTrip(trips);
+  const hasActiveTrip = Boolean(activeTrip);
+  const hasUpcomingTrip = Boolean(nextUpcomingTrip);
 
   let status = "Guest-ready";
   let tone = "good";
@@ -148,7 +194,7 @@ function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
     tone = "bad";
   } else if (hasActiveTrip) {
     status = "On trip";
-    tone = "good";
+    tone = "warn";
   } else if (hasUpcomingTrip) {
     status = "Booked";
     tone = "warn";
@@ -229,9 +275,18 @@ export default function FleetListPanel({
 
         const vehicleData = await vehicleRes.json();
         const vehicles = Array.isArray(vehicleData) ? vehicleData : [];
+        const tripsRes = await fetch("/api/trips?scope=open");
+        const openTrips = tripsRes.ok ? await tripsRes.json() : [];
+        const relevantTrips = Array.isArray(openTrips) ? openTrips : [];
 
         const initialFleet = vehicles
-          .map((vehicle) => buildLiveFleetCard(vehicle, [], null))
+          .map((vehicle) =>
+            buildLiveFleetCard(
+              vehicle,
+              relevantTrips.filter((trip) => tripMatchesVehicle(vehicle, trip)),
+              null
+            )
+          )
           .filter(Boolean)
           .sort(compareFleetByMaintenance);
 
@@ -255,9 +310,17 @@ export default function FleetListPanel({
               (current || [])
                 .map((card) => {
                   const cached = cachedByVin.get(String(card.vin || "").toLowerCase());
-                  return cached
-                    ? mergeFleetCard(card, buildLiveFleetCard(cached, [], null))
-                    : card;
+                  if (!cached) return card;
+
+                  const mergedVehicle = { ...card, ...cached };
+                  const tripsForVehicle = relevantTrips.filter((trip) =>
+                    tripMatchesVehicle(mergedVehicle, trip)
+                  );
+
+                  return mergeFleetCard(
+                    card,
+                    buildLiveFleetCard(mergedVehicle, tripsForVehicle, null)
+                  );
                 })
                 .sort(compareFleetByMaintenance)
             );
@@ -270,10 +333,12 @@ export default function FleetListPanel({
           vehicles.map(async (vehicle) => {
             const routeKey = getVehicleRouteKey(vehicle);
             const maintenanceSelector = vehicle?.vin || routeKey;
+            const tripsForVehicle = relevantTrips.filter((trip) =>
+              tripMatchesVehicle(vehicle, trip)
+            );
 
             try {
-              const [tripsRes, maintenanceRes] = await Promise.all([
-                fetch(`/api/trips/vehicle/${routeKey}?mode=relevant`),
+              const [maintenanceRes] = await Promise.all([
                 maintenanceSelector
                   ? fetch(
                       `/api/vehicles/${encodeURIComponent(
@@ -283,17 +348,12 @@ export default function FleetListPanel({
                   : Promise.resolve(null),
               ]);
 
-              if (!tripsRes.ok) {
-                throw new Error(`Trip status HTTP ${tripsRes.status}`);
-              }
-
-              const tripData = await tripsRes.json();
               const maintenanceSummary =
                 maintenanceRes?.ok ? await maintenanceRes.json() : null;
 
               const card = buildLiveFleetCard(
                 vehicle,
-                Array.isArray(tripData) ? tripData : [],
+                tripsForVehicle,
                 maintenanceSummary
               );
 

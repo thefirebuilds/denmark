@@ -430,6 +430,26 @@ export default function TripEditModal({
     });
   }
 
+  async function requestStageChange(nextStage, force = false) {
+    const resp = await fetch(`${API_BASE}/api/trips/${trip.id}/stage`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        workflow_stage: nextStage,
+        force,
+      }),
+    });
+
+    if (!resp.ok) {
+      const maybeJson = await resp.json().catch(() => null);
+      throw new Error(maybeJson?.error || `HTTP ${resp.status}`);
+    }
+
+    return resp.json();
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     if (!trip?.id) return;
@@ -477,7 +497,13 @@ export default function TripEditModal({
         throw new Error(maybeJson?.error || `HTTP ${resp.status}`);
       }
 
-      const savedTrip = await resp.json();
+      let savedTrip = await resp.json();
+
+      if (overrideStage && overrideStage !== trip.workflow_stage) {
+        savedTrip = await requestStageChange(overrideStage, true);
+        setOverrideStage("");
+      }
+
       onSaved?.(savedTrip);
       onClose?.();
     } catch (err) {
@@ -494,23 +520,7 @@ export default function TripEditModal({
     setStageError("");
 
     try {
-      const resp = await fetch(`${API_BASE}/api/trips/${trip.id}/stage`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          workflow_stage: nextStage,
-          force,
-        }),
-      });
-
-      if (!resp.ok) {
-        const maybeJson = await resp.json().catch(() => null);
-        throw new Error(maybeJson?.error || `HTTP ${resp.status}`);
-      }
-
-      const savedTrip = await resp.json();
+      const savedTrip = await requestStageChange(nextStage, force);
       onSaved?.(savedTrip);
       setOverrideStage("");
     } catch (err) {

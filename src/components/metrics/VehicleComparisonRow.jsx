@@ -239,6 +239,7 @@ export default function VehicleComparisonRow({
     vehicle?.revenue_per_booked_day ?? vehicle?.income_per_booked_day ?? 0
   );
   const revenuePerMile = Number(vehicle?.revenue_per_mile ?? 0);
+  const unallocatedMiles = Number(vehicle?.unallocated_miles ?? 0);
   const hasFmvEstimate = Number.isFinite(fmvEstimateMid) && fmvEstimateMid > 0;
   const fmvChangeTone =
     fmvChange > 0 ? "positive" : fmvChange < 0 ? "negative" : "warning";
@@ -484,11 +485,14 @@ export default function VehicleComparisonRow({
                 </div>
               </div>
 
-              {vehicle?.has_open_trip_at_range_end ? (
+              {vehicle?.has_open_trip_at_range_end || unallocatedMiles > 0 ? (
                 <div className="vehicle-compare__detail-stat">
                   <div className="vehicle-compare__detail-label">Unallocated Miles</div>
                   <div className="vehicle-compare__detail-value">
-                    {formatNumber(vehicle?.unallocated_miles)}
+                    {formatNumber(unallocatedMiles)}
+                  </div>
+                  <div className="vehicle-compare__detail-hint">
+                    Total minus trip and off-trip miles
                   </div>
                 </div>
               ) : null}

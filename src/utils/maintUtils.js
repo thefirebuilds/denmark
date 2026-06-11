@@ -203,10 +203,16 @@ export function formatDotCodeForGuest(dotCode) {
 export function isRuleActionableForQueue(rule, now = new Date()) {
   const status = String(rule?.status || "").toLowerCase();
 
-  if (status === "failed" || status === "overdue") return true;
+  if (
+    status === "failed" ||
+    status === "overdue" ||
+    status === "due_soon"
+  ) {
+    return true;
+  }
 
   if (status === "due") {
-    if (!rule?.nextDueDate) return false;
+    if (!rule?.nextDueDate) return true;
     const dueDate = new Date(rule.nextDueDate);
     if (Number.isNaN(dueDate.getTime())) return false;
     return dueDate <= now;
@@ -999,17 +1005,55 @@ export function getNextServiceDue(summary, options = {}) {
 
 export function getRelevantTrips(trips) {
   if (!Array.isArray(trips)) return [];
+  const now = getNow();
 
   return trips
-    .filter((trip) =>
-      ["in_progress", "unconfirmed", "upcoming"].includes(trip?.queue_bucket)
-    )
     .map((trip) => ({
       ...trip,
       parsedStart: parseDateTime(trip?.trip_start),
       parsedEnd: parseDateTime(trip?.trip_end),
     }))
-    .filter((trip) => trip.parsedStart || trip.parsedEnd)
+    .filter((trip) => {
+      const bucket = String(trip?.queue_bucket || "").toLowerCase();
+      const stage = String(trip?.workflow_stage || "").toLowerCase();
+      const status = String(trip?.status || "").toLowerCase();
+
+      if (["canceled", "cancelled"].includes(bucket)) return false;
+      if (["canceled", "cancelled"].includes(stage)) return false;
+      if (["canceled", "cancelled"].includes(status)) return false;
+      if (!trip.parsedStart && !trip.parsedEnd) return false;
+
+      if (
+        ["in_progress", "needs_closeout", "unconfirmed", "upcoming"].includes(
+          bucket
+        )
+      ) {
+        return true;
+      }
+
+      if (
+        [
+          "booked",
+          "confirmed",
+          "ready_for_handoff",
+          "in_progress",
+          "turnaround",
+        ].includes(stage)
+      ) {
+        return true;
+      }
+
+      if (["active", "started", "trip_started", "booked", "confirmed"].includes(status)) {
+        return true;
+      }
+
+      return Boolean(
+        trip.parsedStart &&
+          trip.parsedEnd &&
+          trip.parsedStart <= now &&
+          trip.parsedEnd >= now
+      );
+    })
     .sort((a, b) => {
       const aTime =
         a.parsedStart?.getTime() ??
@@ -1024,16 +1068,34 @@ export function getRelevantTrips(trips) {
 }
 
 export function getActiveTrip(trips) {
-  return getRelevantTrips(trips).find(
-    (trip) => trip?.queue_bucket === "in_progress"
-  );
+  const now = getNow();
+
+  return getRelevantTrips(trips).find((trip) => {
+    const bucket = String(trip?.queue_bucket || "").toLowerCase();
+    const stage = String(trip?.workflow_stage || "").toLowerCase();
+    const status = String(trip?.status || "").toLowerCase();
+
+    if (
+      bucket === "in_progress" ||
+      stage === "in_progress" ||
+      ["active", "started", "trip_started", "in_progress"].includes(status)
+    ) {
+      return true;
+    }
+
+    return Boolean(
+      trip.parsedStart &&
+        trip.parsedEnd &&
+        trip.parsedStart <= now &&
+        trip.parsedEnd >= now
+    );
+  });
 }
 
 export function getNextUpcomingTrip(trips) {
   const now = getNow();
 
   return getRelevantTrips(trips).find((trip) => {
-    if (!["unconfirmed", "upcoming"].includes(trip?.queue_bucket)) return false;
     if (!trip.parsedStart) return false;
     return trip.parsedStart > now;
   });

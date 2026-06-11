@@ -176,6 +176,9 @@ export default function SelectedTripPanel({
   const mileageStats = getMileageStats(selectedTrip, selectedVehicle);
   const vehicleLabel = getTripVehicleLabel(selectedTrip, selectedVehicleInfo);
   const nextStage = getNextWorkflowStage(selectedTrip);
+  const isCanceledTrip =
+    String(selectedTrip?.workflow_stage || "").toLowerCase() === "canceled" ||
+    String(selectedTrip?.status || "").toLowerCase() === "canceled";
 
   const tollTotal = Number(selectedTrip?.toll_total ?? 0);
   const tollCount = Number(selectedTrip?.toll_count ?? 0);
@@ -515,6 +518,25 @@ function renderLocationLink(vehicle) {
           {stageSaving
             ? "Advancing…"
             : formatStageActionLabel(nextStage)}
+        </button>
+
+        <button
+          type="button"
+          className="detail-action-button secondary"
+          disabled={isCanceledTrip || stageSaving}
+          onClick={() => {
+            const confirmed = window.confirm(
+              "Cancel this trip in Denmark? This will set start and end to today, set mileage to 0, and keep the recorded earnings."
+            );
+            if (!confirmed) return;
+            onAdvanceStage?.(selectedTrip, "canceled", true);
+          }}
+        >
+          {stageSaving
+            ? "Saving..."
+            : isCanceledTrip
+            ? "Canceled"
+            : "Cancel trip"}
         </button>
       </div>
 

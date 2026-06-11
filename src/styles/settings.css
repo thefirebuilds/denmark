@@ -15,7 +15,12 @@
   min-height: 0;
   overflow: auto;
   display: grid;
+  align-content: start;
   gap: 16px;
+}
+
+.settings-maintenance-stack > .settings-main-panel {
+  grid-area: auto;
 }
 
 .settings-section-list,
@@ -89,7 +94,8 @@
 }
 
 .settings-field input,
-.settings-field select {
+.settings-field select,
+.settings-textarea {
   width: 100%;
   border-radius: 8px;
   border: 1px solid #2b3a4d;
@@ -97,6 +103,12 @@
   color: var(--text);
   padding: 10px 12px;
   font: inherit;
+}
+
+.settings-textarea {
+  min-height: 170px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .settings-check-row {
@@ -414,6 +426,22 @@
 .settings-message {
   color: #b8c4d8;
   font-size: 0.9rem;
+}
+
+.settings-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-chip {
+  border: 1px solid #2a395d;
+  background: #10182c;
+  border-radius: 999px;
+  color: #dbe7f8;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 6px 9px;
 }
 
 .settings-dimo-share-card {

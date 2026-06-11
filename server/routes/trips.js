@@ -461,8 +461,38 @@ const TRIP_SELECT = `
   FROM trip_intelligence ti
   JOIN trips t
     ON t.id = ti.id
-  LEFT JOIN vehicles v
-    ON v.turo_vehicle_id = t.turo_vehicle_id
+  LEFT JOIN LATERAL (
+    SELECT v.*
+    FROM vehicles v
+    WHERE (
+      t.turo_vehicle_id IS NOT NULL
+      AND v.turo_vehicle_id = t.turo_vehicle_id
+    )
+    OR (
+      COALESCE(t.vehicle_name, ti.vehicle_name, '') <> ''
+      AND LOWER(v.nickname) = LOWER(COALESCE(t.vehicle_name, ti.vehicle_name))
+    )
+    OR (
+      COALESCE(t.vehicle_name, ti.vehicle_name, '') <> ''
+      AND LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER(COALESCE(t.vehicle_name, ti.vehicle_name))
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM vehicle_aliases va
+      WHERE va.vehicle_id = v.id
+        AND va.active = true
+        AND COALESCE(t.vehicle_name, ti.vehicle_name, '') <> ''
+        AND LOWER(va.alias) = LOWER(COALESCE(t.vehicle_name, ti.vehicle_name))
+    )
+    ORDER BY
+      CASE
+        WHEN t.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = t.turo_vehicle_id THEN 1
+        WHEN COALESCE(t.vehicle_name, ti.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(COALESCE(t.vehicle_name, ti.vehicle_name)) THEN 2
+        WHEN COALESCE(t.vehicle_name, ti.vehicle_name, '') <> '' AND LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER(COALESCE(t.vehicle_name, ti.vehicle_name)) THEN 3
+        ELSE 4
+      END
+    LIMIT 1
+  ) v ON true
   LEFT JOIN trip_financial_facts tf
     ON tf.trip_id = t.id
   LEFT JOIN vehicle_odometer_rollups current_odo_rollup
@@ -471,6 +501,8 @@ const TRIP_SELECT = `
 
 router.get("/", async (req, res) => {
   try {
+    await ensureVehicleAliasesTable();
+
     const scope = String(req.query.scope || "open").toLowerCase();
     const stage = String(req.query.stage || "").trim().toLowerCase();
 
@@ -530,6 +562,8 @@ router.get("/", async (req, res) => {
 
 router.get("/vehicle/:vehicleId", async (req, res) => {
   try {
+    await ensureVehicleAliasesTable();
+
     const vehicleId = String(req.params.vehicleId || "").trim();
     const mode =
       req.query.mode == null
@@ -549,6 +583,15 @@ router.get("/vehicle/:vehicleId", async (req, res) => {
         OR LOWER(COALESCE(t.vehicle_name, '')) = LOWER($1)
         OR LOWER(COALESCE(ti.vehicle_name, '')) = LOWER($1)
         OR LOWER(COALESCE(v.nickname, '')) = LOWER($1)
+        OR LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER($1)
+        OR LOWER(COALESCE(v.vin, '')) = LOWER($1)
+        OR EXISTS (
+          SELECT 1
+          FROM vehicle_aliases va
+          WHERE va.vehicle_id = v.id
+            AND va.active = true
+            AND LOWER(va.alias) = LOWER($1)
+        )
       ORDER BY
         COALESCE(t.trip_start, ti.trip_start) ASC NULLS LAST,
         ti.id ASC
@@ -598,6 +641,8 @@ router.get("/vehicle/:vehicleId", async (req, res) => {
 
 router.get("/automation-notices", async (req, res) => {
   try {
+    await ensureVehicleAliasesTable();
+
     const query = `
       WITH notice_settings AS (
         SELECT COALESCE(
@@ -732,6 +777,8 @@ router.patch("/automation-notices/:historyId/ack", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
+    await ensureVehicleAliasesTable();
+
     const tripId = Number(req.params.id);
 
     if (!Number.isInteger(tripId) || tripId <= 0) {
@@ -827,6 +874,7 @@ router.patch("/:id", async (req, res) => {
 
   try {
     await client.query("BEGIN");
+    await ensureVehicleAliasesTable(client);
 
     const existingTripResult = await client.query(
       `
@@ -881,8 +929,22 @@ router.patch("/:id", async (req, res) => {
       const vehicleLookup = await client.query(
         `
           SELECT turo_vehicle_id, nickname
-          FROM vehicles
-          WHERE LOWER(nickname) = LOWER($1)
+          FROM vehicles v
+          WHERE LOWER(v.nickname) = LOWER($1)
+            OR LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER($1)
+            OR EXISTS (
+              SELECT 1
+              FROM vehicle_aliases va
+              WHERE va.vehicle_id = v.id
+                AND va.active = true
+                AND LOWER(va.alias) = LOWER($1)
+            )
+          ORDER BY
+            CASE
+              WHEN LOWER(v.nickname) = LOWER($1) THEN 1
+              WHEN LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER($1) THEN 2
+              ELSE 3
+            END
           LIMIT 1
         `,
         [nickname]
@@ -891,7 +953,7 @@ router.patch("/:id", async (req, res) => {
       if (!vehicleLookup.rows.length) {
         await client.query("ROLLBACK");
         return res.status(400).json({
-          error: `Vehicle nickname not found: ${nickname}`,
+          error: `Vehicle not found: ${nickname}`,
         });
       }
 

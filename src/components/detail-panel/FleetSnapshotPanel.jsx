@@ -33,6 +33,48 @@ import {
 } from "../../utils/maintUtils";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const UTILIZATION_WINDOW_DAYS = 7;
+
+function getLocalDayStartMs(value = new Date()) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function getLocalDayKey(dayStartMs) {
+  const date = new Date(dayStartMs);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTripBookedDayKeys(trip, windowStartMs, windowEndMs) {
+  const startMs = getTripStartMs(trip);
+  const rawEndMs = getTripEndMs(trip);
+
+  if (!Number.isFinite(startMs)) return [];
+
+  const endMs =
+    Number.isFinite(rawEndMs) && rawEndMs >= startMs ? rawEndMs : startMs;
+  const overlapStartMs = Math.max(startMs, windowStartMs);
+  const overlapEndMs = Math.min(endMs, windowEndMs - 1);
+
+  if (overlapEndMs < windowStartMs || overlapStartMs >= windowEndMs) {
+    return [];
+  }
+
+  const keys = [];
+  for (
+    let dayMs = getLocalDayStartMs(overlapStartMs);
+    dayMs <= getLocalDayStartMs(overlapEndMs);
+    dayMs += 24 * 60 * 60 * 1000
+  ) {
+    keys.push(getLocalDayKey(dayMs));
+  }
+
+  return keys;
+}
 
 /**
  * Fleet-only view shown when no trip is selected.
@@ -284,6 +326,44 @@ export default function FleetSnapshotPanel({
       });
   }, [vehicles, trips]);
 
+  const sevenDayUtilization = useMemo(() => {
+    const windowStartMs = getLocalDayStartMs();
+    const windowEndMs =
+      windowStartMs + UTILIZATION_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const bookedVehicleDays = new Set();
+
+    for (const vehicle of vehicles) {
+      const vehicleKey = getVehicleKey(vehicle);
+      if (!vehicleKey) continue;
+
+      for (const trip of trips) {
+        if (isCanceledTrip(trip) || !tripMatchesVehicle(vehicle, trip)) {
+          continue;
+        }
+
+        for (const dayKey of getTripBookedDayKeys(
+          trip,
+          windowStartMs,
+          windowEndMs
+        )) {
+          bookedVehicleDays.add(`${vehicleKey}:${dayKey}`);
+        }
+      }
+    }
+
+    const capacityDays = vehicles.length * UTILIZATION_WINDOW_DAYS;
+    const bookedDays = bookedVehicleDays.size;
+    const percent = capacityDays > 0 ? bookedDays / capacityDays : 0;
+
+    return {
+      bookedDays,
+      capacityDays,
+      percent,
+      percentLabel: `${Math.round(percent * 100)}%`,
+      widthPercent: Math.round(Math.max(0, Math.min(1, percent)) * 100),
+    };
+  }, [vehicles, trips]);
+
   function renderLocationLink(vehicle) {
   const { label, url, title, clickable } = getVehicleLocationLinkData(vehicle);
 
@@ -340,6 +420,27 @@ export default function FleetSnapshotPanel({
             <div className="detail-value">{vehiclesError}</div>
           </div>
         ) : null}
+
+        <section className="fleet-utilization-card" aria-label="7 day utilization">
+          <div className="fleet-utilization-card__header">
+            <div>
+              <div className="detail-label">7 Day Utilization</div>
+              <div className="fleet-utilization-card__title">
+                {sevenDayUtilization.bookedDays.toLocaleString("en-US")} /{" "}
+                {sevenDayUtilization.capacityDays.toLocaleString("en-US")} booked days
+              </div>
+            </div>
+            <div className="fleet-utilization-card__percent">
+              {sevenDayUtilization.percentLabel}
+            </div>
+          </div>
+          <div className="fleet-utilization-card__track">
+            <div
+              className="fleet-utilization-card__fill"
+              style={{ width: `${sevenDayUtilization.widthPercent}%` }}
+            />
+          </div>
+        </section>
 
         <div className="fleet-list">
           {sortedVehicleRows.map(({ vehicle, currentTrip, nextTrip }) => {
