@@ -10,6 +10,10 @@ const {
   stageStartingOdometerFromTelemetry,
 } = require("../trips/stageStartingOdometer");
 const { saveTelemetryRawPayload } = require("../telemetry/rawPayloadStore");
+const {
+  assignTripToTelemetrySnapshot,
+  ensureTelemetryTripAttributionSchema,
+} = require("../telemetry/tripAttribution");
 
 function toIntegerOrNull(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -187,6 +191,8 @@ async function upsertVehicle(client, snapshot) {
 }
 
 async function insertSnapshot(client, snapshot) {
+  await ensureTelemetryTripAttributionSchema(client);
+
   const result = await client.query(
     `
       INSERT INTO vehicle_telemetry_snapshots (
@@ -248,7 +254,9 @@ async function insertSnapshot(client, snapshot) {
     ]
   );
 
-  await saveTelemetryRawPayload(client, result.rows[0]?.id, snapshot.raw_payload);
+  const snapshotId = result.rows[0]?.id;
+  await saveTelemetryRawPayload(client, snapshotId, snapshot.raw_payload);
+  await assignTripToTelemetrySnapshot(snapshotId, client);
   return result;
 }
 

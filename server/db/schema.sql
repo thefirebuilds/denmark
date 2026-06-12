@@ -90,6 +90,8 @@ DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_service_token_captur
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_external_key;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_dimo_token_captured;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_fuel_vin_latest;
+DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_trip_path;
+DROP INDEX IF EXISTS public.idx_vehicle_telemetry_snapshots_trip_id;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_raw_payloads_created_at;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_token_signal_time;
 DROP INDEX IF EXISTS public.idx_vehicle_telemetry_signal_values_snapshot;
@@ -156,6 +158,7 @@ ALTER TABLE IF EXISTS ONLY public.vehicles DROP CONSTRAINT IF EXISTS vehicles_id
 ALTER TABLE IF EXISTS ONLY public.vehicle_aliases DROP CONSTRAINT IF EXISTS vehicle_aliases_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_raw_payloads DROP CONSTRAINT IF EXISTS vehicle_telemetry_raw_payloads_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_snapshots DROP CONSTRAINT IF EXISTS vehicle_telemetry_snapshots_pkey;
+ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_snapshots DROP CONSTRAINT IF EXISTS vehicle_telemetry_snapshots_trip_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_telemetry_signal_values DROP CONSTRAINT IF EXISTS vehicle_telemetry_signal_values_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_rollups DROP CONSTRAINT IF EXISTS vehicle_odometer_rollups_pkey;
 ALTER TABLE IF EXISTS ONLY public.vehicle_odometer_history DROP CONSTRAINT IF EXISTS vehicle_odometer_history_pkey;
@@ -265,6 +268,7 @@ DROP SEQUENCE IF EXISTS public.fleet_alert_deliveries_id_seq;
 DROP TABLE IF EXISTS public.fleet_alert_deliveries;
 DROP SEQUENCE IF EXISTS public.vehicle_diagnostic_suppressions_id_seq;
 DROP TABLE IF EXISTS public.vehicle_diagnostic_suppressions;
+DROP TABLE IF EXISTS public.system_activity_log;
 DROP TABLE IF EXISTS public.app_settings;
 DROP SEQUENCE IF EXISTS public.api_auth_tokens_id_seq;
 DROP TABLE IF EXISTS public.api_auth_tokens;
@@ -1572,7 +1576,8 @@ CREATE TABLE public.vehicle_telemetry_snapshots (
     throttle_position numeric,
     runtime_minutes numeric,
     def_level numeric,
-    external_vehicle_key text
+    external_vehicle_key text,
+    trip_id integer
 );
 
 
@@ -2641,6 +2646,10 @@ CREATE INDEX idx_vehicle_telemetry_snapshots_lower_vin_recorded_desc ON public.v
 
 CREATE INDEX idx_vehicle_telemetry_snapshots_fuel_vin_latest ON public.vehicle_telemetry_snapshots USING btree (lower(vin), COALESCE(fuel_level_last_updated, vehicle_last_updated, captured_at) DESC, id DESC) WHERE (fuel_level IS NOT NULL);
 
+CREATE INDEX idx_vehicle_telemetry_snapshots_trip_id ON public.vehicle_telemetry_snapshots USING btree (trip_id, captured_at DESC) WHERE (trip_id IS NOT NULL);
+
+CREATE INDEX idx_vehicle_telemetry_snapshots_trip_path ON public.vehicle_telemetry_snapshots USING btree (trip_id, COALESCE(location_last_updated, vehicle_last_updated, captured_at), id) WHERE ((trip_id IS NOT NULL) AND (latitude IS NOT NULL) AND (longitude IS NOT NULL));
+
 
 --
 -- Name: idx_vehicles_dimo_token_id; Type: INDEX; Schema: public; Owner: -
@@ -2784,6 +2793,35 @@ CREATE TABLE public.auth_audit_log (
 
 
 --
+-- Name: system_activity_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.system_activity_log (
+    id bigint NOT NULL GENERATED ALWAYS AS IDENTITY,
+    occurred_at timestamp with time zone DEFAULT now() NOT NULL,
+    category text NOT NULL,
+    event_type text NOT NULL,
+    severity text DEFAULT 'info'::text NOT NULL,
+    actor_type text DEFAULT 'system'::text NOT NULL,
+    actor_user_id bigint,
+    actor_service_token_id bigint,
+    actor_label text,
+    subject_type text,
+    subject_id text,
+    subject_label text,
+    source text,
+    request_method text,
+    request_path text,
+    ip_address text,
+    user_agent text,
+    outcome text DEFAULT 'success'::text NOT NULL,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT system_activity_log_category_check CHECK ((category = ANY (ARRAY['auth'::text, 'security'::text, 'integration'::text, 'database'::text, 'automation'::text, 'admin'::text, 'system'::text]))),
+    CONSTRAINT system_activity_log_severity_check CHECK ((severity = ANY (ARRAY['debug'::text, 'info'::text, 'notice'::text, 'warning'::text, 'error'::text])))
+);
+
+
+--
 -- Name: service_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2813,6 +2851,34 @@ CREATE INDEX auth_audit_log_event_type_idx ON public.auth_audit_log USING btree 
 --
 
 CREATE INDEX auth_audit_log_user_id_idx ON public.auth_audit_log USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: idx_system_activity_log_actor_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_system_activity_log_actor_user ON public.system_activity_log USING btree (actor_user_id, occurred_at DESC) WHERE (actor_user_id IS NOT NULL);
+
+
+--
+-- Name: idx_system_activity_log_category_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_system_activity_log_category_event ON public.system_activity_log USING btree (category, event_type, occurred_at DESC);
+
+
+--
+-- Name: idx_system_activity_log_occurred_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_system_activity_log_occurred_at ON public.system_activity_log USING btree (occurred_at DESC);
+
+
+--
+-- Name: idx_system_activity_log_subject; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_system_activity_log_subject ON public.system_activity_log USING btree (subject_type, subject_id, occurred_at DESC) WHERE (subject_type IS NOT NULL);
 
 
 --
@@ -2973,6 +3039,13 @@ ALTER TABLE ONLY public.vehicle_telemetry_signal_values
 ALTER TABLE ONLY public.vehicle_telemetry_raw_payloads
     ADD CONSTRAINT vehicle_telemetry_raw_payloads_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.vehicle_telemetry_snapshots(id) ON DELETE CASCADE;
 
+--
+-- Name: vehicle_telemetry_snapshots vehicle_telemetry_snapshots_trip_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicle_telemetry_snapshots
+    ADD CONSTRAINT vehicle_telemetry_snapshots_trip_id_fkey FOREIGN KEY (trip_id) REFERENCES public.trips(id) ON DELETE SET NULL;
+
 
 --
 -- Name: app_users trg_app_users_updated_at; Type: TRIGGER; Schema: public; Owner: -
@@ -2987,6 +3060,14 @@ CREATE TRIGGER trg_app_users_updated_at BEFORE UPDATE ON public.app_users FOR EA
 
 ALTER TABLE ONLY public.auth_audit_log
     ADD CONSTRAINT auth_audit_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.app_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: system_activity_log system_activity_log_actor_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.system_activity_log
+    ADD CONSTRAINT system_activity_log_actor_user_id_fkey FOREIGN KEY (actor_user_id) REFERENCES public.app_users(id) ON DELETE SET NULL;
 
 
 --

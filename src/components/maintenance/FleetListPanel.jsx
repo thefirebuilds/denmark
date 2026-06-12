@@ -71,6 +71,7 @@ function getNextActivitySort(trips = []) {
       const status = String(trip?.status || "").toLowerCase();
       const startMs = trip?.trip_start ? new Date(trip.trip_start).getTime() : NaN;
       const endMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+      const startsInFuture = Number.isFinite(startMs) && startMs > now;
       const overlapsNow =
         Number.isFinite(startMs) &&
         Number.isFinite(endMs) &&
@@ -83,7 +84,9 @@ function getNextActivitySort(trips = []) {
         ["active", "started", "trip_started", "in_progress"].includes(status) ||
         overlapsNow
       ) {
-        return Number.isFinite(endMs) ? endMs : Number.POSITIVE_INFINITY;
+        if (!startsInFuture) {
+          return Number.isFinite(endMs) ? endMs : Number.POSITIVE_INFINITY;
+        }
       }
 
       if (

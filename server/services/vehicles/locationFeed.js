@@ -136,11 +136,11 @@ async function getStoredVehicleLocations(client = pool) {
       latest.blocked_signals,
       latest.missing_privileges,
       latest.degraded_reason,
-      latest.location_last_updated AT TIME ZONE 'UTC' AS location_signal_at,
+      latest.location_seen_at AS location_signal_at,
       CASE
         WHEN latest.service_name = 'dimo'
-          AND latest.location_last_updated IS NOT NULL
-          AND latest.captured_at - latest.location_last_updated > INTERVAL '15 minutes'
+          AND latest.location_seen_at IS NOT NULL
+          AND latest.captured_seen_at - latest.location_seen_at > INTERVAL '15 minutes'
           THEN 'dimo_location_signal_stale'
         WHEN latest.service_name = 'dimo'
           AND latest.missing_privileges ? 'GetLocationHistory'
@@ -152,14 +152,14 @@ async function getStoredVehicleLocations(client = pool) {
         ELSE NULL
       END AS location_issue,
       COALESCE(
-        latest.location_last_updated AT TIME ZONE 'UTC',
-        latest.vehicle_last_updated AT TIME ZONE 'UTC',
-        latest.captured_at AT TIME ZONE 'UTC'
+        latest.location_seen_at,
+        latest.vehicle_seen_at,
+        latest.captured_seen_at
       ) AS last_seen,
       COALESCE(
-        latest.ignition_last_updated AT TIME ZONE 'UTC',
-        latest.vehicle_last_updated AT TIME ZONE 'UTC',
-        latest.captured_at AT TIME ZONE 'UTC'
+        latest.ignition_seen_at,
+        latest.vehicle_seen_at,
+        latest.captured_seen_at
       ) AS running_last_seen,
       CASE
         WHEN latest.location_last_updated IS NOT NULL THEN 'location_fix'
@@ -189,6 +189,19 @@ async function getStoredVehicleLocations(client = pool) {
         s.ignition_last_updated,
         s.vehicle_last_updated,
         s.captured_at,
+        CASE
+          WHEN s.service_name = 'dimo' THEN s.location_last_updated AT TIME ZONE 'America/Chicago'
+          ELSE s.location_last_updated AT TIME ZONE 'UTC'
+        END AS location_seen_at,
+        CASE
+          WHEN s.service_name = 'dimo' THEN s.vehicle_last_updated AT TIME ZONE 'America/Chicago'
+          ELSE s.vehicle_last_updated AT TIME ZONE 'UTC'
+        END AS vehicle_seen_at,
+        CASE
+          WHEN s.service_name = 'dimo' THEN s.ignition_last_updated AT TIME ZONE 'America/Chicago'
+          ELSE s.ignition_last_updated AT TIME ZONE 'UTC'
+        END AS ignition_seen_at,
+        s.captured_at AT TIME ZONE 'UTC' AS captured_seen_at,
         COALESCE(raw.raw_payload, s.raw_payload) AS raw_payload,
         ((COALESCE(raw.raw_payload, s.raw_payload) ->> 'availableSignalsCount')::int) AS available_signals_count,
         COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'fetchedSignals', '[]'::jsonb) AS fetched_signals,
@@ -220,9 +233,15 @@ async function getStoredVehicleLocations(client = pool) {
           )
         )
       ORDER BY COALESCE(
-        s.location_last_updated,
-        s.vehicle_last_updated,
-        s.captured_at
+        CASE
+          WHEN s.service_name = 'dimo' THEN s.location_last_updated AT TIME ZONE 'America/Chicago'
+          ELSE s.location_last_updated AT TIME ZONE 'UTC'
+        END,
+        CASE
+          WHEN s.service_name = 'dimo' THEN s.vehicle_last_updated AT TIME ZONE 'America/Chicago'
+          ELSE s.vehicle_last_updated AT TIME ZONE 'UTC'
+        END,
+        s.captured_at AT TIME ZONE 'UTC'
       ) DESC NULLS LAST, s.id DESC
       LIMIT 1
     ) latest ON true

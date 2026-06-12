@@ -166,6 +166,23 @@ body {
   align-items: center;
   padding: 14px 10px;
   gap: 12px;
+  width: 88px;
+  overflow: hidden;
+  position: relative;
+  z-index: 20;
+  transition:
+    width 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.rail.rail--expanded {
+  width: 224px;
+  align-items: stretch;
+  border-color: rgba(96, 165, 250, 0.42);
+  box-shadow:
+    var(--shadow),
+    18px 0 34px rgba(0, 0, 0, 0.22);
 }
 
 .rail-brand {
@@ -178,26 +195,169 @@ body {
   border: 1px solid #2c3d63;
   font-size: 1.15rem;
   font-weight: 800;
+  color: var(--text);
+  appearance: none;
+  cursor: pointer;
+  font-family: inherit;
+  flex: 0 0 auto;
+  justify-content: center;
+  transition:
+    width 180ms ease,
+    border-radius 180ms ease,
+    background 180ms ease;
 }
 
-.rail-btn {
+.rail.rail--expanded .rail-brand {
+  width: 100%;
+  grid-template-columns: 32px minmax(0, 1fr);
+  justify-items: start;
+  gap: 10px;
+  padding: 0 14px;
+  border-radius: 16px;
+}
+
+.rail .rail-btn {
   width: 52px;
   height: 52px;
-  border-radius: 16px;
-  border: 1px solid #2a395d;
-  background: #121b31;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text);
   display: grid;
   place-items: center;
+  padding: 0;
   position: relative;
   font-size: 1.1rem;
   appearance: none;
   cursor: pointer;
+  overflow: hidden;
+  font-family: inherit;
+  transition:
+    width 180ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
-.rail-btn.active {
-  background: linear-gradient(180deg, #1f4d8c, #163968);
-  border-color: #3b82f6;
+.rail.rail--expanded .rail-btn {
+  width: 100%;
+  grid-template-columns: 32px minmax(0, 1fr);
+  justify-items: start;
+  gap: 10px;
+  padding: 0 14px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.rail .rail-btn.active {
+  background: transparent;
+  border-color: transparent;
+}
+
+.rail.rail--expanded .rail-btn.active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.rail .rail-btn:hover,
+.rail-brand:hover {
+  border-color: rgba(96, 165, 250, 0.24);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.rail:not(.rail--expanded) .rail-btn.active::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 15px;
+  bottom: 15px;
+  width: 3px;
+  border-radius: 999px;
+  background: #60a5fa;
+  box-shadow: 0 0 12px rgba(96, 165, 250, 0.44);
+}
+
+.rail:not(.rail--expanded) .rail-btn:hover,
+.rail:not(.rail--expanded) .rail-btn:focus-visible {
+  background: transparent;
+  border-color: transparent;
+  outline: none;
+}
+
+.rail:not(.rail--expanded) .rail-btn:hover .rail-icon,
+.rail:not(.rail--expanded) .rail-btn:focus-visible .rail-icon,
+.rail:not(.rail--expanded) .rail-btn.active .rail-icon {
+  color: #dbeafe;
+  text-shadow: 0 0 14px rgba(96, 165, 250, 0.35);
+}
+
+.rail.rail--expanded .rail-btn:hover,
+.rail.rail--expanded .rail-btn:focus-visible {
+  background: transparent;
+  border-color: transparent;
+  outline: none;
+}
+
+.rail.rail--expanded .rail-btn.active::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 15px;
+  bottom: 15px;
+  width: 3px;
+  border-radius: 999px;
+  background: #60a5fa;
+  box-shadow: 0 0 12px rgba(96, 165, 250, 0.44);
+}
+
+.rail.rail--expanded .rail-btn:hover .rail-icon,
+.rail.rail--expanded .rail-btn:focus-visible .rail-icon,
+.rail.rail--expanded .rail-btn.active .rail-icon,
+.rail.rail--expanded .rail-btn:hover .rail-label,
+.rail.rail--expanded .rail-btn:focus-visible .rail-label,
+.rail.rail--expanded .rail-btn.active .rail-label {
+  color: #dbeafe;
+  text-shadow: 0 0 14px rgba(96, 165, 250, 0.25);
+}
+
+.rail-icon {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  font-size: 1.08rem;
+  line-height: 1;
+}
+
+.rail:not(.rail--expanded) .rail-icon {
+  min-width: 32px;
+  width: 32px;
+  height: 32px;
+  font-size: 1.18rem;
+  transform: translateY(1px);
+}
+
+.rail-label {
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  color: #dbeafe;
+  font-size: 0.84rem;
+  font-weight: 850;
+  line-height: 1.1;
+  white-space: nowrap;
+  transition:
+    opacity 140ms ease,
+    max-width 180ms ease;
+}
+
+.rail.rail--expanded .rail-label {
+  max-width: 150px;
+  opacity: 1;
 }
 
 .mini-badge {
@@ -1016,6 +1176,10 @@ body {
   align-items: start;
 }
 
+.app:has(.rail.rail--expanded) {
+  grid-template-columns: 224px minmax(300px, 340px) minmax(420px, 1fr) minmax(360px, 440px);
+}
+
 .message-maintenance-item div {
   min-width: 0;
   display: grid;
@@ -1396,6 +1560,10 @@ body {
     "rail content";
 }
 
+.app.app--mobile-maintenance:has(.rail.rail--expanded) {
+  grid-template-columns: 224px minmax(0, 1fr);
+}
+
 .mobile-maintenance-shell {
   grid-area: content;
   min-width: 0;
@@ -1472,6 +1640,10 @@ body {
       "rail trips messages"
       "rail details details";
   }
+
+  .app:has(.rail.rail--expanded) {
+    grid-template-columns: 224px minmax(300px, 340px) minmax(420px, 1fr);
+  }
 }
 
 @media (max-width: 980px) {
@@ -1485,11 +1657,31 @@ body {
       "details";
   }
 
+  .app:has(.rail.rail--expanded) {
+    grid-template-columns: 1fr;
+  }
+
   .rail {
     border-radius: 20px;
     flex-direction: row;
     justify-content: flex-start;
     overflow: auto;
+    width: 100%;
+    align-items: center;
+  }
+
+  .rail.rail--expanded {
+    width: 100%;
+  }
+
+  .rail.rail--expanded .rail-brand,
+  .rail.rail--expanded .rail-btn {
+    width: auto;
+    min-width: 52px;
+  }
+
+  .rail.rail--expanded .rail-label {
+    max-width: 130px;
   }
 
   .rail-spacer {
@@ -1506,6 +1698,10 @@ body {
       "rail"
       "banner"
       "content";
+  }
+
+  .app.app--mobile-maintenance:has(.rail.rail--expanded) {
+    grid-template-columns: 1fr;
   }
 
   .top-banner {

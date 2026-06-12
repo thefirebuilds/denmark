@@ -31,6 +31,7 @@ const marketplaceRoutes = require("./routes/marketplace");
 const publicAvailabilityRouter = require("./routes/publicAvailability");
 const settingsRouter = require("./routes/settings");
 const databaseRouter = require("./routes/database");
+const systemActivityRouter = require("./routes/systemActivity");
 const googleCalendarRoutes = require("./routes/googleCalendar");
 const {
   router: notificationRoutes,
@@ -51,6 +52,9 @@ const {
 const {
   ensureVehicleAliasesTable,
 } = require("./services/vehicles/vehicleAliases");
+const {
+  ensureSystemActivityLogTable,
+} = require("./services/systemActivityLog");
 const { ensureIncomeTables } = require("./services/income/incomeService");
 const { ensureFleetAlertTables } = require("./services/alerts/fleetAlerts");
 const { isAuthEnforced } = require("./auth/config");
@@ -328,6 +332,12 @@ app.use(
 );
 app.use("/api/database", defaultCors, requirePermission("database.admin"), databaseRouter);
 app.use(
+  "/api/system-activity",
+  defaultCors,
+  requirePermission("settings.read"),
+  systemActivityRouter
+);
+app.use(
   "/api/integrations/google-calendar",
   defaultCors,
   authenticateServiceToken({ optional: true }),
@@ -375,6 +385,7 @@ async function initializeStartupTables() {
     ensureFleetAlertTables(),
     ensureGoogleCalendarConnectionHealthColumns(),
     ensureAuthTables(),
+    ensureSystemActivityLogTable(),
   ]);
 }
 

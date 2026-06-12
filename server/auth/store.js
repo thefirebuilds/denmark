@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const pool = require("../db");
 const { getPermissionsForRole, normalizeRole } = require("./permissions");
+const { logSystemActivity } = require("../services/systemActivityLog");
 
 let ensureAuthTablesPromise = null;
 const REQUIRED_AUTH_TABLES = ["app_users", "auth_audit_log", "service_tokens"];
@@ -163,6 +164,34 @@ async function createAuthAuditLog({
     `,
     [userId, eventType, ipAddress, userAgent, JSON.stringify(details || {})]
   );
+
+  await logSystemActivity({
+    client,
+    category:
+      String(eventType || "").includes("unauthorized") ||
+      String(eventType || "").includes("rejected")
+        ? "security"
+        : "auth",
+    eventType,
+    severity:
+      String(eventType || "").includes("failure") ||
+      String(eventType || "").includes("unauthorized") ||
+      String(eventType || "").includes("rejected")
+        ? "warning"
+        : "info",
+    actorType: userId ? "user" : "system",
+    actorUserId: userId,
+    source: "auth",
+    ipAddress,
+    userAgent,
+    outcome:
+      String(eventType || "").includes("failure") ||
+      String(eventType || "").includes("unauthorized") ||
+      String(eventType || "").includes("rejected")
+        ? "failure"
+        : "success",
+    details,
+  }).catch(() => null);
 }
 
 async function upsertUserFromOidcProfile(
@@ -211,7 +240,8 @@ async function upsertUserFromOidcProfile(
         role,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        (xmax = 0) AS inserted
     `,
     [
       String(provider || "").trim().toLowerCase(),
@@ -223,6 +253,24 @@ async function upsertUserFromOidcProfile(
   );
 
   const row = result.rows[0];
+  if (row?.inserted === true) {
+    await logSystemActivity({
+      client,
+      category: "admin",
+      eventType: "user_added",
+      severity: "notice",
+      actorType: "system",
+      subjectType: "app_user",
+      subjectId: String(row.id),
+      subjectLabel: row.email,
+      source: "auth",
+      details: {
+        provider: row.provider,
+        role: normalizeRole(row.role),
+      },
+    }).catch(() => null);
+  }
+
   return {
     ...row,
     role: normalizeRole(row.role),

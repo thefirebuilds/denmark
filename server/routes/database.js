@@ -1,6 +1,11 @@
 const express = require("express");
 const zlib = require("zlib");
 const db = require("../db");
+const {
+  getRequestMeta,
+  logRequestActivity,
+  logSystemActivity,
+} = require("../services/systemActivityLog");
 
 const router = express.Router();
 
@@ -357,10 +362,24 @@ async function restoreBackup(backup) {
 }
 
 router.get("/backup", async (req, res) => {
+  const compressed =
+    String(req.query.compress || req.query.format || "").toLowerCase() === "gzip";
+  const filename = `denmark-db-backup-${isoStamp()}.json${compressed ? ".gz" : ""}`;
+
   try {
-    const compressed =
-      String(req.query.compress || req.query.format || "").toLowerCase() === "gzip";
-    const filename = `denmark-db-backup-${isoStamp()}.json${compressed ? ".gz" : ""}`;
+    await logRequestActivity(req, {
+      category: "database",
+      eventType: "database_backup_started",
+      severity: "notice",
+      subjectType: "database",
+      subjectId: process.env.PGDATABASE || "denmark",
+      subjectLabel: process.env.PGDATABASE || "denmark",
+      source: "database.backup",
+      details: {
+        compressed,
+        filename,
+      },
+    }).catch(() => null);
 
     res.setHeader("Content-Type", compressed ? "application/gzip" : "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -377,6 +396,20 @@ router.get("/backup", async (req, res) => {
     await streamBackup(gzip);
   } catch (err) {
     console.error("database backup failed:", err);
+    await logRequestActivity(req, {
+      category: "database",
+      eventType: "database_backup_failed",
+      severity: "error",
+      outcome: "failure",
+      subjectType: "database",
+      subjectId: process.env.PGDATABASE || "denmark",
+      source: "database.backup",
+      details: {
+        compressed,
+        filename,
+        error: err.message || String(err),
+      },
+    }).catch(() => null);
     if (!res.headersSent) {
       res.status(500).json({ error: err.message || "Database backup failed" });
       return;
@@ -393,9 +426,42 @@ router.post("/restore", async (req, res) => {
     }
 
     const result = await restoreBackup(req.body.backup);
+    const requestMeta = getRequestMeta(req);
+    await logSystemActivity({
+      ...requestMeta,
+      actorUserId: null,
+      category: "database",
+      eventType: "database_restore_completed",
+      severity: "warning",
+      subjectType: "database",
+      subjectId: process.env.PGDATABASE || "denmark",
+      subjectLabel: process.env.PGDATABASE || "denmark",
+      source: "database.restore",
+      details: {
+        backupCapturedAt: req.body?.backup?.capturedAt || null,
+        backupVersion: req.body?.backup?.version || null,
+        ...result,
+      },
+    }).catch(() => null);
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error("database restore failed:", err);
+    const requestMeta = getRequestMeta(req);
+    await logSystemActivity({
+      ...requestMeta,
+      actorUserId: null,
+      category: "database",
+      eventType: "database_restore_failed",
+      severity: "error",
+      outcome: "failure",
+      subjectType: "database",
+      subjectId: process.env.PGDATABASE || "denmark",
+      source: "database.restore",
+      details: {
+        backupCapturedAt: req.body?.backup?.capturedAt || null,
+        error: err.message || String(err),
+      },
+    }).catch(() => null);
     res
       .status(err.status || 500)
       .json({ error: err.message || "Database restore failed" });

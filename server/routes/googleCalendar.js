@@ -17,6 +17,7 @@ const {
   syncTripToGoogle,
   reconcileTripsToGoogle,
 } = require("../services/googleCalendar/googleTripSync");
+const { logRequestActivity } = require("../services/systemActivityLog");
 
 const router = express.Router();
 
@@ -71,6 +72,16 @@ router.post("/sync-trip/:tripId", async (req, res, next) => {
     }
 
     const result = await syncTripToGoogle(tripId, getRouteUserId(req));
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_trip_sync_requested",
+      subjectType: "trip",
+      subjectId: String(tripId),
+      source: "google-calendar",
+      details: {
+        result,
+      },
+    }).catch(() => null);
     return res.json({ ok: true, ...result });
   } catch (err) {
     next(err);
@@ -81,6 +92,15 @@ router.post("/reconcile-trips", async (req, res, next) => {
   try {
     const limit = Number(req.body?.limit || 500);
     const result = await reconcileTripsToGoogle({ userId: getRouteUserId(req), limit });
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_reconcile_requested",
+      source: "google-calendar",
+      details: {
+        limit,
+        processed: result?.processed ?? null,
+      },
+    }).catch(() => null);
     return res.json(result);
   } catch (err) {
     next(err);
@@ -212,6 +232,19 @@ router.post("/test-event", async (req, res, next) => {
       },
     });
 
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_test_event_created",
+      subjectType: "google_calendar",
+      subjectId: connection.calendar_id,
+      subjectLabel: connection.calendar_summary || connection.calendar_id,
+      source: "google-calendar",
+      details: {
+        eventId: event.data.id,
+        htmlLink: event.data.htmlLink,
+      },
+    }).catch(() => null);
+
     return res.json({
       ok: true,
       calendarId: connection.calendar_id,
@@ -227,6 +260,15 @@ router.get("/connect", (req, res) => {
   const state = crypto.randomBytes(24).toString("hex");
   req.session.googleCalendarState = state;
 
+  void logRequestActivity(req, {
+    category: "integration",
+    eventType: "google_calendar_connect_started",
+    subjectType: "integration",
+    subjectId: "google-calendar",
+    subjectLabel: "Google Calendar",
+    source: "google-calendar",
+  }).catch(() => null);
+
   const authUrl = getAuthUrl(state);
   return res.redirect(authUrl);
 });
@@ -236,10 +278,30 @@ router.get("/callback", async (req, res, next) => {
     const { code, state } = req.query;
 
     if (!code) {
+      await logRequestActivity(req, {
+        category: "integration",
+        eventType: "google_calendar_connect_failed",
+        severity: "warning",
+        outcome: "failure",
+        subjectType: "integration",
+        subjectId: "google-calendar",
+        source: "google-calendar",
+        details: { reason: "missing_code" },
+      }).catch(() => null);
       return res.status(400).json({ error: "Missing code" });
     }
 
     if (!state || state !== req.session.googleCalendarState) {
+      await logRequestActivity(req, {
+        category: "integration",
+        eventType: "google_calendar_connect_failed",
+        severity: "warning",
+        outcome: "failure",
+        subjectType: "integration",
+        subjectId: "google-calendar",
+        source: "google-calendar",
+        details: { reason: "invalid_state" },
+      }).catch(() => null);
       return res.status(400).json({ error: "Invalid state" });
     }
 
@@ -275,6 +337,20 @@ router.get("/callback", async (req, res, next) => {
       scopeString: tokens.scope || null,
     });
 
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_connected",
+      severity: "notice",
+      subjectType: "integration",
+      subjectId: "google-calendar",
+      subjectLabel: "Google Calendar",
+      source: "google-calendar",
+      details: {
+        calendarCount: calendars.length,
+        scopes: tokens.scope || null,
+      },
+    }).catch(() => null);
+
     console.log("Google Calendar auth succeeded");
     console.log("Available calendars:", calendars);
 
@@ -290,6 +366,18 @@ router.get("/callback", async (req, res, next) => {
         `${frontendBaseUrl}/settings?googleCalendar=connected`
         );
   } catch (err) {
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_connect_failed",
+      severity: "error",
+      outcome: "failure",
+      subjectType: "integration",
+      subjectId: "google-calendar",
+      source: "google-calendar",
+      details: {
+        error: err.message || String(err),
+      },
+    }).catch(() => null);
     next(err);
   }
 });
@@ -344,6 +432,19 @@ router.post("/select-calendar", async (req, res, next) => {
     if (!updated) {
       return res.status(404).json({ error: "No Google Calendar connection found" });
     }
+
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_selected_calendar_changed",
+      severity: "notice",
+      subjectType: "google_calendar",
+      subjectId: updated.calendar_id,
+      subjectLabel: updated.calendar_summary || updated.calendar_id,
+      source: "google-calendar",
+      details: {
+        connectionId: updated.id,
+      },
+    }).catch(() => null);
 
     return res.json({
       ok: true,

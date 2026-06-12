@@ -12,6 +12,10 @@ const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
 const { evaluateCloseoutCompleteness } = require("../services/trips/closeoutState");
 const {
+  ensureTelemetryTripAttributionSchema,
+  telemetryEventAtExpression,
+} = require("../services/telemetry/tripAttribution");
+const {
   ensureVehicleAliasesTable,
 } = require("../services/vehicles/vehicleAliases");
 
@@ -259,7 +263,7 @@ function computeQueueBucket(trip) {
     return "needs_closeout";
   }
 
-  if (workflowStage === "in_progress") {
+  if (workflowStage === "in_progress" && (!start || start <= now)) {
     return "in_progress";
   }
 
@@ -772,6 +776,61 @@ router.patch("/automation-notices/:historyId/ack", async (req, res) => {
     res.status(500).json({ error: "Failed to acknowledge automation notice" });
   } finally {
     client.release();
+  }
+});
+
+router.get("/:id/telemetry-path", async (req, res) => {
+  try {
+    await ensureTelemetryTripAttributionSchema(pool);
+
+    const tripId = Number(req.params.id);
+    const limit = Math.min(
+      5000,
+      Math.max(1, Number.parseInt(req.query.limit, 10) || 2000)
+    );
+
+    if (!Number.isInteger(tripId) || tripId <= 0) {
+      return res.status(400).json({ error: "Invalid trip id" });
+    }
+
+    const eventAt = telemetryEventAtExpression("s");
+    const { rows } = await pool.query(
+      `
+        WITH path AS (
+          SELECT
+            s.id,
+            s.trip_id,
+            s.service_name,
+            s.latitude::float AS lat,
+            s.longitude::float AS lon,
+            s.speed::float AS speed,
+            s.heading::float AS heading,
+            s.is_running,
+            ${eventAt} AS seen_at,
+            s.captured_at AT TIME ZONE 'UTC' AS captured_at,
+            COUNT(*) OVER()::int AS total_points
+          FROM vehicle_telemetry_snapshots s
+          WHERE s.trip_id = $1
+            AND s.latitude IS NOT NULL
+            AND s.longitude IS NOT NULL
+          ORDER BY ${eventAt} ASC, s.id ASC
+          LIMIT $2
+        )
+        SELECT *
+        FROM path
+      `,
+      [tripId, limit]
+    );
+
+    res.json({
+      trip_id: tripId,
+      point_count: rows[0]?.total_points || 0,
+      returned_point_count: rows.length,
+      points: rows.map(({ total_points, ...row }) => row),
+    });
+  } catch (err) {
+    console.error("GET /api/trips/:id/telemetry-path failed:", err.message || err);
+    res.status(500).json({ error: "Failed to load trip telemetry path" });
   }
 });
 

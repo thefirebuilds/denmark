@@ -157,7 +157,10 @@ function buildFleetQueueItems(vehicleCard, summary, historyMap = {}) {
   }));
 }
 
-export default function MaintenanceQueuePanel({ selectedVehicleId }) {
+export default function MaintenanceQueuePanel({
+  selectedVehicleId,
+  onShowAllVehicles,
+}) {
   const [fleetVehicles, setFleetVehicles] = useState([]);
   const [maintenanceSummary, setMaintenanceSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -495,6 +498,43 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
     }
   }
 
+  async function handleResolveTask(item) {
+    const taskId = item?.task?.id;
+    if (!taskId) {
+      window.alert("This queue item is not linked to a maintenance task.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/maintenance-tasks/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "resolved",
+        }),
+      });
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      if (selectedVehicleId && selectedFleetVehicle?.vin) {
+        await loadSummaryForSelectedVehicle(selectedFleetVehicle.vin);
+      } else {
+        setFleetPlanningItems((prev) =>
+          prev.filter((entry) => entry.task?.id !== taskId)
+        );
+      }
+    } catch (err) {
+      console.error("Failed to resolve maintenance task:", err);
+      window.alert(err.message || "Could not mark task done.");
+    }
+  }
+
   function handleCloseInspectionDrawer() {
     if (savingInspection) return;
     setInspectionDrawerOpen(false);
@@ -564,11 +604,38 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
   const openItemCount = selectedVehicleId
     ? queueItems.length
     : fleetPlanningItems.length;
+  const selectedVehicleLabel =
+    selectedFleetVehicle?.nickname ||
+    (selectedVehicleId
+      ? String(selectedVehicleId)
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (match) => match.toUpperCase())
+      : "All vehicles");
 
   return (
     <aside className="panel detail-panel maintenance-queue-panel">
-      <div className="panel-header">
-        <h2>Maintenance Queue</h2>
+      <div className="panel-header maintenance-queue-panel-header">
+        <div>
+          <h2>Maintenance Queue</h2>
+          {selectedVehicleId ? (
+            <div className="maintenance-queue-scope">
+              <span>
+                Selected vehicle: <strong>{selectedVehicleLabel}</strong>
+              </span>
+              <button
+                type="button"
+                className="maintenance-queue-scope-action"
+                onClick={onShowAllVehicles}
+              >
+                ✓ Show all vehicles
+              </button>
+            </div>
+          ) : (
+            <div className="maintenance-queue-scope maintenance-queue-scope--all">
+              <span>Showing all vehicles</span>
+            </div>
+          )}
+        </div>
         <span>{openItemCount} open items</span>
       </div>
 
@@ -613,10 +680,14 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
                                 </small>
                               </button>
                             ) : (
-                              <div className="maintenance-queue-task-static">
+                              <button
+                                type="button"
+                                className="maintenance-queue-task-button"
+                                onClick={() => handleResolveTask(item)}
+                              >
                                 <span>{item.title}</span>
-                                <small>No mapped action</small>
-                              </div>
+                                <small>Mark done</small>
+                              </button>
                             )}
                           </li>
                         ))}
@@ -667,12 +738,16 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
                     </small>
                   </button>
                 ) : (
-                  <div className="maintenance-queue-task-static">
+                  <button
+                    type="button"
+                    className="maintenance-queue-task-button"
+                    onClick={() => handleResolveTask(item)}
+                  >
                     <span>{item.title}</span>
                     <small>
-                      {selectedFleetVehicle?.nickname || "Selected vehicle"} · No mapped action
+                      {selectedFleetVehicle?.nickname || "Selected vehicle"} - Mark done
                     </small>
-                  </div>
+                  </button>
                 )}
               </div>
             ))}
@@ -691,4 +766,5 @@ export default function MaintenanceQueuePanel({ selectedVehicleId }) {
     </aside>
   );
 }
+
 

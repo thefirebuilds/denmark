@@ -28,6 +28,110 @@ const pool = require("../db");
 
 const router = express.Router();
 
+function normalizeManualTaskText(value, fieldName) {
+  const text = String(value || "").trim();
+  if (!text) {
+    const err = new Error(`${fieldName} is required`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return text;
+}
+
+function normalizeManualTaskPriority(value) {
+  const priority = String(value || "medium").trim().toLowerCase();
+  return ["low", "medium", "high", "urgent"].includes(priority)
+    ? priority
+    : "medium";
+}
+
+async function createManualMaintenanceTask(client, vin, input = {}) {
+  const vehicleVin = String(vin || "").trim();
+  if (!vehicleVin) {
+    const err = new Error("VIN required");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const vehicleResult = await client.query(
+    `
+      SELECT vin
+      FROM vehicles
+      WHERE vin = $1
+      LIMIT 1
+    `,
+    [vehicleVin]
+  );
+
+  if (!vehicleResult.rows[0]) {
+    const err = new Error(`Vehicle not found: ${vehicleVin}`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const title = normalizeManualTaskText(input.title, "title");
+  const description =
+    input.description == null || String(input.description).trim() === ""
+      ? null
+      : String(input.description).trim();
+  const priority = normalizeManualTaskPriority(input.priority);
+  const source = String(input.source || "manual").trim() || "manual";
+  const reportedBy =
+    input.reportedBy == null || String(input.reportedBy).trim() === ""
+      ? null
+      : String(input.reportedBy).trim();
+
+  const result = await client.query(
+    `
+      INSERT INTO maintenance_tasks (
+        vehicle_vin,
+        task_type,
+        title,
+        description,
+        priority,
+        status,
+        blocks_rental,
+        blocks_guest_export,
+        needs_review,
+        source,
+        trigger_type,
+        trigger_context
+      )
+      VALUES (
+        $1,
+        'manual_todo',
+        $2,
+        $3,
+        $4,
+        'open',
+        $5,
+        $6,
+        true,
+        $7,
+        'manual',
+        $8::jsonb
+      )
+      RETURNING *
+    `,
+    [
+      vehicleVin,
+      title,
+      description,
+      priority,
+      Boolean(input.blocksRental),
+      Boolean(input.blocksGuestExport),
+      source,
+      JSON.stringify({
+        reportedBy,
+        noteSource: input.noteSource || source,
+        createdFrom: "maintenance_todo_form",
+      }),
+    ]
+  );
+
+  return result.rows[0];
+}
+
 // ------------------------------------------------------------
 // GET reusable maintenance rule templates
 // ------------------------------------------------------------
@@ -190,6 +294,78 @@ router.post("/vehicles/:vin/maintenance-rules", async (req, res) => {
     });
   } finally {
     client.release();
+  }
+});
+
+// ------------------------------------------------------------
+// POST manual maintenance to-do for a vehicle
+// ------------------------------------------------------------
+router.post("/vehicles/:vin/maintenance-tasks", async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const vin = String(req.params.vin || "").trim();
+    const task = await createManualMaintenanceTask(client, vin, req.body || {});
+
+    res.status(201).json({
+      ok: true,
+      task,
+    });
+  } catch (err) {
+    console.error(
+      `POST /vehicles/${req.params.vin}/maintenance-tasks failed:`,
+      err
+    );
+
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to create maintenance task",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// ------------------------------------------------------------
+// PATCH maintenance task status
+// ------------------------------------------------------------
+router.patch("/maintenance-tasks/:taskId", async (req, res) => {
+  try {
+    const taskId = Number(req.params.taskId);
+    const status = String(req.body?.status || "").trim().toLowerCase();
+
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: "Invalid taskId" });
+    }
+
+    if (!["open", "scheduled", "in_progress", "deferred", "resolved"].includes(status)) {
+      return res.status(400).json({ error: "Invalid task status" });
+    }
+
+    const result = await pool.query(
+      `
+        UPDATE maintenance_tasks
+        SET
+          status = $2,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [taskId, status]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Maintenance task not found" });
+    }
+
+    res.json({
+      ok: true,
+      task: result.rows[0],
+    });
+  } catch (err) {
+    console.error(`PATCH /maintenance-tasks/${req.params.taskId} failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to update maintenance task",
+    });
   }
 });
 

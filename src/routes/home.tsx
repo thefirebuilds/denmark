@@ -229,6 +229,9 @@ export default function Home() {
   const [activeView, setActiveView] = useState("dispatch");
   const [messageMode, setMessageMode] = useState<"live" | "trip">("live");
   const [selectedVehicleId, setSelectedVehicleId] = useState("belle");
+  const [maintenanceQueueScope, setMaintenanceQueueScope] = useState<
+    "selected" | "all"
+  >("selected");
   const [mapFocusVehicleId, setMapFocusVehicleId] = useState<string | null>(null);
   const [selectedExpenseVehicleId, setSelectedExpenseVehicleId] = useState<number | null>(null);
   const [dispatchSettings, setDispatchSettings] = useState(DEFAULT_DISPATCH_SETTINGS);
@@ -828,7 +831,13 @@ export default function Home() {
     if (!vehicleId) return;
 
     setSelectedVehicleId(String(vehicleId).trim().toLowerCase().replace(/\s+/g, "_"));
+    setMaintenanceQueueScope("selected");
     setActiveView("maintenance");
+  }
+
+  function handleSelectMaintenanceVehicle(vehicleId) {
+    setSelectedVehicleId(vehicleId);
+    setMaintenanceQueueScope("selected");
   }
 
   useEffect(() => {
@@ -861,6 +870,8 @@ export default function Home() {
     layoutMode === "auto" ? (isCompactViewport ? "mobile" : "desktop") : layoutMode;
   const useMobileMaintenanceShell =
     activeView === "maintenance" && effectiveLayoutMode === "mobile";
+  const maintenanceQueueVehicleId =
+    maintenanceQueueScope === "selected" ? selectedVehicleId : null;
 
   if (!startup.ready) {
     return (
@@ -931,13 +942,13 @@ export default function Home() {
       {useMobileMaintenanceShell ? (
         <MobileMaintenanceShell
           selectedVehicleId={selectedVehicleId}
-          onSelectVehicle={setSelectedVehicleId}
+          onSelectVehicle={handleSelectMaintenanceVehicle}
         />
       ) : activeView === "maintenance" ? (
         <>
           <FleetListPanel
             selectedVehicleId={selectedVehicleId}
-            onSelectVehicle={setSelectedVehicleId}
+            onSelectVehicle={handleSelectMaintenanceVehicle}
           />
 
           <FleetMaintenancePanel
@@ -945,7 +956,10 @@ export default function Home() {
             onOpenVehicleMap={openFleetMapForVehicle}
           />
 
-          <MaintenanceQueuePanel selectedVehicleId={selectedVehicleId} />
+          <MaintenanceQueuePanel
+            selectedVehicleId={maintenanceQueueVehicleId}
+            onShowAllVehicles={() => setMaintenanceQueueScope("all")}
+          />
         </>
       ) : activeView === "expenses" ? (
         <>

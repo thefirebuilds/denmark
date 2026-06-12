@@ -1,83 +1,55 @@
+import { useState } from "react";
+
 // --------------------------------------------------------------
 // /src/components/Rail.jsx
-// file to hold the vertical rail component used for navigation and quick actions
+// Vertical rail component used for navigation and quick actions.
 //--------------------------------------------------------------
 
+const NAV_ITEMS = [
+  { view: "dispatch", label: "Trips", icon: "✈️" },
+  { view: "maintenance", label: "Maintenance", icon: "🚗" },
+  { view: "metrics", label: "Metrics", icon: "📈" },
+  { view: "expenses", label: "Expenses", icon: "💰" },
+  { view: "inbox", label: "Expense Processing", icon: "💳" },
+  { view: "marketplace", label: "Marketplace", icon: "🛍️" },
+  { view: "fleet-map", label: "Fleet Map", icon: "🌎" },
+  { view: "ledger", label: "Trip Ledger", icon: "📒" },
+];
+
 export default function Rail({ activeView = "dispatch", onChangeView }) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
-    <nav className="rail">
-      <div className="rail-brand">≡</div>
-
+    <nav className={`rail ${expanded ? "rail--expanded" : ""}`}>
       <button
         type="button"
-        className={`rail-btn ${activeView === "dispatch" ? "active" : ""}`}
-        onClick={() => onChangeView?.("dispatch")}
-        title="Trips"
+        className="rail-brand"
+        onClick={() => setExpanded((current) => !current)}
+        aria-label={expanded ? "Collapse menu" : "Expand menu"}
+        aria-expanded={expanded}
+        title={expanded ? "Collapse menu" : "Expand menu"}
       >
-        ✈️
+        <span className="rail-icon" aria-hidden="true">
+          ≡
+        </span>
+        <span className="rail-label">Menu</span>
       </button>
 
-      <button
-        type="button"
-        className={`rail-btn ${activeView === "maintenance" ? "active" : ""}`}
-        onClick={() => onChangeView?.("maintenance")}
-        title="Maintenance"
-      >
-        🚗
-      </button>
-
-      <button
-        type="button"
-        className={`rail-btn ${activeView === "expenses" ? "active" : ""}`}
-        onClick={() => onChangeView?.("expenses")}
-        title="Expenses"
-      >
-        💰
-      </button>
-
-      <button
-        type="button"
-        className={`rail-btn ${activeView === "ledger" ? "active" : ""}`}
-        onClick={() => onChangeView?.("ledger")}
-        title="Trip Ledger"
-      >
-        📒
-      </button>
-
-      <button
-        type="button"
-        className={`rail-btn ${activeView === "inbox" ? "active" : ""}`}
-        onClick={() => onChangeView?.("inbox")}
-        title="Expense Processing"
-      >
-        🧾
-      </button>
-
-      <button
-        type="button"
-        className={`rail-btn ${activeView === "metrics" ? "active" : ""}`}
-        onClick={() => onChangeView?.("metrics")}
-        title="Metrics"
-      >
-        📈
-      </button>
-
-      <button
-        type="button"
-        className={`rail-btn ${activeView === "marketplace" ? "active" : ""}`}
-        onClick={() => onChangeView?.("marketplace")}
-        title="Marketplace"
-      >
-        🛍️
-      </button>
-      <button
-        type="button"
-        className={`rail-btn ${activeView === "fleet-map" ? "active" : ""}`}
-        onClick={() => onChangeView?.("fleet-map")}
-        title="Fleet Map"
-      >
-        MAP
-      </button>
+      {NAV_ITEMS.map((item) => (
+        <button
+          key={item.view}
+          type="button"
+          className={`rail-btn ${activeView === item.view ? "active" : ""}`}
+          onClick={() => onChangeView?.(item.view)}
+          title={item.label}
+          aria-label={item.label}
+        >
+          <span className="rail-icon" aria-hidden="true">
+            {item.icon}
+          </span>
+          <span className="rail-label">{item.label}</span>
+        </button>
+      ))}
 
       <div className="rail-spacer"></div>
 
@@ -86,10 +58,13 @@ export default function Rail({ activeView = "dispatch", onChangeView }) {
         className={`rail-btn ${activeView === "settings" ? "active" : ""}`}
         onClick={() => onChangeView?.("settings")}
         title="Settings"
+        aria-label="Settings"
       >
-        ⚙️
+        <span className="rail-icon" aria-hidden="true">
+          ⚙️
+        </span>
+        <span className="rail-label">Settings</span>
       </button>
     </nav>
   );
 }
-

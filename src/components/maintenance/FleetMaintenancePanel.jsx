@@ -768,6 +768,16 @@ export default function FleetMaintenancePanel({
     requiresPassResult: false,
     saveAsTemplate: false,
   });
+  const [addingTodo, setAddingTodo] = useState(false);
+  const [savingTodo, setSavingTodo] = useState(false);
+  const [todoError, setTodoError] = useState("");
+  const [todoForm, setTodoForm] = useState({
+    title: "",
+    description: "",
+    priority: "medium",
+    blocksRental: false,
+    blocksGuestExport: false,
+  });
   const [maintenanceTemplates, setMaintenanceTemplates] = useState([]);
   const [templateLoadError, setTemplateLoadError] = useState("");
 
@@ -1662,6 +1672,17 @@ export default function FleetMaintenancePanel({
     setCustomRuleError("");
   }
 
+  function resetTodoForm() {
+    setTodoForm({
+      title: "",
+      description: "",
+      priority: "medium",
+      blocksRental: false,
+      blocksGuestExport: false,
+    });
+    setTodoError("");
+  }
+
   async function handleSaveCustomRule() {
     try {
       if (!selectedFleetVehicle?.vin) {
@@ -1736,6 +1757,57 @@ export default function FleetMaintenancePanel({
       setCustomRuleError(err.message || "Could not create maintenance rule.");
     } finally {
       setSavingCustomRule(false);
+    }
+  }
+
+  async function handleSaveTodo() {
+    try {
+      if (!selectedFleetVehicle?.vin) {
+        throw new Error("No selected vehicle VIN available.");
+      }
+
+      if (!String(todoForm.title || "").trim()) {
+        throw new Error("Give the to-do a title.");
+      }
+
+      setSavingTodo(true);
+      setTodoError("");
+
+      const res = await fetch(
+        `/api/vehicles/${encodeURIComponent(
+          selectedFleetVehicle.vin
+        )}/maintenance-tasks`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: todoForm.title,
+            description: todoForm.description,
+            priority: todoForm.priority,
+            blocksRental: todoForm.blocksRental,
+            blocksGuestExport: todoForm.blocksGuestExport,
+            source: "manual",
+            reportedBy: "owner",
+          }),
+        }
+      );
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      await loadSelectedVehicleMaintenance();
+      resetTodoForm();
+      setAddingTodo(false);
+    } catch (err) {
+      console.error("Failed to create maintenance to-do:", err);
+      setTodoError(err.message || "Could not create maintenance to-do.");
+    } finally {
+      setSavingTodo(false);
     }
   }
 
@@ -2533,21 +2605,157 @@ export default function FleetMaintenancePanel({
                   </div>
 
                   {!isFleetPlanningMode ? (
-                    <button
-                      type="button"
-                      className="fleet-maintenance-inline-action fleet-maintenance-action-button"
-                      onClick={() => {
-                        if (addingCustomRule) {
-                          resetCustomRuleForm();
-                        }
-                        setAddingCustomRule((current) => !current);
-                      }}
-                      disabled={!selectedFleetVehicle?.vin || savingCustomRule}
-                    >
-                      {addingCustomRule ? "Cancel" : "Add item"}
-                    </button>
+                    <div className="fleet-maintenance-inline-actions">
+                      <button
+                        type="button"
+                        className="fleet-maintenance-inline-action fleet-maintenance-action-button"
+                        onClick={() => {
+                          if (addingCustomRule) {
+                            resetCustomRuleForm();
+                          }
+                          setAddingTodo(false);
+                          setAddingCustomRule((current) => !current);
+                        }}
+                        disabled={!selectedFleetVehicle?.vin || savingCustomRule}
+                      >
+                        {addingCustomRule ? "Cancel" : "Add interval item"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="fleet-maintenance-inline-action fleet-maintenance-action-button"
+                        onClick={() => {
+                          if (addingTodo) {
+                            resetTodoForm();
+                          }
+                          setAddingCustomRule(false);
+                          setAddingTodo((current) => !current);
+                        }}
+                        disabled={!selectedFleetVehicle?.vin || savingTodo}
+                      >
+                        {addingTodo ? "Cancel" : "Add to-do"}
+                      </button>
+                    </div>
                   ) : null}
                 </div>
+
+                {addingTodo && !isFleetPlanningMode ? (
+                  <div className="fleet-maintenance-registration-editor">
+                    <div className="fleet-maintenance-registration-grid">
+                      <label>
+                        <span>To-do</span>
+                        <input
+                          value={todoForm.title}
+                          onChange={(e) =>
+                            setTodoForm((prev) => ({
+                              ...prev,
+                              title: e.target.value,
+                            }))
+                          }
+                          placeholder="Replace broken window switch"
+                          disabled={savingTodo}
+                        />
+                      </label>
+
+                      <label>
+                        <span>Priority</span>
+                        <select
+                          value={todoForm.priority}
+                          onChange={(e) =>
+                            setTodoForm((prev) => ({
+                              ...prev,
+                              priority: e.target.value,
+                            }))
+                          }
+                          disabled={savingTodo}
+                        >
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="urgent">Urgent</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="fleet-maintenance-notes-field">
+                      <span className="fleet-maintenance-notes-label">Notes</span>
+                      <textarea
+                        className="fleet-maintenance-notes-textarea"
+                        rows={3}
+                        value={todoForm.description}
+                        onChange={(e) =>
+                          setTodoForm((prev) => ({
+                            ...prev,
+                            description: e.target.value,
+                          }))
+                        }
+                        placeholder="Part ordered, install when the car is back."
+                        disabled={savingTodo}
+                      />
+                    </label>
+
+                    <div className="fleet-maintenance-registration-actions">
+                      <button
+                        type="button"
+                        className="fleet-maintenance-action-button"
+                        onClick={() =>
+                          setTodoForm((prev) => ({
+                            ...prev,
+                            blocksRental: !prev.blocksRental,
+                          }))
+                        }
+                        disabled={savingTodo}
+                      >
+                        {todoForm.blocksRental ? "Blocks rental" : "Does not block rental"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="fleet-maintenance-action-button"
+                        onClick={() =>
+                          setTodoForm((prev) => ({
+                            ...prev,
+                            blocksGuestExport: !prev.blocksGuestExport,
+                          }))
+                        }
+                        disabled={savingTodo}
+                      >
+                        {todoForm.blocksGuestExport
+                          ? "Blocks guest export"
+                          : "Does not block guest export"}
+                      </button>
+                    </div>
+
+                    {todoError ? (
+                      <div className="fleet-maintenance-note fleet-maintenance-note--error">
+                        {todoError}
+                      </div>
+                    ) : null}
+
+                    <div className="fleet-maintenance-registration-actions">
+                      <button
+                        type="button"
+                        className="fleet-maintenance-action-button"
+                        onClick={() => {
+                          resetTodoForm();
+                          setAddingTodo(false);
+                        }}
+                        disabled={savingTodo}
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        type="button"
+                        className="fleet-maintenance-action-button fleet-maintenance-action-button--primary"
+                        onClick={handleSaveTodo}
+                        disabled={savingTodo}
+                      >
+                        {savingTodo ? "Adding..." : "Add to queue"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                 {addingCustomRule && !isFleetPlanningMode ? (
                   <div className="fleet-maintenance-registration-editor">

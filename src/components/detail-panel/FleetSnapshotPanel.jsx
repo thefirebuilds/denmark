@@ -31,6 +31,7 @@ import {
   buildQueueItemsFromSummary,
   getNextServiceDue,
 } from "../../utils/maintUtils";
+import TripPathMap from "../trip-summary/TripPathMap";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const UTILIZATION_WINDOW_DAYS = 7;
@@ -115,9 +116,22 @@ export default function FleetSnapshotPanel({
   }
 
   function tripMatchesVehicle(vehicle, trip) {
+    const vehicleTuroId = normalizeValue(vehicle?.turo_vehicle_id);
+    const tripTuroId = normalizeValue(trip?.turo_vehicle_id);
+
+    if (tripTuroId && vehicleTuroId) {
+      return tripTuroId === vehicleTuroId;
+    }
+
+    const vehicleVin = normalizeValue(vehicle?.vin);
+    const tripVin = normalizeValue(trip?.vehicle_vin);
+
+    if (tripVin && vehicleVin) {
+      return tripVin === vehicleVin;
+    }
+
     const vehicleKeys = [
-      normalizeValue(vehicle?.vin),
-      normalizeValue(vehicle?.turo_vehicle_id),
+      vehicleTuroId,
       normalizeValue(vehicle?.bouncie_vehicle_id),
       normalizeValue(vehicle?.dimo_token_id),
       normalizeValue(vehicle?.imei),
@@ -127,8 +141,6 @@ export default function FleetSnapshotPanel({
     ].filter(Boolean);
 
     const tripKeys = [
-      normalizeValue(trip?.turo_vehicle_id),
-      normalizeValue(trip?.vehicle_vin),
       normalizeValue(trip?.vehicle_nickname),
       normalizeValue(trip?.vehicle_name),
     ].filter(Boolean);
@@ -627,6 +639,14 @@ export default function FleetSnapshotPanel({
                         </div>
                       </div>
                     </div>
+
+                    {currentTrip?.id ? (
+                      <TripPathMap
+                        tripId={currentTrip.id}
+                        compact
+                        title="Current Trip Path"
+                      />
+                    ) : null}
                   </div>
                 ) : null}
               </div>

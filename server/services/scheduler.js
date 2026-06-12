@@ -36,6 +36,7 @@ const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsServi
 const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
 const { runFleetAlerts } = require("./alerts/fleetAlerts");
 const { refreshVehicleOdometerRollups } = require("./vehicles/odometerRollupService");
+const { logSystemActivity } = require("./systemActivityLog");
 const pool = require("../db");
 
 let tellerSyncInProgress = false;
@@ -154,12 +155,39 @@ async function runStartupTask(name, taskFn) {
       completedAt: new Date().toISOString(),
       error: null,
     });
+    await logSystemActivity({
+      category: "automation",
+      eventType: "startup_task_completed",
+      actorType: "system",
+      subjectType: "startup_task",
+      subjectId: name,
+      subjectLabel: name,
+      source: "scheduler",
+      details: {
+        task: name,
+      },
+    }).catch(() => null);
   } catch (err) {
     updateStartupTask(name, {
       state: "failed",
       completedAt: new Date().toISOString(),
       error: err?.message || String(err),
     });
+    await logSystemActivity({
+      category: "automation",
+      eventType: "startup_task_failed",
+      severity: "error",
+      actorType: "system",
+      outcome: "failure",
+      subjectType: "startup_task",
+      subjectId: name,
+      subjectLabel: name,
+      source: "scheduler",
+      details: {
+        task: name,
+        error: err?.message || String(err),
+      },
+    }).catch(() => null);
   }
 }
 
@@ -212,6 +240,22 @@ function skipAllStartupTasks(reason) {
       completedAt: now,
       error: reason,
     });
+
+    void logSystemActivity({
+      category: "automation",
+      eventType: "startup_task_skipped",
+      severity: "notice",
+      actorType: "system",
+      outcome: "skipped",
+      subjectType: "startup_task",
+      subjectId: taskName,
+      subjectLabel: taskName,
+      source: "scheduler",
+      details: {
+        task: taskName,
+        reason,
+      },
+    }).catch(() => null);
   }
 }
 
@@ -546,6 +590,16 @@ async function runTelemetryRetention(reason = "interval") {
 
 function startScheduler() {
   console.log("[scheduler] started");
+  void logSystemActivity({
+    category: "automation",
+    eventType: "scheduler_started",
+    severity: "notice",
+    actorType: "system",
+    source: "scheduler",
+    details: {
+      startupTasks: STARTUP_TASKS,
+    },
+  }).catch(() => null);
 
   const everyFifteenMinutesMs = 15 * 60 * 1000;
   const everyHourMs = 60 * 60 * 1000;
@@ -741,6 +795,13 @@ function stopScheduler() {
   }
 
   console.log("[scheduler] stopped");
+  void logSystemActivity({
+    category: "automation",
+    eventType: "scheduler_stopped",
+    severity: "notice",
+    actorType: "system",
+    source: "scheduler",
+  }).catch(() => null);
 }
 
 module.exports = startScheduler;

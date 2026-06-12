@@ -20,6 +20,10 @@ const {
   stageStartingOdometerFromTelemetry,
 } = require("../trips/stageStartingOdometer");
 const { saveTelemetryRawPayload } = require("../telemetry/rawPayloadStore");
+const {
+  assignTripToTelemetrySnapshot,
+  ensureTelemetryTripAttributionSchema,
+} = require("../telemetry/tripAttribution");
 
 let snapshotColumnCache = null;
 let vehicleColumnCache = null;
@@ -628,6 +632,8 @@ async function insertDimoOdometerHistory(normalized, client = pool) {
 }
 
 async function insertVehicleTelemetrySnapshot(snapshot, client = pool) {
+  await ensureTelemetryTripAttributionSchema(client);
+
   const existingColumns = await getSnapshotColumns(client);
   const fields = [
     ["service_name", snapshot.service_name],
@@ -686,7 +692,9 @@ async function insertVehicleTelemetrySnapshot(snapshot, client = pool) {
   `;
 
   const result = await client.query(sql, values);
-  await saveTelemetryRawPayload(client, result.rows[0]?.id, snapshot.raw_payload);
+  const snapshotId = result.rows[0]?.id;
+  await saveTelemetryRawPayload(client, snapshotId, snapshot.raw_payload);
+  await assignTripToTelemetrySnapshot(snapshotId, client);
   return result;
 }
 

@@ -395,6 +395,10 @@ export function getTaskLinkedRuleCodes(task) {
     return ["fluid_leak_check", "leak_check"];
   }
 
+  if (type.includes("battery") || title.includes("battery")) {
+    return ["battery_test"];
+  }
+
   if (type.includes("conditionreview")) {
     return ["cleaning"];
   }
@@ -594,6 +598,174 @@ export function getPriorityScore(priority) {
   return 1;
 }
 
+function normalizeQueueText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getQueueFamilyFromRuleCode(ruleCode) {
+  const code = normalizeRuleCode(ruleCode);
+
+  if (["battery_test", "battery_check"].includes(code)) {
+    return {
+      key: "battery_test",
+      title: "Battery test",
+    };
+  }
+
+  if (
+    [
+      "fluid_leak_check",
+      "leak_check",
+      "oil_level_check",
+      "engine_oil_level",
+    ].includes(code)
+  ) {
+    return {
+      key: "fluid_leak_check",
+      title: "Fluid / leak inspection",
+    };
+  }
+
+  if (
+    [
+      "tire_pressure_check",
+      "tire_pressure_inspection",
+      "tire_pressure",
+    ].includes(code)
+  ) {
+    return {
+      key: "tire_pressure_check",
+      title: "Tire pressure check",
+    };
+  }
+
+  return null;
+}
+
+function getQueueFamilyFromItem(item) {
+  const linkedCodes = [
+    item?.linkedRuleCode,
+    ...(Array.isArray(item?.linkedRuleCodes) ? item.linkedRuleCodes : []),
+  ].filter(Boolean);
+
+  for (const code of linkedCodes) {
+    const family = getQueueFamilyFromRuleCode(code);
+    if (family) return family;
+  }
+
+  const title = normalizeQueueText(item?.title);
+  const type = normalizeQueueText(item?.type || item?.task?.task_type);
+
+  if (title.includes("battery") || type.includes("battery")) {
+    return {
+      key: "battery_test",
+      title: "Battery test",
+    };
+  }
+
+  if (
+    title.includes("fluid") ||
+    title.includes("leak") ||
+    title.includes("oil level") ||
+    type.includes("fluid") ||
+    type.includes("leak") ||
+    type.includes("oil level")
+  ) {
+    return {
+      key: "fluid_leak_check",
+      title: "Fluid / leak inspection",
+    };
+  }
+
+  if (
+    title.includes("tire pressure") ||
+    type.includes("tire pressure") ||
+    type.includes("tirepressure")
+  ) {
+    return {
+      key: "tire_pressure_check",
+      title: "Tire pressure check",
+    };
+  }
+
+  return {
+    key: `item:${title || item?.id || "unknown"}`,
+    title: item?.title || "Open maintenance item",
+  };
+}
+
+function getQueueItemUrgencyScore(item) {
+  const status = String(item?.status || item?.ruleStatus || "").toLowerCase();
+  const blocks =
+    item?.blocksRentalWhenOverdue ||
+    item?.blocksGuestExportWhenOverdue ||
+    item?.task?.blocks_rental ||
+    item?.task?.blocks_guest_export;
+
+  let score = (blocks ? 1000 : 0) + getPriorityScore(item?.priority) * 10;
+
+  if (status === "failed" || status === "overdue") score += 50;
+  else if (status === "due") score += 35;
+  else if (status === "due_soon") score += 20;
+
+  if (item?.source === "rule") score += 3;
+  return score;
+}
+
+function mergeQueueItems(items) {
+  const byFamily = new Map();
+
+  for (const item of items || []) {
+    const family = getQueueFamilyFromItem(item);
+    const key = family.key;
+    const existing = byFamily.get(key);
+    const normalizedItem = {
+      ...item,
+      title: family.title,
+      queueFamilyKey: key,
+    };
+
+    if (!existing) {
+      byFamily.set(key, {
+        ...normalizedItem,
+        mergedItems: [item],
+        mergedCount: 1,
+      });
+      continue;
+    }
+
+    const currentScore = getQueueItemUrgencyScore(existing);
+    const nextScore = getQueueItemUrgencyScore(normalizedItem);
+    const winner = nextScore > currentScore ? normalizedItem : existing;
+    const mergedItems = [...(existing.mergedItems || []), item];
+
+    byFamily.set(key, {
+      ...winner,
+      title: family.title,
+      queueFamilyKey: key,
+      mergedItems,
+      mergedCount: mergedItems.length,
+      linkedRuleCodes: Array.from(
+        new Set([
+          ...(Array.isArray(existing.linkedRuleCodes) ? existing.linkedRuleCodes : []),
+          ...(Array.isArray(normalizedItem.linkedRuleCodes)
+            ? normalizedItem.linkedRuleCodes
+            : []),
+          existing.linkedRuleCode,
+          normalizedItem.linkedRuleCode,
+        ].filter(Boolean))
+      ),
+    });
+  }
+
+  return Array.from(byFamily.values());
+}
+
 export function buildQueueItemsFromSummary(summary, historyMap = {}) {
   const tasks = Array.isArray(summary?.tasks) ? summary.tasks : [];
   const rules = Array.isArray(summary?.ruleStatuses) ? summary.ruleStatuses : [];
@@ -629,6 +801,7 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
         linkedRuleCodes,
         nextDueMiles: linkedRule?.nextDueMiles ?? null,
         nextDueDate: linkedRule?.nextDueDate ?? null,
+        ruleStatus: linkedRule?.status ?? null,
         nextDueText: getNextIntervalDueText(linkedRule, currentOdometerMiles),
         blocksRentalWhenOverdue: Boolean(task?.blocks_rental),
         blocksGuestExportWhenOverdue: Boolean(task?.blocks_guest_export),
@@ -652,6 +825,7 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
     linkedRuleCodes: [rule.ruleCode].filter(Boolean),
     nextDueMiles: rule.nextDueMiles ?? null,
     nextDueDate: rule.nextDueDate ?? null,
+    ruleStatus: rule.status ?? null,
     nextDueText: getNextIntervalDueText(rule, currentOdometerMiles),
     history: historyMap[rule.ruleCode] || [],
     blocksRentalWhenOverdue: Boolean(rule.blocksRentalWhenOverdue),
@@ -659,14 +833,7 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
   }));
 
   const merged = [...taskItems, ...ruleItems];
-  const seen = new Set();
-
-  return merged.filter((item) => {
-    const key = `${item.title}::${item.linkedRuleCode || ""}::${item.source}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return mergeQueueItems(merged);
 }
 
 export function sortQueue(items) {
@@ -1074,21 +1241,26 @@ export function getActiveTrip(trips) {
     const bucket = String(trip?.queue_bucket || "").toLowerCase();
     const stage = String(trip?.workflow_stage || "").toLowerCase();
     const status = String(trip?.status || "").toLowerCase();
+    const overlapsNow = Boolean(
+      trip.parsedStart &&
+        trip.parsedEnd &&
+        trip.parsedStart <= now &&
+        trip.parsedEnd >= now
+    );
+
+    if (trip.parsedStart && trip.parsedStart > now) {
+      return false;
+    }
 
     if (
       bucket === "in_progress" ||
       stage === "in_progress" ||
       ["active", "started", "trip_started", "in_progress"].includes(status)
     ) {
-      return true;
+      return overlapsNow || !trip.parsedStart;
     }
 
-    return Boolean(
-      trip.parsedStart &&
-        trip.parsedEnd &&
-        trip.parsedStart <= now &&
-        trip.parsedEnd >= now
-    );
+    return overlapsNow;
   });
 }
 

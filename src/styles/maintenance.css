@@ -252,6 +252,56 @@
   color: #ff8f8f;
 }
 
+.maintenance-queue-panel-header {
+  align-items: flex-start;
+}
+
+.maintenance-queue-panel-header > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.maintenance-queue-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: rgba(226, 232, 240, 0.66);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.maintenance-queue-scope strong {
+  color: #dbeafe;
+  font-weight: 900;
+}
+
+.maintenance-queue-scope--all {
+  color: #bfdbfe;
+}
+
+.maintenance-queue-scope-action {
+  min-height: 28px;
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: rgba(96, 165, 250, 0.1);
+  color: #bfdbfe;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.maintenance-queue-scope-action:hover,
+.maintenance-queue-scope-action:focus-visible {
+  background: rgba(96, 165, 250, 0.18);
+  outline: 1px solid rgba(96, 165, 250, 0.42);
+  outline-offset: 2px;
+}
+
 .maintenance-queue-list {
   display: flex;
   flex-direction: column;
@@ -1149,6 +1199,13 @@ select.drawer-input option {
 .fleet-maintenance-inline-action:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.fleet-maintenance-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .fleet-maintenance-inline-link {
