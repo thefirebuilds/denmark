@@ -32,6 +32,7 @@ import {
   getEarliestAvailableLabel,
   getNextUpcomingTrip,
 } from "../../utils/maintUtils";
+import { notifyMaintenanceTasksUpdated } from "../../utils/maintenanceEvents";
 
 function pickFirstFilled(...values) {
   for (const value of values) {
@@ -1801,6 +1802,11 @@ export default function FleetMaintenancePanel({
       }
 
       await loadSelectedVehicleMaintenance();
+      notifyMaintenanceTasksUpdated({
+        vin: selectedFleetVehicle.vin,
+        task: body?.task || null,
+        source: "manual_todo",
+      });
       resetTodoForm();
       setAddingTodo(false);
     } catch (err) {

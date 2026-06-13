@@ -520,7 +520,7 @@ async function getVehicleMaintenanceSummary(
 
   await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
 
-  const [tasksResult, notesResult, historyResult] = await Promise.all([
+  const [tasksResult, taskHistoryResult, notesResult, historyResult] = await Promise.all([
     client.query(
       `
         SELECT
@@ -556,6 +556,35 @@ async function getVehicleMaintenanceSummary(
           created_at ASC
       `,
       [vin, ACTIVE_TASK_STATUSES]
+    ),
+    client.query(
+      `
+        SELECT
+          id,
+          vehicle_vin,
+          rule_id,
+          related_trip_id,
+          task_type,
+          title,
+          description,
+          priority,
+          status,
+          blocks_rental,
+          blocks_guest_export,
+          needs_review,
+          source,
+          trigger_type,
+          trigger_context,
+          source_key,
+          created_at,
+          updated_at
+        FROM maintenance_tasks
+        WHERE vehicle_vin = $1
+          AND status IN ('resolved', 'canceled')
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 50
+      `,
+      [vin]
     ),
     client.query(
       `
@@ -611,6 +640,7 @@ async function getVehicleMaintenanceSummary(
   ]);
 
   const tasks = tasksResult.rows;
+  const taskHistory = taskHistoryResult.rows;
   const guestVisibleConditionNotes = notesResult.rows;
 
   const ruleHistory = historyResult.rows.reduce((acc, row) => {
@@ -697,6 +727,7 @@ async function getVehicleMaintenanceSummary(
       hasGuestExportBlockerTask || hasGuestExportBlockingOverdueRule,
     openTaskCounts: buildPriorityCounts(tasks),
     tasks,
+    taskHistory,
     ruleStatuses,
     ruleHistory,
     guestVisibleConditionNotes,

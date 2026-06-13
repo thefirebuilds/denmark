@@ -459,6 +459,88 @@
   opacity: 0.86;
 }
 
+.maintenance-task-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.maintenance-task-history-head,
+.maintenance-task-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.maintenance-task-history-head {
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.maintenance-task-history-head small {
+  color: rgba(191, 219, 254, 0.82);
+  font-size: 11px;
+  text-transform: none;
+}
+
+.maintenance-task-history-list {
+  display: grid;
+  gap: 6px;
+}
+
+.maintenance-task-history-item {
+  min-height: 46px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.maintenance-task-history-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.maintenance-task-history-main strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.maintenance-task-history-main span,
+.maintenance-task-history-empty {
+  color: rgba(226, 232, 240, 0.62);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.maintenance-task-history-action {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: rgba(96, 165, 250, 0.1);
+  color: #bfdbfe;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.maintenance-task-history-action:hover,
+.maintenance-task-history-action:focus-visible {
+  background: rgba(96, 165, 250, 0.18);
+  outline: 1px solid rgba(96, 165, 250, 0.36);
+  outline-offset: 2px;
+}
+
 .maintenance-priority {
   min-width: 38px;
   text-align: center;

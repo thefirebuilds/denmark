@@ -30,10 +30,38 @@ function extractReimbursementFields(
   return baseExtractFields(normalizedTextBody, subject, htmlBody);
 }
 
-function classifyMessageType(subject) {
+function isRenterSideTuroActivity({ subject = "", normalizedTextBody = "" } = {}) {
+  const subjectText = clean(subject);
+  const bodyText = String(normalizedTextBody || "");
+  const combined = `${subjectText}\n${bodyText}`;
+
+  const renterSideSignals = [
+    /^.+ has sent you a message about their .+$/i,
+    /^.+ has sent you a message about .+['’]s .+$/i,
+    /^you[’']re booked!?/i,
+    /\byour trip with\b/i,
+    /\bfrom your trip with\b/i,
+    /\bupcoming charges from your trip with\b/i,
+    /\babout their\b/i,
+    /\babout your host\b/i,
+    /\btotal paid\b/i,
+    /\btotal distance included\b/i,
+    /\bbooked trip\b/i,
+    /\bview receipt\b/i,
+    /\bowned by:\b/i,
+  ];
+
+  return renterSideSignals.some((pattern) => pattern.test(combined));
+}
+
+function classifyMessageType(subject, normalizedTextBody = "") {
   const s = clean(subject);
 
   if (!s) return "turo_notification";
+
+  if (isRenterSideTuroActivity({ subject: s, normalizedTextBody })) {
+    return "renter_activity";
+  }
 
   if (/^.+ has sent you a message about your .+$/i.test(s)) {
     return "guest_message";
@@ -650,6 +678,13 @@ function shouldCreateTripStub({
     return false;
   }
 
+  if (
+    messageType === "renter_activity" ||
+    isRenterSideTuroActivity({ subject, normalizedTextBody })
+  ) {
+    return false;
+  }
+
   if (messageType !== "turo_notification") {
     return true;
   }
@@ -689,7 +724,7 @@ async function saveMessage(message) {
   const cleanedHtmlBody = cleanHtmlBody(message.htmlBody);
   const cleanedRawHeaders = cleanHeaders(message.rawHeaders);
   const normalizedTextBody = normalizeTextBodyForAnalysis(cleanedTextBody);
-  const messageType = classifyMessageType(message.subject);
+  const messageType = classifyMessageType(message.subject, normalizedTextBody);
 
   const amount = extractAmount({
     subject: message.subject,
@@ -818,14 +853,16 @@ async function saveMessage(message) {
     return null;
   }
 
-  let trip = await upsertTripFromMessage(savedMessage);
+  const isRenterActivity = messageType === "renter_activity";
+  let trip = isRenterActivity ? null : await upsertTripFromMessage(savedMessage);
 
-  if (!trip?.id && savedMessage.reservation_id) {
+  if (!isRenterActivity && !trip?.id && savedMessage.reservation_id) {
     const existingTrip = await pool.query(
       `
         SELECT id
         FROM trips
         WHERE reservation_id = $1
+          AND deleted_at IS NULL
         LIMIT 1
       `,
       [savedMessage.reservation_id]

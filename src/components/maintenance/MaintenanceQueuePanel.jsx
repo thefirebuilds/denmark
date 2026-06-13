@@ -14,10 +14,13 @@ import {
   getNextIntervalDueText,
   sortQueue,
   getPriorityScore,
-  getActiveTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
 } from "../../utils/maintUtils";
+import {
+  MAINTENANCE_TASKS_UPDATED_EVENT,
+  notifyMaintenanceTasksUpdated,
+} from "../../utils/maintenanceEvents";
 
 function getPlanningScore(item) {
   const blocks =
@@ -27,6 +30,39 @@ function getPlanningScore(item) {
     item?.task?.blocks_guest_export;
 
   return (blocks ? 100 : 0) + getPriorityScore(item?.priority);
+}
+
+function normalizeMatchValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getVehicleTripKeys(vehicle) {
+  return [
+    vehicle?.turo_vehicle_id,
+    vehicle?.vin,
+    vehicle?.nickname,
+    vehicle?.turo_vehicle_name,
+    vehicle?.vehicle_name,
+    ...(Array.isArray(vehicle?.aliases) ? vehicle.aliases : []),
+  ]
+    .map(normalizeMatchValue)
+    .filter(Boolean);
+}
+
+function tripMatchesVehicle(vehicle, trip) {
+  const vehicleKeys = getVehicleTripKeys(vehicle);
+  if (!vehicleKeys.length) return false;
+
+  const tripKeys = [
+    trip?.turo_vehicle_id,
+    trip?.vehicle_vin,
+    trip?.vehicle_nickname,
+    trip?.vehicle_name,
+  ]
+    .map(normalizeMatchValue)
+    .filter(Boolean);
+
+  return tripKeys.some((tripKey) => vehicleKeys.includes(tripKey));
 }
 
 function sortFleetPlanningQueue(items) {
@@ -75,6 +111,26 @@ function getAvailabilityDateLabel(value) {
     month: "long",
     day: "numeric",
   });
+}
+
+function formatTaskHistoryDate(value) {
+  if (!value) return "Date unknown";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unknown";
+
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getTaskHistoryStatusLabel(status) {
+  const value = String(status || "").trim().toLowerCase();
+  if (value === "resolved") return "Done";
+  if (value === "canceled") return "Canceled";
+  return value ? value.replace(/_/g, " ") : "Updated";
 }
 
 function groupFleetItemsByAvailabilityDate(items) {
@@ -167,6 +223,7 @@ export default function MaintenanceQueuePanel({
   const [savingInspection, setSavingInspection] = useState(false);
   const [fleetPlanningItems, setFleetPlanningItems] = useState([]);
   const [fleetPlanningLoading, setFleetPlanningLoading] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const [selectedInspectionItem, setSelectedInspectionItem] = useState(null);
   const [inspectionDrawerOpen, setInspectionDrawerOpen] = useState(false);
@@ -192,10 +249,34 @@ export default function MaintenanceQueuePanel({
     return sortQueue(buildQueueItemsFromSummary(maintenanceSummary, historyMap));
   }, [maintenanceSummary, historyMap]);
 
+  const taskHistory = useMemo(() => {
+    return Array.isArray(maintenanceSummary?.taskHistory)
+      ? maintenanceSummary.taskHistory
+      : [];
+  }, [maintenanceSummary]);
+
   const fleetPlanningGroups = useMemo(
     () => groupFleetItemsByAvailabilityDate(fleetPlanningItems),
     [fleetPlanningItems]
   );
+
+  useEffect(() => {
+    function handleMaintenanceTasksUpdated() {
+      setRefreshNonce((value) => value + 1);
+    }
+
+    window.addEventListener(
+      MAINTENANCE_TASKS_UPDATED_EVENT,
+      handleMaintenanceTasksUpdated
+    );
+
+    return () => {
+      window.removeEventListener(
+        MAINTENANCE_TASKS_UPDATED_EVENT,
+        handleMaintenanceTasksUpdated
+      );
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -285,39 +366,21 @@ export default function MaintenanceQueuePanel({
         const vehicleData = await vehicleRes.json();
         const vehicles = Array.isArray(vehicleData) ? vehicleData : [];
 
-        const vehicleTripPairs = await Promise.all(
-          vehicles.map(async (vehicle) => {
-            const vehicleId = normalizeVehicleKey(
-              vehicle.turo_vehicle_id ||
-                vehicle.nickname ||
-                vehicle.vin ||
-                vehicle.id ||
-                vehicle.dimo_token_id ||
-                vehicle.bouncie_vehicle_id
+        const tripsRes = await fetch("/api/trips?scope=open");
+        const tripData = tripsRes.ok ? await tripsRes.json() : [];
+        const relevantTrips = Array.isArray(tripData) ? tripData : [];
+
+        if (!tripsRes.ok) {
+          console.warn(`Open trip list HTTP ${tripsRes.status}`);
+        }
+
+        const liveFleet = vehicles
+          .map((vehicle) => {
+            const trips = relevantTrips.filter((trip) =>
+              tripMatchesVehicle(vehicle, trip)
             );
 
-            try {
-              const tripsRes = await fetch(
-                `/api/trips/vehicle/${vehicleId}?mode=relevant`
-              );
-
-              if (!tripsRes.ok) throw new Error(`Trip status HTTP ${tripsRes.status}`);
-
-              const tripData = await tripsRes.json();
-
-              return {
-                vehicle,
-                trips: Array.isArray(tripData) ? tripData : [],
-              };
-            } catch (err) {
-              console.error(`Failed to load trips for ${vehicleId}:`, err);
-              return { vehicle, trips: [] };
-            }
-          })
-        );
-
-        const liveFleet = vehicleTripPairs
-          .map(({ vehicle, trips }) => ({
+            return {
             id: normalizeVehicleKey(vehicle.nickname || vehicle.vin || vehicle.id),
             vin: vehicle.vin || null,
             nickname: vehicle.nickname || "Unknown",
@@ -330,11 +393,10 @@ export default function MaintenanceQueuePanel({
               vehicle.current_odometer_miles != null || vehicle.currentOdometerMiles != null
                 ? "vehicle"
                 : null,
-            nextOffTrip: getActiveTrip(trips)
-              ? getEarliestAvailableLabel(trips)
-              : "Available now",
+            nextOffTrip: getEarliestAvailableLabel(trips),
             nextAvailableDate: getEarliestAvailableDate(trips),
-          }))
+            };
+          })
           .filter((v) => v.vin);
 
         if (!cancelled) {
@@ -409,7 +471,7 @@ export default function MaintenanceQueuePanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedFleetVehicle?.vin, selectedVehicleId]);
+  }, [selectedFleetVehicle?.vin, selectedVehicleId, refreshNonce]);
 
   function handleOpenInspectionItemFromRuleCode(ruleCode) {
     const match = inspectionItems.find((item) => item.ruleCode === ruleCode);
@@ -505,6 +567,15 @@ export default function MaintenanceQueuePanel({
       return;
     }
 
+    const taskTitle = item?.title || item?.task?.title || "this maintenance task";
+    const vehicleLabel =
+      item?.vehicleNickname || selectedFleetVehicle?.nickname || "this vehicle";
+    const confirmed = window.confirm(
+      `Mark "${taskTitle}" done for ${vehicleLabel}?`
+    );
+
+    if (!confirmed) return;
+
     try {
       const res = await fetch(`/api/maintenance-tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
@@ -529,9 +600,57 @@ export default function MaintenanceQueuePanel({
           prev.filter((entry) => entry.task?.id !== taskId)
         );
       }
+
+      notifyMaintenanceTasksUpdated({
+        task: body?.task || null,
+        taskId,
+        source: "maintenance_queue_resolve",
+      });
     } catch (err) {
       console.error("Failed to resolve maintenance task:", err);
       window.alert(err.message || "Could not mark task done.");
+    }
+  }
+
+  async function handleReopenTask(task) {
+    const taskId = task?.id;
+    if (!taskId) return;
+
+    const confirmed = window.confirm(
+      `Reopen "${task.title || "this maintenance task"}"?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/maintenance-tasks/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "open",
+        }),
+      });
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      if (selectedFleetVehicle?.vin) {
+        await loadSummaryForSelectedVehicle(selectedFleetVehicle.vin);
+      }
+
+      notifyMaintenanceTasksUpdated({
+        task: body?.task || null,
+        taskId,
+        source: "maintenance_queue_reopen",
+      });
+    } catch (err) {
+      console.error("Failed to reopen maintenance task:", err);
+      window.alert(err.message || "Could not reopen task.");
     }
   }
 
@@ -753,6 +872,41 @@ export default function MaintenanceQueuePanel({
             ))}
           </div>
         )}
+
+        {selectedVehicleId && !loading ? (
+          <section className="maintenance-task-history">
+            <div className="maintenance-task-history-head">
+              <span>Maintenance history</span>
+              <small>{taskHistory.length} recent</small>
+            </div>
+            {taskHistory.length === 0 ? (
+              <div className="maintenance-task-history-empty">
+                No completed to-dos yet.
+              </div>
+            ) : (
+              <div className="maintenance-task-history-list">
+                {taskHistory.map((task) => (
+                  <div key={task.id} className="maintenance-task-history-item">
+                    <div className="maintenance-task-history-main">
+                      <strong>{task.title || "Maintenance task"}</strong>
+                      <span>
+                        {getTaskHistoryStatusLabel(task.status)} -{" "}
+                        {formatTaskHistoryDate(task.updated_at || task.updatedAt)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="maintenance-task-history-action"
+                      onClick={() => handleReopenTask(task)}
+                    >
+                      Reopen
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
       </div>
 
       <InspectionItemDrawer

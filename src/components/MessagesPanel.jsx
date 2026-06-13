@@ -23,6 +23,12 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
+const FULL_QUEUE_ONLY_TYPES = new Set([
+  "maintenance_required",
+  "closeout_required",
+  "late_toll_unbilled",
+  "trip_overlap_detected",
+]);
 const RAW_FEED_TYPES = [
   { id: "emails", label: "Emails" },
   { id: "internal", label: "Internal messages" },
@@ -53,6 +59,11 @@ function saveCompletedSyntheticTaskIds(ids) {
   } catch {
     // localStorage may be unavailable in privacy modes.
   }
+}
+
+function isFullQueueOnlyItem(message) {
+  const type = message?.type || message?.message_type;
+  return FULL_QUEUE_ONLY_TYPES.has(type);
 }
 
 function buildReplyUrl(message) {
@@ -1294,6 +1305,7 @@ export default function MessagesPanel({
   const seenIdsRef = useRef(new Set());
   const knownQueueItemIdsRef = useRef(new Set());
   const queueChimeWatermarkRef = useRef(Date.now());
+  const messagesRef = useRef([]);
   const audioRef = useRef(null);
   const highlightTimeoutRef = useRef(null);
   const prepExportRef = useRef(null);
@@ -1305,6 +1317,10 @@ export default function MessagesPanel({
   useEffect(() => {
     completedSyntheticTaskIdsRef.current = completedSyntheticTaskIds;
   }, [completedSyntheticTaskIds]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   async function loadMessageStats() {
     try {
@@ -1895,7 +1911,19 @@ async function handleExportGuestInspectionSheet(message) {
           ? messageItems
           : messageItems.slice(0, 5)
         : [];
-      const visibleMessages = nextMessages.filter(
+      const mergedMessages =
+        useFastQueue && !showingTripMessages
+          ? [
+              ...nextMessages,
+              ...messagesRef.current.filter((message) => {
+                if (!isFullQueueOnlyItem(message)) return false;
+                return !nextMessages.some(
+                  (nextMessage) => String(nextMessage.id) === String(message.id)
+                );
+              }),
+            ]
+          : nextMessages;
+      const visibleMessages = mergedMessages.filter(
         (message) =>
           !isCompletableSyntheticTask(message) ||
           !completedSyntheticTaskIdsRef.current.has(message.id)
@@ -1958,6 +1986,7 @@ async function handleExportGuestInspectionSheet(message) {
         queueChimeWatermarkRef.current = Date.now();
       }
 
+      messagesRef.current = displayMessages;
       setMessages(displayMessages);
       setError("");
     } catch (err) {
