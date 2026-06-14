@@ -113,6 +113,146 @@ function loadRepaveSchemaSql() {
     .replace("DROP SCHEMA IF EXISTS public;", "DROP SCHEMA IF EXISTS public CASCADE;");
 }
 
+function splitSqlStatements(sql) {
+  const statements = [];
+  let statement = "";
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let dollarQuoteTag = null;
+
+  for (let i = 0; i < sql.length; i += 1) {
+    const char = sql[i];
+    const next = sql[i + 1];
+
+    if (dollarQuoteTag) {
+      const maybeTag = sql.slice(i, i + dollarQuoteTag.length);
+      if (maybeTag === dollarQuoteTag) {
+        statement += dollarQuoteTag;
+        i += dollarQuoteTag.length - 1;
+        dollarQuoteTag = null;
+      } else {
+        statement += char;
+      }
+      continue;
+    }
+
+    if (inLineComment) {
+      statement += char;
+      if (char === "\n") inLineComment = false;
+      continue;
+    }
+
+    if (inBlockComment) {
+      statement += char;
+      if (char === "*" && next === "/") {
+        statement += next;
+        i += 1;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && char === "-" && next === "-") {
+      statement += char + next;
+      i += 1;
+      inLineComment = true;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && char === "/" && next === "*") {
+      statement += char + next;
+      i += 1;
+      inBlockComment = true;
+      continue;
+    }
+
+    if (!inDoubleQuote && char === "'") {
+      statement += char;
+      if (inSingleQuote && next === "'") {
+        statement += next;
+        i += 1;
+      } else {
+        inSingleQuote = !inSingleQuote;
+      }
+      continue;
+    }
+
+    if (!inSingleQuote && char === '"') {
+      inDoubleQuote = !inDoubleQuote;
+      statement += char;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && char === "$") {
+      const rest = sql.slice(i);
+      const match = rest.match(/^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/);
+      if (match) {
+        dollarQuoteTag = match[0];
+        statement += dollarQuoteTag;
+        i += dollarQuoteTag.length - 1;
+        continue;
+      }
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && char === ";") {
+      const trimmed = statement.trim();
+      if (trimmed) statements.push(`${trimmed};`);
+      statement = "";
+      continue;
+    }
+
+    statement += char;
+  }
+
+  const trailing = statement.trim();
+  if (trailing) statements.push(trailing);
+  return statements;
+}
+
+function describeSqlStatement(statement) {
+  const sql = statement
+    .replace(/^\s*--.*$/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    [/^CREATE UNIQUE INDEX\s+([^\s]+)/i, "create unique index"],
+    [/^CREATE INDEX\s+([^\s]+)/i, "create index"],
+    [/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?([^\s(]+)/i, "create table"],
+    [/^ALTER TABLE(?: ONLY)?\s+([^\s]+)/i, "alter table"],
+    [/^CREATE SEQUENCE\s+([^\s]+)/i, "create sequence"],
+    [/^CREATE VIEW\s+([^\s]+)/i, "create view"],
+    [/^CREATE TRIGGER\s+([^\s]+)/i, "create trigger"],
+    [/^DROP SCHEMA\s+IF EXISTS\s+([^\s;]+)/i, "drop schema"],
+  ];
+
+  for (const [pattern, action] of patterns) {
+    const match = sql.match(pattern);
+    if (match) return `${action} ${match[1]}`;
+  }
+
+  return sql.slice(0, 100);
+}
+
+async function runSchemaSql(client, schemaSql) {
+  const statements = splitSqlStatements(schemaSql);
+  console.log(`[db:bootstrap] applying base schema (${statements.length} statements)`);
+
+  for (const statement of statements) {
+    const label = describeSqlStatement(statement);
+    console.log(`[db:bootstrap] ${label}`);
+
+    try {
+      await client.query(statement);
+    } catch (err) {
+      err.message = `schema statement failed during ${label}: ${err.message}`;
+      throw err;
+    }
+  }
+}
+
 async function getExistingRequiredTables(client) {
   const result = await client.query(
     `
@@ -218,10 +358,11 @@ async function main() {
 
     const schemaSql = loadRepaveSchemaSql();
     await client.query("BEGIN");
-    await client.query(schemaSql);
+    await runSchemaSql(client, schemaSql);
     await ensureBootstrapMarker(client);
     await client.query("COMMIT");
 
+    console.log("[db:bootstrap] ensuring runtime support tables");
     await assertRuntimeDependencies(client);
     await runRuntimeEnsures();
     console.log(

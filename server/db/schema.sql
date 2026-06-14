@@ -2371,7 +2371,7 @@ CREATE INDEX idx_messages_mailbox_uid ON public.messages USING btree (mailbox, i
 CREATE INDEX idx_messages_message_timestamp ON public.messages USING btree (message_timestamp);
 
 -- Name: idx_messages_unread_queue; Type: INDEX; Schema: public; Owner: -
-CREATE INDEX idx_messages_unread_queue ON public.messages USING btree ((COALESCE(message_timestamp, created_at)) DESC, id DESC)
+CREATE INDEX idx_messages_unread_queue ON public.messages USING btree (message_timestamp DESC, created_at DESC, id DESC)
   WHERE status = 'unread' AND COALESCE(message_type, '') <> 'payment_notice';
 
 
@@ -2771,6 +2771,7 @@ CREATE TABLE public.app_users (
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_users_pkey PRIMARY KEY (id),
     CONSTRAINT app_users_email_unique UNIQUE (email),
     CONSTRAINT app_users_provider_subject_unique UNIQUE (provider, provider_subject),
     CONSTRAINT app_users_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'operator'::text, 'viewer'::text, 'family'::text, 'service'::text])))
@@ -2788,7 +2789,8 @@ CREATE TABLE public.auth_audit_log (
     ip_address text,
     user_agent text,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT auth_audit_log_pkey PRIMARY KEY (id)
 );
 
 
@@ -2816,6 +2818,7 @@ CREATE TABLE public.system_activity_log (
     user_agent text,
     outcome text DEFAULT 'success'::text NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT system_activity_log_pkey PRIMARY KEY (id),
     CONSTRAINT system_activity_log_category_check CHECK ((category = ANY (ARRAY['auth'::text, 'security'::text, 'integration'::text, 'database'::text, 'automation'::text, 'admin'::text, 'system'::text]))),
     CONSTRAINT system_activity_log_severity_check CHECK ((severity = ANY (ARRAY['debug'::text, 'info'::text, 'notice'::text, 'warning'::text, 'error'::text])))
 );
@@ -2835,6 +2838,7 @@ CREATE TABLE public.service_tokens (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     revoked_at timestamp with time zone,
     CONSTRAINT service_tokens_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'operator'::text, 'viewer'::text, 'family'::text, 'service'::text]))),
+    CONSTRAINT service_tokens_pkey PRIMARY KEY (id),
     CONSTRAINT service_tokens_token_hash_unique UNIQUE (token_hash)
 );
 
