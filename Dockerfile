@@ -30,9 +30,14 @@ COPY server ./server
 COPY setup ./setup
 COPY --from=web-build /app/dist ./dist
 
-RUN node --check ./setup/bootstrap-db.js \
+RUN test -f ./server/db/schema.sql \
+  && test -f ./setup/bootstrap-db.js \
+  && test -f ./setup/verify-db-bootstrap.js \
+  && test ! -e ./setup/bootstrap-db.cjs \
+  && test ! -e ./setup/verify-db-bootstrap.cjs \
+  && node --check ./setup/bootstrap-db.js \
   && node --check ./setup/verify-db-bootstrap.js \
-  && node -e "require('./server/node_modules/pg'); require('./server/node_modules/dotenv'); console.log('setup runtime deps ok')"
+  && node -e "const pkg = require('./server/package.json'); if (pkg.scripts['db:bootstrap'] !== 'node ../setup/bootstrap-db.js' || pkg.scripts['db:verify'] !== 'node ../setup/verify-db-bootstrap.js') throw new Error('stale setup script paths in server/package.json'); require('./server/node_modules/pg'); require('./server/node_modules/dotenv'); console.log('setup runtime deps ok')"
 
 EXPOSE 5000
 WORKDIR /app/server

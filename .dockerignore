@@ -19,6 +19,7 @@ temp
 *.temp
 
 *.sql
+!server/db/schema.sql
 *.sql.gz
 *.dump
 *.backup

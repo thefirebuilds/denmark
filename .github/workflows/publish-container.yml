@@ -1,6 +1,7 @@
 name: Publish container
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -37,3 +38,20 @@ jobs:
           tags: |
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
+
+      - name: Verify pushed image setup scripts
+        run: |
+          set -euo pipefail
+          docker pull "${{ steps.image.outputs.name }}:latest"
+          docker run --rm "${{ steps.image.outputs.name }}:latest" sh -lc '
+            set -eu
+            find /app/setup -maxdepth 1 -type f -print
+            test -f /app/setup/bootstrap-db.js
+            test -f /app/setup/verify-db-bootstrap.js
+            test -f /app/server/db/schema.sql
+            test ! -e /app/setup/bootstrap-db.cjs
+            test ! -e /app/setup/verify-db-bootstrap.cjs
+            cat /app/server/package.json | grep -A5 -B5 db:
+            grep -q "node ../setup/bootstrap-db.js" /app/server/package.json
+            grep -q "node ../setup/verify-db-bootstrap.js" /app/server/package.json
+          '
