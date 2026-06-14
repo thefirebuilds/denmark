@@ -1,5 +1,9 @@
 const pool = require("../../db");
 const { sendSms } = require("./twilioSms");
+const {
+  getEnabledLocations,
+  getPrimaryParkingLocation,
+} = require("../locations/locationSettings");
 
 let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
@@ -162,37 +166,6 @@ function toNumber(value) {
   if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function getParkingSpotConfig() {
-  const lat = toNumber(
-    process.env.PARKING_SPOT_LAT ||
-      process.env.FLEET_PARKING_LAT ||
-      process.env.HOME_BASE_LAT
-  );
-  const lon = toNumber(
-    process.env.PARKING_SPOT_LON ||
-      process.env.PARKING_SPOT_LONGITUDE ||
-      process.env.FLEET_PARKING_LON ||
-      process.env.FLEET_PARKING_LONGITUDE ||
-      process.env.HOME_BASE_LON ||
-      process.env.HOME_BASE_LONGITUDE
-  );
-  const radiusMiles =
-    toNumber(process.env.PARKING_SPOT_RADIUS_MILES) ??
-    toNumber(process.env.FLEET_PARKING_RADIUS_MILES) ??
-    0.15;
-
-  return {
-    lat,
-    lon,
-    radiusMiles,
-    label:
-      cleanText(process.env.PARKING_SPOT_LABEL) ||
-      cleanText(process.env.FLEET_PARKING_LABEL) ||
-      "parking spot",
-    enabled: lat != null && lon != null,
-  };
 }
 
 function distanceMiles(aLat, aLon, bLat, bLon) {
@@ -624,7 +597,7 @@ async function collectOverdueReturnAlerts() {
     LIMIT 10
   `);
 
-  const parking = getParkingSpotConfig();
+  const parking = await getPrimaryParkingLocation();
 
   return rows
     .map((row) => {
@@ -653,7 +626,7 @@ async function collectOverdueReturnAlerts() {
 }
 
 async function collectReturnedToParkingSpotAlerts() {
-  const parking = getParkingSpotConfig();
+  const parking = await getPrimaryParkingLocation();
   if (!parking.enabled) return [];
 
   const { rows } = await pool.query(`
@@ -763,6 +736,148 @@ async function collectReturnedToParkingSpotAlerts() {
     .filter(Boolean);
 }
 
+async function collectLocationEntryAlerts() {
+  const locations = (await getEnabledLocations()).filter(
+    (location) => location.alertOnEntry !== false
+  );
+  if (!locations.length) return [];
+
+  const { rows } = await pool.query(`
+    WITH latest AS (
+      SELECT DISTINCT ON (v.id)
+        v.id AS vehicle_id,
+        COALESCE(NULLIF(trim(v.nickname), ''), s.nickname, v.vin, 'vehicle') AS vehicle_name,
+        v.vin AS vehicle_vin,
+        s.id AS snapshot_id,
+        s.service_name,
+        s.latitude,
+        s.longitude,
+        COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
+      FROM vehicle_telemetry_snapshots s
+      JOIN vehicles v
+        ON (
+          s.vin IS NOT NULL
+          AND s.vin <> ''
+          AND v.vin IS NOT NULL
+          AND LOWER(s.vin) = LOWER(v.vin)
+        )
+        OR (
+          s.dimo_token_id IS NOT NULL
+          AND v.dimo_token_id IS NOT NULL
+          AND s.dimo_token_id = v.dimo_token_id
+        )
+        OR (
+          s.external_vehicle_key IS NOT NULL
+          AND v.external_vehicle_key IS NOT NULL
+          AND s.external_vehicle_key = v.external_vehicle_key
+        )
+      WHERE s.latitude IS NOT NULL
+        AND s.longitude IS NOT NULL
+        AND COALESCE(v.is_active, true) = true
+        AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) >= NOW() - INTERVAL '2 hours'
+      ORDER BY v.id, COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+    )
+    SELECT
+      latest.*,
+      previous.latitude AS previous_latitude,
+      previous.longitude AS previous_longitude,
+      previous.seen_at AS previous_seen_at
+    FROM latest
+    LEFT JOIN LATERAL (
+      SELECT
+        s.latitude,
+        s.longitude,
+        COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
+      FROM vehicle_telemetry_snapshots s
+      WHERE s.latitude IS NOT NULL
+        AND s.longitude IS NOT NULL
+        AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) < latest.seen_at
+        AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) >= latest.seen_at - INTERVAL '24 hours'
+        AND (
+          (
+            latest.vehicle_vin IS NOT NULL
+            AND s.vin IS NOT NULL
+            AND LOWER(s.vin) = LOWER(latest.vehicle_vin)
+          )
+          OR (
+            s.dimo_token_id IS NOT NULL
+            AND s.dimo_token_id IN (
+              SELECT dimo_token_id
+              FROM vehicles
+              WHERE id = latest.vehicle_id
+                AND dimo_token_id IS NOT NULL
+            )
+          )
+        )
+      ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+      LIMIT 1
+    ) previous ON true
+  `);
+
+  const alerts = [];
+
+  for (const row of rows) {
+    const lat = toNumber(row.latitude);
+    const lon = toNumber(row.longitude);
+    if (lat == null || lon == null) continue;
+
+    for (const location of locations) {
+      const milesAway = distanceMiles(
+        lat,
+        lon,
+        location.latitude,
+        location.longitude
+      );
+      if (milesAway > location.radiusMiles) continue;
+
+      const previousLat = toNumber(row.previous_latitude);
+      const previousLon = toNumber(row.previous_longitude);
+      const wasAlreadyInside =
+        previousLat != null &&
+        previousLon != null &&
+        distanceMiles(
+          previousLat,
+          previousLon,
+          location.latitude,
+          location.longitude
+        ) <= location.radiusMiles;
+
+      if (wasAlreadyInside) continue;
+
+      const seenAt = row.seen_at || new Date().toISOString();
+      const seenHour = new Date(seenAt);
+      if (!Number.isNaN(seenHour.getTime())) {
+        seenHour.setMinutes(0, 0, 0);
+      }
+      const bucket = Number.isNaN(seenHour.getTime())
+        ? String(row.snapshot_id)
+        : seenHour.toISOString();
+      const vehicle = row.vehicle_name || "vehicle";
+
+      alerts.push({
+        alertKey: `location-entry:${location.id}:${row.vehicle_id}:${bucket}`,
+        alertType: "location_entry",
+        severity: "info",
+        body: `Denmark: ${vehicle} entered ${location.label}. Seen ${formatChicago(
+          seenAt
+        )}.`,
+        details: {
+          vehicleId: row.vehicle_id,
+          vehicle,
+          snapshotId: row.snapshot_id,
+          serviceName: row.service_name,
+          seenAt,
+          location,
+          milesAway,
+          previousSeenAt: row.previous_seen_at,
+        },
+      });
+    }
+  }
+
+  return alerts;
+}
+
 async function collectFleetAlerts() {
   const groups = await Promise.all([
     collectNewTripBookedAlerts(),
@@ -771,6 +886,7 @@ async function collectFleetAlerts() {
     collectDtcAlerts(),
     collectOverdueReturnAlerts(),
     collectReturnedToParkingSpotAlerts(),
+    collectLocationEntryAlerts(),
   ]);
   return groups.flat();
 }

@@ -1124,6 +1124,7 @@ function mapInspectionExportNoticeRow(row) {
     type: "inspection_export_required",
     guest_name: guestName,
     vehicle_name: row.vehicle_name,
+    turo_vehicle_id: row.turo_vehicle_id,
     vehicle_nickname: row.vehicle_nickname,
     vehicle_vin: row.vehicle_vin,
     reservation_id: row.reservation_id,
@@ -1473,7 +1474,12 @@ router.get("/stats", async (req, res) => {
       SELECT
         COUNT(*) FILTER (
           WHERE status = 'unread'
-            AND COALESCE(message_type, '') <> 'payment_notice'
+            AND COALESCE(message_type, '') NOT IN ('payment_notice', 'renter_activity')
+            AND NOT (
+              message_type = 'turo_notification'
+              AND trip_id IS NOT NULL
+              AND subject ILIKE '%upcoming trip%'
+            )
         ) AS unread_count,
         COUNT(*) FILTER (WHERE status = 'read') AS read_count,
         COUNT(*) FILTER (WHERE message_type = 'guest_message') AS guest_message_count,
@@ -1939,7 +1945,7 @@ router.get("/", async (req, res) => {
         WHERE
           (
             m.status = 'unread'
-            AND COALESCE(m.message_type, '') <> 'payment_notice'
+            AND COALESCE(m.message_type, '') NOT IN ('payment_notice', 'renter_activity')
             AND NOT (
               LOWER(COALESCE(m.subject, '')) LIKE '%has not responded to your reimbursement invoice%'
               AND EXISTS (
@@ -1998,7 +2004,7 @@ router.get("/", async (req, res) => {
       ORDER BY
         CASE
           WHEN status = 'unread'
-            AND COALESCE(message_type, '') <> 'payment_notice'
+            AND COALESCE(message_type, '') NOT IN ('payment_notice', 'renter_activity')
             AND trip_id IS NULL
             AND reservation_id IS NULL
             THEN -1
@@ -2120,7 +2126,7 @@ router.get("/", async (req, res) => {
         ON t.turo_vehicle_id IS NOT NULL
         AND v.turo_vehicle_id = t.turo_vehicle_id
       WHERE m.status = 'unread'
-        AND COALESCE(m.message_type, '') <> 'payment_notice'
+        AND COALESCE(m.message_type, '') NOT IN ('payment_notice', 'renter_activity')
       ORDER BY
         CASE
           WHEN m.message_type = 'guest_message' THEN -2
@@ -2728,6 +2734,7 @@ router.get("/", async (req, res) => {
         t.reservation_id,
         t.guest_name,
         t.vehicle_name,
+        t.turo_vehicle_id,
         v.nickname AS vehicle_nickname,
         v.vin AS vehicle_vin,
         t.trip_start,
@@ -2750,6 +2757,7 @@ router.get("/", async (req, res) => {
         AND COALESCE(t.workflow_stage, '') = 'ready_for_handoff'
         AND COALESCE(t.status, '') <> 'canceled'
         AND COALESCE(t.closed_out, false) = false
+        AND t.deleted_at IS NULL
       ORDER BY t.trip_start ASC NULLS LAST, t.id ASC
     `;
 

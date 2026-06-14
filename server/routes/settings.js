@@ -10,6 +10,11 @@ const {
   getPublicAvailabilityExportConfig,
   pushPublicAvailabilitySnapshot,
 } = require("../services/pushPublicAvailability");
+const {
+  getDefaultLocationSettings,
+  normalizeLocationSettings,
+  SETTINGS_KEY: LOCATION_SETTINGS_KEY,
+} = require("../services/locations/locationSettings");
 
 const router = express.Router();
 
@@ -60,6 +65,7 @@ const DEFAULT_SETTINGS = {
     heartbeatStaleMinutes: 25,
     turoNotificationStaleHours: 12,
   },
+  [LOCATION_SETTINGS_KEY]: getDefaultLocationSettings(),
 };
 
 function normalizeKey(value) {
@@ -128,6 +134,10 @@ function mergeSettings(key, value) {
           ? Math.min(turoNotificationStaleHours, 168)
           : defaults.turoNotificationStaleHours,
     };
+  }
+
+  if (key === LOCATION_SETTINGS_KEY) {
+    return normalizeLocationSettings(value);
   }
 
   return merged;

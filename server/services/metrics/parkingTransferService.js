@@ -1,5 +1,6 @@
 const pool = require("../../db");
 const { getParkingSpotConfig } = require("../vehicles/parkingSpotUsage");
+const { getEnabledLocations } = require("../locations/locationSettings");
 const {
   getCalendarDaysInRange,
   getDateRange,
@@ -20,12 +21,6 @@ const DEFAULT_FUEL_PRICE_PER_GALLON = 3.25;
 function cleanText(value) {
   if (value == null) return "";
   return String(value).trim();
-}
-
-function toOptionalNumber(value) {
-  if (value == null || value === "") return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
 }
 
 function toDateKey(date) {
@@ -155,40 +150,19 @@ function getMetricPeriod(options = {}) {
   };
 }
 
-function getHomeGeoConfig() {
-  const lat = toNumber(
-    process.env.HOME_SPOT_LAT ||
-      process.env.HOME_SPOT_LAN ||
-      process.env.HOME_BASE_LAT ||
-      process.env.HOME_LAT ||
-      process.env.FLEET_HOME_LAT
-  );
-  const lon = toNumber(
-    process.env.HOME_SPOT_LON ||
-      process.env.HOME_SPOT_LONGITUDE ||
-      process.env.HOME_BASE_LON ||
-      process.env.HOME_BASE_LONGITUDE ||
-      process.env.HOME_LON ||
-      process.env.HOME_LONGITUDE ||
-      process.env.FLEET_HOME_LON ||
-      process.env.FLEET_HOME_LONGITUDE
-  );
-  const radiusMiles =
-    toOptionalNumber(process.env.HOME_SPOT_RADIUS_MILES) ??
-    toOptionalNumber(process.env.HOME_BASE_RADIUS_MILES) ??
-    toOptionalNumber(process.env.HOME_RADIUS_MILES) ??
-    DEFAULT_HOME_RADIUS_MILES;
+async function getHomeGeoConfig() {
+  const locations = await getEnabledLocations();
+  const home =
+    locations.find((location) => location.kind === "home") ||
+    locations.find((location) => /garlic creek|home/i.test(location.label || "")) ||
+    null;
 
   return {
-    lat,
-    lon,
-    radiusMiles,
-    label:
-      cleanText(process.env.HOME_SPOT_LABEL) ||
-      cleanText(process.env.HOME_BASE_LABEL) ||
-      cleanText(process.env.HOME_LABEL) ||
-      "Home",
-    configured: lat != null && lon != null,
+    lat: home?.latitude ?? null,
+    lon: home?.longitude ?? null,
+    radiusMiles: home?.radiusMiles || DEFAULT_HOME_RADIUS_MILES,
+    label: home?.label || "Home",
+    configured: home?.latitude != null && home?.longitude != null,
   };
 }
 
@@ -234,8 +208,8 @@ async function getHomeParkingTransfers(options = {}) {
   const period = getMetricPeriod(
     typeof options === "string" ? { range: options } : options
   );
-  const parking = getParkingSpotConfig();
-  const home = getHomeGeoConfig();
+  const parking = await getParkingSpotConfig();
+  const home = await getHomeGeoConfig();
   const config = getParkingEconomicsConfig();
   const timeZone = cleanText(process.env.PARKING_TRANSFER_TIME_ZONE) || DEFAULT_TIME_ZONE;
   const maxTransferHours = toNumber(
@@ -249,13 +223,13 @@ async function getHomeParkingTransfers(options = {}) {
   );
 
   if (!parking.enabled) {
-    const err = new Error("PARKING_SPOT_LAT and PARKING_SPOT_LON are required");
+    const err = new Error("Configure a Parking location in Settings > Locations");
     err.status = 400;
     throw err;
   }
 
   if (!home.configured) {
-    const err = new Error("HOME_SPOT_LAN/HOME_SPOT_LAT and HOME_SPOT_LON are required");
+    const err = new Error("Configure a Home location in Settings > Locations");
     err.status = 400;
     throw err;
   }

@@ -117,6 +117,14 @@
   color: #dbe7f8;
 }
 
+.settings-field .settings-check-row span {
+  color: #dbe7f8;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .settings-group {
   display: grid;
   gap: 10px;

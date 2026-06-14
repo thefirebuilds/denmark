@@ -1,4 +1,5 @@
 const pool = require("../../db");
+const { getPrimaryParkingLocation } = require("../locations/locationSettings");
 
 const DEFAULT_RADIUS_MILES = 0.15;
 const DEFAULT_TIME_ZONE = "America/Chicago";
@@ -92,34 +93,15 @@ function getPeriodFromQuery(query = {}) {
   return { start, end };
 }
 
-function getParkingSpotConfig() {
-  const lat = toNumber(
-    process.env.PARKING_SPOT_LAT ||
-      process.env.FLEET_PARKING_LAT ||
-      process.env.HOME_BASE_LAT
-  );
-  const lon = toNumber(
-    process.env.PARKING_SPOT_LON ||
-      process.env.PARKING_SPOT_LONGITUDE ||
-      process.env.FLEET_PARKING_LON ||
-      process.env.FLEET_PARKING_LONGITUDE ||
-      process.env.HOME_BASE_LON ||
-      process.env.HOME_BASE_LONGITUDE
-  );
-  const radiusMiles =
-    toNumber(process.env.PARKING_SPOT_RADIUS_MILES) ??
-    toNumber(process.env.FLEET_PARKING_RADIUS_MILES) ??
-    DEFAULT_RADIUS_MILES;
+async function getParkingSpotConfig() {
+  const parking = await getPrimaryParkingLocation();
 
   return {
-    lat,
-    lon,
-    radiusMiles,
-    label:
-      cleanText(process.env.PARKING_SPOT_LABEL) ||
-      cleanText(process.env.FLEET_PARKING_LABEL) ||
-      "Parking Spot",
-    enabled: lat != null && lon != null,
+    lat: parking.lat,
+    lon: parking.lon,
+    radiusMiles: parking.radiusMiles || DEFAULT_RADIUS_MILES,
+    label: parking.label || "Park My Share",
+    enabled: parking.enabled && parking.lat != null && parking.lon != null,
   };
 }
 
@@ -133,12 +115,12 @@ function getPeriodDayCount(start, end) {
 
 async function getParkingSpotUsage(options = {}) {
   const period = getPeriodFromQuery(options);
-  const parking = getParkingSpotConfig();
+  const parking = await getParkingSpotConfig();
   const timeZone = cleanText(options.timeZone) || DEFAULT_TIME_ZONE;
   const vehicleFilter = cleanText(options.vehicle);
 
   if (!parking.enabled) {
-    const err = new Error("PARKING_SPOT_LAT and PARKING_SPOT_LON are required");
+    const err = new Error("Configure a Parking location in Settings > Locations");
     err.status = 400;
     throw err;
   }

@@ -37,6 +37,20 @@ const DEFAULT_MARKETPLACE_FILTERS = {
   maxMiles: "",
 };
 const DEFAULT_MARKETPLACE_IGNORE_KEYWORDS = "nissan leaf";
+const DEFAULT_LOCATION_SETTINGS = {
+  locations: [
+    {
+      id: "park-my-share",
+      label: "Park My Share",
+      latitude: "",
+      longitude: "",
+      radiusMiles: 0.15,
+      kind: "parking",
+      enabled: true,
+      alertOnEntry: true,
+    },
+  ],
+};
 
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority queue" },
@@ -168,6 +182,82 @@ function mergeBridgeAlertSettings(settings) {
   };
 }
 
+function slugifyLocationLabel(value, fallback = "location") {
+  const slug = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || fallback;
+}
+
+function coerceLocationCoordinate(value, maxAbs) {
+  if (value == null || value === "") return "";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return value;
+  if (Math.abs(number) <= maxAbs) return number;
+
+  for (let scale = 10; scale <= 1e16; scale *= 10) {
+    const scaled = number / scale;
+    if (Math.abs(scaled) <= maxAbs) return scaled;
+  }
+
+  return number;
+}
+
+function normalizeLocation(location = {}, index = 0) {
+  const label = String(location.label || location.name || `Location ${index + 1}`).trim();
+  const latitude = coerceLocationCoordinate(location.latitude ?? location.lat ?? "", 90);
+  const longitude = coerceLocationCoordinate(
+    location.longitude ?? location.lon ?? location.lng ?? "",
+    180
+  );
+  const radiusMiles = Number(location.radiusMiles ?? location.radius_miles);
+
+  return {
+    id: slugifyLocationLabel(location.id || label, `location-${index + 1}`),
+    label,
+    latitude: latitude == null ? "" : String(latitude),
+    longitude: longitude == null ? "" : String(longitude),
+    radiusMiles: Number.isFinite(radiusMiles) && radiusMiles > 0 ? radiusMiles : 0.15,
+    kind: String(location.kind || (index === 0 ? "parking" : "custom")).trim(),
+    enabled: location.enabled !== false,
+    alertOnEntry: location.alertOnEntry ?? location.alert_on_entry ?? true,
+  };
+}
+
+function mergeLocationSettings(settings) {
+  const incoming = Array.isArray(settings?.locations)
+    ? settings.locations
+    : DEFAULT_LOCATION_SETTINGS.locations;
+  const seen = new Set();
+  const locations = incoming.map(normalizeLocation).map((location, index) => {
+    let id = location.id;
+    while (seen.has(id)) {
+      id = `${location.id}-${index + 1}`;
+    }
+    seen.add(id);
+    return { ...location, id };
+  });
+
+  return {
+    locations: locations.length
+      ? locations
+      : DEFAULT_LOCATION_SETTINGS.locations.map(normalizeLocation),
+  };
+}
+
+function toLocationPayload(settings) {
+  return {
+    locations: mergeLocationSettings(settings).locations.map((location) => ({
+      ...location,
+      latitude: location.latitude === "" ? null : Number(location.latitude),
+      longitude: location.longitude === "" ? null : Number(location.longitude),
+      radiusMiles: Number(location.radiusMiles) || 0.15,
+    })),
+  };
+}
+
 function moveItem(items, index, direction) {
   const nextIndex = index + direction;
   if (nextIndex < 0 || nextIndex >= items.length) return items;
@@ -220,6 +310,7 @@ function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
+    { key: "locations", title: "Locations", sub: "Geofences and entry alerts" },
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
     { key: "marketplace", title: "Marketplace", sub: "Search defaults and screening" },
     { key: "website", title: "Website", sub: "Public availability export" },
@@ -2407,6 +2498,304 @@ function IntegrationsSettingsPanel() {
   );
 }
 
+function LocationsSettingsPanel() {
+  const [form, setForm] = useState(DEFAULT_LOCATION_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadLocations() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/locations.tracking`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load locations");
+      }
+
+      setForm(mergeLocationSettings(json.value));
+    } catch (err) {
+      setMessage(err.message || "Failed to load locations");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveLocations(nextForm = form) {
+    try {
+      setSaving(true);
+      setMessage("");
+      const payload = toLocationPayload(nextForm);
+      const res = await fetch(`${API_BASE}/api/settings/locations.tracking`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: payload }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save locations");
+      }
+
+      setForm(mergeLocationSettings(json.value || payload));
+      setMessage("Saved");
+    } catch (err) {
+      setMessage(err.message || "Failed to save locations");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    loadLocations();
+  }, []);
+
+  function updateLocation(index, patch) {
+    setForm((current) => {
+      const locations = current.locations.map((location, locationIndex) =>
+        locationIndex === index
+          ? normalizeLocation({ ...location, ...patch }, locationIndex)
+          : location
+      );
+      return { locations };
+    });
+  }
+
+  function addLocation() {
+    setForm((current) => ({
+      locations: [
+        ...current.locations,
+        normalizeLocation(
+          {
+            id: `new-location-${current.locations.length + 1}`,
+            label: `New location ${current.locations.length + 1}`,
+            radiusMiles: 0.15,
+            enabled: true,
+            alertOnEntry: true,
+            kind: "custom",
+          },
+          current.locations.length
+        ),
+      ],
+    }));
+  }
+
+  function removeLocation(index) {
+    setForm((current) => ({
+      locations: current.locations.filter((_, locationIndex) => locationIndex !== index),
+    }));
+  }
+
+  const configuredCount = form.locations.filter(
+    (location) => location.enabled && location.latitude && location.longitude
+  ).length;
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Locations</h2>
+          <span>named geographic circles</span>
+        </div>
+        <div className="settings-form-actions">
+          <button
+            type="button"
+            className="settings-action-btn secondary"
+            disabled={loading || saving}
+            onClick={loadLocations}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+          <button
+            type="button"
+            className="settings-action-btn"
+            disabled={loading || saving}
+            onClick={() => saveLocations()}
+          >
+            {saving ? "Saving..." : "Save Locations"}
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Tracking circles</div>
+          <div className="settings-empty-state">
+            Add places like Park My Share, home, lots, shops, or airports. When a
+            vehicle crosses into an enabled circle with entry alerts on, Denmark
+            can send the location-entry alert.
+          </div>
+
+          <div className="settings-fleet-summary">
+            <div>
+              <strong>{form.locations.length}</strong>
+              <span>saved circles</span>
+            </div>
+            <div>
+              <strong>{configuredCount}</strong>
+              <span>active geofences</span>
+            </div>
+            <div>
+              <strong>Entry</strong>
+              <span>alert mode</span>
+            </div>
+          </div>
+
+          {message ? <span className="settings-message">{message}</span> : null}
+        </div>
+
+        <div className="settings-vehicle-config-list">
+          {form.locations.map((location, index) => (
+            <div key={location.id || index} className="settings-vehicle-config-card">
+              <div className="settings-vehicle-config-head">
+                <div>
+                  <strong>{location.label || `Location ${index + 1}`}</strong>
+                  <span>
+                    {location.latitude && location.longitude
+                      ? `${location.latitude}, ${location.longitude}`
+                      : "Coordinates needed"}
+                  </span>
+                </div>
+                <div className="settings-vehicle-config-badges">
+                  <span
+                    className={`settings-status-badge ${
+                      location.enabled ? "is-good" : "is-muted"
+                    }`}
+                  >
+                    {location.enabled ? "Enabled" : "Paused"}
+                  </span>
+                  <span className="settings-status-badge">
+                    {location.radiusMiles} mi
+                  </span>
+                </div>
+              </div>
+
+              <div className="settings-vehicle-config-body">
+                <div className="settings-form-grid">
+                  <label className="settings-field">
+                    <span>Friendly name</span>
+                    <input
+                      value={location.label}
+                      onChange={(event) =>
+                        updateLocation(index, {
+                          label: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Kind</span>
+                    <select
+                      value={location.kind}
+                      onChange={(event) =>
+                        updateLocation(index, { kind: event.target.value })
+                      }
+                    >
+                      <option value="parking">Parking</option>
+                      <option value="home">Home</option>
+                      <option value="shop">Shop</option>
+                      <option value="airport">Airport</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </label>
+                  <label className="settings-field">
+                    <span>Latitude</span>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={location.latitude}
+                      onChange={(event) =>
+                        updateLocation(index, { latitude: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Longitude</span>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={location.longitude}
+                      onChange={(event) =>
+                        updateLocation(index, { longitude: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Radius miles</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="25"
+                      step="0.01"
+                      value={location.radiusMiles}
+                      onChange={(event) =>
+                        updateLocation(index, { radiusMiles: event.target.value })
+                      }
+                    />
+                  </label>
+                  <div className="settings-field">
+                    <span>Behavior</span>
+                    <label className="settings-check-row">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(location.enabled)}
+                        onChange={(event) =>
+                          updateLocation(index, { enabled: event.target.checked })
+                        }
+                      />
+                      <span>Track this location</span>
+                    </label>
+                    <label className="settings-check-row">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(location.alertOnEntry)}
+                        onChange={(event) =>
+                          updateLocation(index, { alertOnEntry: event.target.checked })
+                        }
+                      />
+                      <span>Alert when a vehicle enters</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="settings-form-actions">
+                  <button
+                    type="button"
+                    className="settings-action-btn secondary"
+                    onClick={() => saveLocations()}
+                    disabled={loading || saving}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-action-btn settings-action-btn--danger"
+                    onClick={() => removeLocation(index)}
+                    disabled={form.locations.length <= 1 || saving}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className="settings-action-btn"
+          onClick={addLocation}
+          disabled={loading || saving}
+        >
+          Add Location
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function PublicExportSettingsPanel() {
   const [exportInfo, setExportInfo] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2857,6 +3246,14 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
+    if (activeSection === "locations") {
+      return {
+        title: "Location tracking",
+        body:
+          "Named circles turn raw GPS points into useful places. The first parking location is used anywhere Denmark needs the fleet parking spot, and entry alerts can watch every enabled circle.",
+      };
+    }
+
     if (activeSection === "marketplace") {
       return {
         title: "Marketplace defaults",
@@ -2934,6 +3331,8 @@ export default function SettingsPanel({
         />
       ) : activeSection === "fleet" ? (
         <FleetSettingsPanel />
+      ) : activeSection === "locations" ? (
+        <LocationsSettingsPanel />
       ) : activeSection === "expenses" ? (
         <ExpenseSettingsPanel />
       ) : activeSection === "marketplace" ? (

@@ -92,6 +92,7 @@ function mapInspectionExportNoticeRow(row) {
     message_type: "inspection_export_required",
     guest_name: row.guest_name,
     vehicle_name: row.vehicle_name,
+    turo_vehicle_id: row.turo_vehicle_id,
     vehicle_nickname: row.vehicle_nickname,
     vehicle_vin: row.vehicle_vin,
     reservation_id: row.reservation_id,
@@ -1488,6 +1489,7 @@ router.get("/:id/messages", async (req, res) => {
         t.reservation_id,
         t.guest_name,
         t.vehicle_name,
+        t.turo_vehicle_id,
         v.nickname AS vehicle_nickname,
         v.vin AS vehicle_vin,
         t.trip_start,
@@ -1511,6 +1513,7 @@ router.get("/:id/messages", async (req, res) => {
         AND COALESCE(t.workflow_stage, '') = 'ready_for_handoff'
         AND COALESCE(t.status, '') <> 'canceled'
         AND COALESCE(t.closed_out, false) = false
+        AND t.deleted_at IS NULL
       LIMIT 1
     `;
 

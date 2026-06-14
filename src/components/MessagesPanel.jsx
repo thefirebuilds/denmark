@@ -1806,6 +1806,7 @@ async function handleExportGuestInspectionSheet(message) {
     setError("");
 
     const vehicleSelector =
+      message.turo_vehicle_id ||
       message.vehicle_vin ||
       message.vehicle_nickname ||
       message.vehicle_name;
@@ -1836,6 +1837,7 @@ async function handleExportGuestInspectionSheet(message) {
     setInspectionExport({
       messageId: message.id,
       vehicle: buildGuestInspectionVehicle(message, vehicle, summary),
+      guestName: message.guest_name || "",
     });
   } catch (err) {
     console.error("Failed preparing guest inspection sheet:", err);
@@ -3205,6 +3207,7 @@ async function handleExportGuestInspectionSheet(message) {
           <GuestSafetySnapshotCard
             vehicle={inspectionExport.vehicle}
             cardRef={inspectionExportRef}
+            guestName={inspectionExport.guestName}
           />
         </div>
       ) : null}

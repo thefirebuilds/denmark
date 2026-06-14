@@ -283,6 +283,16 @@ AUTH_COOKIE_SECURE=true
 AUTH_OWNER_EMAILS=you@example.com
 ```
 
+Generate `SESSION_SECRET` on the VM with:
+
+```bash
+openssl rand -base64 48
+```
+
+If the container logs `SESSION_SECRET is required when NODE_ENV=production`,
+the `.env` file being used by Docker Compose is missing that value or is not
+next to `docker-compose.yml`.
+
 Add any integrations you use:
 
 - `BOUNCIE_*`

@@ -1185,6 +1185,10 @@ export default function FleetMaintenancePanel({
     return getNextUpcomingTrip(vehicleTrips);
   }, [vehicleTrips]);
 
+  const guestSnapshotTrip = useMemo(() => {
+    return getActiveTrip(vehicleTrips) || nextUpcomingTrip || null;
+  }, [vehicleTrips, nextUpcomingTrip]);
+
   const vehicle = useMemo(() => {
     const withDiagnosticsFallbackNotice = (candidate) => {
       if (
@@ -3188,7 +3192,7 @@ export default function FleetMaintenancePanel({
                 <GuestSafetySnapshotCard
                   vehicle={vehicle}
                   cardRef={cardRef}
-                  guestName={nextUpcomingTrip?.guest_name || ""}
+                  guestName={guestSnapshotTrip?.guest_name || ""}
                 />
               </div>
             ) : null}
