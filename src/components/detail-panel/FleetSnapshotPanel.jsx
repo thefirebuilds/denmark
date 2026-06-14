@@ -36,6 +36,83 @@ import TripPathMap from "../trip-summary/TripPathMap";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const UTILIZATION_WINDOW_DAYS = 7;
 
+function coerceCoordinate(value, maxAbs) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  if (Math.abs(number) <= maxAbs) return number;
+
+  for (let scale = 10; scale <= 1e16; scale *= 10) {
+    const scaled = number / scale;
+    if (Math.abs(scaled) <= maxAbs) return scaled;
+  }
+
+  return number;
+}
+
+function distanceMiles(a, b) {
+  const lat1 = Number(a?.lat);
+  const lon1 = Number(a?.lon);
+  const lat2 = Number(b?.lat);
+  const lon2 = Number(b?.lon);
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Infinity;
+
+  const radiusMiles = 3958.7613;
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const rLat1 = toRadians(lat1);
+  const rLat2 = toRadians(lat2);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) ** 2;
+
+  return 2 * radiusMiles * Math.asin(Math.sqrt(h));
+}
+
+function normalizeGeoLocation(location) {
+  const rawLat = location?.latitude ?? location?.lat;
+  const rawLon = location?.longitude ?? location?.lon ?? location?.lng;
+  if (rawLat == null || rawLat === "" || rawLon == null || rawLon === "") {
+    return null;
+  }
+
+  const lat = coerceCoordinate(rawLat, 90);
+  const lon = coerceCoordinate(rawLon, 180);
+  const radiusMiles = Number(location?.radiusMiles ?? location?.radius_miles);
+  if (lat == null || lon == null) return null;
+  if (lat === 0 && lon === 0) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  if (!Number.isFinite(radiusMiles) || radiusMiles <= 0) return null;
+  if (location?.enabled === false) return null;
+
+  return {
+    id: String(location?.id || location?.label || `${lat},${lon}`),
+    label: String(location?.label || location?.name || "Location"),
+    lat,
+    lon,
+    radiusMiles,
+  };
+}
+
+function getVehicleTelemetryPoint(vehicle) {
+  const location = vehicle?.telemetry?.location;
+  const lat = Number(location?.lat);
+  const lon = Number(location?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lon };
+}
+
+function getContainingGeoLocation(vehicle, geoLocations) {
+  const point = getVehicleTelemetryPoint(vehicle);
+  if (!point) return null;
+  return (
+    geoLocations.find(
+      (location) => distanceMiles(point, location) <= location.radiusMiles
+    ) || null
+  );
+}
+
 function getLocalDayStartMs(value = new Date()) {
   const date = new Date(value);
   date.setHours(0, 0, 0, 0);
@@ -90,6 +167,31 @@ export default function FleetSnapshotPanel({
   onOpenVehicleMap,
 }) {
   const [expandedVehicles, setExpandedVehicles] = useState({});
+  const [geoLocations, setGeoLocations] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadGeoLocations() {
+      try {
+        const resp = await fetch(`${API_BASE}/api/settings/locations.tracking`);
+        if (!resp.ok) return;
+        const json = await resp.json();
+        const nextLocations = Array.isArray(json?.value?.locations)
+          ? json.value.locations.map(normalizeGeoLocation).filter(Boolean)
+          : [];
+        if (!cancelled) setGeoLocations(nextLocations);
+      } catch (err) {
+        if (!cancelled) setGeoLocations([]);
+      }
+    }
+
+    loadGeoLocations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function getVehicleKey(vehicle) {
     return (
@@ -478,6 +580,10 @@ export default function FleetSnapshotPanel({
               : "";
 
             const isExpanded = expandedVehicles[vehicleKey] || false;
+            const containingGeoLocation = getContainingGeoLocation(
+              vehicle,
+              geoLocations
+            );
 
             return (
               <div
@@ -500,8 +606,12 @@ export default function FleetSnapshotPanel({
                         ) : null}
                       </div>
                       <div className="fleet-row-summary-badges">
-                        <div className={`fleet-status-pill ${statusTone}`}>
-                          {getVehicleStatusLabel(vehicle)}
+                        <div
+                          className={`fleet-status-pill ${statusTone} ${
+                            containingGeoLocation ? "in-geo-location" : ""
+                          }`}
+                        >
+                          {containingGeoLocation?.label || getVehicleStatusLabel(vehicle)}
                         </div>
                         {hasServiceDue ? (
                           <div className={serviceDueBadgeClass}>
@@ -563,6 +673,15 @@ export default function FleetSnapshotPanel({
                           {renderLocationLink(vehicle)}
                         </div>
                       </div>
+
+                      {containingGeoLocation ? (
+                        <div className="fleet-meta-item fleet-meta-item--full">
+                          <div className="detail-label">Geo Location</div>
+                          <div className="detail-value detail-value--compact">
+                            Inside {containingGeoLocation.label}
+                          </div>
+                        </div>
+                      ) : null}
 
                       {batteryAlert ? (
                         <div className={`fleet-inline-alert ${batteryAlert.level}`}>

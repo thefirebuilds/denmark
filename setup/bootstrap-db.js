@@ -4,30 +4,33 @@ const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
 
-require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
+const ROOT_DIR = path.resolve(__dirname, "..");
+require("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
 
-const appPool = require("../db");
-const { ensureAuthTables } = require("../auth/store");
+const appPool = require("../server/db");
+const { ensureAuthTables } = require("../server/auth/store");
 const {
   ensureGoogleCalendarConnectionHealthColumns,
-} = require("../services/googleCalendar/googleCalendarStore");
+} = require("../server/services/googleCalendar/googleCalendarStore");
 const {
   ensureVehicleFmvEstimatesTable,
-} = require("../services/vehicles/fmvEstimateService");
+} = require("../server/services/vehicles/fmvEstimateService");
 const {
   ensureBusinessMetricsTables,
-} = require("../services/metrics/businessMetricsService");
+} = require("../server/services/metrics/businessMetricsService");
 const {
   ensureVehicleOdometerRollupTable,
-} = require("../services/vehicles/odometerRollupService");
+} = require("../server/services/vehicles/odometerRollupService");
 const {
   ensureVehicleAliasesTable,
-} = require("../services/vehicles/vehicleAliases");
-const { ensureSystemActivityLogTable } = require("../services/systemActivityLog");
-const { ensureIncomeTables } = require("../services/income/incomeService");
-const { ensureFleetAlertTables } = require("../services/alerts/fleetAlerts");
+} = require("../server/services/vehicles/vehicleAliases");
+const {
+  ensureSystemActivityLogTable,
+} = require("../server/services/systemActivityLog");
+const { ensureIncomeTables } = require("../server/services/income/incomeService");
+const { ensureFleetAlertTables } = require("../server/services/alerts/fleetAlerts");
 
-const SCHEMA_PATH = path.resolve(__dirname, "../db/schema.sql");
+const SCHEMA_PATH = path.join(ROOT_DIR, "server/db/schema.sql");
 const FORCE_RESET = process.argv.includes("--force-reset");
 const BASE_SCHEMA_TABLES = [
   "api_auth_tokens",
@@ -73,9 +76,7 @@ const BASE_SCHEMA_TABLES = [
   "system_activity_log",
   "service_tokens",
 ];
-const RUNTIME_ENSURED_TABLES = [
-  "income_transactions",
-];
+const RUNTIME_ENSURED_TABLES = ["income_transactions"];
 const REQUIRED_TABLES = [...BASE_SCHEMA_TABLES, ...RUNTIME_ENSURED_TABLES];
 
 function getConnectionConfig() {

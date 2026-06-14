@@ -1908,6 +1908,12 @@ body {
   color: inherit;
 }
 
+.fleet-status-pill.in-geo-location {
+  background: rgba(20, 184, 166, 0.14);
+  color: #99f6e4;
+  border-color: rgba(45, 212, 191, 0.36);
+}
+
 .fleet-status-pill.parked {
   background: rgba(255, 255, 255, 0.04);
   color: #c7d2e8;

@@ -27,6 +27,7 @@ WORKDIR /app
 
 COPY --from=server-deps /app/server/node_modules ./server/node_modules
 COPY server ./server
+COPY setup ./setup
 COPY --from=web-build /app/dist ./dist
 
 EXPOSE 5000

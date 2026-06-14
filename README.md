@@ -258,6 +258,7 @@ git pull
 The VM mainly needs:
 
 - `docker-compose.yml`
+- `setup/`
 - `.env`
 
 The repo checkout is convenient for updates and docs, but the app code comes from the published container image.
@@ -332,9 +333,20 @@ echo YOUR_GITHUB_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-s
 
 You only need to do this again if the Docker login expires or the VM changes.
 
-### 4. Bootstrap a fresh database
+### 4. Run the installer
 
-Start the local Postgres service first:
+The shortest fresh-droplet path is:
+
+```bash
+bash setup/install.sh
+```
+
+That starts Postgres, pulls the app image, runs database bootstrap, verifies the
+schema, and starts Denmark.
+
+### Manual bootstrap steps
+
+If you want to run the pieces by hand, start the local Postgres service first:
 
 ```bash
 docker compose up -d db

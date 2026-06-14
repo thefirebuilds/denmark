@@ -3,7 +3,8 @@
 const path = require("path");
 const { Pool } = require("pg");
 
-require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
+const ROOT_DIR = path.resolve(__dirname, "..");
+require("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
 
 const REQUIRED_TABLES = [
   "api_auth_tokens",
