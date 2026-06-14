@@ -5,8 +5,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "db:bootstrap": "node ../setup/bootstrap-db.cjs",
-    "db:verify": "node ../setup/verify-db-bootstrap.cjs"
+    "db:bootstrap": "node ../setup/bootstrap-db.js",
+    "db:verify": "node ../setup/verify-db-bootstrap.js"
   },
   "keywords": [],
   "author": "",

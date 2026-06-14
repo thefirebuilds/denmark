@@ -88,6 +88,7 @@ const BASE_SCHEMA_TABLES = [
 ];
 const RUNTIME_ENSURED_TABLES = ["income_transactions"];
 const REQUIRED_TABLES = [...BASE_SCHEMA_TABLES, ...RUNTIME_ENSURED_TABLES];
+const RUNTIME_DEPENDENCY_TABLES = ["vehicles", "trips", "teller_transactions"];
 
 function getConnectionConfig() {
   return {
@@ -154,6 +155,19 @@ async function ensureBootstrapMarker(client) {
   );
 }
 
+async function assertRuntimeDependencies(client) {
+  const existing = await getExistingRequiredTables(client);
+  const missing = RUNTIME_DEPENDENCY_TABLES.filter((table) => !existing.has(table));
+
+  if (missing.length) {
+    throw new Error(
+      `base schema missing runtime dependency tables before support-table creation: ${missing.join(
+        ", "
+      )}`
+    );
+  }
+}
+
 async function runRuntimeEnsures() {
   await ensureAuthTables();
   await ensureGoogleCalendarConnectionHealthColumns();
@@ -181,6 +195,7 @@ async function main() {
 
     if (existing.size === BASE_SCHEMA_TABLES.length && !FORCE_RESET) {
       await ensureBootstrapMarker(client);
+      await assertRuntimeDependencies(client);
       await runRuntimeEnsures();
       console.log("[db:bootstrap] schema already initialized; ensured runtime tables");
       return;
@@ -207,6 +222,7 @@ async function main() {
     await ensureBootstrapMarker(client);
     await client.query("COMMIT");
 
+    await assertRuntimeDependencies(client);
     await runRuntimeEnsures();
     console.log(
       `[db:bootstrap] created Denmark schema with ${REQUIRED_TABLES.length} required tables`

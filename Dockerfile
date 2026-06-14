@@ -30,6 +30,10 @@ COPY server ./server
 COPY setup ./setup
 COPY --from=web-build /app/dist ./dist
 
+RUN node --check ./setup/bootstrap-db.js \
+  && node --check ./setup/verify-db-bootstrap.js \
+  && node -e "require('./server/node_modules/pg'); require('./server/node_modules/dotenv'); console.log('setup runtime deps ok')"
+
 EXPOSE 5000
 WORKDIR /app/server
 CMD ["node", "index.js"]
