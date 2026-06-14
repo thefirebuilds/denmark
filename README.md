@@ -344,6 +344,12 @@ bash setup/install.sh
 That starts Postgres, pulls the app image, runs database bootstrap, verifies the
 schema, and starts Denmark.
 
+During first install, Docker may print one-off container creation lines before
+the bootstrap logs appear. The installer prints an explicit
+`waiting for postgres...` message until the database is ready. If bootstrap or
+verification fails, the installer prints recent `db` and `app` logs and exits
+before starting the app.
+
 ### Manual bootstrap steps
 
 If you want to run the pieces by hand, start the local Postgres service first:

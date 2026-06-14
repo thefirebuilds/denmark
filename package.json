@@ -9,8 +9,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "db:bootstrap": "node setup/bootstrap-db.js",
-    "db:verify": "node setup/verify-db-bootstrap.js"
+    "db:bootstrap": "node setup/bootstrap-db.cjs",
+    "db:verify": "node setup/verify-db-bootstrap.cjs"
   },
   "dependencies": {
     "@dimo-network/data-sdk": "^1.7.0",

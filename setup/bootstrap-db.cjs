@@ -2,10 +2,20 @@
 
 const fs = require("fs");
 const path = require("path");
-const { Pool } = require("pg");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
-require("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
+
+function requireAppDependency(name) {
+  try {
+    return require(name);
+  } catch (err) {
+    if (err.code !== "MODULE_NOT_FOUND") throw err;
+    return require(path.join(ROOT_DIR, "server/node_modules", name));
+  }
+}
+
+const { Pool } = requireAppDependency("pg");
+requireAppDependency("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
 
 const appPool = require("../server/db");
 const { ensureAuthTables } = require("../server/auth/store");
