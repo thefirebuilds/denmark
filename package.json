@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:bootstrap": "npm --prefix server run db:bootstrap",
+    "db:verify": "npm --prefix server run db:verify"
   },
   "dependencies": {
     "@dimo-network/data-sdk": "^1.7.0",

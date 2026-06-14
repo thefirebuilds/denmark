@@ -1192,6 +1192,9 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
               const running = vehicle.isRunning === true;
               const headingLabel = formatHeading(vehicle.heading);
               const telemetryIssue = formatTelemetryIssue(vehicle);
+              const containingGeoLocation = geoLocationsVisible
+                ? getContainingGeoLocation(vehicle, namedLocations)
+                : null;
               return (
                 <button
                   key={vehicle.id}
@@ -1208,10 +1211,18 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                       {running ? (
                         <span className="fleet-map-running-pill">Running</span>
                       ) : null}
+                      {containingGeoLocation ? (
+                        <span className="fleet-map-location-pill">
+                          {containingGeoLocation.label}
+                        </span>
+                      ) : null}
                     </small>
                   </span>
                   <span className="fleet-map-list-meta">
                     {running ? "Running" : stale ? "Stale" : "Fresh"} ·{" "}
+                    {containingGeoLocation
+                      ? `Inside ${containingGeoLocation.label} · `
+                      : ""}
                     {formatLastSeenLabel(vehicle.lastSeenType)} ·{" "}
                     {formatFreshness(vehicle.lastSeen)}
                     {telemetryIssue ? ` · ${telemetryIssue}` : ""}

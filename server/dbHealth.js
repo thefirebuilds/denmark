@@ -2,6 +2,7 @@ const RETRY_AFTER_SECONDS = Number(process.env.DB_RETRY_AFTER_SECONDS || 15);
 
 const state = {
   ready: false,
+  schemaInitialized: false,
   lastError: null,
   lastErrorAt: null,
   lastReadyAt: null,
@@ -31,8 +32,19 @@ function isDatabaseConnectionError(error) {
   );
 }
 
+function isDatabaseSchemaError(error) {
+  const code = String(error?.code || error?.cause?.code || "").toUpperCase();
+  const text = `${error?.message || ""} ${error?.cause?.message || ""}`.toLowerCase();
+  return (
+    code === "42P01" ||
+    code === "42703" ||
+    text.includes("relation ") && text.includes(" does not exist")
+  );
+}
+
 function markDatabaseReady() {
   state.ready = true;
+  state.schemaInitialized = true;
   state.lastReadyAt = new Date().toISOString();
   state.lastError = null;
   state.lastErrorAt = null;
@@ -40,6 +52,9 @@ function markDatabaseReady() {
 
 function markDatabaseUnavailable(error) {
   state.ready = false;
+  if (!isDatabaseSchemaError(error)) {
+    state.schemaInitialized = false;
+  }
   state.lastError = summarizeError(error);
   state.lastErrorAt = new Date().toISOString();
 
@@ -54,9 +69,17 @@ function markDatabaseUnavailable(error) {
   }
 }
 
+function markDatabaseSchemaMissing(error) {
+  state.ready = false;
+  state.schemaInitialized = false;
+  state.lastError = summarizeError(error);
+  state.lastErrorAt = new Date().toISOString();
+}
+
 function getDatabaseHealth() {
   return {
     ready: state.ready,
+    schema_initialized: state.schemaInitialized,
     retry_after_seconds: RETRY_AFTER_SECONDS,
     last_ready_at: state.lastReadyAt,
     last_error_at: state.lastErrorAt,
@@ -65,6 +88,16 @@ function getDatabaseHealth() {
 }
 
 function buildDatabaseUnavailablePayload() {
+  if (!state.schemaInitialized && state.lastError) {
+    return {
+      ok: false,
+      error: "database schema not initialized",
+      message:
+        "PostgreSQL is reachable, but Denmark's database tables are missing. Run npm run db:bootstrap, then restart the app.",
+      database: getDatabaseHealth(),
+    };
+  }
+
   return {
     ok: false,
     error: "database unavailable",
@@ -97,7 +130,9 @@ module.exports = {
   databaseUnavailableMiddleware,
   getDatabaseHealth,
   isDatabaseConnectionError,
+  isDatabaseSchemaError,
   markDatabaseReady,
+  markDatabaseSchemaMissing,
   markDatabaseUnavailable,
   onDatabaseUnavailable,
   summarizeError,

@@ -28,6 +28,16 @@ const {
 
 const router = express.Router();
 
+router.get("/", async (req, res) => {
+  try {
+    const data = await getSummaryMetrics(req.query.range || "30d");
+    return res.json(data);
+  } catch (err) {
+    console.error("GET /api/metrics failed:", err);
+    return res.status(500).json({ error: "Failed to load metrics" });
+  }
+});
+
 router.get("/summary", async (req, res) => {
   try {
     const data = await getSummaryMetrics(req.query.range || "30d");

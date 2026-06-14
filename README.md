@@ -208,7 +208,9 @@ There are two supported ways to run Denmark:
 - Production or VM install: Docker Compose pulls the app image from GitHub Container Registry.
 - Local development: install frontend and backend npm dependencies, run the Express API and Vite dev server separately.
 
-The production container expects an existing Postgres database and a valid `.env`. It does not run schema repaves or migrations at startup.
+The production container expects a valid `.env`. Docker Compose can start a local
+Postgres service named `db`, and the schema is initialized with an explicit
+bootstrap command.
 
 ### How releases work
 
@@ -230,11 +232,12 @@ Install these on the VM:
 - Docker Engine
 - Docker Compose plugin
 - Git, if you want to pull `docker-compose.yml` and docs from the repo
-- Network access to the existing PostgreSQL database
 - A production `.env` file kept on the VM
 - Optional: a reverse proxy or tunnel that terminates HTTPS and forwards to port `5000`
 
-The compose file runs only the app container. It does not run Postgres and it does not run schema migrations.
+The compose file includes the app and an optional local Postgres service named
+`db`. It does not run schema bootstrap automatically; run the bootstrap command
+once for a fresh database.
 
 ### 1. Get the deploy files onto the VM
 
@@ -266,12 +269,12 @@ Create `.env` next to `docker-compose.yml`. Do not commit this file.
 Minimum production shape:
 
 ```dotenv
-PGHOST=your-postgres-host
+NODE_ENV=production
+PGHOST=db
 PGPORT=5432
 PGDATABASE=denmark
-PGUSER=your-postgres-user
+PGUSER=postgres
 PGPASSWORD=replace-with-postgres-password
-DATABASE_URL=postgres://your-postgres-user:replace-with-postgres-password@your-postgres-host:5432/denmark
 
 PORT=5000
 FRONTEND_BASE_URL=https://your-domain.example
@@ -329,7 +332,33 @@ echo YOUR_GITHUB_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-s
 
 You only need to do this again if the Docker login expires or the VM changes.
 
-### 4. Start the app
+### 4. Bootstrap a fresh database
+
+Start the local Postgres service first:
+
+```bash
+docker compose up -d db
+```
+
+Create the Denmark tables:
+
+```bash
+docker compose run --rm app npm run db:bootstrap
+```
+
+Verify the expected tables:
+
+```bash
+docker compose run --rm app npm run db:verify
+```
+
+The bootstrap command uses `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and
+`PGPASSWORD` from `.env`. It is safe to run again; once the base schema exists it
+only verifies/ensures runtime support tables. If it detects a partially
+initialized schema, it refuses to reset it unless you explicitly pass
+`-- --force-reset`.
+
+### 5. Start the app
 
 ```bash
 docker compose pull
@@ -338,7 +367,7 @@ docker compose up -d
 
 The app listens on container port `5000`, mapped to VM port `5000`.
 
-### 5. Check the app
+### 6. Check the app
 
 ```bash
 docker compose ps
@@ -353,13 +382,14 @@ curl http://localhost:5000/api/health
 
 `/api/health` is intentionally suitable for deployment checks. Most operational APIs are auth-gated when `AUTH_ENFORCED=true`.
 
-### 6. Update the VM later
+### 7. Update the VM later
 
 After changes are merged to `main`, wait for the GitHub Actions container publish workflow to finish. Then run:
 
 ```bash
 git pull
 docker compose pull
+docker compose run --rm app npm run db:bootstrap
 docker compose up -d
 ```
 
@@ -367,9 +397,31 @@ If `docker compose pull` does not pick up a new image, confirm the `main` branch
 
 ### Database bootstrap / repave
 
-The Docker container expects the database to already exist.
+For normal first install or deployment updates, use the idempotent bootstrap:
 
-For a brand-new local database or a destructive rebuild, use:
+```bash
+npm run db:bootstrap
+```
+
+Inside Docker Compose:
+
+```bash
+docker compose run --rm app npm run db:bootstrap
+```
+
+Verification:
+
+```bash
+npm run db:verify
+```
+
+To also probe the running API, set `DENMARK_VERIFY_API_BASE_URL`:
+
+```bash
+DENMARK_VERIFY_API_BASE_URL=http://localhost:5000 npm run db:verify
+```
+
+The older schema file is still available as a destructive rebuild reference:
 
 ```text
 server/db/schema.sql

@@ -465,6 +465,20 @@
   text-transform: uppercase;
 }
 
+.fleet-map-location-pill {
+  display: inline-block;
+  margin-left: 8px;
+  border: 1px solid rgba(45, 212, 191, 0.62);
+  border-radius: 999px;
+  background: rgba(13, 148, 136, 0.2);
+  color: #99f6e4;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  text-transform: uppercase;
+}
+
 .fleet-map-popup {
   display: grid;
   gap: 4px;

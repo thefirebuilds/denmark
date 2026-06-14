@@ -4,7 +4,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "db:bootstrap": "node scripts/bootstrap-db.js",
+    "db:verify": "node scripts/verify-db-bootstrap.js"
   },
   "keywords": [],
   "author": "",

@@ -66,7 +66,9 @@ const {
   databaseUnavailableMiddleware,
   getDatabaseHealth,
   isDatabaseConnectionError,
+  isDatabaseSchemaError,
   markDatabaseReady,
+  markDatabaseSchemaMissing,
   markDatabaseUnavailable,
   onDatabaseUnavailable,
   summarizeError,
@@ -410,10 +412,17 @@ async function initializeStartupTablesWithRetry() {
       startScheduler();
     }
   } catch (err) {
-    markDatabaseUnavailable(err);
-    console.warn(
-      `[server] database unavailable; startup tables not ready. Retrying in ${RETRY_AFTER_SECONDS}s. ${summarizeError(err)}`
-    );
+    if (isDatabaseSchemaError(err)) {
+      markDatabaseSchemaMissing(err);
+      console.warn(
+        `[server] database schema not initialized. Run npm run db:bootstrap. Retrying in ${RETRY_AFTER_SECONDS}s. ${summarizeError(err)}`
+      );
+    } else {
+      markDatabaseUnavailable(err);
+      console.warn(
+        `[server] database unavailable; startup tables not ready. Retrying in ${RETRY_AFTER_SECONDS}s. ${summarizeError(err)}`
+      );
+    }
 
     startupRetryHandle = setTimeout(() => {
       startupRetryHandle = null;
@@ -435,6 +444,14 @@ app.use((err, req, res, next) => {
 
   if (isDatabaseConnectionError(err)) {
     markDatabaseUnavailable(err);
+    startupTablesReady = false;
+    void initializeStartupTablesWithRetry();
+    res.set("Retry-After", String(RETRY_AFTER_SECONDS));
+    return res.status(503).json(buildDatabaseUnavailablePayload());
+  }
+
+  if (isDatabaseSchemaError(err)) {
+    markDatabaseSchemaMissing(err);
     startupTablesReady = false;
     void initializeStartupTablesWithRetry();
     res.set("Retry-After", String(RETRY_AFTER_SECONDS));
