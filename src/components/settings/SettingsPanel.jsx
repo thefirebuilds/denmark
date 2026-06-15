@@ -276,7 +276,8 @@ function normalizeCallbackPathForDisplay(value) {
 }
 
 function mergeAuthPublicUrlSettings(settings) {
-  const publicBaseUrl = normalizePublicBaseUrlForDisplay(settings?.publicBaseUrl);
+  const publicBaseUrl = String(settings?.publicBaseUrl || "");
+  const normalizedPublicBaseUrl = normalizePublicBaseUrlForDisplay(publicBaseUrl);
   const googleCallbackPath = normalizeCallbackPathForDisplay(
     settings?.googleCallbackPath
   );
@@ -284,9 +285,11 @@ function mergeAuthPublicUrlSettings(settings) {
   return {
     publicBaseUrl,
     googleCallbackPath,
-    googleRedirectUri: publicBaseUrl ? `${publicBaseUrl}${googleCallbackPath}` : "",
-    googleCalendarRedirectUri: publicBaseUrl
-      ? `${publicBaseUrl}${GOOGLE_CALENDAR_CALLBACK_PATH}`
+    googleRedirectUri: normalizedPublicBaseUrl
+      ? `${normalizedPublicBaseUrl}${googleCallbackPath}`
+      : "",
+    googleCalendarRedirectUri: normalizedPublicBaseUrl
+      ? `${normalizedPublicBaseUrl}${GOOGLE_CALENDAR_CALLBACK_PATH}`
       : "",
   };
 }
@@ -756,12 +759,13 @@ function AuthPublicUrlSettingsPanel() {
   }, []);
 
   function updateField(key, value) {
-    setForm((current) =>
-      mergeAuthPublicUrlSettings({
+    setForm((current) => ({
+      ...mergeAuthPublicUrlSettings({
         ...current,
         [key]: value,
-      })
-    );
+      }),
+      [key]: value,
+    }));
   }
 
   async function saveSettings(event) {
@@ -770,7 +774,13 @@ function AuthPublicUrlSettingsPanel() {
     try {
       setSaving(true);
       setMessage("Saving...");
-      const payload = mergeAuthPublicUrlSettings(form);
+      const payload = {
+        ...mergeAuthPublicUrlSettings(form),
+        publicBaseUrl: normalizePublicBaseUrlForDisplay(form.publicBaseUrl),
+        googleCallbackPath: normalizeCallbackPathForDisplay(
+          form.googleCallbackPath
+        ),
+      };
       const res = await fetch(`${API_BASE}/api/settings/auth/public-url`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },

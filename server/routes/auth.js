@@ -118,6 +118,16 @@ router.get("/auth/callback", async (req, res) => {
     const pendingAuth = req.session?.oidcAuth;
 
     if (!code || !state || !pendingAuth) {
+      console.warn("[auth] login callback missing required state", {
+        hasCode: Boolean(code),
+        hasState: Boolean(state),
+        hasPendingSession: Boolean(pendingAuth),
+        sessionId: req.sessionID || null,
+        forwardedProto: req.get("x-forwarded-proto") || null,
+        forwardedHost: req.get("x-forwarded-host") || null,
+        host: req.get("host") || null,
+        secure: Boolean(req.secure),
+      });
       await createAuthAuditLog({
         eventType: "login_failure",
         ...auditMeta,
