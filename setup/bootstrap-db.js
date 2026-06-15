@@ -39,6 +39,9 @@ const {
 } = require("../server/services/systemActivityLog");
 const { ensureIncomeTables } = require("../server/services/income/incomeService");
 const { ensureFleetAlertTables } = require("../server/services/alerts/fleetAlerts");
+const {
+  ensureAuthPublicUrlSettings,
+} = require("../server/services/authPublicUrlSettings");
 
 const SCHEMA_PATH = path.join(ROOT_DIR, "server/db/schema.sql");
 const FORCE_RESET = process.argv.includes("--force-reset");
@@ -318,6 +321,7 @@ async function runRuntimeEnsures() {
   await ensureSystemActivityLogTable();
   await ensureIncomeTables();
   await ensureFleetAlertTables();
+  await ensureAuthPublicUrlSettings();
 }
 
 async function main() {

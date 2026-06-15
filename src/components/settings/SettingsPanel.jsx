@@ -51,6 +51,13 @@ const DEFAULT_LOCATION_SETTINGS = {
     },
   ],
 };
+const DEFAULT_AUTH_PUBLIC_URL_SETTINGS = {
+  publicBaseUrl: "",
+  googleCallbackPath: "/api/auth/callback",
+  googleRedirectUri: "",
+  googleCalendarRedirectUri: "",
+};
+const GOOGLE_CALENDAR_CALLBACK_PATH = "/api/integrations/google-calendar/callback";
 
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority queue" },
@@ -258,6 +265,32 @@ function toLocationPayload(settings) {
   };
 }
 
+function normalizePublicBaseUrlForDisplay(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function normalizeCallbackPathForDisplay(value) {
+  const raw = String(value || DEFAULT_AUTH_PUBLIC_URL_SETTINGS.googleCallbackPath).trim();
+  if (!raw) return DEFAULT_AUTH_PUBLIC_URL_SETTINGS.googleCallbackPath;
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+function mergeAuthPublicUrlSettings(settings) {
+  const publicBaseUrl = normalizePublicBaseUrlForDisplay(settings?.publicBaseUrl);
+  const googleCallbackPath = normalizeCallbackPathForDisplay(
+    settings?.googleCallbackPath
+  );
+
+  return {
+    publicBaseUrl,
+    googleCallbackPath,
+    googleRedirectUri: publicBaseUrl ? `${publicBaseUrl}${googleCallbackPath}` : "",
+    googleCalendarRedirectUri: publicBaseUrl
+      ? `${publicBaseUrl}${GOOGLE_CALENDAR_CALLBACK_PATH}`
+      : "",
+  };
+}
+
 function moveItem(items, index, direction) {
   const nextIndex = index + direction;
   if (nextIndex < 0 || nextIndex >= items.length) return items;
@@ -309,6 +342,7 @@ function toPayloadVehicle(form) {
 function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
+    { key: "auth", title: "Authentication", sub: "Public URL and OAuth" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
     { key: "locations", title: "Locations", sub: "Geofences and entry alerts" },
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
@@ -688,6 +722,188 @@ function AlertSettingsPanel() {
           <div className="settings-message">{message}</div>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+function AuthPublicUrlSettingsPanel() {
+  const [form, setForm] = useState(DEFAULT_AUTH_PUBLIC_URL_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadSettings() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/auth/public-url`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load authentication settings");
+      }
+
+      setForm(mergeAuthPublicUrlSettings(json.value));
+    } catch (err) {
+      setMessage(err.message || "Failed to load authentication settings");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  function updateField(key, value) {
+    setForm((current) =>
+      mergeAuthPublicUrlSettings({
+        ...current,
+        [key]: value,
+      })
+    );
+  }
+
+  async function saveSettings(event) {
+    event.preventDefault();
+
+    try {
+      setSaving(true);
+      setMessage("Saving...");
+      const payload = mergeAuthPublicUrlSettings(form);
+      const res = await fetch(`${API_BASE}/api/settings/auth/public-url`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: payload }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save authentication settings");
+      }
+
+      setForm(mergeAuthPublicUrlSettings(json.value || payload));
+      setMessage("Saved");
+    } catch (err) {
+      setMessage(err.message || "Failed to save authentication settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function copyRedirectUri() {
+    if (!form.googleRedirectUri) return;
+
+    try {
+      await navigator.clipboard.writeText(form.googleRedirectUri);
+      setMessage("Redirect URI copied");
+    } catch {
+      setMessage("Copy failed");
+    }
+  }
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Authentication</h2>
+          <span>public URL and Google OAuth callback</span>
+        </div>
+        <div className="settings-autosave-state">
+          {loading ? "Loading..." : saving ? "Saving..." : message || "Ready"}
+        </div>
+      </div>
+
+      <form className="settings-form" onSubmit={saveSettings}>
+        <div className="settings-group">
+          <div className="settings-group-title">Public URL</div>
+          <div className="settings-empty-state">
+            This is the browser-facing URL for this Denmark deployment. It is
+            public configuration, not a secret, and is used to build the Google
+            OAuth redirect URI.
+          </div>
+
+          <div className="settings-form-grid">
+            <label className="settings-field settings-field-wide">
+              <span>Public app base URL</span>
+              <input
+                value={form.publicBaseUrl}
+                onChange={(event) =>
+                  updateField("publicBaseUrl", event.target.value)
+                }
+                placeholder="https://denmark.example.com"
+                disabled={loading || saving}
+              />
+              <small className="settings-field-note">
+                Store only the scheme and host. Denmark removes trailing slashes.
+              </small>
+            </label>
+
+            <label className="settings-field settings-field-wide">
+              <span>Google OAuth callback path</span>
+              <input
+                value={form.googleCallbackPath}
+                onChange={(event) =>
+                  updateField("googleCallbackPath", event.target.value)
+                }
+                placeholder="/api/auth/callback"
+                disabled={loading || saving}
+              />
+            </label>
+
+            <label className="settings-field settings-field-wide">
+              <span>Computed Google OAuth redirect URI</span>
+              <input
+                value={
+                  form.googleRedirectUri ||
+                  "Set the public app base URL to compute the redirect URI"
+                }
+                readOnly
+              />
+              <small className="settings-field-note">
+                Add this exact redirect URI to Google Cloud Console under
+                Authorized redirect URIs.
+              </small>
+            </label>
+
+            <label className="settings-field settings-field-wide">
+              <span>Computed Google Calendar redirect URI</span>
+              <input
+                value={
+                  form.googleCalendarRedirectUri ||
+                  "Set the public app base URL to compute the calendar redirect URI"
+                }
+                readOnly
+              />
+              <small className="settings-field-note">
+                Add this too if you use the Google Calendar integration with the
+                same OAuth client.
+              </small>
+            </label>
+          </div>
+
+          <div className="settings-form-actions">
+            <button
+              type="submit"
+              className="settings-action-btn"
+              disabled={loading || saving}
+            >
+              {saving ? "Saving..." : "Save Authentication Settings"}
+            </button>
+            <button
+              type="button"
+              className="settings-action-btn secondary"
+              disabled={!form.googleRedirectUri}
+              onClick={copyRedirectUri}
+            >
+              Copy Redirect URI
+            </button>
+            {message && message !== "Saved" ? (
+              <span className="settings-message">{message}</span>
+            ) : null}
+          </div>
+        </div>
+      </form>
     </section>
   );
 }
@@ -3238,6 +3454,14 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
+    if (activeSection === "auth") {
+      return {
+        title: "OAuth redirect",
+        body:
+          "Google requires the redirect URI to match exactly. Set the public app URL once, copy the computed URI, and paste it into Google Cloud Console.",
+      };
+    }
+
     if (activeSection === "website") {
       return {
         title: "Website export",
@@ -3331,6 +3555,8 @@ export default function SettingsPanel({
         />
       ) : activeSection === "fleet" ? (
         <FleetSettingsPanel />
+      ) : activeSection === "auth" ? (
+        <AuthPublicUrlSettingsPanel />
       ) : activeSection === "locations" ? (
         <LocationsSettingsPanel />
       ) : activeSection === "expenses" ? (

@@ -18,8 +18,13 @@ const {
   reconcileTripsToGoogle,
 } = require("../services/googleCalendar/googleTripSync");
 const { logRequestActivity } = require("../services/systemActivityLog");
+const {
+  resolveAuthPublicUrlSettings,
+  computeGoogleRedirectUri,
+} = require("../services/authPublicUrlSettings");
 
 const router = express.Router();
+const GOOGLE_CALENDAR_CALLBACK_PATH = "/api/integrations/google-calendar/callback";
 
 function getRouteUserId(req) {
   return req?.auth?.kind === "user" ? req.auth.userId : null;
@@ -32,6 +37,13 @@ function getGoogleApiErrorCode(err) {
     err?.code ||
     err?.message ||
     "unknown_error"
+  );
+}
+
+function buildGoogleCalendarRedirectUri(publicUrlSettings) {
+  return computeGoogleRedirectUri(
+    publicUrlSettings.effectivePublicBaseUrl || publicUrlSettings.publicBaseUrl,
+    GOOGLE_CALENDAR_CALLBACK_PATH
   );
 }
 
@@ -256,21 +268,29 @@ router.post("/test-event", async (req, res, next) => {
   }
 });
 
-router.get("/connect", (req, res) => {
-  const state = crypto.randomBytes(24).toString("hex");
-  req.session.googleCalendarState = state;
+router.get("/connect", async (req, res, next) => {
+  try {
+    const state = crypto.randomBytes(24).toString("hex");
+    const publicUrl = await resolveAuthPublicUrlSettings(req);
+    const redirectUri = buildGoogleCalendarRedirectUri(publicUrl);
+    req.session.googleCalendarState = state;
+    req.session.googleCalendarRedirectUri = redirectUri;
 
-  void logRequestActivity(req, {
-    category: "integration",
-    eventType: "google_calendar_connect_started",
-    subjectType: "integration",
-    subjectId: "google-calendar",
-    subjectLabel: "Google Calendar",
-    source: "google-calendar",
-  }).catch(() => null);
+    void logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_connect_started",
+      subjectType: "integration",
+      subjectId: "google-calendar",
+      subjectLabel: "Google Calendar",
+      source: "google-calendar",
+    }).catch(() => null);
 
-  const authUrl = getAuthUrl(state);
-  return res.redirect(authUrl);
+    console.log(`[google-calendar] oauth redirect uri: ${redirectUri}`);
+    const authUrl = getAuthUrl(state, redirectUri);
+    return res.redirect(authUrl);
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get("/callback", async (req, res, next) => {
@@ -305,8 +325,14 @@ router.get("/callback", async (req, res, next) => {
       return res.status(400).json({ error: "Invalid state" });
     }
 
-    const tokens = await exchangeCodeForTokens(code);
+    const publicUrl = await resolveAuthPublicUrlSettings(req);
+    const redirectUri =
+      req.session.googleCalendarRedirectUri ||
+      buildGoogleCalendarRedirectUri(publicUrl);
+    console.log(`[google-calendar] oauth redirect uri: ${redirectUri}`);
+    const tokens = await exchangeCodeForTokens(code, redirectUri);
     delete req.session.googleCalendarState;
+    delete req.session.googleCalendarRedirectUri;
 
     if (!tokens.refresh_token) {
       return res.status(400).json({
@@ -361,10 +387,9 @@ router.get("/callback", async (req, res, next) => {
       );
     });
 
-    const frontendBaseUrl = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
-        return res.redirect(
-        `${frontendBaseUrl}/settings?googleCalendar=connected`
-        );
+    return res.redirect(
+      `${publicUrl.effectivePublicBaseUrl || ""}/settings?googleCalendar=connected`
+    );
   } catch (err) {
     await logRequestActivity(req, {
       category: "integration",

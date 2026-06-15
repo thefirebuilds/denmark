@@ -132,13 +132,7 @@ If you want the easiest human-login path to practice with, use Google.
 1. In Google Cloud Console, create or reuse a project.
 2. Configure the OAuth consent screen.
 3. Create an `OAuth client ID` of type `Web application`.
-4. Add this authorized redirect URI:
-
-```text
-http://localhost:5000/api/auth/callback
-```
-
-5. Put these values in `.env`:
+4. Put these values in `.env`:
 
 ```dotenv
 AUTH_ENFORCED=true
@@ -148,7 +142,6 @@ AUTH_OWNER_EMAILS=you@example.com
 OIDC_ENABLED=true
 OIDC_PROVIDER_NAME=google
 OIDC_ISSUER_URL=https://accounts.google.com
-OIDC_REDIRECT_URI=http://localhost:5000/api/auth/callback
 OIDC_SCOPES=openid profile email
 ```
 
@@ -157,8 +150,10 @@ If you already use Google Calendar sync in Denmark, you can reuse the same Googl
 - omit `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`
 - Denmark will fall back to the `GOOGLE_*` values automatically for auth
 
-6. Restart the backend.
-7. Open Denmark and use `Sign in`.
+5. Bootstrap/start Denmark, then open **Settings > Authentication**.
+6. Set the public app base URL.
+7. Copy the computed Google OAuth redirect URI into Google Cloud Console under **Authorized redirect URIs**. If you use the Google Calendar integration with the same OAuth client, copy that computed calendar redirect URI too.
+8. Open Denmark and use `Sign in`.
 
 Notes:
 - `AUTH_ENFORCED=false` means no real login is happening, even if OIDC values are present.
@@ -278,7 +273,6 @@ PGUSER=postgres
 PGPASSWORD=replace-with-postgres-password
 
 PORT=5000
-FRONTEND_BASE_URL=https://your-domain.example
 SESSION_SECRET=replace-with-long-random-session-secret
 TOKEN_ENCRYPTION_KEY=replace-with-64-char-hex-or-long-random-secret
 DENMARK_BRIDGE_SECRET=replace-with-shared-secret-for-android-bridge
@@ -309,15 +303,22 @@ Add any integrations you use:
 - `PUBLIC_AVAILABILITY_*`, if pushing availability to another site
 - `TWILIO_*`, if operational text alerts are enabled in your environment
 
-For login in production, configure OIDC as described above. `FRONTEND_BASE_URL` and `OIDC_REDIRECT_URI` should use the public URL that users open in their browser, for example:
+For login in production, configure OIDC provider identity in `.env`:
 
 ```dotenv
 OIDC_ENABLED=true
 OIDC_PROVIDER_NAME=google
 OIDC_ISSUER_URL=https://accounts.google.com
-OIDC_REDIRECT_URI=https://your-domain.example/api/auth/callback
 OIDC_SCOPES=openid profile email
 ```
+
+After bootstrap, open **Settings > Authentication**, set the public app base URL
+such as `https://your-domain.example`, and copy the computed Google OAuth
+redirect URI into Google Cloud Console under **Authorized redirect URIs**. If you
+use Google Calendar sync with the same OAuth client, copy the computed Calendar
+redirect URI from that same settings section. This public URL lives in
+`app_settings`, not `.env`, so customer/tenant deployments do not require
+rebuilding or editing environment files for their browser URL.
 
 For DIMO, map known vehicles deliberately in **Settings > Fleet** by saving each
 vehicle's DIMO token ID. Live DIMO polling constructs the fleet shape from the

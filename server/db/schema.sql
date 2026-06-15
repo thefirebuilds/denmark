@@ -3105,6 +3105,12 @@ VALUES (
 )
 ON CONFLICT (key) DO NOTHING;
 
+INSERT INTO public.app_settings (key, value)
+VALUES
+  ('auth.public_base_url', '{"publicBaseUrl": ""}'::jsonb),
+  ('auth.google_callback_path', '{"googleCallbackPath": "/api/auth/callback"}'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
 
 --
 -- PostgreSQL database dump complete

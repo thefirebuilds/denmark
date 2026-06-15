@@ -13,6 +13,9 @@ const {
   getAuditRequestMeta,
   upsertUserFromOidcProfile,
 } = require("../auth/store");
+const {
+  resolveAuthPublicUrlSettings,
+} = require("../services/authPublicUrlSettings");
 
 const router = express.Router();
 
@@ -29,9 +32,9 @@ function getRequestOrigin(req) {
   return host ? `${proto}://${host}` : "";
 }
 
-function getFrontendRedirectBase(req) {
-  const configured = String(process.env.FRONTEND_BASE_URL || "").trim();
-  return String(configured || getRequestOrigin(req) || "http://localhost:5000").replace(
+async function getFrontendRedirectBase(req) {
+  const resolved = await resolveAuthPublicUrlSettings(req);
+  return String(resolved.effectivePublicBaseUrl || getRequestOrigin(req) || "").replace(
     /\/+$/,
     ""
   );
@@ -77,13 +80,24 @@ router.get("/login", async (req, res) => {
       return res.status(503).json({ error: "OIDC login is disabled" });
     }
 
+    const publicUrl = await resolveAuthPublicUrlSettings(req);
+    if (!publicUrl.googleRedirectUri) {
+      return res.status(500).json({
+        error:
+          "Authentication public URL is not configured. Set it in Settings > Authentication.",
+      });
+    }
+
+    console.log(`[auth] google redirect uri: ${publicUrl.googleRedirectUri}`);
     const loginRequest = await buildLoginRequest({
       loginHint: req.query?.login_hint,
+      redirectUri: publicUrl.googleRedirectUri,
     });
     req.session.oidcAuth = {
       state: loginRequest.state,
       nonce: loginRequest.nonce,
       codeVerifier: loginRequest.codeVerifier,
+      redirectUri: publicUrl.googleRedirectUri,
       startedAt: Date.now(),
     };
     await sessionSave(req);
@@ -111,7 +125,8 @@ router.get("/auth/callback", async (req, res) => {
           reason: "missing_code_or_state",
         },
       });
-      return res.redirect(`${getFrontendRedirectBase(req)}/?authError=login_failed`);
+      const redirectBase = await getFrontendRedirectBase(req);
+      return res.redirect(`${redirectBase}/?authError=login_failed`);
     }
 
     if (state !== pendingAuth.state) {
@@ -122,12 +137,17 @@ router.get("/auth/callback", async (req, res) => {
           reason: "state_mismatch",
         },
       });
-      return res.redirect(`${getFrontendRedirectBase(req)}/?authError=state_mismatch`);
+      const redirectBase = await getFrontendRedirectBase(req);
+      return res.redirect(`${redirectBase}/?authError=state_mismatch`);
     }
 
+    const publicUrl = await resolveAuthPublicUrlSettings(req);
+    const redirectUri = pendingAuth.redirectUri || publicUrl.googleRedirectUri;
+    console.log(`[auth] google redirect uri: ${redirectUri}`);
     const tokens = await exchangeCodeForTokens({
       code: String(code),
       codeVerifier: pendingAuth.codeVerifier,
+      redirectUri,
     });
     const userInfo = await fetchUserInfo(tokens.access_token);
     const provider = getOidcConfig();
@@ -153,7 +173,8 @@ router.get("/auth/callback", async (req, res) => {
           email: user.email,
         },
       });
-      return res.redirect(`${getFrontendRedirectBase(req)}/?authError=inactive_user`);
+      const redirectBase = await getFrontendRedirectBase(req);
+      return res.redirect(`${redirectBase}/?authError=inactive_user`);
     }
 
     await sessionRegenerate(req);
@@ -175,7 +196,8 @@ router.get("/auth/callback", async (req, res) => {
       },
     });
 
-    return res.redirect(`${getFrontendRedirectBase(req)}/?auth=success`);
+    const redirectBase = await getFrontendRedirectBase(req);
+    return res.redirect(`${redirectBase}/?auth=success`);
   } catch (error) {
     await createAuthAuditLog({
       eventType: "login_failure",
@@ -185,7 +207,8 @@ router.get("/auth/callback", async (req, res) => {
         message: error.message || "unknown error",
       },
     }).catch(() => null);
-    return res.redirect(`${getFrontendRedirectBase(req)}/?authError=callback_failed`);
+    const redirectBase = await getFrontendRedirectBase(req).catch(() => "");
+    return res.redirect(`${redirectBase}/?authError=callback_failed`);
   }
 });
 

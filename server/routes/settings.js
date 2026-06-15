@@ -15,6 +15,16 @@ const {
   normalizeLocationSettings,
   SETTINGS_KEY: LOCATION_SETTINGS_KEY,
 } = require("../services/locations/locationSettings");
+const {
+  PUBLIC_BASE_URL_KEY,
+  GOOGLE_CALLBACK_PATH_KEY,
+  DEFAULT_GOOGLE_CALLBACK_PATH,
+  computeGoogleRedirectUri,
+  normalizePublicBaseUrl,
+  normalizeGoogleCallbackPath,
+  loadAuthPublicUrlSettings,
+  saveAuthPublicUrlSettings,
+} = require("../services/authPublicUrlSettings");
 
 const router = express.Router();
 
@@ -66,6 +76,12 @@ const DEFAULT_SETTINGS = {
     turoNotificationStaleHours: 12,
   },
   [LOCATION_SETTINGS_KEY]: getDefaultLocationSettings(),
+  [PUBLIC_BASE_URL_KEY]: {
+    publicBaseUrl: "",
+  },
+  [GOOGLE_CALLBACK_PATH_KEY]: {
+    googleCallbackPath: DEFAULT_GOOGLE_CALLBACK_PATH,
+  },
 };
 
 function normalizeKey(value) {
@@ -140,6 +156,29 @@ function mergeSettings(key, value) {
     return normalizeLocationSettings(value);
   }
 
+  if (key === PUBLIC_BASE_URL_KEY) {
+    return {
+      publicBaseUrl: normalizePublicBaseUrl(
+        typeof value === "string"
+          ? value
+          : value.publicBaseUrl || value.url || "",
+        { allowEmpty: true }
+      ),
+    };
+  }
+
+  if (key === GOOGLE_CALLBACK_PATH_KEY) {
+    return {
+      googleCallbackPath: normalizeGoogleCallbackPath(
+        typeof value === "string"
+          ? value
+          : value.googleCallbackPath ||
+              value.callbackPath ||
+              DEFAULT_GOOGLE_CALLBACK_PATH
+      ),
+    };
+  }
+
   return merged;
 }
 
@@ -206,6 +245,45 @@ router.post("/public-availability-export/push", async (req, res) => {
     res.status(502).json({
       error: err.message || "Failed to push public availability export",
       details: err.details || null,
+    });
+  }
+});
+
+router.get("/auth/public-url", async (req, res) => {
+  try {
+    const settings = await loadAuthPublicUrlSettings();
+    res.json({
+      key: "auth.public_url",
+      value: settings,
+    });
+  } catch (err) {
+    console.error("GET /api/settings/auth/public-url failed:", err);
+    res.status(500).json({ error: "Failed to load auth public URL settings" });
+  }
+});
+
+router.put("/auth/public-url", async (req, res) => {
+  try {
+    const input = req.body?.value || req.body || {};
+    const settings = await saveAuthPublicUrlSettings({
+      publicBaseUrl: input.publicBaseUrl,
+      googleCallbackPath: input.googleCallbackPath,
+    });
+
+    res.json({
+      key: "auth.public_url",
+      value: {
+        ...settings,
+        googleRedirectUri: computeGoogleRedirectUri(
+          settings.publicBaseUrl,
+          settings.googleCallbackPath
+        ),
+      },
+    });
+  } catch (err) {
+    console.error("PUT /api/settings/auth/public-url failed:", err);
+    res.status(400).json({
+      error: err.message || "Failed to save auth public URL settings",
     });
   }
 });

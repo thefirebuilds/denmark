@@ -30,7 +30,6 @@ function getOidcConfig() {
     issuerUrl: trimTrailingSlash(process.env.OIDC_ISSUER_URL || ""),
     clientId: getClientId(),
     clientSecret: getClientSecret(),
-    redirectUri: String(process.env.OIDC_REDIRECT_URI || "").trim(),
     scopes: String(process.env.OIDC_SCOPES || "openid profile email").trim(),
     prompt: String(process.env.OIDC_PROMPT || "").trim(),
   };
@@ -42,7 +41,6 @@ function assertOidcConfigured() {
   if (!config.issuerUrl) missing.push("OIDC_ISSUER_URL");
   if (!config.clientId) missing.push("OIDC_CLIENT_ID or GOOGLE_CLIENT_ID");
   if (!config.clientSecret) missing.push("OIDC_CLIENT_SECRET or GOOGLE_CLIENT_SECRET");
-  if (!config.redirectUri) missing.push("OIDC_REDIRECT_URI");
   if (missing.length) {
     const error = new Error(
       `OIDC is not fully configured. Missing: ${missing.join(", ")}`
@@ -98,10 +96,17 @@ async function buildLoginRequest(options = {}) {
   const nonce = crypto.randomBytes(24).toString("hex");
   const { codeVerifier, codeChallenge } = generatePkcePair();
   const loginHint = String(options.loginHint || "").trim();
+  const redirectUri = String(options.redirectUri || "").trim();
+
+  if (!redirectUri) {
+    const error = new Error("OIDC redirect URI is not configured");
+    error.statusCode = 500;
+    throw error;
+  }
 
   const authorizationUrl = buildAuthorizationUrl(discovery.authorization_endpoint, {
     client_id: config.clientId,
-    redirect_uri: config.redirectUri,
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: config.scopes,
     state,
@@ -120,15 +125,23 @@ async function buildLoginRequest(options = {}) {
   };
 }
 
-async function exchangeCodeForTokens({ code, codeVerifier }) {
+async function exchangeCodeForTokens({ code, codeVerifier, redirectUri }) {
   const config = assertOidcConfigured();
   const discovery = await getDiscoveryDocument();
+  const effectiveRedirectUri = String(redirectUri || "").trim();
+
+  if (!effectiveRedirectUri) {
+    const error = new Error("OIDC redirect URI is not configured");
+    error.statusCode = 500;
+    throw error;
+  }
+
   const params = new URLSearchParams({
     grant_type: "authorization_code",
     code,
     client_id: config.clientId,
     client_secret: config.clientSecret,
-    redirect_uri: config.redirectUri,
+    redirect_uri: effectiveRedirectUri,
     code_verifier: codeVerifier,
   });
 

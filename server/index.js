@@ -57,6 +57,9 @@ const {
 } = require("./services/systemActivityLog");
 const { ensureIncomeTables } = require("./services/income/incomeService");
 const { ensureFleetAlertTables } = require("./services/alerts/fleetAlerts");
+const {
+  ensureAuthPublicUrlSettings,
+} = require("./services/authPublicUrlSettings");
 const { isAuthEnforced } = require("./auth/config");
 const { getOidcConfig } = require("./auth/oidcProvider");
 const { ensureAuthTables } = require("./auth/store");
@@ -388,6 +391,7 @@ async function initializeStartupTables() {
     ensureGoogleCalendarConnectionHealthColumns(),
     ensureAuthTables(),
     ensureSystemActivityLogTable(),
+    ensureAuthPublicUrlSettings(),
   ]);
 }
 
@@ -474,7 +478,7 @@ app.listen(PORT, () => {
   console.log(
     `[server] auth provider: ${oidcConfig.providerName || "oidc"} | issuer: ${
       oidcConfig.issuerUrl || "(not set)"
-    } | redirect: ${oidcConfig.redirectUri || "(not set)"}`
+    } | redirect: app_settings/auth.public_base_url + auth.google_callback_path`
   );
   void initializeStartupTablesWithRetry();
 });
