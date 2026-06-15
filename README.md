@@ -159,6 +159,7 @@ Notes:
 - `AUTH_ENFORCED=false` means no real login is happening, even if OIDC values are present.
 - The existing `GOOGLE_*` settings for Calendar sync are separate from these `OIDC_*` settings, even if they come from the same Google project.
 - For local testing, `AUTH_COOKIE_SECURE=false` is expected on plain `http://localhost`.
+- If a copied/restored local database still has a deployed `auth.public_base_url`, local development will use the current localhost request URL for OAuth redirects instead of sending the browser to the deployed tenant.
 
 ### Frontend build/runtime caveats
 - Vite wants Node `20.19+` or `22.12+`.

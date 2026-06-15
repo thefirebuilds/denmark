@@ -92,6 +92,28 @@ function getRequestPublicBaseUrl(req) {
   return host ? normalizePublicBaseUrl(`${proto}://${host}`, { allowEmpty: true }) : "";
 }
 
+function getUrlHostname(value) {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function shouldUseLocalRequestBaseUrl(configuredBaseUrl, requestBaseUrl) {
+  if (!configuredBaseUrl || !requestBaseUrl) return false;
+  if (process.env.NODE_ENV === "production") return false;
+
+  const requestHost = getUrlHostname(requestBaseUrl);
+  const configuredHost = getUrlHostname(configuredBaseUrl);
+
+  return (
+    isLocalhostHost(requestHost) &&
+    configuredHost &&
+    configuredHost !== requestHost
+  );
+}
+
 function readBaseUrlValue(value) {
   if (typeof value === "string") return value;
   return value?.publicBaseUrl || value?.url || "";
@@ -165,9 +187,10 @@ async function resolveAuthPublicUrlSettings(req) {
   const warnings = [];
   let effectivePublicBaseUrl = settings.publicBaseUrl;
   let source = "database";
+  const requestPublicBaseUrl = getRequestPublicBaseUrl(req);
 
   if (!effectivePublicBaseUrl) {
-    effectivePublicBaseUrl = getRequestPublicBaseUrl(req);
+    effectivePublicBaseUrl = requestPublicBaseUrl;
     source = "request";
     warnings.push(
       "auth.public_base_url is not configured; deriving OAuth redirect base from request headers"
@@ -177,6 +200,15 @@ async function resolveAuthPublicUrlSettings(req) {
         effectivePublicBaseUrl || "unavailable"
       }`
     );
+  } else if (shouldUseLocalRequestBaseUrl(effectivePublicBaseUrl, requestPublicBaseUrl)) {
+    warnings.push(
+      "auth.public_base_url points at another host; using the localhost request base for local development"
+    );
+    console.warn(
+      `[auth] auth.public_base_url host mismatch in local development; using request host ${requestPublicBaseUrl} instead of ${effectivePublicBaseUrl}`
+    );
+    effectivePublicBaseUrl = requestPublicBaseUrl;
+    source = "request_local_override";
   }
 
   const googleRedirectUri = computeGoogleRedirectUri(
