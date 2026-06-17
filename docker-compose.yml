@@ -16,6 +16,8 @@ services:
       - db
     ports:
       - "127.0.0.1:5000:5000"
+    volumes:
+      - ./imports:/app/imports
 
   db:
     image: postgres:16

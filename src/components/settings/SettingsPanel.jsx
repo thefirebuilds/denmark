@@ -1463,21 +1463,56 @@ function FleetSettingsPanel() {
 
 function DatabaseSettingsPanel() {
   const [backupStatus, setBackupStatus] = useState("");
-  const [restoreFile, setRestoreFile] = useState(null);
   const [restoreConfirm, setRestoreConfirm] = useState("");
   const [restoreStatus, setRestoreStatus] = useState("");
+  const [cloudImportUrl, setCloudImportUrl] = useState("");
+  const [cloudImportStatus, setCloudImportStatus] = useState("");
+  const [cloudImportJobs, setCloudImportJobs] = useState([]);
+  const [selectedRestoreJobId, setSelectedRestoreJobId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cloudImportBusy, setCloudImportBusy] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
 
-  async function downloadBackup({ compressed = false } = {}) {
+  async function loadCloudImportJobs() {
+    try {
+      const res = await fetch(`${API_BASE}/api/database/imports`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || `Import jobs failed (${res.status})`);
+      }
+
+      setCloudImportJobs(Array.isArray(json.jobs) ? json.jobs : []);
+    } catch (err) {
+      setCloudImportStatus(err.message || "Failed to load cloud import jobs");
+    }
+  }
+
+  useEffect(() => {
+    loadCloudImportJobs();
+  }, []);
+
+  useEffect(() => {
+    const hasActiveJob = cloudImportJobs.some((job) =>
+      ["queued", "downloading", "validating", "restoring"].includes(
+        String(job.status || "").toLowerCase()
+      )
+    );
+    if (!hasActiveJob) return undefined;
+
+    const timer = window.setInterval(() => {
+      loadCloudImportJobs();
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [cloudImportJobs]);
+
+  async function downloadBackup() {
     try {
       setBusy(true);
-      setBackupStatus(
-        compressed ? "Streaming compressed backup..." : "Streaming backup..."
-      );
+      setBackupStatus("Streaming tenant backup...");
 
-      const res = await fetch(
-        `${API_BASE}/api/database/backup${compressed ? "?compress=gzip" : ""}`
-      );
+      const res = await fetch(`${API_BASE}/api/database/backup`);
 
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -1488,7 +1523,7 @@ function DatabaseSettingsPanel() {
       const disposition = res.headers.get("content-disposition") || "";
       const match = disposition.match(/filename="([^"]+)"/);
       const filename =
-        match?.[1] || `denmark-db-backup-${new Date().toISOString()}.json`;
+        match?.[1] || `denmark-tenant-backup-${new Date().toISOString()}.dump`;
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
 
@@ -1507,49 +1542,106 @@ function DatabaseSettingsPanel() {
     }
   }
 
-  async function restoreBackup() {
-    if (!restoreFile) {
-      setRestoreStatus("Choose a backup JSON file first.");
+  async function startCloudImport() {
+    const url = cloudImportUrl.trim();
+    if (!url) {
+      setCloudImportStatus("Paste a public Google Drive file link first.");
       return;
     }
 
+    try {
+      setCloudImportBusy(true);
+      setCloudImportStatus("Queueing cloud import...");
+
+      const res = await fetch(`${API_BASE}/api/database/imports/from-url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || `Cloud import failed (${res.status})`);
+      }
+
+      setCloudImportStatus("Cloud import queued. Denmark will download it server-side.");
+      setCloudImportUrl("");
+      await loadCloudImportJobs();
+    } catch (err) {
+      setCloudImportStatus(err.message || "Cloud import failed");
+    } finally {
+      setCloudImportBusy(false);
+    }
+  }
+
+  function formatImportJobTime(value) {
+    if (!value) return "";
+    return new Date(value).toLocaleString();
+  }
+
+  async function validateCloudImport(jobId) {
+    try {
+      setRestoreBusy(true);
+      setRestoreStatus("Validating backup...");
+      const res = await fetch(`${API_BASE}/api/database/imports/${jobId}/validate`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || `Validation failed (${res.status})`);
+      }
+
+      setRestoreStatus("Backup validated. It can be restored to this tenant.");
+      await loadCloudImportJobs();
+    } catch (err) {
+      setRestoreStatus(err.message || "Validation failed");
+    } finally {
+      setRestoreBusy(false);
+    }
+  }
+
+  async function startTenantRestore() {
+    if (!selectedRestoreJobId) {
+      setRestoreStatus("Choose a staged backup first.");
+      return;
+    }
     if (restoreConfirm !== "RESTORE") {
       setRestoreStatus("Type RESTORE to confirm.");
       return;
     }
 
     try {
-      setBusy(true);
-      setRestoreStatus("Reading backup...");
-
-      const text = await restoreFile.text();
-      const backup = JSON.parse(text);
-
-      setRestoreStatus("Restoring database...");
-
-      const res = await fetch(`${API_BASE}/api/database/restore`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm: restoreConfirm, backup }),
-      });
-
+      setRestoreBusy(true);
+      setRestoreStatus("Starting restore job...");
+      const res = await fetch(
+        `${API_BASE}/api/database/imports/${selectedRestoreJobId}/restore`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: restoreConfirm }),
+        }
+      );
       const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         throw new Error(json?.error || `Restore failed (${res.status})`);
       }
 
-      setRestoreStatus(
-        `Restored ${json.restoredRows || 0} rows across ${
-          json.restoredTables || 0
-        } tables. Refresh the app.`
+      setRestoreStatus("Restore started. Keep this page open and watch import status.");
+      setCloudImportJobs((jobs) =>
+        jobs.map((job) =>
+          String(job.id) === String(selectedRestoreJobId)
+            ? { ...job, status: "restoring" }
+            : job
+        )
       );
-      setRestoreFile(null);
       setRestoreConfirm("");
+      await loadCloudImportJobs();
     } catch (err) {
       setRestoreStatus(err.message || "Restore failed");
     } finally {
-      setBusy(false);
+      setRestoreBusy(false);
     }
   }
 
@@ -1558,7 +1650,7 @@ function DatabaseSettingsPanel() {
       <div className="panel-header">
         <div>
           <h2>Database</h2>
-          <span>backup and restore local Postgres data</span>
+          <span>tenant backup, standup, and disaster recovery</span>
         </div>
       </div>
 
@@ -1566,26 +1658,18 @@ function DatabaseSettingsPanel() {
         <div className="settings-group">
           <div className="settings-group-title">Backup</div>
           <div className="settings-empty-state">
-            Stream a JSON snapshot of every table in the public schema. The
-            compressed download is much smaller for storage; decompress it
-            before using the current restore form.
+            Download a tenant database backup in the standard Postgres custom
+            dump format. This contains tenant data, settings, messages, trips,
+            vehicles, integrations, and history, but not the Denmark app code.
           </div>
           <div className="settings-form-actions">
             <button
               type="button"
               className="settings-action-btn"
               disabled={busy}
-              onClick={() => downloadBackup()}
+              onClick={downloadBackup}
             >
-              {busy ? "Working..." : "Download JSON Backup"}
-            </button>
-            <button
-              type="button"
-              className="settings-action-btn"
-              disabled={busy}
-              onClick={() => downloadBackup({ compressed: true })}
-            >
-              {busy ? "Working..." : "Download Compressed Backup"}
+              {busy ? "Working..." : "Download Tenant Backup"}
             </button>
             {backupStatus ? (
               <span className="settings-message">{backupStatus}</span>
@@ -1594,19 +1678,109 @@ function DatabaseSettingsPanel() {
         </div>
 
         <div className="settings-group">
-          <div className="settings-group-title">Restore</div>
+          <div className="settings-group-title">Cloud restore staging</div>
           <div className="settings-empty-state">
-            Restore replaces the current database contents with the selected
-            backup. This is meant for local recovery, not merging two datasets.
+            Paste a public Google Drive file link. Denmark downloads the file
+            on the server and stages it for validation and restore.
           </div>
 
           <label className="settings-field">
-            <span>Backup file</span>
+            <span>Public Google Drive link</span>
             <input
-              type="file"
-              accept="application/json,.json"
-              onChange={(e) => setRestoreFile(e.target.files?.[0] || null)}
+              value={cloudImportUrl}
+              onChange={(e) => setCloudImportUrl(e.target.value)}
+              placeholder="https://drive.google.com/file/d/.../view"
             />
+          </label>
+
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={cloudImportBusy || !cloudImportUrl.trim()}
+              onClick={startCloudImport}
+            >
+              {cloudImportBusy ? "Queueing..." : "Stage Cloud Backup"}
+            </button>
+            <button
+              type="button"
+              className="settings-action-btn secondary"
+              disabled={cloudImportBusy}
+              onClick={loadCloudImportJobs}
+            >
+              Refresh Imports
+            </button>
+            {cloudImportStatus ? (
+              <span className="settings-message">{cloudImportStatus}</span>
+            ) : null}
+          </div>
+
+          {cloudImportJobs.length ? (
+            <div className="settings-list">
+              {cloudImportJobs.slice(0, 5).map((job) => (
+                <div className="settings-list-row" key={job.id}>
+                  <div>
+                    <strong>{job.remoteFileName || job.remoteFileId || `Import ${job.id}`}</strong>
+                    <span>
+                      {job.status}
+                      {job.format ? ` - ${job.format}` : ""}
+                      {job.bytesDownloadedLabel ? ` - ${job.bytesDownloadedLabel}` : ""}
+                      {job.bytesTotalLabel ? ` of ${job.bytesTotalLabel}` : ""}
+                    </span>
+                    {job.localPath ? <span>{job.localPath}</span> : null}
+                    {job.sha256 ? <span>sha256: {job.sha256}</span> : null}
+                    {job.error ? <span>{job.error}</span> : null}
+                  </div>
+                  <div className="settings-list-row-actions">
+                    <span className="settings-status-badge">
+                      {formatImportJobTime(job.updatedAt) || "Queued"}
+                    </span>
+                    {["downloaded", "failed"].includes(
+                      String(job.status || "").toLowerCase()
+                    ) ? (
+                      <button
+                        type="button"
+                        className="settings-action-btn secondary"
+                        disabled={restoreBusy || job.status === "failed"}
+                        onClick={() => validateCloudImport(job.id)}
+                      >
+                        Validate
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Restore tenant</div>
+          <div className="settings-empty-state">
+            Restore replaces this tenant database with a staged backup. Use this
+            for initial tenant standup or disaster recovery failover.
+          </div>
+
+          <label className="settings-field">
+            <span>Staged backup</span>
+            <select
+              value={selectedRestoreJobId}
+              onChange={(e) => setSelectedRestoreJobId(e.target.value)}
+            >
+              <option value="">Select a validated backup</option>
+              {cloudImportJobs
+                .filter((job) =>
+                  ["downloaded", "validated"].includes(
+                    String(job.status || "").toLowerCase()
+                  )
+                )
+                .map((job) => (
+                  <option key={job.id} value={job.id}>
+                    {job.remoteFileName || job.remoteFileId || `Import ${job.id}`} -{" "}
+                    {job.status}
+                  </option>
+                ))}
+            </select>
           </label>
 
           <label className="settings-field">
@@ -1622,10 +1796,14 @@ function DatabaseSettingsPanel() {
             <button
               type="button"
               className="settings-action-btn settings-action-btn--danger"
-              disabled={busy || !restoreFile || restoreConfirm !== "RESTORE"}
-              onClick={restoreBackup}
+              disabled={
+                restoreBusy ||
+                !selectedRestoreJobId ||
+                restoreConfirm !== "RESTORE"
+              }
+              onClick={startTenantRestore}
             >
-              Restore Database
+              {restoreBusy ? "Working..." : "Restore Tenant"}
             </button>
             {restoreStatus ? (
               <span className="settings-message">{restoreStatus}</span>

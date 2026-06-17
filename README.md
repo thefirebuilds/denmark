@@ -402,6 +402,31 @@ curl http://localhost:5000/api/health
 
 `/api/health` is intentionally suitable for deployment checks. Most operational APIs are auth-gated when `AUTH_ENFORCED=true`.
 
+### Tenant backup and restore
+
+Settings > Database uses native Postgres custom dumps for tenant backup and
+restore. A backup contains the tenant database work product: vehicles, trips,
+messages, settings, integrations, activity history, and related records. It does
+not contain the Denmark application image or source code.
+
+Self-service migration or DR flow:
+
+1. In the source tenant, open Settings > Database and download a tenant backup.
+   The file uses the `.dump` format produced by `pg_dump -Fc`.
+2. Upload that `.dump` file somewhere reachable, such as Google Drive, and set
+   sharing to anyone with the link.
+3. In the destination tenant, paste the public Drive link under Cloud restore
+   staging. Denmark downloads it server-side into `./imports` on the host
+   through the compose mount at `/app/imports`.
+4. Validate the staged backup. Denmark runs `pg_restore --list` to confirm the
+   file is a Postgres custom dump.
+5. Select the staged backup, type `RESTORE`, and start the restore. Denmark runs
+   `pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error`
+   in a background job.
+
+Restore replaces the current tenant database. Use it for initial tenant standup
+from an existing backup or for disaster recovery failover.
+
 ### 7. Update the VM later
 
 After changes are merged to `main`, wait for the GitHub Actions container publish workflow to finish. Then run:

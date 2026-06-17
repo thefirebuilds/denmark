@@ -33,6 +33,7 @@ dist-ssr
 *.backup
 *.bak
 !server/db/schema.sql
+imports/
 
 # Temporary files and local junk
 tmp/

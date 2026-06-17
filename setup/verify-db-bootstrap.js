@@ -58,6 +58,7 @@ const REQUIRED_TABLES = [
   "app_users",
   "auth_audit_log",
   "system_activity_log",
+  "database_import_jobs",
   "service_tokens",
   "income_transactions",
   "denmark_schema_migrations",

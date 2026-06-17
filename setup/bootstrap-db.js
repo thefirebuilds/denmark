@@ -87,6 +87,7 @@ const BASE_SCHEMA_TABLES = [
   "app_users",
   "auth_audit_log",
   "system_activity_log",
+  "database_import_jobs",
   "service_tokens",
 ];
 const RUNTIME_ENSURED_TABLES = ["income_transactions"];

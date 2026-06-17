@@ -269,6 +269,7 @@ DROP TABLE IF EXISTS public.fleet_alert_deliveries;
 DROP SEQUENCE IF EXISTS public.vehicle_diagnostic_suppressions_id_seq;
 DROP TABLE IF EXISTS public.vehicle_diagnostic_suppressions;
 DROP TABLE IF EXISTS public.system_activity_log;
+DROP TABLE IF EXISTS public.database_import_jobs;
 DROP TABLE IF EXISTS public.app_settings;
 DROP SEQUENCE IF EXISTS public.api_auth_tokens_id_seq;
 DROP TABLE IF EXISTS public.api_auth_tokens;
@@ -351,6 +352,32 @@ CREATE TABLE public.app_settings (
     key text NOT NULL,
     value jsonb NOT NULL,
     updated_at timestamp without time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.database_import_jobs (
+    id bigint NOT NULL GENERATED ALWAYS AS IDENTITY,
+    provider text NOT NULL,
+    source_url text NOT NULL,
+    remote_file_id text,
+    remote_file_name text,
+    status text DEFAULT 'queued'::text NOT NULL,
+    local_path text,
+    content_type text,
+    bytes_total bigint,
+    bytes_downloaded bigint DEFAULT 0 NOT NULL,
+    format text,
+    sha256 text,
+    error text,
+    restore_log text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    validated_at timestamp with time zone,
+    restore_started_at timestamp with time zone,
+    restore_completed_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT database_import_jobs_pkey PRIMARY KEY (id),
+    CONSTRAINT database_import_jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'downloading'::text, 'downloaded'::text, 'validating'::text, 'validated'::text, 'restoring'::text, 'restored'::text, 'failed'::text])))
 );
 
 CREATE TABLE public.business_financial_settings (
@@ -2855,6 +2882,20 @@ CREATE INDEX auth_audit_log_event_type_idx ON public.auth_audit_log USING btree 
 --
 
 CREATE INDEX auth_audit_log_user_id_idx ON public.auth_audit_log USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: idx_database_import_jobs_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_database_import_jobs_created_at ON public.database_import_jobs USING btree (created_at DESC);
+
+
+--
+-- Name: idx_database_import_jobs_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_database_import_jobs_status ON public.database_import_jobs USING btree (status, updated_at DESC);
 
 
 --

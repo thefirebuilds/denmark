@@ -25,6 +25,15 @@ FROM node:22.12-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates wget gnupg \
+  && install -d /usr/share/postgresql-common/pgdg \
+  && wget -qO /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-16 \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY --from=server-deps /app/server/node_modules ./server/node_modules
 COPY server ./server
 COPY setup ./setup
@@ -37,6 +46,8 @@ RUN test -f ./server/db/schema.sql \
   && test ! -e ./setup/verify-db-bootstrap.cjs \
   && node --check ./setup/bootstrap-db.js \
   && node --check ./setup/verify-db-bootstrap.js \
+  && pg_dump --version \
+  && pg_restore --version \
   && node -e "const pkg = require('./server/package.json'); if (pkg.scripts['db:bootstrap'] !== 'node ../setup/bootstrap-db.js' || pkg.scripts['db:verify'] !== 'node ../setup/verify-db-bootstrap.js') throw new Error('stale setup script paths in server/package.json'); require('./server/node_modules/pg'); require('./server/node_modules/dotenv'); console.log('setup runtime deps ok')"
 
 EXPOSE 5000
