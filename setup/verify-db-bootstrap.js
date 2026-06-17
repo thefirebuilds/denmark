@@ -15,6 +15,9 @@ function requireAppDependency(name) {
 
 const { Pool } = requireAppDependency("pg");
 requireAppDependency("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
+const {
+  REQUIRED_UNIQUE_CONSTRAINTS,
+} = require("../server/services/database/applicationUniqueConstraints");
 
 const REQUIRED_TABLES = [
   "api_auth_tokens",
@@ -94,6 +97,67 @@ async function verifyTables(pool) {
   console.log(`[db:verify] found ${REQUIRED_TABLES.length} required tables`);
 }
 
+async function verifyVehicleIdentityConstraints(pool) {
+  const { rows } = await pool.query(
+    `
+      SELECT conname
+      FROM pg_constraint
+      WHERE conrelid = 'public.vehicles'::regclass
+        AND contype IN ('p', 'u')
+        AND conname = ANY($1::text[])
+    `,
+    [["vehicles_id_key", "vehicles_vin_key", "vehicles_pkey"]]
+  );
+  const found = new Set(rows.map((row) => row.conname));
+
+  if (!found.has("vehicles_id_key")) {
+    throw new Error("missing vehicles_id_key unique constraint");
+  }
+  if (!found.has("vehicles_vin_key") && !found.has("vehicles_pkey")) {
+    throw new Error("missing vehicles vin unique/primary key constraint");
+  }
+
+  console.log("[db:verify] vehicle identity constraints ok");
+}
+
+async function verifyApplicationUniqueConstraints(pool) {
+  for (const constraint of REQUIRED_UNIQUE_CONSTRAINTS) {
+    const { rows } = await pool.query(
+      `
+        SELECT COALESCE(bool_or(index_columns = $2::text[]), false) AS exists
+        FROM (
+          SELECT array_agg(att.attname ORDER BY ord.n) AS index_columns
+          FROM pg_index idx
+          JOIN pg_class rel ON rel.oid = idx.indrelid
+          JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+          JOIN unnest(idx.indkey) WITH ORDINALITY AS ord(attnum, n) ON true
+          JOIN pg_attribute att
+            ON att.attrelid = rel.oid
+           AND att.attnum = ord.attnum
+          WHERE ns.nspname = 'public'
+            AND rel.relname = $1
+            AND idx.indisunique = true
+            AND idx.indpred IS NULL
+          GROUP BY idx.indexrelid
+        ) unique_indexes
+      `,
+      [constraint.table, constraint.columns]
+    );
+
+    if (rows[0]?.exists !== true) {
+      throw new Error(
+        `missing unique constraint/index for ${constraint.table}(${constraint.columns.join(
+          ", "
+        )})`
+      );
+    }
+  }
+
+  console.log(
+    `[db:verify] application unique constraints ok (${REQUIRED_UNIQUE_CONSTRAINTS.length})`
+  );
+}
+
 async function verifyApi() {
   const baseUrl = String(process.env.DENMARK_VERIFY_API_BASE_URL || "").trim();
   if (!baseUrl) return;
@@ -121,6 +185,8 @@ async function main() {
       `[db:verify] checking ${config.user}@${config.host}:${config.port}/${config.database}`
     );
     await verifyTables(pool);
+    await verifyVehicleIdentityConstraints(pool);
+    await verifyApplicationUniqueConstraints(pool);
     await verifyApi();
     console.log("[db:verify] ok");
   } catch (err) {

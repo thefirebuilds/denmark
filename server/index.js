@@ -53,6 +53,12 @@ const {
   ensureVehicleAliasesTable,
 } = require("./services/vehicles/vehicleAliases");
 const {
+  ensureVehicleIdentityConstraints,
+} = require("./services/vehicles/vehicleIdentityConstraints");
+const {
+  ensureApplicationUniqueConstraints,
+} = require("./services/database/applicationUniqueConstraints");
+const {
   ensureSystemActivityLogTable,
 } = require("./services/systemActivityLog");
 const { ensureIncomeTables } = require("./services/income/incomeService");
@@ -381,6 +387,8 @@ let schedulerStarted = false;
 let startupRetryHandle = null;
 
 async function initializeStartupTables() {
+  await ensureVehicleIdentityConstraints();
+  await ensureApplicationUniqueConstraints();
   await Promise.all([
     ensureNotificationEventsTable(),
     ensureVehicleFmvEstimatesTable(),

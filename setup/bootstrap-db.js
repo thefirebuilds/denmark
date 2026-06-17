@@ -35,6 +35,12 @@ const {
   ensureVehicleAliasesTable,
 } = require("../server/services/vehicles/vehicleAliases");
 const {
+  ensureVehicleIdentityConstraints,
+} = require("../server/services/vehicles/vehicleIdentityConstraints");
+const {
+  ensureApplicationUniqueConstraints,
+} = require("../server/services/database/applicationUniqueConstraints");
+const {
   ensureSystemActivityLogTable,
 } = require("../server/services/systemActivityLog");
 const { ensureIncomeTables } = require("../server/services/income/incomeService");
@@ -282,18 +288,27 @@ async function ensureBootstrapMarker(client) {
 
   await client.query(
     `
+      UPDATE public.denmark_schema_migrations
+      SET
+        applied_at = now(),
+        details = jsonb_build_object(
+          'requiredTables', $1::text[],
+          'source', 'server/db/schema.sql'
+        )
+      WHERE id = 'bootstrap-schema';
+
       INSERT INTO public.denmark_schema_migrations (id, details)
-      VALUES (
+      SELECT
         'bootstrap-schema',
         jsonb_build_object(
           'requiredTables', $1::text[],
           'source', 'server/db/schema.sql'
         )
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM public.denmark_schema_migrations
+        WHERE id = 'bootstrap-schema'
       )
-      ON CONFLICT (id)
-      DO UPDATE SET
-        applied_at = now(),
-        details = EXCLUDED.details
     `,
     [REQUIRED_TABLES]
   );
@@ -313,6 +328,12 @@ async function assertRuntimeDependencies(client) {
 }
 
 async function runRuntimeEnsures() {
+  await ensureVehicleIdentityConstraints();
+  await ensureApplicationUniqueConstraints(undefined, {
+    log(message) {
+      console.log(message.replace("[db:schema]", "[db:bootstrap]"));
+    },
+  });
   await ensureAuthTables();
   await ensureGoogleCalendarConnectionHealthColumns();
   await ensureVehicleFmvEstimatesTable();
