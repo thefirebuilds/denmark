@@ -160,6 +160,9 @@ function describePgToolError(error, command) {
   if (error.code === "ENOENT" || /ENOENT|not found|not recognized/i.test(message)) {
     return `${command} is not available in the running Denmark app container. Pull/rebuild the latest image with PostgreSQL client tools, then restart the app.`;
   }
+  if (/unsupported version .* in file header/i.test(message)) {
+    return `${command} is too old for this backup file. Pull/rebuild the latest Denmark image with PostgreSQL 18 client tools, then validate the staged backup again. Original error: ${message}`;
+  }
   return message;
 }
 

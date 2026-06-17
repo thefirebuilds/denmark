@@ -409,6 +409,10 @@ restore. A backup contains the tenant database work product: vehicles, trips,
 messages, settings, integrations, activity history, and related records. It does
 not contain the Denmark application image or source code.
 
+The app image includes PostgreSQL 18 client tools for `pg_dump` and
+`pg_restore`, so tenants can restore dumps produced by current Denmark exports
+without hitting archive header version errors.
+
 Self-service migration or DR flow:
 
 1. In the source tenant, open Settings > Database and download a tenant backup.
