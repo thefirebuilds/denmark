@@ -166,6 +166,36 @@ function describePgToolError(error, command) {
   return message;
 }
 
+function isIgnorablePgRestoreCompatibilityFailure(result) {
+  const stderr = String(result?.stderr || "");
+  if (!/transaction_timeout/i.test(stderr)) return false;
+
+  const remaining = stderr
+    .replace(
+      /pg_restore:\s*error:\s*could not execute query:\s*ERROR:\s*unrecognized configuration parameter "transaction_timeout"\s*Command was:\s*SET transaction_timeout = 0;?/gis,
+      ""
+    )
+    .replace(/Command was:\s*SET transaction_timeout = 0;?/gi, "")
+    .replace(/pg_restore:\s*warning:\s*errors ignored on restore:\s*\d+/gi, "")
+    .trim();
+
+  return !/pg_restore:\s*error:/i.test(remaining);
+}
+
+function buildRestoreSuccessLog(result, { compatibilityWarningIgnored = false } = {}) {
+  return truncateText(
+    [
+      compatibilityWarningIgnored
+        ? "pg_restore completed with an ignored compatibility warning: target PostgreSQL does not support transaction_timeout."
+        : "pg_restore completed.",
+      result.stderr,
+      result.stdout,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
 function parseContentDispositionFilename(value) {
   const header = String(value || "");
   const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
@@ -752,32 +782,33 @@ async function runRestoreJob(jobId) {
       restore_started_at: restoreStartedAt,
     });
 
-    const result = await runPgCommand(
-      "pg_restore",
-      [
-        "--clean",
-        "--if-exists",
-        "--no-owner",
-        "--no-privileges",
-        "--exit-on-error",
-        ...getPgConnectionArgs(),
-        localPath,
-      ],
-      { timeoutMs: Number(process.env.DATABASE_RESTORE_TIMEOUT_MS || 2 * 60 * 60 * 1000) }
-    );
+    let result;
+    let compatibilityWarningIgnored = false;
+    try {
+      result = await runPgCommand(
+        "pg_restore",
+        [
+          "--clean",
+          "--if-exists",
+          "--no-owner",
+          "--no-privileges",
+          ...getPgConnectionArgs(),
+          localPath,
+        ],
+        { timeoutMs: Number(process.env.DATABASE_RESTORE_TIMEOUT_MS || 2 * 60 * 60 * 1000) }
+      );
+    } catch (error) {
+      if (!isIgnorablePgRestoreCompatibilityFailure(error.result)) {
+        throw error;
+      }
+      result = error.result;
+      compatibilityWarningIgnored = true;
+    }
 
     await upsertImportJobSnapshot(job, {
       status: "restored",
       error: null,
-      restore_log: truncateText(
-        [
-          "pg_restore completed.",
-          result.stderr,
-          result.stdout,
-        ]
-          .filter(Boolean)
-          .join("\n")
-      ),
+      restore_log: buildRestoreSuccessLog(result, { compatibilityWarningIgnored }),
       restore_started_at: job.restoreStartedAt || restoreStartedAt,
       restore_completed_at: new Date(),
       completed_at: new Date(),

@@ -412,6 +412,9 @@ not contain the Denmark application image or source code.
 The app image includes PostgreSQL 18 client tools for `pg_dump` and
 `pg_restore`, so tenants can restore dumps produced by current Denmark exports
 without hitting archive header version errors.
+When restoring a dump produced by newer client tools into an older PostgreSQL
+server, Denmark ignores the harmless `transaction_timeout` restore warning and
+continues to treat the restore as successful if no other restore errors occur.
 
 Self-service migration or DR flow:
 
@@ -427,8 +430,8 @@ Self-service migration or DR flow:
 4. Validate the staged backup. Denmark runs `pg_restore --list` to confirm the
    file is a Postgres custom dump.
 5. Select the staged backup, type `RESTORE`, and start the restore. Denmark runs
-   `pg_restore --clean --if-exists --no-owner --no-privileges --exit-on-error`
-   in a background job.
+   `pg_restore --clean --if-exists --no-owner --no-privileges` in a background
+   job.
 
 Restore replaces the current tenant database. Use it for initial tenant standup
 from an existing backup or for disaster recovery failover.
