@@ -54,7 +54,7 @@ async function hasUsableUniqueIndex(client, table, columns) {
     `
       SELECT COALESCE(bool_or(index_columns = $2::text[]), false) AS exists
       FROM (
-        SELECT array_agg(att.attname ORDER BY ord.n) AS index_columns
+        SELECT array_agg(att.attname::text ORDER BY ord.n) AS index_columns
         FROM pg_index idx
         JOIN pg_class rel ON rel.oid = idx.indrelid
         JOIN pg_namespace ns ON ns.oid = rel.relnamespace
