@@ -25,6 +25,7 @@ const IMPORT_JOB_STATUSES = [
   "downloaded",
   "validating",
   "validated",
+  "validation_failed",
   "restoring",
   "restored",
   "failed",
@@ -152,6 +153,14 @@ function runPgCommand(command, args, { timeoutMs = 30 * 60 * 1000 } = {}) {
       reject(error);
     });
   });
+}
+
+function describePgToolError(error, command) {
+  const message = error.message || String(error);
+  if (error.code === "ENOENT" || /ENOENT|not found|not recognized/i.test(message)) {
+    return `${command} is not available in the running Denmark app container. Pull/rebuild the latest image with PostgreSQL client tools, then restart the app.`;
+  }
+  return message;
 }
 
 function parseContentDispositionFilename(value) {
@@ -711,12 +720,14 @@ async function validateImportJob(jobId) {
 
     return getImportJob(jobId);
   } catch (error) {
+    const message = describePgToolError(error, "pg_restore");
     await updateImportJob(jobId, {
-      status: "failed",
-      error: error.message || String(error),
+      status: "validation_failed",
+      error: message,
       restore_log: truncateText(error.result?.stderr || error.result?.stdout || ""),
       completed_at: new Date(),
     });
+    error.message = message;
     throw error;
   }
 }
@@ -783,9 +794,10 @@ async function runRestoreJob(jobId) {
       },
     }).catch(() => null);
   } catch (error) {
+    const message = describePgToolError(error, "pg_restore");
     const fields = {
       status: "failed",
-      error: error.message || String(error),
+      error: message,
       restore_log: truncateText(error.result?.stderr || error.result?.stdout || ""),
       restore_completed_at: new Date(),
       completed_at: new Date(),
@@ -1400,8 +1412,10 @@ router.post("/imports/:id/validate", async (req, res) => {
     const job = await validateImportJob(req.params.id);
     return res.json({ ok: true, job });
   } catch (err) {
+    const job = await getImportJob(req.params.id).catch(() => null);
     return res.status(err.status || 500).json({
       error: err.message || "Failed to validate database import",
+      job,
     });
   }
 });

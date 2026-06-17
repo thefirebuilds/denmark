@@ -1589,6 +1589,13 @@ function DatabaseSettingsPanel() {
       const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
+        if (json?.job) {
+          setCloudImportJobs((jobs) =>
+            jobs.map((job) =>
+              String(job.id) === String(jobId) ? json.job : job
+            )
+          );
+        }
         throw new Error(json?.error || `Validation failed (${res.status})`);
       }
 
@@ -1596,6 +1603,7 @@ function DatabaseSettingsPanel() {
       await loadCloudImportJobs();
     } catch (err) {
       setRestoreStatus(err.message || "Validation failed");
+      await loadCloudImportJobs();
     } finally {
       setRestoreBusy(false);
     }
@@ -1637,8 +1645,15 @@ function DatabaseSettingsPanel() {
   }
 
   async function startTenantRestore() {
-    if (!selectedRestoreJobId) {
-      setRestoreStatus("Choose a staged backup first.");
+    const selectedJob = cloudImportJobs.find(
+      (job) => String(job.id) === String(selectedRestoreJobId)
+    );
+    if (!selectedJob) {
+      setRestoreStatus("Choose a validated backup first.");
+      return;
+    }
+    if (getJobStatus(selectedJob) !== "validated") {
+      setRestoreStatus("Validate the staged backup before restoring.");
       return;
     }
     if (restoreConfirm !== "RESTORE") {
@@ -1765,16 +1780,19 @@ function DatabaseSettingsPanel() {
                     {job.localPath ? <span>{job.localPath}</span> : null}
                     {job.sha256 ? <span>sha256: {job.sha256}</span> : null}
                     {job.error ? <span>{job.error}</span> : null}
+                    {job.restoreLog ? <span>{job.restoreLog}</span> : null}
                   </div>
                   <div className="settings-list-row-actions">
                     <span className="settings-status-badge">
                       {formatImportJobTime(job.updatedAt) || "Queued"}
                     </span>
-                    {["downloaded", "failed"].includes(getJobStatus(job)) ? (
+                    {["downloaded", "validation_failed"].includes(
+                      getJobStatus(job)
+                    ) ? (
                       <button
                         type="button"
                         className="settings-action-btn secondary"
-                        disabled={restoreBusy || getJobStatus(job) === "failed"}
+                        disabled={restoreBusy}
                         onClick={() => validateCloudImport(job.id)}
                       >
                         Validate
@@ -1819,9 +1837,7 @@ function DatabaseSettingsPanel() {
             >
               <option value="">Select a validated backup</option>
               {cloudImportJobs
-                .filter((job) =>
-                  ["downloaded", "validated"].includes(getJobStatus(job))
-                )
+                .filter((job) => getJobStatus(job) === "validated")
                 .map((job) => (
                   <option key={job.id} value={job.id}>
                     {job.remoteFileName || job.remoteFileId || `Import ${job.id}`} -{" "}

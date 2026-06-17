@@ -377,7 +377,7 @@ CREATE TABLE public.database_import_jobs (
     completed_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT database_import_jobs_pkey PRIMARY KEY (id),
-    CONSTRAINT database_import_jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'downloading'::text, 'downloaded'::text, 'validating'::text, 'validated'::text, 'restoring'::text, 'restored'::text, 'failed'::text])))
+    CONSTRAINT database_import_jobs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'downloading'::text, 'downloaded'::text, 'validating'::text, 'validated'::text, 'validation_failed'::text, 'restoring'::text, 'restored'::text, 'failed'::text])))
 );
 
 CREATE TABLE public.business_financial_settings (
