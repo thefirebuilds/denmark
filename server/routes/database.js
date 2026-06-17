@@ -1296,6 +1296,61 @@ router.get("/imports/:id", async (req, res) => {
   }
 });
 
+router.delete("/imports/:id", async (req, res) => {
+  try {
+    await ensureDatabaseImportJobsTable();
+    const job = await getImportJob(req.params.id);
+
+    if (!job) {
+      return res.status(404).json({ error: "Import job not found" });
+    }
+
+    const status = String(job.status || "").trim().toLowerCase();
+    if (["downloading", "validating", "restoring"].includes(status)) {
+      return res.status(409).json({
+        error: `Import job is ${status}; wait for it to finish before removing it`,
+      });
+    }
+
+    let removedFile = false;
+    if (job.localPath) {
+      const localPath = getSafeImportPath(job.localPath);
+      await fs.promises
+        .unlink(localPath)
+        .then(() => {
+          removedFile = true;
+        })
+        .catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+    }
+
+    await db.query(`DELETE FROM public.database_import_jobs WHERE id = $1`, [
+      req.params.id,
+    ]);
+
+    await logSystemActivity({
+      category: "database",
+      eventType: "database_import_removed",
+      severity: "notice",
+      subjectType: "database_import_job",
+      subjectId: String(req.params.id),
+      subjectLabel: job.remoteFileName || job.remoteFileId || String(req.params.id),
+      source: "database.import",
+      details: {
+        removedFile,
+        localPath: job.localPath || null,
+      },
+    }).catch(() => null);
+
+    return res.json({ ok: true, removedFile });
+  } catch (err) {
+    return res.status(err.status || 500).json({
+      error: err.message || "Failed to remove database import",
+    });
+  }
+});
+
 router.post("/imports/from-url", async (req, res) => {
   try {
     await ensureDatabaseImportJobsTable();
@@ -1361,13 +1416,16 @@ router.post("/imports/:id/restore", async (req, res) => {
     if (!job) {
       return res.status(404).json({ error: "Import job not found" });
     }
-    if (!["downloaded", "validated"].includes(String(job.status || "").toLowerCase())) {
+    const status = String(job.status || "").trim().toLowerCase();
+    if (!["downloaded", "validated"].includes(status)) {
       return res.status(400).json({
-        error: "Import must be downloaded or validated before restore",
+        error: `Import must be downloaded or validated before restore. Current status: ${
+          job.status || "unknown"
+        }`,
       });
     }
 
-    if (job.status !== "validated") {
+    if (status !== "validated") {
       await validateImportJob(req.params.id);
     }
 

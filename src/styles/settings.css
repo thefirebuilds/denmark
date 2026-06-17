@@ -486,6 +486,32 @@
   font-size: 0.74rem;
 }
 
+.settings-import-remove {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: rgba(127, 29, 29, 0.26);
+  color: #fecaca;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.9rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-import-remove:hover:not(:disabled) {
+  border-color: rgba(248, 113, 113, 0.8);
+  background: rgba(185, 28, 28, 0.36);
+  color: #fee2e2;
+}
+
+.settings-import-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .settings-chip-list {
   display: flex;
   flex-wrap: wrap;

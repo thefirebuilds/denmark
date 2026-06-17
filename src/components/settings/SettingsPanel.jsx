@@ -1495,7 +1495,7 @@ function DatabaseSettingsPanel() {
   useEffect(() => {
     const hasActiveJob = cloudImportJobs.some((job) =>
       ["queued", "downloading", "validating", "restoring"].includes(
-        String(job.status || "").toLowerCase()
+        String(job.status || "").trim().toLowerCase()
       )
     );
     if (!hasActiveJob) return undefined;
@@ -1599,6 +1599,41 @@ function DatabaseSettingsPanel() {
     } finally {
       setRestoreBusy(false);
     }
+  }
+
+  async function removeCloudImport(jobId) {
+    try {
+      setCloudImportBusy(true);
+      setCloudImportStatus("Removing staged backup...");
+      const res = await fetch(`${API_BASE}/api/database/imports/${jobId}`, {
+        method: "DELETE",
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || `Remove failed (${res.status})`);
+      }
+
+      setCloudImportJobs((jobs) =>
+        jobs.filter((job) => String(job.id) !== String(jobId))
+      );
+      if (String(selectedRestoreJobId) === String(jobId)) {
+        setSelectedRestoreJobId("");
+      }
+      setCloudImportStatus(
+        json.removedFile
+          ? "Removed staged backup and server file."
+          : "Removed staged backup record."
+      );
+    } catch (err) {
+      setCloudImportStatus(err.message || "Remove failed");
+    } finally {
+      setCloudImportBusy(false);
+    }
+  }
+
+  function getJobStatus(job) {
+    return String(job?.status || "").trim().toLowerCase();
   }
 
   async function startTenantRestore() {
@@ -1735,18 +1770,33 @@ function DatabaseSettingsPanel() {
                     <span className="settings-status-badge">
                       {formatImportJobTime(job.updatedAt) || "Queued"}
                     </span>
-                    {["downloaded", "failed"].includes(
-                      String(job.status || "").toLowerCase()
-                    ) ? (
+                    {["downloaded", "failed"].includes(getJobStatus(job)) ? (
                       <button
                         type="button"
                         className="settings-action-btn secondary"
-                        disabled={restoreBusy || job.status === "failed"}
+                        disabled={restoreBusy || getJobStatus(job) === "failed"}
                         onClick={() => validateCloudImport(job.id)}
                       >
                         Validate
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      className="settings-import-remove"
+                      aria-label={`Remove ${
+                        job.remoteFileName || job.remoteFileId || `import ${job.id}`
+                      }`}
+                      title="Remove staged backup"
+                      disabled={
+                        cloudImportBusy ||
+                        ["downloading", "validating", "restoring"].includes(
+                          getJobStatus(job)
+                        )
+                      }
+                      onClick={() => removeCloudImport(job.id)}
+                    >
+                      x
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1770,9 +1820,7 @@ function DatabaseSettingsPanel() {
               <option value="">Select a validated backup</option>
               {cloudImportJobs
                 .filter((job) =>
-                  ["downloaded", "validated"].includes(
-                    String(job.status || "").toLowerCase()
-                  )
+                  ["downloaded", "validated"].includes(getJobStatus(job))
                 )
                 .map((job) => (
                   <option key={job.id} value={job.id}>
