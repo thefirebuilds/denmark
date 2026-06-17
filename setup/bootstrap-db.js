@@ -295,8 +295,13 @@ async function ensureBootstrapMarker(client) {
           'requiredTables', $1::text[],
           'source', 'server/db/schema.sql'
         )
-      WHERE id = 'bootstrap-schema';
+      WHERE id = 'bootstrap-schema'
+    `,
+    [REQUIRED_TABLES]
+  );
 
+  await client.query(
+    `
       INSERT INTO public.denmark_schema_migrations (id, details)
       SELECT
         'bootstrap-schema',
