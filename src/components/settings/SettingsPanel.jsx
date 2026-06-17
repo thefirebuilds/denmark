@@ -1680,16 +1680,16 @@ function DatabaseSettingsPanel() {
         <div className="settings-group">
           <div className="settings-group-title">Cloud restore staging</div>
           <div className="settings-empty-state">
-            Paste a public Google Drive file link. Denmark downloads the file
+            Paste the public Google Drive share link. Denmark downloads the file
             on the server and stages it for validation and restore.
           </div>
 
           <label className="settings-field">
-            <span>Public Google Drive link</span>
+            <span>Google Drive share link</span>
             <input
               value={cloudImportUrl}
               onChange={(e) => setCloudImportUrl(e.target.value)}
-              placeholder="https://drive.google.com/file/d/.../view"
+              placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
             />
           </label>
 

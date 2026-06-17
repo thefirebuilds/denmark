@@ -415,9 +415,11 @@ Self-service migration or DR flow:
    The file uses the `.dump` format produced by `pg_dump -Fc`.
 2. Upload that `.dump` file somewhere reachable, such as Google Drive, and set
    sharing to anyone with the link.
-3. In the destination tenant, paste the public Drive link under Cloud restore
-   staging. Denmark downloads it server-side into `./imports` on the host
-   through the compose mount at `/app/imports`.
+3. In the destination tenant, paste the public Google Drive share link under
+   Cloud restore staging. The normal `/file/d/.../view?usp=sharing` link is
+   expected. Denmark follows Drive's download prompt server-side and writes the
+   staged file into `./imports` on the host through the compose mount at
+   `/app/imports`.
 4. Validate the staged backup. Denmark runs `pg_restore --list` to confirm the
    file is a Postgres custom dump.
 5. Select the staged backup, type `RESTORE`, and start the restore. Denmark runs

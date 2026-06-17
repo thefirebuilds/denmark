@@ -166,6 +166,91 @@ function parseContentDispositionFilename(value) {
   return plainMatch ? plainMatch[1].trim() : "";
 }
 
+function decodeHtmlAttribute(value) {
+  return String(value || "")
+    .replace(/\\u003d/g, "=")
+    .replace(/\\u0026/g, "&")
+    .replace(/&amp;/g, "&")
+    .replace(/&#38;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function getResponseCookies(response) {
+  const getSetCookie = response.headers.getSetCookie?.();
+  if (Array.isArray(getSetCookie) && getSetCookie.length) {
+    return getSetCookie.map((cookie) => cookie.split(";")[0]).join("; ");
+  }
+
+  const singleHeader = response.headers.get("set-cookie");
+  return singleHeader ? singleHeader.split(/,(?=[^;,]+=)/).map((cookie) => cookie.split(";")[0]).join("; ") : "";
+}
+
+function isAllowedGoogleDownloadHost(url) {
+  const host = url.hostname.toLowerCase();
+  return (
+    host === "drive.google.com" ||
+    host === "docs.google.com" ||
+    host === "drive.usercontent.google.com"
+  );
+}
+
+function extractDriveDownloadUrlFromHtml(html) {
+  const text = String(html || "");
+  const hrefPattern = /href=(?:"([^"]+)"|'([^']+)'|([^>\s]+))/gi;
+  let match;
+
+  while ((match = hrefPattern.exec(text))) {
+    const href = decodeHtmlAttribute(match[1] || match[2] || match[3]);
+    if (!href) continue;
+
+    let candidate;
+    try {
+      candidate = new URL(href, "https://drive.google.com");
+    } catch {
+      continue;
+    }
+
+    const candidateText = candidate.toString();
+    if (
+      isAllowedGoogleDownloadHost(candidate) &&
+      (candidate.pathname.includes("/uc") ||
+        candidate.pathname.includes("/download") ||
+        candidateText.includes("export=download") ||
+        candidateText.includes("confirm="))
+    ) {
+      return candidate;
+    }
+  }
+
+  const actionMatch = text.match(/<form[^>]+action=(?:"([^"]+)"|'([^']+)'|([^>\s]+))[^>]*>/i);
+  if (!actionMatch) return null;
+
+  let actionUrl;
+  try {
+    actionUrl = new URL(
+      decodeHtmlAttribute(actionMatch[1] || actionMatch[2] || actionMatch[3]),
+      "https://drive.google.com"
+    );
+  } catch {
+    return null;
+  }
+
+  if (!isAllowedGoogleDownloadHost(actionUrl)) return null;
+
+  const inputPattern = /<input[^>]+>/gi;
+  while ((match = inputPattern.exec(text))) {
+    const input = match[0];
+    const nameMatch = input.match(/\sname=(?:"([^"]+)"|'([^']+)'|([^>\s]+))/i);
+    const valueMatch = input.match(/\svalue=(?:"([^"]*)"|'([^']*)'|([^>\s]*))/i);
+    const name = decodeHtmlAttribute(nameMatch?.[1] || nameMatch?.[2] || nameMatch?.[3]);
+    const value = decodeHtmlAttribute(valueMatch?.[1] || valueMatch?.[2] || valueMatch?.[3]);
+    if (name) actionUrl.searchParams.set(name, value || "");
+  }
+
+  return actionUrl;
+}
+
 function parseGoogleDriveFileId(value) {
   let parsed;
   try {
@@ -183,6 +268,41 @@ function parseGoogleDriveFileId(value) {
   return parsed.searchParams.get("id") || "";
 }
 
+function buildGoogleDriveDownloadUrls(fileId, sourceUrl) {
+  let resourceKey = "";
+  try {
+    resourceKey = new URL(sourceUrl).searchParams.get("resourcekey") || "";
+  } catch {
+    resourceKey = "";
+  }
+
+  const params = new URLSearchParams({
+    id: fileId,
+    export: "download",
+  });
+  const confirmedParams = new URLSearchParams({
+    id: fileId,
+    export: "download",
+    confirm: "t",
+  });
+  const userContentParams = new URLSearchParams({
+    id: fileId,
+    export: "download",
+  });
+
+  if (resourceKey) {
+    params.set("resourcekey", resourceKey);
+    confirmedParams.set("resourcekey", resourceKey);
+    userContentParams.set("resourcekey", resourceKey);
+  }
+
+  return [
+    `https://drive.google.com/uc?${params.toString()}`,
+    `https://drive.google.com/uc?${confirmedParams.toString()}`,
+    `https://drive.usercontent.google.com/download?${userContentParams.toString()}`,
+  ];
+}
+
 function normalizeCloudBackupUrl(rawUrl) {
   const sourceUrl = String(rawUrl || "").trim();
   const googleDriveFileId = parseGoogleDriveFileId(sourceUrl);
@@ -197,9 +317,7 @@ function normalizeCloudBackupUrl(rawUrl) {
     provider: "google_drive_public",
     remoteFileId: googleDriveFileId,
     sourceUrl,
-    downloadUrl: `https://drive.google.com/uc?export=download&id=${encodeURIComponent(
-      googleDriveFileId
-    )}`,
+    downloadUrls: buildGoogleDriveDownloadUrls(googleDriveFileId, sourceUrl),
   };
 }
 
@@ -361,25 +479,60 @@ async function upsertImportJobSnapshot(job, fields) {
   );
 }
 
-async function fetchDriveDownloadResponse(downloadUrl) {
-  const firstResponse = await fetch(downloadUrl, { redirect: "follow" });
-  const firstContentType = firstResponse.headers.get("content-type") || "";
-  const firstDisposition = firstResponse.headers.get("content-disposition") || "";
+async function fetchDriveDownloadResponse(downloadUrls) {
+  const urls = Array.isArray(downloadUrls) ? downloadUrls : [downloadUrls];
+  const errors = [];
 
-  if (!firstContentType.includes("text/html") || firstDisposition) {
-    return firstResponse;
+  for (const downloadUrl of urls) {
+    const firstResponse = await fetch(downloadUrl, {
+      redirect: "follow",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; DenmarkBackupRestore/1.0; +https://freshcoastgarage.com)",
+        Accept: "application/octet-stream,text/html;q=0.9,*/*;q=0.8",
+      },
+    });
+    const firstContentType = firstResponse.headers.get("content-type") || "";
+    const firstDisposition = firstResponse.headers.get("content-disposition") || "";
+
+    if (!firstContentType.includes("text/html") || firstDisposition) {
+      return firstResponse;
+    }
+
+    const html = await firstResponse.text();
+    if (!html.trim()) {
+      errors.push(`${downloadUrl}: Google returned an empty HTML handoff page`);
+      continue;
+    }
+
+    const confirmUrl = extractDriveDownloadUrlFromHtml(html);
+    if (!confirmUrl) {
+      errors.push(`${downloadUrl}: no direct download link found in Google handoff page`);
+      continue;
+    }
+
+    const cookie = getResponseCookies(firstResponse);
+    const confirmedResponse = await fetch(confirmUrl, {
+      redirect: "follow",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; DenmarkBackupRestore/1.0; +https://freshcoastgarage.com)",
+        Accept: "application/octet-stream,text/html;q=0.9,*/*;q=0.8",
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+    });
+    const confirmedContentType = confirmedResponse.headers.get("content-type") || "";
+    const confirmedDisposition = confirmedResponse.headers.get("content-disposition") || "";
+    if (!confirmedContentType.includes("text/html") || confirmedDisposition) {
+      return confirmedResponse;
+    }
+
+    errors.push(`${downloadUrl}: confirmed download still returned an HTML page`);
   }
 
-  const html = await firstResponse.text();
-  const linkMatch = html.match(/href="([^"]*?(?:confirm|download_warning)[^"]*)"/i);
-  if (!linkMatch) {
-    throw new Error(
-      "Google Drive returned an HTML page instead of the file. Make sure the link is public to anyone with the link."
-    );
-  }
-
-  const confirmUrl = new URL(linkMatch[1].replace(/&amp;/g, "&"), "https://drive.google.com");
-  return fetch(confirmUrl, { redirect: "follow" });
+  throw new Error(
+    `Google Drive did not provide a downloadable file. Confirm the file is shared to anyone with the link. Tried ${urls.length} download URL(s): ${errors.join("; ")}`
+  );
 }
 
 async function downloadCloudBackupJob(jobId, normalized) {
@@ -394,7 +547,7 @@ async function downloadCloudBackupJob(jobId, normalized) {
       error: null,
     });
 
-    const response = await fetchDriveDownloadResponse(normalized.downloadUrl);
+    const response = await fetchDriveDownloadResponse(normalized.downloadUrls);
     if (!response.ok) {
       throw new Error(`Cloud download failed: HTTP ${response.status}`);
     }
