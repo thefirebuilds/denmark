@@ -3059,53 +3059,52 @@ router.get("/", async (req, res) => {
       LIMIT 1
     `;
 
-    const [
-      handoffResult,
-      inspectionExportResult,
-      closeoutResult,
-      lateTollResult,
-      overlapResult,
-      messagesResult,
-      unmatchedNotificationsResult,
-      diagnosticResult,
-      maintenanceResult,
-      googleCalendarReconnectResult,
-    ] = await Promise.all([
-      timeQueueQuery(queueTimings, "handoff", db.query(handoffSql)),
-      timeQueueQuery(queueTimings, "inspectionExport", db.query(inspectionExportSql)),
-      fast
-        ? Promise.resolve(EMPTY_QUERY_RESULT)
-        : timeQueueQuery(queueTimings, "closeout", db.query(closeoutSql)),
-      fast
-        ? Promise.resolve(EMPTY_QUERY_RESULT)
-        : timeQueueQuery(queueTimings, "lateToll", db.query(lateTollSql)),
-      fast
-        ? Promise.resolve(EMPTY_QUERY_RESULT)
-        : timeQueueQuery(queueTimings, "overlap", db.query(overlapSql)),
-      timeQueueQuery(
-        queueTimings,
-        fast ? "messagesFast" : "messages",
-        db.query(fast ? fastMessagesSql : messagesSql, [candidateLimit])
-      ),
-      timeQueueQuery(
-        queueTimings,
-        "unmatchedNotifications",
-        db.query(unmatchedNotificationsSql)
-      ),
-      timeQueueQuery(queueTimings, "diagnostics", db.query(diagnosticSql)),
-      fast
-        ? Promise.resolve(EMPTY_QUERY_RESULT)
-        : timeQueueQuery(
-            queueTimings,
-            "maintenance",
-            db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
-          ),
-      timeQueueQuery(
-        queueTimings,
-        "googleCalendarReconnect",
-        db.query(googleCalendarReconnectSql)
-      ),
-    ]);
+    const handoffResult = await timeQueueQuery(
+      queueTimings,
+      "handoff",
+      db.query(handoffSql)
+    );
+    const inspectionExportResult = await timeQueueQuery(
+      queueTimings,
+      "inspectionExport",
+      db.query(inspectionExportSql)
+    );
+    const closeoutResult = fast
+      ? EMPTY_QUERY_RESULT
+      : await timeQueueQuery(queueTimings, "closeout", db.query(closeoutSql));
+    const lateTollResult = fast
+      ? EMPTY_QUERY_RESULT
+      : await timeQueueQuery(queueTimings, "lateToll", db.query(lateTollSql));
+    const overlapResult = fast
+      ? EMPTY_QUERY_RESULT
+      : await timeQueueQuery(queueTimings, "overlap", db.query(overlapSql));
+    const messagesResult = await timeQueueQuery(
+      queueTimings,
+      fast ? "messagesFast" : "messages",
+      db.query(fast ? fastMessagesSql : messagesSql, [candidateLimit])
+    );
+    const unmatchedNotificationsResult = await timeQueueQuery(
+      queueTimings,
+      "unmatchedNotifications",
+      db.query(unmatchedNotificationsSql)
+    );
+    const diagnosticResult = await timeQueueQuery(
+      queueTimings,
+      "diagnostics",
+      db.query(diagnosticSql)
+    );
+    const maintenanceResult = fast
+      ? EMPTY_QUERY_RESULT
+      : await timeQueueQuery(
+          queueTimings,
+          "maintenance",
+          db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
+        );
+    const googleCalendarReconnectResult = await timeQueueQuery(
+      queueTimings,
+      "googleCalendarReconnect",
+      db.query(googleCalendarReconnectSql)
+    );
 
     messagesResult.rows.forEach((row) => {
       row.pickup_location = extractPickupLocationFromNoticeText(
