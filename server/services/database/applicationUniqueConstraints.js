@@ -23,6 +23,7 @@ const REQUIRED_UNIQUE_CONSTRAINTS = [
   { table: "toll_charges", name: "toll_charges_source_fingerprint_key", columns: ["source", "external_fingerprint"] },
   { table: "trip_financial_facts", name: "trip_financial_facts_trip_id_key", columns: ["trip_id"] },
   { table: "trip_google_sync", name: "trip_google_sync_trip_calendar_event_key", columns: ["trip_id", "google_calendar_connection_id", "event_type"] },
+  { table: "trips", name: "trips_id_key", columns: ["id"] },
   { table: "trips", name: "trips_reservation_id_key", columns: ["reservation_id"] },
   { table: "vehicle_diagnostic_suppressions", name: "vehicle_diagnostic_suppressions_diagnostic_key_key", columns: ["diagnostic_key"] },
   { table: "vehicle_financial_profiles", name: "vehicle_financial_profiles_vehicle_id_key", columns: ["vehicle_id"] },
