@@ -214,16 +214,34 @@ app.use(
 
 app.use(express.json({ limit: "500mb" }));
 app.get("/api/health", defaultCors, (req, res) => {
+  if (!startupTablesReady && !startupTablesInitializing) {
+    void initializeStartupTablesWithRetry();
+  }
+
   res.json({
     ok: true,
     service: "denmark-backend",
     database: getDatabaseHealth(),
+    startup: {
+      tables_ready: startupTablesReady,
+      tables_initializing: startupTablesInitializing,
+      scheduler_started: schedulerStarted,
+    },
   });
 });
 app.get("/api/database/health", defaultCors, (req, res) => {
+  if (!startupTablesReady && !startupTablesInitializing) {
+    void initializeStartupTablesWithRetry();
+  }
+
   res.json({
     ok: true,
     database: getDatabaseHealth(),
+    startup: {
+      tables_ready: startupTablesReady,
+      tables_initializing: startupTablesInitializing,
+      scheduler_started: schedulerStarted,
+    },
   });
 });
 app.use("/api", databaseUnavailableMiddleware);
@@ -387,8 +405,11 @@ let schedulerStarted = false;
 let startupRetryHandle = null;
 
 async function initializeStartupTables() {
+  console.log("[server] ensuring vehicle identity constraints");
   await ensureVehicleIdentityConstraints();
+  console.log("[server] ensuring application unique constraints");
   await ensureApplicationUniqueConstraints();
+  console.log("[server] ensuring runtime support tables");
   await Promise.all([
     ensureNotificationEventsTable(),
     ensureVehicleFmvEstimatesTable(),
