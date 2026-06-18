@@ -410,19 +410,24 @@ async function initializeStartupTables() {
   console.log("[server] ensuring application unique constraints");
   await ensureApplicationUniqueConstraints();
   console.log("[server] ensuring runtime support tables");
-  await Promise.all([
-    ensureNotificationEventsTable(),
-    ensureVehicleFmvEstimatesTable(),
-    ensureBusinessMetricsTables(),
-    ensureVehicleOdometerRollupTable(),
-    ensureVehicleAliasesTable(),
-    ensureIncomeTables(),
-    ensureFleetAlertTables(),
-    ensureGoogleCalendarConnectionHealthColumns(),
-    ensureAuthTables(),
-    ensureSystemActivityLogTable(),
-    ensureAuthPublicUrlSettings(),
-  ]);
+  const startupEnsures = [
+    ["notification events", ensureNotificationEventsTable],
+    ["vehicle FMV estimates", ensureVehicleFmvEstimatesTable],
+    ["business metrics", ensureBusinessMetricsTables],
+    ["vehicle odometer rollups", ensureVehicleOdometerRollupTable],
+    ["vehicle aliases", ensureVehicleAliasesTable],
+    ["income tables", ensureIncomeTables],
+    ["fleet alerts", ensureFleetAlertTables],
+    ["Google Calendar health columns", ensureGoogleCalendarConnectionHealthColumns],
+    ["auth tables", ensureAuthTables],
+    ["system activity log", ensureSystemActivityLogTable],
+    ["auth public URL settings", ensureAuthPublicUrlSettings],
+  ];
+
+  for (const [label, ensureFn] of startupEnsures) {
+    console.log(`[server] ensuring ${label}`);
+    await ensureFn();
+  }
 }
 
 async function initializeStartupTablesWithRetry() {
