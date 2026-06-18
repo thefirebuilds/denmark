@@ -115,11 +115,22 @@ async function ensureUniqueConstraint(client, constraint) {
 
   await assertNoDuplicateKey(client, constraint);
 
-  await client.query(`
-    ALTER TABLE public.${quoteIdentifier(constraint.table)}
-    ADD CONSTRAINT ${quoteIdentifier(constraint.name)}
-    UNIQUE (${formatColumnList(constraint.columns)})
-  `);
+  const createIndexSql = `
+    CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ${quoteIdentifier(constraint.name)}
+    ON public.${quoteIdentifier(constraint.table)}
+    (${formatColumnList(constraint.columns)})
+  `;
+
+  try {
+    await client.query(createIndexSql);
+  } catch (error) {
+    if (String(error?.code || "") !== "25001") throw error;
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ${quoteIdentifier(constraint.name)}
+      ON public.${quoteIdentifier(constraint.table)}
+      (${formatColumnList(constraint.columns)})
+    `);
+  }
 
   return true;
 }
@@ -133,7 +144,14 @@ async function ensureApplicationUniqueConstraints(client = pool, { log = null } 
         )})`
       );
     }
-    await ensureUniqueConstraint(client, constraint);
+    const created = await ensureUniqueConstraint(client, constraint);
+    if (typeof log === "function") {
+      log(
+        `[db:schema] ${
+          created ? "created" : "found"
+        } unique index ${constraint.name}`
+      );
+    }
   }
 }
 
