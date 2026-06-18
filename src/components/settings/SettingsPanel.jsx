@@ -1675,6 +1675,8 @@ function DatabaseSettingsPanel() {
     return `${tableText} | tracked total: ${backupSummary.totalRows}`;
   }
 
+  const backupSummaryText = formatBackupSummary();
+
   async function startTenantRestore() {
     const selectedJob = cloudImportJobs.find(
       (job) => String(job.id) === String(selectedRestoreJobId)
@@ -1719,6 +1721,7 @@ function DatabaseSettingsPanel() {
       );
       setRestoreConfirm("");
       await loadCloudImportJobs();
+      await loadBackupSummary();
     } catch (err) {
       setRestoreStatus(err.message || "Restore failed");
     } finally {
@@ -1743,9 +1746,9 @@ function DatabaseSettingsPanel() {
             dump format. This contains tenant data, settings, messages, trips,
             vehicles, integrations, and history, but not the Denmark app code.
           </div>
-          {backupSummary ? (
+          {backupSummaryText ? (
             <div className="settings-empty-state">
-              Current database: {formatBackupSummary()}
+              Current database: {backupSummaryText}
             </div>
           ) : null}
           <div className="settings-form-actions">
@@ -1777,6 +1780,11 @@ function DatabaseSettingsPanel() {
             Paste the public Google Drive share link. Denmark downloads the file
             on the server and stages it for validation and restore.
           </div>
+          {backupSummaryText ? (
+            <div className="settings-empty-state">
+              Current database before restore: {backupSummaryText}
+            </div>
+          ) : null}
 
           <label className="settings-field">
             <span>Google Drive share link</span>
@@ -1872,6 +1880,11 @@ function DatabaseSettingsPanel() {
             Restore replaces this tenant database with a staged backup. Use this
             for initial tenant standup or disaster recovery failover.
           </div>
+          {backupSummaryText ? (
+            <div className="settings-empty-state">
+              Current database before restore: {backupSummaryText}
+            </div>
+          ) : null}
 
           <label className="settings-field">
             <span>Staged backup</span>

@@ -130,6 +130,22 @@ async function getTenantDataSummary(client = db) {
   };
 }
 
+function formatTenantSummary(summary) {
+  if (!summary?.tables?.length) return "unavailable";
+  const keyTables = new Set([
+    "vehicles",
+    "trips",
+    "messages",
+    "vehicle_telemetry_snapshots",
+  ]);
+  const keyCounts = summary.tables
+    .filter((table) => keyTables.has(table.table))
+    .map((table) => `${table.table}: ${table.exists ? table.rows : "missing"}`)
+    .join(" | ");
+
+  return `${keyCounts} | tracked total: ${summary.totalRows}`;
+}
+
 function parsePgRestoreTableDataNames(listOutput) {
   const names = new Set();
   const pattern = /;\s+\d+\s+\d+\s+TABLE DATA\s+public\s+([^\s]+)\s+/g;
@@ -900,12 +916,18 @@ async function runRestoreJob(jobId) {
     }
 
     await repairRestoredSchema();
+    const postRestoreSummary = await getTenantDataSummary();
     markDatabaseReady();
 
     await upsertImportJobSnapshot(job, {
       status: "restored",
       error: null,
-      restore_log: buildRestoreSuccessLog(result, { compatibilityWarningIgnored }),
+      restore_log: truncateText(
+        [
+          buildRestoreSuccessLog(result, { compatibilityWarningIgnored }),
+          `Post-restore database: ${formatTenantSummary(postRestoreSummary)}`,
+        ].join("\n")
+      ),
       restore_started_at: job.restoreStartedAt || restoreStartedAt,
       restore_completed_at: new Date(),
       completed_at: new Date(),
