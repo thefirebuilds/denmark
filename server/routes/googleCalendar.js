@@ -26,6 +26,21 @@ const {
 const router = express.Router();
 const GOOGLE_CALENDAR_CALLBACK_PATH = "/api/integrations/google-calendar/callback";
 
+function getConfiguredGoogleCalendarRedirectUri() {
+  const value = String(process.env.GOOGLE_REDIRECT_URI || "").trim();
+  if (!value) return "";
+
+  try {
+    const parsed = new URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("Google Calendar redirect URI must use http or https");
+    }
+    return parsed.toString();
+  } catch (err) {
+    throw new Error(`Invalid GOOGLE_REDIRECT_URI: ${err.message || err}`);
+  }
+}
+
 function getRouteUserId(req) {
   return req?.auth?.kind === "user" ? req.auth.userId : null;
 }
@@ -41,6 +56,11 @@ function getGoogleApiErrorCode(err) {
 }
 
 function buildGoogleCalendarRedirectUri(publicUrlSettings) {
+  const configuredRedirectUri = getConfiguredGoogleCalendarRedirectUri();
+  if (configuredRedirectUri) {
+    return configuredRedirectUri;
+  }
+
   return computeGoogleRedirectUri(
     publicUrlSettings.effectivePublicBaseUrl || publicUrlSettings.publicBaseUrl,
     GOOGLE_CALENDAR_CALLBACK_PATH
