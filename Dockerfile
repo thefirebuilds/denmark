@@ -40,6 +40,8 @@ COPY server ./server
 COPY setup ./setup
 COPY --from=web-build /app/dist ./dist
 
+RUN mkdir -p ./imports
+
 RUN test -f ./server/db/schema.sql \
   && test -f ./setup/bootstrap-db.js \
   && test -f ./setup/verify-db-bootstrap.js \
