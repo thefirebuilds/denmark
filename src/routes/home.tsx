@@ -148,7 +148,26 @@ async function timedStartupFetch(
   init?: RequestInit
 ) {
   const startedAt = performance.now();
-  const response = await fetch(input, init);
+  const controller = new AbortController();
+  const timeoutMs = 20000;
+  const timeout = window.setTimeout(() => {
+    controller.abort(new Error(`${label} request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  let response: Response;
+
+  try {
+    response = await fetch(input, {
+      ...init,
+      signal: init?.signal || controller.signal,
+    });
+  } catch (err) {
+    const durationMs = Math.round(performance.now() - startedAt);
+    console.warn(`[startup] ${label} failed after ${durationMs}ms`, err);
+    throw err;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+
   const durationMs = Math.round(performance.now() - startedAt);
   let shouldLog = durationMs >= 1000;
 
@@ -603,7 +622,10 @@ export default function Home() {
             label: isBackendUnavailableError(err)
               ? "Waiting for backend"
               : "Waiting for startup data",
-            error: "",
+            error:
+              err instanceof Error
+                ? err.message
+                : "Startup request failed. Retrying...",
           });
           setMessageStatsLoading(true);
 
