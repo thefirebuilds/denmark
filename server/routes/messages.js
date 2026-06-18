@@ -2954,6 +2954,15 @@ router.get("/", async (req, res) => {
         AND COALESCE(t.toll_review_status, '') NOT IN ('billed', 'waived')
       GROUP BY
         t.id,
+        t.reservation_id,
+        t.guest_name,
+        t.vehicle_name,
+        t.trip_start,
+        t.trip_end,
+        t.workflow_stage,
+        t.status,
+        t.toll_review_status,
+        t.toll_charged_total,
         v.nickname
       HAVING COALESCE(SUM(tc.amount), 0) > 0
       ORDER BY MAX(tc.created_at) DESC NULLS LAST, t.trip_end DESC NULLS LAST
