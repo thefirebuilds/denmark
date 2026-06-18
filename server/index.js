@@ -403,12 +403,39 @@ let startupTablesReady = false;
 let startupTablesInitializing = false;
 let schedulerStarted = false;
 let startupRetryHandle = null;
+const STARTUP_ENSURE_TIMEOUT_MS = Number(
+  process.env.STARTUP_ENSURE_TIMEOUT_MS || 30000
+);
+
+function withStartupEnsureTimeout(label, promise) {
+  let timeoutHandle = null;
+  const timeout = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(
+        new Error(
+          `Startup schema ensure timed out after ${STARTUP_ENSURE_TIMEOUT_MS}ms: ${label}`
+        )
+      );
+    }, STARTUP_ENSURE_TIMEOUT_MS);
+    timeoutHandle.unref?.();
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  });
+}
 
 async function initializeStartupTables() {
   console.log("[server] ensuring vehicle identity constraints");
-  await ensureVehicleIdentityConstraints();
+  await withStartupEnsureTimeout(
+    "vehicle identity constraints",
+    ensureVehicleIdentityConstraints()
+  );
   console.log("[server] ensuring application unique constraints");
-  await ensureApplicationUniqueConstraints();
+  await withStartupEnsureTimeout(
+    "application unique constraints",
+    ensureApplicationUniqueConstraints()
+  );
   console.log("[server] ensuring runtime support tables");
   const startupEnsures = [
     ["notification events", ensureNotificationEventsTable],
@@ -426,7 +453,7 @@ async function initializeStartupTables() {
 
   for (const [label, ensureFn] of startupEnsures) {
     console.log(`[server] ensuring ${label}`);
-    await ensureFn();
+    await withStartupEnsureTimeout(label, ensureFn());
   }
 }
 

@@ -7,10 +7,19 @@ const { Readable, Transform } = require("stream");
 const { pipeline } = require("stream/promises");
 const db = require("../db");
 const {
+  markDatabaseReady,
+} = require("../dbHealth");
+const {
   getRequestMeta,
   logRequestActivity,
   logSystemActivity,
 } = require("../services/systemActivityLog");
+const {
+  ensureVehicleIdentityConstraints,
+} = require("../services/vehicles/vehicleIdentityConstraints");
+const {
+  ensureApplicationUniqueConstraints,
+} = require("../services/database/applicationUniqueConstraints");
 
 const router = express.Router();
 const IMPORT_DIR = path.resolve(
@@ -765,6 +774,12 @@ async function validateImportJob(jobId) {
   }
 }
 
+async function repairRestoredSchema() {
+  await ensureDatabaseImportJobsTable();
+  await ensureVehicleIdentityConstraints();
+  await ensureApplicationUniqueConstraints();
+}
+
 async function runRestoreJob(jobId) {
   if (activeRestoreJobs.has(jobId)) return;
   activeRestoreJobs.add(jobId);
@@ -804,6 +819,9 @@ async function runRestoreJob(jobId) {
       result = error.result;
       compatibilityWarningIgnored = true;
     }
+
+    await repairRestoredSchema();
+    markDatabaseReady();
 
     await upsertImportJobSnapshot(job, {
       status: "restored",
