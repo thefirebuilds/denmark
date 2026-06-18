@@ -436,6 +436,24 @@ Self-service migration or DR flow:
 Restore replaces the current tenant database. Use it for initial tenant standup
 from an existing backup or for disaster recovery failover.
 
+Legacy JSON backups from the earlier Denmark exporter can be restored from the
+server CLI. This path is intended for oversized JSON files that should not be
+uploaded through the browser.
+
+```bash
+mkdir -p imports
+# Copy the JSON backup into ./imports on the host first.
+docker compose stop app
+docker compose run --rm app npm run db:restore-json -- /app/imports/denmark-backup.json --force
+docker compose run --rm app npm run db:bootstrap
+docker compose run --rm app npm run db:verify
+docker compose up -d app
+```
+
+The JSON restore command truncates the tenant tables before importing. It
+streams rows from disk and then runs the same schema repair pass used by
+bootstrap.
+
 ### 7. Update the VM later
 
 After changes are merged to `main`, wait for the GitHub Actions container publish workflow to finish. Then run:

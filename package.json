@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "db:bootstrap": "node setup/bootstrap-db.js",
-    "db:verify": "node setup/verify-db-bootstrap.js"
+    "db:verify": "node setup/verify-db-bootstrap.js",
+    "db:restore-json": "node setup/restore-json-backup.js"
   },
   "dependencies": {
     "@dimo-network/data-sdk": "^1.7.0",

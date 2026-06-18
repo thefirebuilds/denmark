@@ -6,7 +6,8 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "db:bootstrap": "node ../setup/bootstrap-db.js",
-    "db:verify": "node ../setup/verify-db-bootstrap.js"
+    "db:verify": "node ../setup/verify-db-bootstrap.js",
+    "db:restore-json": "node ../setup/restore-json-backup.js"
   },
   "keywords": [],
   "author": "",
@@ -25,7 +26,8 @@
     "mailparser": "^3.9.3",
     "node-cron": "^4.2.1",
     "pg": "^8.20.0",
-    "playwright": "^1.58.2"
+    "playwright": "^1.58.2",
+    "stream-json": "^1.9.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
