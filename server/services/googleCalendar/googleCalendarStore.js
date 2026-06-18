@@ -10,6 +10,39 @@ async function ensureGoogleCalendarConnectionHealthColumns(client = pool) {
   `);
 }
 
+async function findGoogleCalendarConnectionForWrite(userId = null) {
+  if (userId !== null && userId !== undefined) {
+    const exact = await pool.query(
+      `
+        SELECT id
+        FROM google_calendar_connections
+        WHERE user_id IS NOT DISTINCT FROM $1
+        LIMIT 1
+      `,
+      [userId]
+    );
+
+    return exact.rows[0] || null;
+  }
+
+  const tenantScoped = await pool.query(`
+    SELECT id
+    FROM google_calendar_connections
+    ORDER BY
+      CASE
+        WHEN user_id IS NOT NULL AND calendar_id IS NOT NULL THEN 0
+        WHEN user_id IS NOT NULL THEN 1
+        WHEN calendar_id IS NOT NULL THEN 2
+        ELSE 3
+      END,
+      updated_at DESC NULLS LAST,
+      id DESC
+    LIMIT 1
+  `);
+
+  return tenantScoped.rows[0] || null;
+}
+
 async function upsertGoogleCalendarConnection({
   userId = null,
   googleEmail = null,
@@ -19,18 +52,10 @@ async function upsertGoogleCalendarConnection({
   const encryptedToken = encrypt(refreshToken);
   const fallbackCalendar = await getFallbackSelectedCalendar(userId);
 
-  const existing = await pool.query(
-    `
-      SELECT id
-      FROM google_calendar_connections
-      WHERE user_id IS NOT DISTINCT FROM $1
-      LIMIT 1
-    `,
-    [userId]
-  );
+  const existing = await findGoogleCalendarConnectionForWrite(userId);
 
-  if (existing.rows.length) {
-    const id = existing.rows[0].id;
+  if (existing) {
+    const id = existing.id;
 
     await pool.query(
       `
@@ -172,16 +197,19 @@ async function saveSelectedCalendar({
   calendarId,
   calendarSummary,
 }) {
+  const existing = await findGoogleCalendarConnectionForWrite(userId);
+  if (!existing) return null;
+
   const result = await pool.query(
     `
       UPDATE google_calendar_connections
       SET calendar_id = $2,
           calendar_summary = $3,
           updated_at = NOW()
-      WHERE user_id IS NOT DISTINCT FROM $1
+      WHERE id = $1
       RETURNING *
     `,
-    [userId, calendarId, calendarSummary]
+    [existing.id, calendarId, calendarSummary]
   );
 
   return result.rows[0] || null;
