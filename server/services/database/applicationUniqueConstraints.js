@@ -12,7 +12,6 @@ const REQUIRED_UNIQUE_CONSTRAINTS = [
   { table: "app_users", name: "app_users_provider_subject_unique", columns: ["provider", "provider_subject"] },
   { table: "business_financial_settings", name: "business_financial_settings_id_key", columns: ["id"] },
   { table: "database_import_jobs", name: "database_import_jobs_id_key", columns: ["id"] },
-  { table: "denmark_schema_migrations", name: "denmark_schema_migrations_id_key", columns: ["id"] },
   { table: "fleet_alert_deliveries", name: "fleet_alert_deliveries_alert_key_key", columns: ["alert_key"] },
   { table: "maintenance_rule_templates", name: "maintenance_rule_templates_rule_code_key", columns: ["rule_code"] },
   { table: "maintenance_tasks", name: "maintenance_tasks_source_key_key", columns: ["source_key"] },
