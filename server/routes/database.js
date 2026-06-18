@@ -39,6 +39,18 @@ const IMPORT_JOB_STATUSES = [
   "restored",
   "failed",
 ];
+const BACKUP_IMPORTANT_TABLES = [
+  "vehicles",
+  "trips",
+  "messages",
+  "vehicle_telemetry_snapshots",
+  "maintenance_tasks",
+  "maintenance_events",
+  "expenses",
+  "notification_events",
+  "app_settings",
+  "google_calendar_connections",
+];
 
 function quoteIdent(value) {
   return `"${String(value).replace(/"/g, '""')}"`;
@@ -75,6 +87,59 @@ function truncateText(value, maxLength = 12000) {
   const text = String(value || "");
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength)}\n...[truncated ${text.length - maxLength} chars]`;
+}
+
+async function getTenantDataSummary(client = db) {
+  const { rows: existingRows } = await client.query(
+    `
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND table_name = ANY($1::text[])
+    `,
+    [BACKUP_IMPORTANT_TABLES]
+  );
+  const existing = new Set(existingRows.map((row) => row.table_name));
+  const tableCounts = [];
+
+  for (const tableName of BACKUP_IMPORTANT_TABLES) {
+    if (!existing.has(tableName)) {
+      tableCounts.push({ table: tableName, exists: false, rows: null });
+      continue;
+    }
+
+    const { rows } = await client.query(
+      `SELECT COUNT(*)::bigint AS count FROM ${qualifiedTable(tableName)}`
+    );
+    tableCounts.push({
+      table: tableName,
+      exists: true,
+      rows: Number(rows[0]?.count || 0),
+    });
+  }
+
+  return {
+    database: process.env.PGDATABASE || "denmark",
+    capturedAt: new Date().toISOString(),
+    tables: tableCounts,
+    totalRows: tableCounts.reduce(
+      (sum, table) => sum + (Number.isFinite(table.rows) ? table.rows : 0),
+      0
+    ),
+  };
+}
+
+function parsePgRestoreTableDataNames(listOutput) {
+  const names = new Set();
+  const pattern = /;\s+\d+\s+\d+\s+TABLE DATA\s+public\s+([^\s]+)\s+/g;
+  let match;
+
+  while ((match = pattern.exec(String(listOutput || "")))) {
+    names.add(match[1]);
+  }
+
+  return [...names].sort();
 }
 
 function getPgCommandEnv() {
@@ -741,11 +806,25 @@ async function validateImportJob(jobId) {
     });
     const tableCount = (result.stdout.match(/ TABLE DATA /g) || []).length;
     const schemaCount = (result.stdout.match(/ TABLE /g) || []).length;
+    const tableDataNames = parsePgRestoreTableDataNames(result.stdout);
+    const tableDataSet = new Set(tableDataNames);
+    const presentImportantTables = BACKUP_IMPORTANT_TABLES.filter((table) =>
+      tableDataSet.has(table)
+    );
+    const missingImportantTables = BACKUP_IMPORTANT_TABLES.filter(
+      (table) => !tableDataSet.has(table)
+    );
     const restoreLog = truncateText(
       [
         "pg_restore --list completed.",
         `Tables: ${schemaCount}`,
         `Table data entries: ${tableCount}`,
+        `Key data tables present: ${
+          presentImportantTables.length ? presentImportantTables.join(", ") : "none"
+        }`,
+        `Key data tables missing: ${
+          missingImportantTables.length ? missingImportantTables.join(", ") : "none"
+        }`,
         result.stderr,
       ]
         .filter(Boolean)
@@ -1294,6 +1373,21 @@ router.get("/backup", async (req, res) => {
     }
 
     res.destroy(err);
+  }
+});
+
+router.get("/backup/summary", async (req, res) => {
+  try {
+    res.json({
+      ok: true,
+      summary: await getTenantDataSummary(),
+    });
+  } catch (err) {
+    console.error("database backup summary failed:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message || "Database backup summary failed",
+    });
   }
 });
 

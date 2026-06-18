@@ -1462,6 +1462,7 @@ function FleetSettingsPanel() {
 }
 
 function DatabaseSettingsPanel() {
+  const [backupSummary, setBackupSummary] = useState(null);
   const [backupStatus, setBackupStatus] = useState("");
   const [restoreConfirm, setRestoreConfirm] = useState("");
   const [restoreStatus, setRestoreStatus] = useState("");
@@ -1472,6 +1473,21 @@ function DatabaseSettingsPanel() {
   const [busy, setBusy] = useState(false);
   const [cloudImportBusy, setCloudImportBusy] = useState(false);
   const [restoreBusy, setRestoreBusy] = useState(false);
+
+  async function loadBackupSummary() {
+    try {
+      const res = await fetch(`${API_BASE}/api/database/backup/summary`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || `Backup summary failed (${res.status})`);
+      }
+
+      setBackupSummary(json.summary || null);
+    } catch (err) {
+      setBackupStatus(err.message || "Failed to load backup summary");
+    }
+  }
 
   async function loadCloudImportJobs() {
     try {
@@ -1490,6 +1506,7 @@ function DatabaseSettingsPanel() {
 
   useEffect(() => {
     loadCloudImportJobs();
+    loadBackupSummary();
   }, []);
 
   useEffect(() => {
@@ -1510,6 +1527,7 @@ function DatabaseSettingsPanel() {
   async function downloadBackup() {
     try {
       setBusy(true);
+      await loadBackupSummary();
       setBackupStatus("Streaming tenant backup...");
 
       const res = await fetch(`${API_BASE}/api/database/backup`);
@@ -1644,6 +1662,19 @@ function DatabaseSettingsPanel() {
     return String(job?.status || "").trim().toLowerCase();
   }
 
+  function formatBackupSummary() {
+    if (!backupSummary?.tables?.length) return "";
+    const tableText = backupSummary.tables
+      .filter((table) =>
+        ["vehicles", "trips", "messages", "vehicle_telemetry_snapshots"].includes(
+          table.table
+        )
+      )
+      .map((table) => `${table.table}: ${table.exists ? table.rows : "missing"}`)
+      .join(" | ");
+    return `${tableText} | tracked total: ${backupSummary.totalRows}`;
+  }
+
   async function startTenantRestore() {
     const selectedJob = cloudImportJobs.find(
       (job) => String(job.id) === String(selectedRestoreJobId)
@@ -1712,6 +1743,11 @@ function DatabaseSettingsPanel() {
             dump format. This contains tenant data, settings, messages, trips,
             vehicles, integrations, and history, but not the Denmark app code.
           </div>
+          {backupSummary ? (
+            <div className="settings-empty-state">
+              Current database: {formatBackupSummary()}
+            </div>
+          ) : null}
           <div className="settings-form-actions">
             <button
               type="button"
@@ -1720,6 +1756,14 @@ function DatabaseSettingsPanel() {
               onClick={downloadBackup}
             >
               {busy ? "Working..." : "Download Tenant Backup"}
+            </button>
+            <button
+              type="button"
+              className="settings-action-btn secondary"
+              disabled={busy}
+              onClick={loadBackupSummary}
+            >
+              Refresh Counts
             </button>
             {backupStatus ? (
               <span className="settings-message">{backupStatus}</span>
