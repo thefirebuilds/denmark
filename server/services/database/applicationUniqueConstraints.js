@@ -1,6 +1,9 @@
 const pool = require("../../db");
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const REPAIR_STATEMENT_TIMEOUT_MS = Number(
+  process.env.SCHEMA_REPAIR_STATEMENT_TIMEOUT_MS || 60000
+);
 
 const REQUIRED_UNIQUE_CONSTRAINTS = [
   { table: "api_auth_tokens", name: "api_auth_tokens_service_name_key", columns: ["service_name"] },
@@ -66,6 +69,8 @@ async function hasUsableUniqueIndex(client, table, columns) {
         WHERE ns.nspname = 'public'
           AND rel.relname = $1
           AND idx.indisunique = true
+          AND idx.indisvalid = true
+          AND idx.indisready = true
           AND idx.indpred IS NULL
         GROUP BY idx.indexrelid
       ) unique_indexes
@@ -73,6 +78,32 @@ async function hasUsableUniqueIndex(client, table, columns) {
     [table, columns]
   );
   return rows[0]?.exists === true;
+}
+
+async function dropInvalidRepairIndex(client, constraint, log) {
+  const { rows } = await client.query(
+    `
+      SELECT idx.indexrelid::regclass::text AS index_name
+      FROM pg_index idx
+      JOIN pg_class index_rel ON index_rel.oid = idx.indexrelid
+      JOIN pg_namespace ns ON ns.oid = index_rel.relnamespace
+      WHERE ns.nspname = 'public'
+        AND index_rel.relname = $1
+        AND (idx.indisvalid = false OR idx.indisready = false)
+      LIMIT 1
+    `,
+    [constraint.name]
+  );
+
+  if (!rows.length) return false;
+
+  if (typeof log === "function") {
+    log(`[db:schema] dropping invalid unique index ${constraint.name}`);
+  }
+  await client.query(
+    `DROP INDEX CONCURRENTLY IF EXISTS public.${quoteIdentifier(constraint.name)}`
+  );
+  return true;
 }
 
 async function assertNoDuplicateKey(client, { table, columns }) {
@@ -106,14 +137,18 @@ async function assertNoDuplicateKey(client, { table, columns }) {
   );
 }
 
-async function ensureUniqueConstraint(client, constraint) {
+async function ensureUniqueConstraint(client, constraint, log = null) {
   if (!(await tableExists(client, constraint.table))) {
     throw new Error(`public.${constraint.table} is missing`);
   }
 
   if (await hasUsableUniqueIndex(client, constraint.table, constraint.columns)) return false;
 
-  await assertNoDuplicateKey(client, constraint);
+  await dropInvalidRepairIndex(client, constraint, log);
+
+  if (typeof log === "function") {
+    log(`[db:schema] creating unique index ${constraint.name}`);
+  }
 
   const createIndexSql = `
     CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ${quoteIdentifier(constraint.name)}
@@ -122,14 +157,27 @@ async function ensureUniqueConstraint(client, constraint) {
   `;
 
   try {
+    await client.query(`SET statement_timeout = ${REPAIR_STATEMENT_TIMEOUT_MS}`);
+    await client.query(`SET lock_timeout = ${REPAIR_STATEMENT_TIMEOUT_MS}`);
     await client.query(createIndexSql);
   } catch (error) {
-    if (String(error?.code || "") !== "25001") throw error;
+    if (String(error?.code || "") !== "25001") {
+      if (String(error?.code || "") === "23505") {
+        await assertNoDuplicateKey(client, constraint).catch(() => null);
+      }
+      error.message = `Failed repairing unique index ${constraint.name} on public.${
+        constraint.table
+      }(${constraint.columns.join(", ")}): ${error.message}`;
+      throw error;
+    }
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS ${quoteIdentifier(constraint.name)}
       ON public.${quoteIdentifier(constraint.table)}
       (${formatColumnList(constraint.columns)})
     `);
+  } finally {
+    await client.query("RESET lock_timeout").catch(() => null);
+    await client.query("RESET statement_timeout").catch(() => null);
   }
 
   return true;
@@ -144,7 +192,7 @@ async function ensureApplicationUniqueConstraints(client = pool, { log = null } 
         )})`
       );
     }
-    const created = await ensureUniqueConstraint(client, constraint);
+    const created = await ensureUniqueConstraint(client, constraint, log);
     if (typeof log === "function") {
       log(
         `[db:schema] ${
