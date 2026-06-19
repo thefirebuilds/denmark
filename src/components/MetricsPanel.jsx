@@ -641,38 +641,22 @@ export default function MetricsPanel() {
     setError(null);
 
     const params = new URLSearchParams({ range });
-
-    const [summaryRes, vehiclesRes, trendsRes] = await Promise.all([
-      fetch(`${API_BASE}/api/metrics/summary?${params.toString()}`, {
+    const fetchMetricJson = async (label, path) => {
+      const response = await fetch(`${API_BASE}${path}?${params.toString()}`, {
         headers: { Accept: "application/json" },
-      }),
-      fetch(`${API_BASE}/api/metrics/vehicles?${params.toString()}`, {
-        headers: { Accept: "application/json" },
-      }),
-      fetch(`${API_BASE}/api/metrics/trends?${params.toString()}`, {
-        headers: { Accept: "application/json" },
-      }),
-    ]);
+      });
+      const text = await response.text();
 
-    const summaryText = await summaryRes.text();
-    const vehiclesText = await vehiclesRes.text();
-    const trendsText = await trendsRes.text();
+      if (!response.ok) {
+        throw new Error(`${label} request failed: ${response.status} ${text}`);
+      }
 
-    if (!summaryRes.ok) {
-      throw new Error(
-        `Summary request failed: ${summaryRes.status} ${summaryText}`
-      );
-    }
+      return text ? JSON.parse(text) : null;
+    };
 
-    if (!vehiclesRes.ok) {
-      throw new Error(
-        `Vehicles request failed: ${vehiclesRes.status} ${vehiclesText}`
-      );
-    }
-
-    const summaryData = JSON.parse(summaryText);
-    const vehiclesData = JSON.parse(vehiclesText);
-    const trendsData = trendsRes.ok ? JSON.parse(trendsText) : null;
+    const summaryData = await fetchMetricJson("Summary", "/api/metrics/summary");
+    const vehiclesData = await fetchMetricJson("Vehicles", "/api/metrics/vehicles");
+    const trendsData = await fetchMetricJson("Trends", "/api/metrics/trends");
 
     if (metricsLoadSeq.current !== loadSeq) return;
 
@@ -694,77 +678,41 @@ export default function MetricsPanel() {
     setParkingMetrics(null);
     setParkingTransfers(null);
 
-    fetch(`${API_BASE}/api/metrics/business/current?${params.toString()}`, {
-      headers: { Accept: "application/json" },
-    })
-      .then(async (businessRes) => {
-        const businessText = await businessRes.text();
-        if (!businessRes.ok) {
-          throw new Error(
-            `Business metrics request failed: ${businessRes.status} ${businessText}`
-          );
-        }
-        return businessText ? JSON.parse(businessText) : null;
-      })
-      .then((businessData) => {
-        if (metricsLoadSeq.current === loadSeq) {
-          setBusinessMetrics(businessData);
-        }
-      })
-      .catch((err) => {
-        console.warn("Business metrics loaded after primary metrics failed:", err);
-        if (metricsLoadSeq.current === loadSeq) {
-          setBusinessMetrics(null);
-        }
-      });
+    void (async () => {
+      const secondaryLoads = [
+        {
+          label: "Business metrics",
+          path: "/api/metrics/business/current",
+          apply: setBusinessMetrics,
+        },
+        {
+          label: "Parking metrics",
+          path: "/api/metrics/parking",
+          apply: setParkingMetrics,
+        },
+        {
+          label: "Parking transfer metrics",
+          path: "/api/metrics/parking/home-transfers",
+          apply: setParkingTransfers,
+        },
+      ];
 
-    fetch(`${API_BASE}/api/metrics/parking?${params.toString()}`, {
-      headers: { Accept: "application/json" },
-    })
-      .then(async (parkingRes) => {
-        const parkingText = await parkingRes.text();
-        if (!parkingRes.ok) {
-          throw new Error(
-            `Parking metrics request failed: ${parkingRes.status} ${parkingText}`
-          );
-        }
-        return parkingText ? JSON.parse(parkingText) : null;
-      })
-      .then((parkingData) => {
-        if (metricsLoadSeq.current === loadSeq) {
-          setParkingMetrics(parkingData);
-        }
-      })
-      .catch((err) => {
-        console.warn("Parking metrics loaded after primary metrics failed:", err);
-        if (metricsLoadSeq.current === loadSeq) {
-          setParkingMetrics(null);
-        }
-      });
+      for (const item of secondaryLoads) {
+        if (metricsLoadSeq.current !== loadSeq) return;
 
-    fetch(`${API_BASE}/api/metrics/parking/home-transfers?${params.toString()}`, {
-      headers: { Accept: "application/json" },
-    })
-      .then(async (transferRes) => {
-        const transferText = await transferRes.text();
-        if (!transferRes.ok) {
-          throw new Error(
-            `Parking transfer request failed: ${transferRes.status} ${transferText}`
-          );
+        try {
+          const data = await fetchMetricJson(item.label, item.path);
+          if (metricsLoadSeq.current === loadSeq) {
+            item.apply(data);
+          }
+        } catch (err) {
+          console.warn(`${item.label} loaded after primary metrics failed:`, err);
+          if (metricsLoadSeq.current === loadSeq) {
+            item.apply(null);
+          }
         }
-        return transferText ? JSON.parse(transferText) : null;
-      })
-      .then((transferData) => {
-        if (metricsLoadSeq.current === loadSeq) {
-          setParkingTransfers(transferData);
-        }
-      })
-      .catch((err) => {
-        console.warn("Parking transfer metrics loaded after primary metrics failed:", err);
-        if (metricsLoadSeq.current === loadSeq) {
-          setParkingTransfers(null);
-        }
-      });
+      }
+    })();
   }
 
   function toggleBusinessProfile(vehicleId) {

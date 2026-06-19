@@ -27,8 +27,41 @@ const {
 } = require("../services/metrics/parkingTransferService");
 
 const router = express.Router();
+const METRICS_MAX_CONCURRENT = Number(process.env.METRICS_MAX_CONCURRENT || 2);
+let activeMetricReads = 0;
+const queuedMetricReads = [];
 
-router.get("/", async (req, res) => {
+function acquireMetricsSlot() {
+  if (activeMetricReads < METRICS_MAX_CONCURRENT) {
+    activeMetricReads += 1;
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    queuedMetricReads.push(resolve);
+  }).then(() => {
+    activeMetricReads += 1;
+  });
+}
+
+function releaseMetricsSlot() {
+  activeMetricReads = Math.max(0, activeMetricReads - 1);
+  const next = queuedMetricReads.shift();
+  if (next) next();
+}
+
+function limitMetricRead(handler) {
+  return async (req, res, next) => {
+    await acquireMetricsSlot();
+    try {
+      return await handler(req, res, next);
+    } finally {
+      releaseMetricsSlot();
+    }
+  };
+}
+
+router.get("/", limitMetricRead(async (req, res) => {
   try {
     const data = await getSummaryMetrics(req.query.range || "30d");
     return res.json(data);
@@ -36,9 +69,9 @@ router.get("/", async (req, res) => {
     console.error("GET /api/metrics failed:", err);
     return res.status(500).json({ error: "Failed to load metrics" });
   }
-});
+}));
 
-router.get("/summary", async (req, res) => {
+router.get("/summary", limitMetricRead(async (req, res) => {
   try {
     const data = await getSummaryMetrics(req.query.range || "30d");
     return res.json(data);
@@ -46,9 +79,9 @@ router.get("/summary", async (req, res) => {
     console.error("GET /api/metrics/summary failed:", err);
     return res.status(500).json({ error: "Failed to load summary metrics" });
   }
-});
+}));
 
-router.get("/vehicles", async (req, res) => {
+router.get("/vehicles", limitMetricRead(async (req, res) => {
   try {
     const data = await getVehicleMetrics(req.query.range || "30d");
     return res.json(data);
@@ -56,9 +89,9 @@ router.get("/vehicles", async (req, res) => {
     console.error("GET /api/metrics/vehicles failed:", err);
     return res.status(500).json({ error: "Failed to load vehicle metrics" });
   }
-});
+}));
 
-router.get("/off-trip-audit", async (req, res) => {
+router.get("/off-trip-audit", limitMetricRead(async (req, res) => {
   try {
     const data = await getOffTripMileageAudit(req.query.range || "30d");
     return res.json(data);
@@ -66,9 +99,9 @@ router.get("/off-trip-audit", async (req, res) => {
     console.error("GET /api/metrics/off-trip-audit failed:", err);
     return res.status(500).json({ error: "Failed to load off-trip mileage audit" });
   }
-});
+}));
 
-router.get("/tolls/detail", async (req, res) => {
+router.get("/tolls/detail", limitMetricRead(async (req, res) => {
   try {
     const data = await getTollMetricsDetail(req.query.range || "30d");
     return res.json(data);
@@ -76,9 +109,9 @@ router.get("/tolls/detail", async (req, res) => {
     console.error("GET /api/metrics/tolls/detail failed:", err);
     return res.status(500).json({ error: "Failed to load toll detail" });
   }
-});
+}));
 
-router.get("/parking", async (req, res) => {
+router.get("/parking", limitMetricRead(async (req, res) => {
   try {
     const data = await getParkingEconomics(req.query.range || "30d");
     return res.json(data);
@@ -89,9 +122,9 @@ router.get("/parking", async (req, res) => {
       error: status === 500 ? "Failed to load parking metrics" : err.message,
     });
   }
-});
+}));
 
-router.get("/parking/home-transfers", async (req, res) => {
+router.get("/parking/home-transfers", limitMetricRead(async (req, res) => {
   try {
     const data = await getHomeParkingTransfers(req.query || {});
     return res.json(data);
@@ -102,7 +135,7 @@ router.get("/parking/home-transfers", async (req, res) => {
       error: status === 500 ? "Failed to load parking transfer metrics" : err.message,
     });
   }
-});
+}));
 
 router.put("/tolls/charges/:tollChargeId/assign-trip", async (req, res) => {
   const tollChargeId = Number(req.params.tollChargeId);
@@ -235,7 +268,7 @@ router.put("/tolls/charges/:tollChargeId/assign-trip", async (req, res) => {
   }
 });
 
-router.get("/vehicles/:vehicleId/financial-detail", async (req, res) => {
+router.get("/vehicles/:vehicleId/financial-detail", limitMetricRead(async (req, res) => {
   try {
     const data = await getVehicleFinancialDetail(
       req.params.vehicleId,
@@ -249,7 +282,7 @@ router.get("/vehicles/:vehicleId/financial-detail", async (req, res) => {
     console.error("GET /api/metrics/vehicles/:vehicleId/financial-detail failed:", err);
     return res.status(500).json({ error: "Failed to load vehicle financial detail" });
   }
-});
+}));
 
 router.put("/off-trip-audit/review", async (req, res) => {
   try {
@@ -348,7 +381,7 @@ router.put("/off-trip-audit/review", async (req, res) => {
   }
 });
 
-router.get("/trends", async (req, res) => {
+router.get("/trends", limitMetricRead(async (req, res) => {
   try {
     const data = await getTrendMetrics(req.query.range || "90d");
     return res.json(data);
@@ -356,6 +389,6 @@ router.get("/trends", async (req, res) => {
     console.error("GET /api/metrics/trends failed:", err);
     return res.status(500).json({ error: "Failed to load trend metrics" });
   }
-});
+}));
 
 module.exports = router;
