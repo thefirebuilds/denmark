@@ -436,6 +436,53 @@
   font-size: 0.9rem;
 }
 
+.settings-calendar-cleanup {
+  border: 1px solid #2a395d;
+  background: rgba(15, 23, 42, 0.48);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.settings-calendar-cleanup > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-calendar-cleanup strong {
+  color: #f8fafc;
+}
+
+.settings-calendar-cleanup span {
+  color: #9fb0c7;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.settings-calendar-cleanup-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-calendar-cleanup-summary span {
+  border: 1px solid #28415f;
+  background: #0d1520;
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.settings-calendar-cleanup-summary strong {
+  font-size: 1rem;
+}
+
 .settings-list {
   display: grid;
   gap: 8px;
@@ -656,6 +703,7 @@
   .settings-inline-add,
   .settings-category-row,
   .settings-fleet-summary,
+  .settings-calendar-cleanup-summary,
   .settings-vehicle-config-head,
   .settings-dimo-share-card {
     display: flex;

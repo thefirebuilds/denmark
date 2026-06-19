@@ -21,6 +21,10 @@ const {
   getGoogleCalendarSyncSettings,
   isGoogleCalendarSyncEnabled,
 } = require("../services/googleCalendar/googleCalendarSyncSettings");
+const {
+  previewGoogleCalendarDuplicateCleanup,
+  runGoogleCalendarDuplicateCleanup,
+} = require("../services/googleCalendar/googleCalendarDedupe");
 const { logRequestActivity } = require("../services/systemActivityLog");
 const {
   resolveAuthPublicUrlSettings,
@@ -177,6 +181,92 @@ router.post("/reconcile-trips", async (req, res, next) => {
         processed: result?.processed ?? null,
       },
     }).catch(() => null);
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+async function getConnectedCalendarClient(req) {
+  const userId = getRouteUserId(req);
+  const connection = await getGoogleCalendarConnection(userId);
+
+  if (!connection) {
+    const err = new Error("No Google Calendar connection found");
+    err.status = 404;
+    throw err;
+  }
+
+  if (!connection.calendar_id) {
+    const err = new Error("No selected calendar_id saved");
+    err.status = 400;
+    throw err;
+  }
+
+  const oauth2Client = getOAuthClient();
+  oauth2Client.setCredentials({
+    refresh_token: connection.refresh_token,
+  });
+
+  return {
+    connection,
+    calendar: google.calendar({ version: "v3", auth: oauth2Client }),
+  };
+}
+
+router.post("/dedupe/preview", async (req, res, next) => {
+  try {
+    const { connection, calendar } = await getConnectedCalendarClient(req);
+    const result = await previewGoogleCalendarDuplicateCleanup(
+      calendar,
+      connection.calendar_id
+    );
+
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_duplicate_cleanup_previewed",
+      subjectType: "google_calendar",
+      subjectId: connection.calendar_id,
+      subjectLabel: connection.calendar_summary || connection.calendar_id,
+      source: "google-calendar",
+      details: {
+        scannedEvents: result.scannedEvents,
+        duplicateGroups: result.duplicateGroups.length,
+        removableEvents: result.removableEvents,
+      },
+    }).catch(() => null);
+
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/dedupe/run", async (req, res, next) => {
+  try {
+    const { connection, calendar } = await getConnectedCalendarClient(req);
+    const result = await runGoogleCalendarDuplicateCleanup(
+      calendar,
+      connection.calendar_id
+    );
+
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_duplicate_cleanup_run",
+      severity: result.ok ? "notice" : "warning",
+      outcome: result.ok ? "success" : "failure",
+      subjectType: "google_calendar",
+      subjectId: connection.calendar_id,
+      subjectLabel: connection.calendar_summary || connection.calendar_id,
+      source: "google-calendar",
+      details: {
+        scannedEvents: result.scannedEvents,
+        duplicateGroups: result.duplicateGroups,
+        removedEvents: result.removedEvents,
+        failedEvents: result.failedEvents,
+      },
+    }).catch(() => null);
+
     return res.json(result);
   } catch (err) {
     next(err);

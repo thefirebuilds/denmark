@@ -2590,9 +2590,14 @@ function GoogleCalendarCard({
   status,
   loading,
   syncing,
+  cleanupPreview,
+  previewingCleanup,
+  runningCleanup,
   savingSyncEnabled,
   onConnect,
   onSync,
+  onPreviewCleanup,
+  onRunCleanup,
   onSyncEnabledChange,
 }) {
   const syncEnabled = status?.syncEnabled !== false;
@@ -2701,6 +2706,67 @@ function GoogleCalendarCard({
           {syncing ? "Syncing..." : syncEnabled ? "Sync Trips" : "Sync Disabled"}
         </button>
       </div>
+
+      <div className="settings-calendar-cleanup">
+        <div>
+          <strong>Duplicate cleanup</strong>
+          <span>
+            Scans Denmark trip and maintenance events on the selected calendar,
+            then removes duplicate copies while keeping the newest shared event.
+          </span>
+        </div>
+        {cleanupPreview ? (
+          <div className="settings-calendar-cleanup-summary">
+            <span>
+              Scanned <strong>{cleanupPreview.scannedEvents || 0}</strong>
+            </span>
+            <span>
+              Groups{" "}
+              <strong>
+                {Array.isArray(cleanupPreview.duplicateGroups)
+                  ? cleanupPreview.duplicateGroups.length
+                  : cleanupPreview.duplicateGroups || 0}
+              </strong>
+            </span>
+            <span>
+              Removable{" "}
+              <strong>
+                {cleanupPreview.removableEvents ?? cleanupPreview.removedEvents ?? 0}
+              </strong>
+            </span>
+          </div>
+        ) : null}
+        <div className="settings-form-actions">
+          <button
+            type="button"
+            className="settings-action-btn secondary"
+            disabled={
+              loading ||
+              previewingCleanup ||
+              runningCleanup ||
+              !status?.connected
+            }
+            onClick={onPreviewCleanup}
+          >
+            {previewingCleanup ? "Scanning..." : "Preview Cleanup"}
+          </button>
+          <button
+            type="button"
+            className="settings-action-btn settings-action-btn--danger"
+            disabled={
+              loading ||
+              previewingCleanup ||
+              runningCleanup ||
+              !status?.connected ||
+              !cleanupPreview ||
+              Number(cleanupPreview.removableEvents || 0) <= 0
+            }
+            onClick={onRunCleanup}
+          >
+            {runningCleanup ? "Cleaning..." : "Delete Duplicates"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2717,6 +2783,12 @@ function IntegrationsSettingsPanel() {
   const [syncing, setSyncing] = useState(false);
   const [syncingMercury, setSyncingMercury] = useState(false);
   const [syncingGoogleCalendar, setSyncingGoogleCalendar] = useState(false);
+  const [previewingGoogleCalendarCleanup, setPreviewingGoogleCalendarCleanup] =
+    useState(false);
+  const [runningGoogleCalendarCleanup, setRunningGoogleCalendarCleanup] =
+    useState(false);
+  const [googleCalendarCleanupPreview, setGoogleCalendarCleanupPreview] =
+    useState(null);
   const [savingGoogleCalendarSyncEnabled, setSavingGoogleCalendarSyncEnabled] =
     useState(false);
   const [message, setMessage] = useState("");
@@ -2986,6 +3058,7 @@ function IntegrationsSettingsPanel() {
         syncEnabled: json?.value?.syncEnabled !== false,
         settings: json?.value || { syncEnabled },
       }));
+      setGoogleCalendarCleanupPreview(null);
       setMessage(
         syncEnabled
           ? "Google Calendar sync enabled for this tenant."
@@ -2996,6 +3069,87 @@ function IntegrationsSettingsPanel() {
       setMessage(err.message || "Failed to save Google Calendar setting");
     } finally {
       setSavingGoogleCalendarSyncEnabled(false);
+    }
+  }
+
+  async function previewGoogleCalendarCleanup() {
+    try {
+      setPreviewingGoogleCalendarCleanup(true);
+      setMessage("");
+
+      const res = await fetch(
+        `${API_BASE}/api/integrations/google-calendar/dedupe/preview`,
+        { method: "POST" }
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to preview calendar cleanup");
+      }
+
+      setGoogleCalendarCleanupPreview(json);
+      setMessage(
+        `Calendar cleanup found ${json.removableEvents || 0} duplicate event${
+          Number(json.removableEvents || 0) === 1 ? "" : "s"
+        } across ${
+          Array.isArray(json.duplicateGroups)
+            ? json.duplicateGroups.length
+            : json.duplicateGroups || 0
+        } group${
+          (Array.isArray(json.duplicateGroups)
+            ? json.duplicateGroups.length
+            : json.duplicateGroups || 0) === 1
+            ? ""
+            : "s"
+        }.`
+      );
+    } catch (err) {
+      setMessage(err.message || "Failed to preview calendar cleanup");
+    } finally {
+      setPreviewingGoogleCalendarCleanup(false);
+    }
+  }
+
+  async function runGoogleCalendarCleanup() {
+    const removableEvents = Number(googleCalendarCleanupPreview?.removableEvents || 0);
+    if (removableEvents <= 0) return;
+
+    const confirmed = window.confirm(
+      `Delete ${removableEvents} duplicate Denmark calendar event${
+        removableEvents === 1 ? "" : "s"
+      } from the selected Google Calendar?`
+    );
+    if (!confirmed) return;
+
+    try {
+      setRunningGoogleCalendarCleanup(true);
+      setMessage("");
+
+      const res = await fetch(
+        `${API_BASE}/api/integrations/google-calendar/dedupe/run`,
+        { method: "POST" }
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to clean calendar duplicates");
+      }
+
+      setGoogleCalendarCleanupPreview({
+        ...json,
+        removableEvents: 0,
+        duplicateGroups: json.duplicateGroups || 0,
+      });
+      setMessage(
+        `Calendar cleanup removed ${json.removedEvents || 0} duplicate event${
+          Number(json.removedEvents || 0) === 1 ? "" : "s"
+        }${json.failedEvents ? ` with ${json.failedEvents} failure(s)` : ""}.`
+      );
+      await loadTellerState();
+    } catch (err) {
+      setMessage(err.message || "Failed to clean calendar duplicates");
+    } finally {
+      setRunningGoogleCalendarCleanup(false);
     }
   }
 
@@ -3023,9 +3177,14 @@ function IntegrationsSettingsPanel() {
           status={googleCalendarStatus}
           loading={loading}
           syncing={syncingGoogleCalendar}
+          cleanupPreview={googleCalendarCleanupPreview}
+          previewingCleanup={previewingGoogleCalendarCleanup}
+          runningCleanup={runningGoogleCalendarCleanup}
           savingSyncEnabled={savingGoogleCalendarSyncEnabled}
           onConnect={connectGoogleCalendar}
           onSync={syncGoogleCalendar}
+          onPreviewCleanup={previewGoogleCalendarCleanup}
+          onRunCleanup={runGoogleCalendarCleanup}
           onSyncEnabledChange={setGoogleCalendarSyncEnabled}
         />
 
