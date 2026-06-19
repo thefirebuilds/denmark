@@ -42,6 +42,7 @@ const {
   getEffectiveSmsAlertSettings,
   saveSmsAlertSettings,
 } = require("../services/alerts/smsAlertSettings");
+const { sendSms } = require("../services/alerts/twilioSms");
 
 const router = express.Router();
 
@@ -331,6 +332,43 @@ router.put(`/${SMS_ALERT_SETTINGS_KEY}`, async (req, res) => {
   } catch (err) {
     console.error("PUT /api/settings/alerts.sms failed:", err);
     res.status(500).json({ error: "Failed to save SMS alert settings" });
+  }
+});
+
+router.post(`/${SMS_ALERT_SETTINGS_KEY}/test`, async (req, res) => {
+  try {
+    const delivery = await sendSms(
+      `Denmark test text from ${
+        req.hostname || "this tenant"
+      } at ${new Date().toLocaleString("en-US", {
+        timeZone: "America/Chicago",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      })}.`
+    );
+
+    if (delivery.skipped) {
+      return res.status(409).json({
+        ok: false,
+        skipped: true,
+        reason: delivery.reason || "sms skipped",
+      });
+    }
+
+    return res.json({
+      ok: delivery.ok === true,
+      sid: delivery.sid || null,
+      status: delivery.status || null,
+    });
+  } catch (err) {
+    console.error("POST /api/settings/alerts.sms/test failed:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message || "Failed to send test SMS",
+    });
   }
 });
 

@@ -605,6 +605,7 @@ function AlertSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingSms, setSavingSms] = useState(false);
+  const [sendingSmsTest, setSendingSmsTest] = useState(false);
   const [message, setMessage] = useState("");
   const dirtyRef = useRef(false);
   const saveSeqRef = useRef(0);
@@ -758,6 +759,37 @@ function AlertSettingsPanel() {
     }
   }
 
+  async function sendSmsTest() {
+    try {
+      setSendingSmsTest(true);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/settings/alerts.sms/test`, {
+        method: "POST",
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || json.ok === false) {
+        throw new Error(json?.error || json?.reason || "Failed to send test SMS");
+      }
+
+      setMessage(
+        `Test text sent${json.sid ? ` (${json.sid})` : ""}.`
+      );
+    } catch (err) {
+      setMessage(err.message || "Failed to send test SMS");
+    } finally {
+      setSendingSmsTest(false);
+    }
+  }
+
+  const smsFormLooksConfigured = Boolean(
+    smsForm.accountSid &&
+      (smsForm.authToken || smsForm.authTokenConfigured) &&
+      smsForm.senderNumber &&
+      smsForm.receiverNumber
+  );
+
   return (
     <section className="panel settings-main-panel">
       <div className="panel-header">
@@ -841,11 +873,29 @@ function AlertSettingsPanel() {
             <button
               type="submit"
               className="settings-action-btn"
-              disabled={loading || savingSms}
+              disabled={loading || savingSms || sendingSmsTest}
             >
               {savingSms ? "Saving..." : "Save Text Alerts"}
             </button>
+            <button
+              type="button"
+              className="settings-action-btn secondary"
+              disabled={
+                loading ||
+                savingSms ||
+                sendingSmsTest ||
+                smsForm.enabled === false ||
+                !smsFormLooksConfigured
+              }
+              onClick={sendSmsTest}
+            >
+              {sendingSmsTest ? "Sending..." : "Send Test"}
+            </button>
           </div>
+          <small className="settings-field-note">
+            Send Test uses the currently saved settings. Save first after making
+            credential changes.
+          </small>
         </form>
 
         <div className="settings-group">
