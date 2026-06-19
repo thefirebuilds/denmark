@@ -6,10 +6,6 @@ try {
 
 const DEFAULT_API_BASES = [
   "https://denmark.freshcoastgarage.com",
-  "http://127.0.0.1:5000",
-  "http://localhost:5000",
-  "http://127.0.0.1:3001",
-  "http://localhost:3001",
 ];
 const DEFAULT_APP_URL_PATTERNS = [
   "https://denmark.freshcoastgarage.com/*",

@@ -12,7 +12,7 @@ The extension does not store Facebook credentials. It uses the current Chrome pr
 - Talks to the configured Denmark API. The default target is:
   - `https://denmark.freshcoastgarage.com`
 
-  Local development fallbacks are also included:
+  Local development fallbacks are available only if you add them to `marketplace_config.js`:
   - `http://localhost:5000`
   - `http://127.0.0.1:5000`
   - `http://localhost:3001`
@@ -39,8 +39,6 @@ For a hosted tenant, set the first entries to that tenant URL:
 globalThis.FCG_MARKETPLACE_CONFIG = {
   apiBases: [
     "https://denmark.freshcoastgarage.com",
-    "http://127.0.0.1:5000",
-    "http://localhost:5000",
   ],
   appUrlPatterns: [
     "https://denmark.freshcoastgarage.com/*",
@@ -50,7 +48,7 @@ globalThis.FCG_MARKETPLACE_CONFIG = {
 };
 ```
 
-`apiBases` controls where Marketplace listing data is posted. `appUrlPatterns` controls which Denmark app pages can talk to the extension for batch enrich status and commands. After changing this file, reload the extension in `chrome://extensions`.
+`apiBases` controls where Marketplace listing data is posted. Keep one entry for normal use so failed hosted requests do not fall through to a local test tenant. `appUrlPatterns` controls which Denmark app pages can talk to the extension for batch enrich status and commands. After changing this file, reload the extension in `chrome://extensions`.
 
 ## Configure Credentials / Session
 

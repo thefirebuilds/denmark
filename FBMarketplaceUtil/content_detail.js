@@ -11,10 +11,6 @@
 
   const DEFAULT_API_BASES = [
     "https://denmark.freshcoastgarage.com",
-    "http://127.0.0.1:5000",
-    "http://localhost:5000",
-    "http://127.0.0.1:3001",
-    "http://localhost:3001",
   ];
   const MARKETPLACE_CONFIG = window.FCG_MARKETPLACE_CONFIG || {};
   const configuredApiBases = (Array.isArray(MARKETPLACE_CONFIG.apiBases)
