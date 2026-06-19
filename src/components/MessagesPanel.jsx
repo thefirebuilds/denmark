@@ -1397,6 +1397,8 @@ async function handleMarkAsRead(messageId) {
     typeof messageId === "object" && messageId !== null
       ? messageId
       : messages.find((item) => item.id === messageId);
+  const isGuestThread =
+    (message?.type || message?.message_type) === "guest_message_thread";
   const ids = Array.isArray(message?.message_ids) && message.message_ids.length
     ? message.message_ids
     : [typeof messageId === "object" ? message?.id : messageId].filter(Boolean);
@@ -1419,7 +1421,27 @@ async function handleMarkAsRead(messageId) {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ ids }),
+      body: JSON.stringify({
+        ids,
+        thread: isGuestThread
+          ? {
+              type: "guest_message_thread",
+              key: message.guest_thread_key || null,
+              tripId: message.guest_thread_trip_id || message.trip_id || null,
+              reservationId:
+                message.guest_thread_reservation_id ||
+                message.reservation_id ||
+                null,
+              guestName:
+                message.guest_thread_guest_name || message.guest_name || null,
+              vehicleName:
+                message.guest_thread_vehicle_name ||
+                message.vehicle_nickname ||
+                message.vehicle_name ||
+                null,
+            }
+          : null,
+      }),
     });
 
     if (!res.ok) {
