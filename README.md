@@ -309,7 +309,10 @@ Add any integrations you use:
 - `TELLER_*`
 - `OPENAI_*`, if using FMV enrichment
 - `PUBLIC_AVAILABILITY_*`, if pushing availability to another site
-- `TWILIO_*`, if operational text alerts are enabled in your environment
+
+Operational text alerts are configured in the app at **Settings > Maintenance >
+Alerts**. Legacy `TWILIO_*` environment variables are still read as a fallback
+until tenant-level Twilio settings are saved.
 
 For login in production, configure OIDC provider identity in `.env`:
 

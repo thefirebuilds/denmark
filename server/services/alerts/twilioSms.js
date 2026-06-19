@@ -1,29 +1,37 @@
 const https = require("https");
+const { getEffectiveSmsAlertSettings } = require("./smsAlertSettings");
 
-function getTwilioConfig() {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN || process.env.TWILIO_CLIENT_SECRET;
-  const from =
-    process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_SENDER_NUMBER;
-  const to = process.env.TWILIO_TO_NUMBER || process.env.TWILIO_RECEIVER_NUMBER;
+async function getTwilioConfig() {
+  const settings = await getEffectiveSmsAlertSettings();
 
   return {
-    accountSid,
-    authToken,
-    from,
-    to,
-    enabled: Boolean(accountSid && authToken && from && to),
+    accountSid: settings.accountSid,
+    authToken: settings.authToken,
+    from: settings.senderNumber,
+    to: settings.receiverNumber,
+    enabled: settings.enabled !== false && settings.configured,
+    alertsEnabled: settings.enabled !== false,
+    configured: settings.configured,
+    source: settings.source,
   };
 }
 
-function sendSms(body, options = {}) {
-  const config = getTwilioConfig();
-  if (!config.enabled) {
-    return Promise.resolve({
+async function sendSms(body, options = {}) {
+  const config = await getTwilioConfig();
+  if (!config.alertsEnabled) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "sms_alerts_disabled",
+    };
+  }
+
+  if (!config.configured) {
+    return {
       ok: false,
       skipped: true,
       reason: "missing_twilio_config",
-    });
+    };
   }
 
   const payload = new URLSearchParams({

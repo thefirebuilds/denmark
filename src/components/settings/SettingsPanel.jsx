@@ -31,6 +31,16 @@ const DEFAULT_BRIDGE_ALERT_SETTINGS = {
   heartbeatStaleMinutes: 25,
   turoNotificationStaleHours: 12,
 };
+const DEFAULT_SMS_ALERT_SETTINGS = {
+  enabled: true,
+  accountSid: "",
+  authToken: "",
+  authTokenConfigured: false,
+  senderNumber: "",
+  receiverNumber: "",
+  configured: false,
+  source: "database",
+};
 const DEFAULT_MARKETPLACE_FILTERS = {
   minPrice: "",
   maxPrice: "",
@@ -188,6 +198,21 @@ function mergeBridgeAlertSettings(settings) {
       Number.isFinite(turoNotificationStaleHours) && turoNotificationStaleHours >= 1
         ? Math.min(turoNotificationStaleHours, 168)
         : DEFAULT_BRIDGE_ALERT_SETTINGS.turoNotificationStaleHours,
+  };
+}
+
+function mergeSmsAlertSettings(settings) {
+  return {
+    ...DEFAULT_SMS_ALERT_SETTINGS,
+    ...(settings || {}),
+    enabled: settings?.enabled !== false,
+    accountSid: String(settings?.accountSid || ""),
+    authToken: String(settings?.authToken || ""),
+    authTokenConfigured: Boolean(settings?.authTokenConfigured),
+    senderNumber: String(settings?.senderNumber || ""),
+    receiverNumber: String(settings?.receiverNumber || ""),
+    configured: Boolean(settings?.configured),
+    source: String(settings?.source || "database"),
   };
 }
 
@@ -576,8 +601,10 @@ function DispatchSettingsPanel({ settings, onSaved }) {
 
 function AlertSettingsPanel() {
   const [form, setForm] = useState(DEFAULT_BRIDGE_ALERT_SETTINGS);
+  const [smsForm, setSmsForm] = useState(DEFAULT_SMS_ALERT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingSms, setSavingSms] = useState(false);
   const [message, setMessage] = useState("");
   const dirtyRef = useRef(false);
   const saveSeqRef = useRef(0);
@@ -588,16 +615,24 @@ function AlertSettingsPanel() {
     async function loadSettings() {
       try {
         setLoading(true);
-        const res = await fetch(`${API_BASE}/api/settings/alerts.bridge`);
-        const json = await res.json().catch(() => ({}));
+        const [bridgeRes, smsRes] = await Promise.all([
+          fetch(`${API_BASE}/api/settings/alerts.bridge`),
+          fetch(`${API_BASE}/api/settings/alerts.sms`),
+        ]);
+        const bridgeJson = await bridgeRes.json().catch(() => ({}));
+        const smsJson = await smsRes.json().catch(() => ({}));
 
-        if (!res.ok) {
-          throw new Error(json?.error || "Failed to load alert settings");
+        if (!bridgeRes.ok) {
+          throw new Error(bridgeJson?.error || "Failed to load alert settings");
+        }
+        if (!smsRes.ok) {
+          throw new Error(smsJson?.error || "Failed to load SMS settings");
         }
 
         if (cancelled) return;
         dirtyRef.current = false;
-        setForm(mergeBridgeAlertSettings(json.value));
+        setForm(mergeBridgeAlertSettings(bridgeJson.value));
+        setSmsForm(mergeSmsAlertSettings(smsJson.value));
         setMessage("");
       } catch (err) {
         if (!cancelled) {
@@ -676,6 +711,53 @@ function AlertSettingsPanel() {
     );
   }
 
+  function updateSmsField(key, value) {
+    setSmsForm((current) =>
+      mergeSmsAlertSettings({
+        ...current,
+        [key]: value,
+      })
+    );
+  }
+
+  async function saveSmsSettings(event) {
+    event.preventDefault();
+
+    try {
+      setSavingSms(true);
+      setMessage("");
+
+      const payload = {
+        enabled: smsForm.enabled !== false,
+        accountSid: smsForm.accountSid,
+        authToken:
+          smsForm.authToken && !smsForm.authToken.startsWith("********")
+            ? smsForm.authToken
+            : "",
+        senderNumber: smsForm.senderNumber,
+        receiverNumber: smsForm.receiverNumber,
+      };
+
+      const res = await fetch(`${API_BASE}/api/settings/alerts.sms`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: payload }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save SMS settings");
+      }
+
+      setSmsForm(mergeSmsAlertSettings(json.value || payload));
+      setMessage("SMS alert settings saved");
+    } catch (err) {
+      setMessage(err.message || "Failed to save SMS settings");
+    } finally {
+      setSavingSms(false);
+    }
+  }
+
   return (
     <section className="panel settings-main-panel">
       <div className="panel-header">
@@ -689,6 +771,83 @@ function AlertSettingsPanel() {
       </div>
 
       <div className="settings-form">
+        <form className="settings-group" onSubmit={saveSmsSettings}>
+          <div className="settings-group-title">Text alerts</div>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={smsForm.enabled !== false}
+              onChange={(event) => updateSmsField("enabled", event.target.checked)}
+            />
+            <span>Enable SMS text alerts for this tenant</span>
+          </label>
+          <small className="settings-field-note">
+            This controls every Denmark text alert. Twilio values saved here take
+            priority over legacy environment variables.
+          </small>
+          <div className="settings-vehicle-list">
+            <div className="settings-vehicle-row">
+              <strong>Twilio source</strong>
+              <span>{smsForm.source === "environment" ? "Environment fallback" : "Tenant settings"}</span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Configuration</strong>
+              <span>{smsForm.configured ? "Ready" : "Missing credentials"}</span>
+            </div>
+          </div>
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Account SID</span>
+              <input
+                type="text"
+                value={smsForm.accountSid}
+                onChange={(event) => updateSmsField("accountSid", event.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <label className="settings-field">
+              <span>Auth token / client secret</span>
+              <input
+                type="password"
+                value={smsForm.authToken}
+                placeholder={smsForm.authTokenConfigured ? "Saved; leave blank to keep" : ""}
+                onChange={(event) => updateSmsField("authToken", event.target.value)}
+                autoComplete="new-password"
+              />
+              <small className="settings-field-note">
+                Leave blank to keep the saved secret.
+              </small>
+            </label>
+            <label className="settings-field">
+              <span>Sender number</span>
+              <input
+                type="text"
+                value={smsForm.senderNumber}
+                onChange={(event) => updateSmsField("senderNumber", event.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <label className="settings-field">
+              <span>Receiver number</span>
+              <input
+                type="text"
+                value={smsForm.receiverNumber}
+                onChange={(event) => updateSmsField("receiverNumber", event.target.value)}
+                autoComplete="off"
+              />
+            </label>
+          </div>
+          <div className="settings-form-actions">
+            <button
+              type="submit"
+              className="settings-action-btn"
+              disabled={loading || savingSms}
+            >
+              {savingSms ? "Saving..." : "Save Text Alerts"}
+            </button>
+          </div>
+        </form>
+
         <div className="settings-group">
           <div className="settings-group-title">Android bridge</div>
           <label className="settings-checkbox-row">

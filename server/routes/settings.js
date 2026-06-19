@@ -34,6 +34,14 @@ const {
   DEFAULT_BRIDGE_ALERT_SETTINGS,
   normalizeBridgeAlertSettings,
 } = require("../services/alerts/bridgeAlertSettings");
+const {
+  SETTINGS_KEY: SMS_ALERT_SETTINGS_KEY,
+  DEFAULT_SMS_ALERT_SETTINGS,
+  normalizeSmsAlertSettings,
+  sanitizeSmsAlertSettings,
+  getEffectiveSmsAlertSettings,
+  saveSmsAlertSettings,
+} = require("../services/alerts/smsAlertSettings");
 
 const router = express.Router();
 
@@ -81,6 +89,7 @@ const DEFAULT_SETTINGS = {
     categories: DEFAULT_EXPENSE_CATEGORIES,
   },
   "alerts.bridge": DEFAULT_BRIDGE_ALERT_SETTINGS,
+  [SMS_ALERT_SETTINGS_KEY]: DEFAULT_SMS_ALERT_SETTINGS,
   [GOOGLE_CALENDAR_SETTINGS_KEY]: DEFAULT_GOOGLE_CALENDAR_SYNC_SETTINGS,
   [LOCATION_SETTINGS_KEY]: getDefaultLocationSettings(),
   [PUBLIC_BASE_URL_KEY]: {
@@ -146,6 +155,10 @@ function mergeSettings(key, value) {
     return normalizeBridgeAlertSettings(value);
   }
 
+  if (key === SMS_ALERT_SETTINGS_KEY) {
+    return normalizeSmsAlertSettings(value);
+  }
+
   if (key === GOOGLE_CALENDAR_SETTINGS_KEY) {
     return normalizeGoogleCalendarSyncSettings(value);
   }
@@ -192,6 +205,13 @@ router.get("/", async (req, res) => {
 
     for (const row of rows) {
       settings[row.key] = mergeSettings(row.key, row.value);
+    }
+
+    if (settings[SMS_ALERT_SETTINGS_KEY]) {
+      settings[SMS_ALERT_SETTINGS_KEY] = sanitizeSmsAlertSettings(
+        settings[SMS_ALERT_SETTINGS_KEY],
+        { source: "database" }
+      );
     }
 
     res.json({ settings });
@@ -283,6 +303,34 @@ router.put("/auth/public-url", async (req, res) => {
     res.status(400).json({
       error: err.message || "Failed to save auth public URL settings",
     });
+  }
+});
+
+router.get(`/${SMS_ALERT_SETTINGS_KEY}`, async (req, res) => {
+  try {
+    const settings = await getEffectiveSmsAlertSettings();
+    res.json({
+      key: SMS_ALERT_SETTINGS_KEY,
+      value: sanitizeSmsAlertSettings(settings, { source: settings.source }),
+      updated_at: null,
+    });
+  } catch (err) {
+    console.error("GET /api/settings/alerts.sms failed:", err);
+    res.status(500).json({ error: "Failed to load SMS alert settings" });
+  }
+});
+
+router.put(`/${SMS_ALERT_SETTINGS_KEY}`, async (req, res) => {
+  try {
+    const settings = await saveSmsAlertSettings(req.body?.value ?? req.body);
+    res.json({
+      key: SMS_ALERT_SETTINGS_KEY,
+      value: sanitizeSmsAlertSettings(settings, { source: "database" }),
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("PUT /api/settings/alerts.sms failed:", err);
+    res.status(500).json({ error: "Failed to save SMS alert settings" });
   }
 });
 
