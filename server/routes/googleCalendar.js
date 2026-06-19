@@ -26,9 +26,31 @@ const {
 const router = express.Router();
 const GOOGLE_CALENDAR_CALLBACK_PATH = "/api/integrations/google-calendar/callback";
 
+function isLocalhostRedirectUri(value) {
+  try {
+    const parsed = new URL(value);
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
 function getConfiguredGoogleCalendarRedirectUri() {
   const value = String(process.env.GOOGLE_REDIRECT_URI || "").trim();
   if (!value) return "";
+
+  if (
+    process.env.NODE_ENV === "production" &&
+    isLocalhostRedirectUri(value) &&
+    String(process.env.ALLOW_LOCALHOST_PUBLIC_BASE_URL || "").trim().toLowerCase() !==
+      "true"
+  ) {
+    console.warn(
+      "[google-calendar] ignoring localhost GOOGLE_REDIRECT_URI in production"
+    );
+    return "";
+  }
 
   try {
     const parsed = new URL(value);

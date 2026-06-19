@@ -221,6 +221,7 @@ async function listGoogleCalendarSyncTargets() {
     FROM google_calendar_connections
     WHERE refresh_token_encrypted IS NOT NULL
       AND calendar_id IS NOT NULL
+      AND COALESCE(token_status, 'valid') <> 'invalid'
     ORDER BY
       CASE WHEN user_id IS NULL THEN 1 ELSE 0 END,
       updated_at DESC
