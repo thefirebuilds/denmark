@@ -12,6 +12,9 @@ const {
 } = require("./tripGoogleSyncStore");
 const { markGoogleCalendarConnectionHealth } = require("./googleCalendarStore");
 const { getDesiredGoogleEventsForTrip } = require("./googleTripEventBuilder");
+const {
+  isGoogleCalendarSyncEnabled,
+} = require("./googleCalendarSyncSettings");
 
 function getGoogleApiErrorCode(err) {
   return (
@@ -71,6 +74,20 @@ async function upsertGoogleEvent({
 }
 
 async function syncTripToGoogle(tripId, userId = null, options = {}) {
+  if (options.allowWhenDisabled !== true) {
+    const syncEnabled = await isGoogleCalendarSyncEnabled();
+    if (!syncEnabled) {
+      return {
+        tripId,
+        calendarId: null,
+        syncedEvents: [],
+        desiredEventTypes: [],
+        skipped: true,
+        reason: "google_calendar_sync_disabled",
+      };
+    }
+  }
+
   const trip = await getTripById(tripId);
   if (!trip) {
     throw new Error(`Trip ${tripId} not found`);
@@ -169,6 +186,17 @@ async function syncTripToGoogle(tripId, userId = null, options = {}) {
 }
 
 async function reconcileTripsToGoogle({ userId = null, limit = 500 } = {}) {
+  const syncEnabled = await isGoogleCalendarSyncEnabled();
+  if (!syncEnabled) {
+    return {
+      ok: true,
+      processed: 0,
+      skipped: true,
+      reason: "google_calendar_sync_disabled",
+      results: [],
+    };
+  }
+
   const trips = await getTripsForGoogleCalendarReconcile(limit);
   const results = [];
 
@@ -197,6 +225,20 @@ async function reconcileTripsToGoogle({ userId = null, limit = 500 } = {}) {
 }
 
 async function syncTripToSelectedGoogleCalendars(tripId, options = {}) {
+  if (options.allowWhenDisabled !== true) {
+    const syncEnabled = await isGoogleCalendarSyncEnabled();
+    if (!syncEnabled) {
+      return {
+        ok: true,
+        tripId,
+        processed: 0,
+        skipped: true,
+        reason: "google_calendar_sync_disabled",
+        results: [],
+      };
+    }
+  }
+
   const targets = await listGoogleCalendarSyncTargets();
 
   if (!targets.length) {

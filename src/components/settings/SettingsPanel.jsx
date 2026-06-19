@@ -2590,9 +2590,12 @@ function GoogleCalendarCard({
   status,
   loading,
   syncing,
+  savingSyncEnabled,
   onConnect,
   onSync,
+  onSyncEnabledChange,
 }) {
+  const syncEnabled = status?.syncEnabled !== false;
   const tokenStatus = status?.tokenStatus || "missing";
   const needsReconnect =
     tokenStatus === "invalid" ||
@@ -2623,7 +2626,31 @@ function GoogleCalendarCard({
         so Denmark checks the saved token directly.
       </div>
 
+      <label className="settings-check-row">
+        <input
+          type="checkbox"
+          checked={syncEnabled}
+          disabled={loading || savingSyncEnabled}
+          onChange={(event) => onSyncEnabledChange?.(event.target.checked)}
+        />
+        <span>
+          {savingSyncEnabled
+            ? "Saving calendar sync setting..."
+            : "Enable trip and maintenance event syncing for this tenant"}
+        </span>
+      </label>
+
       <div className="settings-vehicle-list">
+        <div className="settings-vehicle-row">
+          <strong>Sync writes</strong>
+          <span
+            className={`settings-status-badge ${
+              syncEnabled ? "is-ok" : "is-muted"
+            }`}
+          >
+            {syncEnabled ? "Enabled" : "Disabled"}
+          </span>
+        </div>
         <div className="settings-vehicle-row">
           <strong>Status</strong>
           <span className={`settings-status-badge ${badgeClass}`}>
@@ -2668,10 +2695,10 @@ function GoogleCalendarCard({
         <button
           type="button"
           className="settings-action-btn secondary"
-          disabled={loading || syncing || !status?.connected}
+          disabled={loading || syncing || !syncEnabled || !status?.connected}
           onClick={onSync}
         >
-          {syncing ? "Syncing..." : "Sync Trips"}
+          {syncing ? "Syncing..." : syncEnabled ? "Sync Trips" : "Sync Disabled"}
         </button>
       </div>
     </div>
@@ -2690,6 +2717,8 @@ function IntegrationsSettingsPanel() {
   const [syncing, setSyncing] = useState(false);
   const [syncingMercury, setSyncingMercury] = useState(false);
   const [syncingGoogleCalendar, setSyncingGoogleCalendar] = useState(false);
+  const [savingGoogleCalendarSyncEnabled, setSavingGoogleCalendarSyncEnabled] =
+    useState(false);
   const [message, setMessage] = useState("");
 
   async function loadTellerState() {
@@ -2936,6 +2965,40 @@ function IntegrationsSettingsPanel() {
     }
   }
 
+  async function setGoogleCalendarSyncEnabled(syncEnabled) {
+    try {
+      setSavingGoogleCalendarSyncEnabled(true);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/settings/integrations.google_calendar`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ syncEnabled }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save Google Calendar setting");
+      }
+
+      setGoogleCalendarStatus((current) => ({
+        ...(current || {}),
+        syncEnabled: json?.value?.syncEnabled !== false,
+        settings: json?.value || { syncEnabled },
+      }));
+      setMessage(
+        syncEnabled
+          ? "Google Calendar sync enabled for this tenant."
+          : "Google Calendar sync disabled for this tenant."
+      );
+      await loadTellerState();
+    } catch (err) {
+      setMessage(err.message || "Failed to save Google Calendar setting");
+    } finally {
+      setSavingGoogleCalendarSyncEnabled(false);
+    }
+  }
+
   const latestConnected = connections?.latest_connected_at
     ? new Date(connections.latest_connected_at).toLocaleString()
     : "Never";
@@ -2960,8 +3023,10 @@ function IntegrationsSettingsPanel() {
           status={googleCalendarStatus}
           loading={loading}
           syncing={syncingGoogleCalendar}
+          savingSyncEnabled={savingGoogleCalendarSyncEnabled}
           onConnect={connectGoogleCalendar}
           onSync={syncGoogleCalendar}
+          onSyncEnabledChange={setGoogleCalendarSyncEnabled}
         />
 
         <div className="settings-group">

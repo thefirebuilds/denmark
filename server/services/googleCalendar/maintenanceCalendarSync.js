@@ -6,6 +6,9 @@ const {
   listGoogleCalendarSyncTargets,
   markGoogleCalendarConnectionHealth,
 } = require("./googleCalendarStore");
+const {
+  isGoogleCalendarSyncEnabled,
+} = require("./googleCalendarSyncSettings");
 
 const HIGH_PRIORITY_LEVELS = new Set(["urgent", "high"]);
 const SYNC_CACHE_MS = Number(
@@ -241,6 +244,17 @@ async function syncNoticeToConnection(notice, target) {
 }
 
 async function syncHighPriorityMaintenanceCalendarNotices(notices = []) {
+  const syncEnabled = await isGoogleCalendarSyncEnabled();
+  if (!syncEnabled) {
+    return {
+      ok: true,
+      processed: 0,
+      skipped: true,
+      reason: "google_calendar_sync_disabled",
+      results: [],
+    };
+  }
+
   const candidates = notices.filter((notice) => {
     const tasks = getHighPriorityTasks(notice);
     return tasks.length > 0 && notice?.maintenance_available_at;

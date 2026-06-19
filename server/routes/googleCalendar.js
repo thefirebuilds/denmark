@@ -17,6 +17,10 @@ const {
   syncTripToGoogle,
   reconcileTripsToGoogle,
 } = require("../services/googleCalendar/googleTripSync");
+const {
+  getGoogleCalendarSyncSettings,
+  isGoogleCalendarSyncEnabled,
+} = require("../services/googleCalendar/googleCalendarSyncSettings");
 const { logRequestActivity } = require("../services/systemActivityLog");
 const {
   resolveAuthPublicUrlSettings,
@@ -119,6 +123,14 @@ async function getGoogleCalendarSyncStats(connectionId) {
 
 router.post("/sync-trip/:tripId", async (req, res, next) => {
   try {
+    if (!(await isGoogleCalendarSyncEnabled())) {
+      return res.status(409).json({
+        ok: false,
+        error: "Google Calendar sync is disabled for this tenant",
+        reason: "google_calendar_sync_disabled",
+      });
+    }
+
     const tripId = Number(req.params.tripId);
 
     if (!Number.isInteger(tripId) || tripId <= 0) {
@@ -144,6 +156,16 @@ router.post("/sync-trip/:tripId", async (req, res, next) => {
 
 router.post("/reconcile-trips", async (req, res, next) => {
   try {
+    if (!(await isGoogleCalendarSyncEnabled())) {
+      return res.json({
+        ok: true,
+        processed: 0,
+        skipped: true,
+        reason: "google_calendar_sync_disabled",
+        results: [],
+      });
+    }
+
     const limit = Number(req.body?.limit || 500);
     const result = await reconcileTripsToGoogle({ userId: getRouteUserId(req), limit });
     await logRequestActivity(req, {
@@ -168,12 +190,15 @@ router.get("/ping", (req, res) => {
 router.get("/status", async (req, res, next) => {
   try {
     const userId = getRouteUserId(req);
+    const syncSettings = await getGoogleCalendarSyncSettings();
     const connection = await getGoogleCalendarConnection(userId);
 
     if (!connection) {
       return res.json({
         configured: false,
         connected: false,
+        syncEnabled: syncSettings.syncEnabled !== false,
+        settings: syncSettings,
         tokenStatus: "missing",
         selectedCalendar: null,
         sync: await getGoogleCalendarSyncStats(null),
@@ -190,6 +215,8 @@ router.get("/status", async (req, res, next) => {
     const payload = {
       configured: true,
       connected: false,
+      syncEnabled: syncSettings.syncEnabled !== false,
+      settings: syncSettings,
       tokenStatus: "unknown",
       tokenError: null,
       selectedCalendar,
@@ -252,6 +279,14 @@ router.get("/status", async (req, res, next) => {
 
 router.post("/test-event", async (req, res, next) => {
   try {
+    if (!(await isGoogleCalendarSyncEnabled())) {
+      return res.status(409).json({
+        ok: false,
+        error: "Google Calendar sync is disabled for this tenant",
+        reason: "google_calendar_sync_disabled",
+      });
+    }
+
     const userId = getRouteUserId(req);
     const connection = await getGoogleCalendarConnection(userId);
 
@@ -422,12 +457,16 @@ router.get("/callback", async (req, res, next) => {
     console.log("Google Calendar auth succeeded");
     console.log("Available calendars:", calendars);
 
-    void reconcileTripsToGoogle({ userId, limit: 500 }).catch((err) => {
-      console.warn(
-        "[google-calendar] reconcile after reconnect failed:",
-        err.message || err
-      );
-    });
+    if (await isGoogleCalendarSyncEnabled()) {
+      void reconcileTripsToGoogle({ userId, limit: 500 }).catch((err) => {
+        console.warn(
+          "[google-calendar] reconcile after reconnect failed:",
+          err.message || err
+        );
+      });
+    } else {
+      console.log("[google-calendar] reconnect completed; sync disabled, skipping reconcile");
+    }
 
     return res.redirect(
       `${publicUrl.effectivePublicBaseUrl || ""}/settings?googleCalendar=connected`

@@ -25,6 +25,11 @@ const {
   loadAuthPublicUrlSettings,
   saveAuthPublicUrlSettings,
 } = require("../services/authPublicUrlSettings");
+const {
+  SETTINGS_KEY: GOOGLE_CALENDAR_SETTINGS_KEY,
+  DEFAULT_GOOGLE_CALENDAR_SYNC_SETTINGS,
+  normalizeGoogleCalendarSyncSettings,
+} = require("../services/googleCalendar/googleCalendarSyncSettings");
 
 const router = express.Router();
 
@@ -76,6 +81,7 @@ const DEFAULT_SETTINGS = {
     heartbeatStaleMinutes: 25,
     turoNotificationStaleHours: 12,
   },
+  [GOOGLE_CALENDAR_SETTINGS_KEY]: DEFAULT_GOOGLE_CALENDAR_SYNC_SETTINGS,
   [LOCATION_SETTINGS_KEY]: getDefaultLocationSettings(),
   [PUBLIC_BASE_URL_KEY]: {
     publicBaseUrl: "",
@@ -152,6 +158,10 @@ function mergeSettings(key, value) {
           ? Math.min(turoNotificationStaleHours, 168)
           : defaults.turoNotificationStaleHours,
     };
+  }
+
+  if (key === GOOGLE_CALENDAR_SETTINGS_KEY) {
+    return normalizeGoogleCalendarSyncSettings(value);
   }
 
   if (key === LOCATION_SETTINGS_KEY) {
