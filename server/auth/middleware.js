@@ -5,6 +5,7 @@ const {
   normalizeRole,
 } = require("./permissions");
 const { isAuthEnforced } = require("./config");
+const { isDatabaseConnectionError } = require("../dbHealth");
 const {
   createAuthAuditLog,
   getAuditRequestMeta,
@@ -33,6 +34,13 @@ function buildRequestAuthFromUser(user) {
     isActive: user.is_active === true,
     provider: user.provider,
   };
+}
+
+function isUsableCachedUser(cachedUser, sessionUserId) {
+  return (
+    cachedUser?.id === sessionUserId &&
+    cachedUser?.is_active === true
+  );
 }
 
 async function logUnauthorizedAccess(req, details = {}) {
@@ -66,8 +74,7 @@ async function loadRequestAuth(req, res, next) {
       ? new Date(cachedUser.cachedAt).getTime()
       : NaN;
     if (
-      cachedUser?.id === sessionUserId &&
-      cachedUser?.is_active === true &&
+      isUsableCachedUser(cachedUser, sessionUserId) &&
       Number.isFinite(cachedAt) &&
       Date.now() - cachedAt < SESSION_AUTH_CACHE_MS
     ) {
@@ -75,7 +82,22 @@ async function loadRequestAuth(req, res, next) {
       return next();
     }
 
-    const user = await getUserById(sessionUserId);
+    let user;
+    try {
+      user = await getUserById(sessionUserId);
+    } catch (error) {
+      if (isDatabaseConnectionError(error) && isUsableCachedUser(cachedUser, sessionUserId)) {
+        req.auth = buildRequestAuthFromUser(cachedUser);
+        console.warn(
+          `[auth] using stale cached session auth after database connection error | path=${
+            req.originalUrl || req.url
+          } error=${error.message || error}`
+        );
+        return next();
+      }
+      throw error;
+    }
+
     if (!user || user.is_active !== true) {
       if (req.session?.auth) {
         delete req.session.auth;
