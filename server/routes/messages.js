@@ -3498,55 +3498,48 @@ router.patch("/read", async (req, res) => {
     const threadVehicleName = String(thread?.vehicleName || "").trim();
 
     if (threadType === "guest_message_thread") {
-      let result = null;
+      const result = await db.query(
+        `
+          UPDATE messages
+          SET status = 'read'
+          WHERE status = 'unread'
+            AND message_type = 'guest_message'
+            AND (
+              id = ANY($1::int[])
+              OR (
+                $2::int IS NOT NULL
+                AND trip_id = $2::int
+              )
+              OR (
+                $3::bigint IS NOT NULL
+                AND reservation_id = $3::bigint
+              )
+              OR (
+                $4::text <> ''
+                AND $5::text <> ''
+                AND LOWER(COALESCE(guest_name, '')) = LOWER($4::text)
+                AND LOWER(COALESCE(vehicle_name, '')) = LOWER($5::text)
+              )
+            )
+          RETURNING id, status
+        `,
+        [
+          uniqueIds,
+          Number.isInteger(threadTripId) && threadTripId > 0 ? threadTripId : null,
+          Number.isInteger(threadReservationId) && threadReservationId > 0
+            ? threadReservationId
+            : null,
+          threadGuestName,
+          threadVehicleName,
+        ]
+      );
 
-      if (Number.isInteger(threadTripId) && threadTripId > 0) {
-        result = await db.query(
-          `
-            UPDATE messages
-            SET status = 'read'
-            WHERE status = 'unread'
-              AND message_type = 'guest_message'
-              AND trip_id = $1
-            RETURNING id, status
-          `,
-          [threadTripId]
-        );
-      } else if (Number.isInteger(threadReservationId) && threadReservationId > 0) {
-        result = await db.query(
-          `
-            UPDATE messages
-            SET status = 'read'
-            WHERE status = 'unread'
-              AND message_type = 'guest_message'
-              AND reservation_id = $1
-            RETURNING id, status
-          `,
-          [threadReservationId]
-        );
-      } else if (threadGuestName && threadVehicleName) {
-        result = await db.query(
-          `
-            UPDATE messages
-            SET status = 'read'
-            WHERE status = 'unread'
-              AND message_type = 'guest_message'
-              AND LOWER(COALESCE(guest_name, '')) = LOWER($1::text)
-              AND LOWER(COALESCE(vehicle_name, '')) = LOWER($2::text)
-            RETURNING id, status
-          `,
-          [threadGuestName, threadVehicleName]
-        );
-      }
-
-      if (result) {
-        invalidateMessageCaches();
-        return res.json({
-          success: true,
-          resolved_count: result.rowCount,
-          resolved: result.rows,
-        });
-      }
+      invalidateMessageCaches();
+      return res.json({
+        success: true,
+        resolved_count: result.rowCount,
+        resolved: result.rows,
+      });
     }
 
     if (!uniqueIds.length) {

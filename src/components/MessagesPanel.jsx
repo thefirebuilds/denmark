@@ -1410,7 +1410,6 @@ async function handleMarkAsRead(messageId) {
   try {
     setMessages((prev) => prev.filter((msg) => msg.id !== queueItemId));
     setNewMessageIds((prev) => prev.filter((id) => id !== queueItemId));
-    setUnreadCount((prev) => Math.max(0, prev - ids.length));
     seenIdsRef.current.delete(queueItemId);
     knownQueueItemIdsRef.current.delete(String(queueItemId));
     setError("");
@@ -1444,10 +1443,34 @@ async function handleMarkAsRead(messageId) {
       }),
     });
 
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+
     if (!res.ok) {
       throw new Error(`Failed to mark message as read (${res.status})`);
     }
 
+    const resolvedIds = new Set(
+      (Array.isArray(data?.resolved) ? data.resolved : [])
+        .map((item) => item?.id)
+        .filter((id) => id != null)
+        .map(String)
+    );
+    resolvedIds.add(String(queueItemId));
+
+    setMessages((prev) =>
+      prev.filter((msg) => !resolvedIds.has(String(msg.id)))
+    );
+    setNewMessageIds((prev) =>
+      prev.filter((id) => !resolvedIds.has(String(id)))
+    );
+    for (const id of resolvedIds) {
+      seenIdsRef.current.delete(id);
+      knownQueueItemIdsRef.current.delete(id);
+    }
+    setUnreadCount((prev) =>
+      Math.max(0, prev - Number(data?.resolved_count || ids.length))
+    );
     notifyMessageStatsUpdated();
   } catch (err) {
     setMessages(previousMessages);
