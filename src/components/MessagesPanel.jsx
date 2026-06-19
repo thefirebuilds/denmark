@@ -610,10 +610,11 @@ function buildMessageBody(message) {
   if (type === "maintenance_required") {
     const count = Number(message?.maintenance_task_count || 0);
     const copy = getMaintenanceNoticeCopy(message);
+    const available = formatMaintenancePlanDate(message?.maintenance_available_at);
 
     return `${count} maintenance planning item${count === 1 ? "" : "s"} for ${
       message?.maintenance_vehicle_name || message?.vehicle_name || "this vehicle"
-    } ${copy.body}.`;
+    } ${copy.body}. Available: ${available}.`;
   }
 
   if (type === "guest_message" && message?.guest_message) {

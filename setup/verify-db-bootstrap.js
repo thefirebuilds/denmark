@@ -34,6 +34,7 @@ const REQUIRED_TABLES = [
   "fleet_alert_deliveries",
   "vehicle_diagnostic_suppressions",
   "google_calendar_connections",
+  "maintenance_google_sync",
   "maintenance_events",
   "maintenance_rule_templates",
   "maintenance_rules",

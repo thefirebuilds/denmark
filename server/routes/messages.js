@@ -5,6 +5,9 @@ const tripAutomationRules = require("../config/tripAutomationRules.json");
 const {
   ensureVehicleAliasesTable,
 } = require("../services/vehicles/vehicleAliases");
+const {
+  syncHighPriorityMaintenanceCalendarNotices,
+} = require("../services/googleCalendar/maintenanceCalendarSync");
 
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
@@ -1247,6 +1250,9 @@ function mapMaintenanceNoticeRow(row) {
     ? row.tasks.map(mapMaintenanceTaskForNotice)
     : [];
   const groupedTasks = groupMaintenanceTasksForNotice(tasks);
+  const hasHighPriorityTasks = groupedTasks.some((task) =>
+    ["urgent", "high"].includes(String(task?.priority || "").toLowerCase())
+  );
   const hasProjectionTasks = tasks.some((task) =>
     task?.planning_mode === "during_trip"
   );
@@ -1305,6 +1311,7 @@ function mapMaintenanceNoticeRow(row) {
     maintenance_sort_at: maintenanceSortAt,
     maintenance_task_count: groupedTasks.length,
     maintenance_open_task_record_count: Number(row.open_task_count || 0),
+    maintenance_has_high_priority: hasHighPriorityTasks,
     maintenance_tasks: groupedTasks,
     created_at: row.latest_task_created_at,
   };
@@ -3141,6 +3148,20 @@ router.get("/", async (req, res) => {
       mapInspectionExportNoticeRow
     );
     const maintenanceNotices = maintenanceResult.rows.map(mapMaintenanceNoticeRow);
+    syncHighPriorityMaintenanceCalendarNotices(maintenanceNotices)
+      .then((result) => {
+        if (result?.processed > 0) {
+          console.log(
+            `[maintenance-calendar] synced ${result.processed} high-priority maintenance event(s)`
+          );
+        }
+      })
+      .catch((err) => {
+        console.warn(
+          "[maintenance-calendar] sync failed:",
+          err.message || err
+        );
+      });
     const prepTaskTripIds = new Set(
       [...handoffNotices, ...inspectionExportNotices]
         .map((row) => row.trip_id)

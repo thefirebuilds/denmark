@@ -23,6 +23,9 @@ const {
   ensureGoogleCalendarConnectionHealthColumns,
 } = require("../server/services/googleCalendar/googleCalendarStore");
 const {
+  ensureMaintenanceGoogleSyncTable,
+} = require("../server/services/googleCalendar/maintenanceCalendarSync");
+const {
   ensureVehicleFmvEstimatesTable,
 } = require("../server/services/vehicles/fmvEstimateService");
 const {
@@ -96,7 +99,7 @@ const BASE_SCHEMA_TABLES = [
   "database_import_jobs",
   "service_tokens",
 ];
-const RUNTIME_ENSURED_TABLES = ["income_transactions"];
+const RUNTIME_ENSURED_TABLES = ["income_transactions", "maintenance_google_sync"];
 const REQUIRED_TABLES = [...BASE_SCHEMA_TABLES, ...RUNTIME_ENSURED_TABLES];
 const RUNTIME_DEPENDENCY_TABLES = ["vehicles", "trips", "teller_transactions"];
 
@@ -341,6 +344,7 @@ async function runRuntimeEnsures() {
   });
   await ensureAuthTables();
   await ensureGoogleCalendarConnectionHealthColumns();
+  await ensureMaintenanceGoogleSyncTable();
   await ensureVehicleFmvEstimatesTable();
   await ensureBusinessMetricsTables();
   await ensureVehicleOdometerRollupTable();
