@@ -3425,6 +3425,41 @@ router.patch("/:id/read", async (req, res) => {
   }
 });
 
+router.patch("/read", async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    const uniqueIds = [...new Set(ids)];
+
+    if (!uniqueIds.length) {
+      return res.status(400).json({ error: "message ids are required" });
+    }
+
+    const result = await db.query(
+      `
+        UPDATE messages
+        SET status = 'read'
+        WHERE id = ANY($1::int[])
+        RETURNING id, status
+      `,
+      [uniqueIds]
+    );
+
+    invalidateMessageCaches();
+    res.json({
+      success: true,
+      resolved_count: result.rowCount,
+      resolved: result.rows,
+    });
+  } catch (err) {
+    console.error("mark messages as read failed:", err);
+    res.status(500).json({ error: "failed to mark messages as read" });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
 

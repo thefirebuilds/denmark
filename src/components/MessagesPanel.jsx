@@ -1398,28 +1398,37 @@ async function handleMarkAsRead(messageId) {
     ? message.message_ids
     : [typeof messageId === "object" ? message?.id : messageId].filter(Boolean);
   const queueItemId = message?.id || messageId;
+  const previousMessages = messages;
+  const previousNewMessageIds = newMessageIds;
+  const previousUnreadCount = unreadCount;
 
   try {
-    await Promise.all(
-      ids.map(async (id) => {
-        const res = await fetch(`/api/messages/${id}/read`, {
-          method: "PATCH",
-        });
-
-        if (!res.ok) {
-          throw new Error(`Failed to mark message as read (${res.status})`);
-        }
-      })
-    );
-
     setMessages((prev) => prev.filter((msg) => msg.id !== queueItemId));
     setNewMessageIds((prev) => prev.filter((id) => id !== queueItemId));
     setUnreadCount((prev) => Math.max(0, prev - ids.length));
     seenIdsRef.current.delete(queueItemId);
     knownQueueItemIdsRef.current.delete(String(queueItemId));
+    setError("");
+
+    const res = await fetch(`${API_BASE}/api/messages/read`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ ids }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to mark message as read (${res.status})`);
+    }
 
     notifyMessageStatsUpdated();
   } catch (err) {
+    setMessages(previousMessages);
+    setNewMessageIds(previousNewMessageIds);
+    setUnreadCount(previousUnreadCount);
+    knownQueueItemIdsRef.current.add(String(queueItemId));
     setError(err.message || "Failed to mark message as read");
   }
 }
