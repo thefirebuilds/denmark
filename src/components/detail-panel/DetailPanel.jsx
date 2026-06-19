@@ -50,6 +50,7 @@ export default function DetailPanel({
   selectedTrip,
   editTripRequest,
   onTripUpdated,
+  onTripCompleted,
   trips,
   onOpenVehicleMap,
 }) {
@@ -174,6 +175,12 @@ export default function DetailPanel({
 
       const savedTrip = await resp.json();
       onTripUpdated?.(savedTrip);
+      if (
+        String(savedTrip?.workflow_stage || nextStage || "").toLowerCase() === "complete" ||
+        savedTrip?.closed_out === true
+      ) {
+        onTripCompleted?.(savedTrip);
+      }
     } catch (err) {
       console.error("Failed to advance stage:", err);
     } finally {
@@ -203,6 +210,12 @@ export default function DetailPanel({
 
       const savedTrip = await resp.json();
       onTripUpdated?.(savedTrip);
+      if (
+        String(savedTrip?.workflow_stage || "").toLowerCase() === "complete" ||
+        savedTrip?.closed_out === true
+      ) {
+        onTripCompleted?.(savedTrip);
+      }
       return savedTrip;
     } catch (err) {
       const message = err.message || "Failed to save closeout details";

@@ -849,6 +849,11 @@ export default function Home() {
     setMessageMode("live");
   }
 
+  function handleTripCompleted() {
+    setSelectedTrip(null);
+    setMessageMode("live");
+  }
+
   function handleOpenMaintenanceVehicle(vehicleId) {
     if (!vehicleId) return;
 
@@ -1041,6 +1046,7 @@ export default function Home() {
             selectedTrip={selectedTrip}
             editTripRequest={editTripRequest}
             onTripUpdated={handleTripUpdated}
+            onTripCompleted={handleTripCompleted}
             trips={trips}
             onOpenVehicleMap={openFleetMapForVehicle}
           />
