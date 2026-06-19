@@ -87,6 +87,30 @@ function syncTripCalendarNotices(trip, reason = "trip") {
     });
 }
 
+function runStageEntryAutomation(trip, previousStage = null) {
+  if (!trip?.id) return;
+
+  void (async () => {
+    const client = await pool.connect();
+    try {
+      const result = await handleTripStageEntry(client, trip, previousStage);
+      if (!result?.skipped) {
+        console.log(
+          `[trips] stage entry automation complete | trip=${trip.id} stage=${trip.workflow_stage}`
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[trips] stage entry automation failed | trip=${trip.id} stage=${
+          trip.workflow_stage
+        } error=${err.message || err}`
+      );
+    } finally {
+      client.release();
+    }
+  })();
+}
+
 function shouldSyncTripCalendarAfterStageChange(stage) {
   return ["ready_for_handoff", "awaiting_expenses", "complete", "canceled"].includes(stage);
 }
@@ -664,14 +688,14 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       ]
     );
 
-    await handleTripStageEntry(client, updatedTrip, currentStage);
-
     await client.query("COMMIT");
 
     const response = {
       ...updatedTrip,
       allowed_next_stages: getAllowedNextStages(updatedTrip.workflow_stage),
     };
+
+    runStageEntryAutomation(updatedTrip, currentStage);
 
     if (shouldSyncTripCalendarAfterStageChange(normalizedNextStage)) {
       syncTripCalendarNotices(updatedTrip, normalizedNextStage);
