@@ -104,6 +104,7 @@ function getPublicAvailabilityExportConfig() {
       nextAvailableDate: "YYYY-MM-DD | null",
       nextAvailableLabel: "string | null",
       nextBookedStart: "YYYY-MM-DD | null",
+      nextBookedDateTime: "ISO timestamp | null",
       nextBookedLabel: "string | null",
       availableDates: "YYYY-MM-DD[]",
       unavailableDates: "YYYY-MM-DD[]",

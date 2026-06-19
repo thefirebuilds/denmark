@@ -64,6 +64,18 @@ function formatPublicDate(date) {
   }).format(date);
 }
 
+function formatPublicDateTime(date) {
+  if (!date) return null;
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: PUBLIC_TIME_ZONE,
+  }).format(date);
+}
+
 function formatDateKey(date) {
   if (!date) return null;
 
@@ -223,8 +235,51 @@ function chooseVehicleTripKey(trip) {
   ]);
 }
 
-function chooseVehicleKey(vehicle) {
-  return firstPresent(vehicle, ["id", "turo_vehicle_id"]);
+function normalizeVehicleLookupValue(value) {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  return text || null;
+}
+
+function compactLookupKeys(keys) {
+  return Array.from(
+    new Set(
+      keys
+        .map((key) => (key == null || key === "" ? null : String(key)))
+        .filter(Boolean)
+    )
+  );
+}
+
+function getVehicleLookupKeys(vehicle) {
+  const nickname = normalizeVehicleLookupValue(vehicle?.nickname);
+  const turoName = normalizeVehicleLookupValue(vehicle?.turo_vehicle_name);
+  const displayName = normalizeVehicleLookupValue(getVehicleDisplayName(vehicle));
+
+  return compactLookupKeys([
+    vehicle?.id,
+    vehicle?.turo_vehicle_id,
+    nickname ? `name:${nickname}` : null,
+    turoName ? `name:${turoName}` : null,
+    displayName ? `name:${displayName}` : null,
+  ]);
+}
+
+function getTripLookupKeys(trip) {
+  const vehicleName = normalizeVehicleLookupValue(trip?.vehicle_name);
+  const resolvedName = normalizeVehicleLookupValue(trip?.resolved_vehicle_name);
+  const resolvedTuroName = normalizeVehicleLookupValue(trip?.resolved_turo_vehicle_name);
+
+  return compactLookupKeys([
+    chooseVehicleTripKey(trip),
+    trip?.vehicle_id,
+    trip?.turo_vehicle_id,
+    vehicleName ? `name:${vehicleName}` : null,
+    resolvedName ? `name:${resolvedName}` : null,
+    resolvedTuroName ? `name:${resolvedTuroName}` : null,
+  ]);
 }
 
 function slugify(value) {
@@ -479,6 +534,9 @@ function buildVehicleStatus(vehicle, trips, now) {
   const nextBookedStartKey = nextBookedTrip?.start
     ? formatDateKey(nextBookedTrip.start)
     : null;
+  const nextBookedLabel = nextBookedTrip?.start
+    ? `Next Booking: ${formatPublicDateTime(nextBookedTrip.start)}`
+    : null;
   const nextAvailabilityAfterBookingKey = nextBookedTrip?.end
     ? getFirstAvailableDateAfter(calendar, nextBookedTrip.end)
     : null;
@@ -556,7 +614,7 @@ function buildVehicleStatus(vehicle, trips, now) {
       return {
         ...buildVehiclePublicMetadata(vehicle),
         status: "available_until_next_booking",
-        label: `Next Booking: ${formatPublicDate(parseDateKeyToUtcMidday(nextBookedStartKey))}`,
+        label: nextBookedLabel || "Booked Soon",
         nextAvailableDate: nextAvailabilityAfterBookingKey || nextAvailableDateKey,
         nextAvailableLabel: nextAvailabilityAfterBookingKey
           ? `Next Availability: ${formatPublicDate(
@@ -568,9 +626,8 @@ function buildVehicleStatus(vehicle, trips, now) {
         unavailableRanges: calendar.unavailableRanges,
         updatedAt: now.toISOString(),
         nextBookedStart: nextBookedStartKey,
-        nextBookedLabel: `Next Booking: ${formatPublicDate(
-          parseDateKeyToUtcMidday(nextBookedStartKey)
-        )}`,
+        nextBookedDateTime: nextBookedTrip?.start?.toISOString() || null,
+        nextBookedLabel,
         publicAdvanceNoticeHours: PUBLIC_ADVANCE_NOTICE_HOURS,
         shortPreBookingWindow: true,
         typicalDailyRate,
@@ -592,9 +649,8 @@ function buildVehicleStatus(vehicle, trips, now) {
       unavailableRanges: calendar.unavailableRanges,
       updatedAt: now.toISOString(),
       nextBookedStart: nextBookedStartKey,
-      nextBookedLabel: nextBookedStartKey
-        ? `Next Booking: ${formatPublicDate(parseDateKeyToUtcMidday(nextBookedStartKey))}`
-        : null,
+      nextBookedDateTime: nextBookedTrip?.start?.toISOString() || null,
+      nextBookedLabel,
       publicAdvanceNoticeHours: PUBLIC_ADVANCE_NOTICE_HOURS,
       shortPreBookingWindow: false,
       typicalDailyRate,
@@ -646,16 +702,19 @@ async function getRelevantTrips() {
       t.workflow_stage,
       t.trip_start,
       t.trip_end,
+      t.vehicle_name,
       t.amount,
       t.closed_out,
       t.closed_out_at,
       t.completed_at,
       t.canceled_at,
       t.deleted_at,
+      resolved_vehicle.nickname AS resolved_vehicle_name,
+      resolved_vehicle.turo_vehicle_name AS resolved_turo_vehicle_name,
       COALESCE(t.turo_vehicle_id, resolved_vehicle.turo_vehicle_id) AS turo_vehicle_id
     FROM trips t
     LEFT JOIN LATERAL (
-      SELECT v.id, v.turo_vehicle_id
+      SELECT v.id, v.turo_vehicle_id, v.nickname, v.turo_vehicle_name
       FROM vehicles v
       WHERE (
         t.turo_vehicle_id IS NOT NULL
@@ -710,28 +769,26 @@ async function getPublicAvailability() {
   const tripsByVehicle = new Map();
 
   for (const trip of trips) {
-    const key = chooseVehicleTripKey(trip);
-    if (!key) continue;
+    const keys = getTripLookupKeys(trip);
+    if (!keys.length) continue;
 
-    if (!tripsByVehicle.has(key)) {
-      tripsByVehicle.set(key, []);
+    for (const key of keys) {
+      if (!tripsByVehicle.has(key)) {
+        tripsByVehicle.set(key, []);
+      }
+      tripsByVehicle.get(key).push(trip);
     }
-
-    tripsByVehicle.get(key).push(trip);
   }
 
   return vehicles.map((vehicle) => {
-    const vehicleIdKey = vehicle.id;
-    const turoVehicleKey = vehicle.turo_vehicle_id;
-    const fallbackKey = chooseVehicleKey(vehicle);
+    const vehicleTripsById = new Map();
+    for (const key of getVehicleLookupKeys(vehicle)) {
+      for (const trip of tripsByVehicle.get(key) || []) {
+        vehicleTripsById.set(trip.id, trip);
+      }
+    }
 
-    const vehicleTrips =
-      tripsByVehicle.get(vehicleIdKey) ||
-      tripsByVehicle.get(turoVehicleKey) ||
-      tripsByVehicle.get(fallbackKey) ||
-      [];
-
-    return buildVehicleStatus(vehicle, vehicleTrips, now);
+    return buildVehicleStatus(vehicle, [...vehicleTripsById.values()], now);
   });
 }
 
