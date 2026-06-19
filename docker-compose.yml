@@ -12,6 +12,8 @@ services:
       PGDATABASE: ${PGDATABASE:-denmark}
       PGUSER: ${PGUSER:-postgres}
       PGPASSWORD: ${PGPASSWORD:?set PGPASSWORD in .env}
+      PGPOOL_MAX: ${PGPOOL_MAX:-6}
+      PGCONNECT_TIMEOUT_MS: ${PGCONNECT_TIMEOUT_MS:-10000}
     depends_on:
       - db
     ports:

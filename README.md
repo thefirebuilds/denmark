@@ -272,6 +272,8 @@ PGPORT=5432
 PGDATABASE=denmark
 PGUSER=postgres
 PGPASSWORD=replace-with-postgres-password
+PGPOOL_MAX=6
+PGCONNECT_TIMEOUT_MS=10000
 
 PORT=5000
 SESSION_SECRET=replace-with-long-random-session-secret
@@ -291,6 +293,11 @@ openssl rand -base64 48
 If the container logs `SESSION_SECRET is required when NODE_ENV=production`,
 the `.env` file being used by Docker Compose is missing that value or is not
 next to `docker-compose.yml`.
+
+For small Droplets, keep `PGPOOL_MAX` conservative. If Postgres logs
+`sorry, too many clients already`, lower `PGPOOL_MAX`, recreate the app
+container, and clear any leftover one-off `docker compose run app ...`
+containers.
 
 Add any integrations you use:
 
