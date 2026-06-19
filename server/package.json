@@ -7,7 +7,8 @@
     "dev": "nodemon index.js",
     "db:bootstrap": "node ../setup/bootstrap-db.js",
     "db:verify": "node ../setup/verify-db-bootstrap.js",
-    "db:restore-json": "node ../setup/restore-json-backup.js"
+    "db:restore-json": "node ../setup/restore-json-backup.js",
+    "reimbursements:apply": "node ../setup/apply-reimbursement-invoices.js"
   },
   "keywords": [],
   "author": "",

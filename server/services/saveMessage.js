@@ -469,10 +469,50 @@ function parseMoney(value) {
   return Number.isNaN(n) ? null : n;
 }
 
+function roundMoney(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+
+function extractInvoiceAmount(text, label) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`(?:^|\\n)\\s*${escapedLabel}\\s*-\\s*\\$([0-9,]+(?:\\.\\d{2})?)`, "i"),
+    new RegExp(`(?:^|\\n)\\s*${escapedLabel}\\s*\\n\\s*\\$([0-9,]+(?:\\.\\d{2})?)`, "i"),
+  ];
+
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    const amount = parseMoney(match?.[1]);
+    if (amount != null) return roundMoney(amount);
+  }
+
+  return null;
+}
+
 function extractTollAmountFromText(normalizedTextBody) {
   const text = String(normalizedTextBody || "");
   const match = text.match(/tolls?\s*-\s*\$([0-9,]+(?:\.\d{2})?)/i);
   return match ? parseMoney(match[1]) : null;
+}
+
+function extractFuelReimbursementFromText(normalizedTextBody) {
+  const text = String(normalizedTextBody || "");
+  const refueling =
+    extractInvoiceAmount(text, "Refueling") ?? extractInvoiceAmount(text, "Refuel");
+  const refuelingFee =
+    extractInvoiceAmount(text, "Refueling convenience fee") ??
+    extractInvoiceAmount(text, "Fee");
+
+  if (refueling == null && refuelingFee == null) {
+    return null;
+  }
+
+  return {
+    refueling,
+    refuelingFee,
+    fuelTotal: roundMoney((refueling || 0) + (refuelingFee || 0)),
+  };
 }
 
 function reimbursementLooksLikeTollInvoice(normalizedTextBody) {
@@ -494,6 +534,7 @@ async function applyTripCloseoutSignalsFromMessage({
 
   const tollAmount = extractTollAmountFromText(normalizedTextBody);
   const tollInvoice = reimbursementLooksLikeTollInvoice(normalizedTextBody);
+  const fuelInvoice = extractFuelReimbursementFromText(normalizedTextBody);
 
   await pool.query(
     `
@@ -517,10 +558,14 @@ async function applyTripCloseoutSignalsFromMessage({
           WHEN $2::boolean OR COALESCE(has_tolls, false) = TRUE THEN 'billed'
           ELSE toll_review_status
         END,
+        fuel_reimbursement_total = CASE
+          WHEN $4::numeric IS NOT NULL THEN $4::numeric
+          ELSE fuel_reimbursement_total
+        END,
         updated_at = NOW()
       WHERE id = $1
     `,
-    [tripId, tollInvoice, tollAmount]
+    [tripId, tollInvoice, tollAmount, fuelInvoice?.fuelTotal ?? null]
   );
 }
 
@@ -930,4 +975,6 @@ async function saveMessage(message) {
 }
 
 module.exports = saveMessage;
+module.exports.applyTripCloseoutSignalsFromMessage = applyTripCloseoutSignalsFromMessage;
+module.exports.extractFuelReimbursementFromText = extractFuelReimbursementFromText;
 
