@@ -1,8 +1,33 @@
 (() => {
+  const DEFAULT_APP_URL_PATTERNS = [
+    "https://denmark.freshcoastgarage.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+  ];
+  const MARKETPLACE_CONFIG = window.FCG_MARKETPLACE_CONFIG || {};
+  const APP_URL_PATTERNS = Array.isArray(MARKETPLACE_CONFIG.appUrlPatterns)
+    ? MARKETPLACE_CONFIG.appUrlPatterns
+    : DEFAULT_APP_URL_PATTERNS;
   const START_EVENT = "fcg-marketplace-enrich-visible";
   const STATUS_EVENT = "fcg-marketplace-enrich-status";
   const READY_EVENT = "fcg-marketplace-extension-ready";
   const READY_ATTR = "data-fcg-marketplace-extension-ready";
+
+  function escapeRegex(value) {
+    return String(value).replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function matchesPattern(url, pattern) {
+    const source = String(pattern || "").trim();
+    if (!source) return false;
+
+    const regex = new RegExp(`^${escapeRegex(source).replace(/\*/g, ".*")}$`);
+    return regex.test(url);
+  }
+
+  if (!APP_URL_PATTERNS.some((pattern) => matchesPattern(location.href, pattern))) {
+    return;
+  }
 
   function emitStatus(detail) {
     window.dispatchEvent(new CustomEvent(STATUS_EVENT, { detail }));

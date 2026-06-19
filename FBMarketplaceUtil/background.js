@@ -1,13 +1,44 @@
-const API_BASES = [
+try {
+  importScripts("marketplace_config.js");
+} catch (err) {
+  console.warn("[fcg-marketplace] config file not loaded; using defaults", err);
+}
+
+const DEFAULT_API_BASES = [
+  "https://denmark.freshcoastgarage.com",
   "http://127.0.0.1:5000",
   "http://localhost:5000",
   "http://127.0.0.1:3001",
   "http://localhost:3001",
 ];
+const DEFAULT_APP_URL_PATTERNS = [
+  "https://denmark.freshcoastgarage.com/*",
+  "http://localhost/*",
+  "http://127.0.0.1/*",
+];
+
+function normalizeConfigList(value, fallback) {
+  const list = Array.isArray(value) ? value : fallback;
+  const cleaned = list
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => item.replace(/\/+$/, ""));
+
+  return Array.from(new Set(cleaned.length ? cleaned : fallback));
+}
+
+const MARKETPLACE_CONFIG = globalThis.FCG_MARKETPLACE_CONFIG || {};
+const API_BASES = normalizeConfigList(
+  MARKETPLACE_CONFIG.apiBases,
+  DEFAULT_API_BASES
+);
 
 const AUTO_ENRICH_FLAG = "fcg_enrich=1";
 const AVAILABILITY_CHECK_FLAG = "fcg_check_available=1";
-const APP_URL_PATTERNS = ["http://localhost/*", "http://127.0.0.1/*"];
+const APP_URL_PATTERNS = normalizeConfigList(
+  MARKETPLACE_CONFIG.appUrlPatterns,
+  DEFAULT_APP_URL_PATTERNS
+);
 const enrichQueueState = {
   pending: [],
   running: false,

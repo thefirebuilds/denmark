@@ -9,7 +9,10 @@ The extension does not store Facebook credentials. It uses the current Chrome pr
 - Adds listing-page controls on `facebook.com/marketplace/item/...`.
 - Scrapes visible Marketplace search result cards when you click the extension icon.
 - Enriches individual listing detail pages and posts the extracted data to Denmark.
-- Talks to the local Denmark API at:
+- Talks to the configured Denmark API. The default target is:
+  - `https://denmark.freshcoastgarage.com`
+
+  Local development fallbacks are also included:
   - `http://localhost:5000`
   - `http://127.0.0.1:5000`
   - `http://localhost:3001`
@@ -17,7 +20,7 @@ The extension does not store Facebook credentials. It uses the current Chrome pr
 
 ## Install In Chrome
 
-1. Start the Denmark backend locally so the Marketplace API routes are available.
+1. Confirm the Denmark tenant URL in `marketplace_config.js`.
 2. Open Chrome and go to `chrome://extensions`.
 3. Turn on **Developer mode**.
 4. Click **Load unpacked**.
@@ -26,13 +29,36 @@ The extension does not store Facebook credentials. It uses the current Chrome pr
 
 If you edit files in this folder, return to `chrome://extensions` and click the extension's reload button before testing again.
 
+## Configure Denmark Tenant
+
+Customer-facing extension settings live in `marketplace_config.js`.
+
+For a hosted tenant, set the first entries to that tenant URL:
+
+```js
+globalThis.FCG_MARKETPLACE_CONFIG = {
+  apiBases: [
+    "https://denmark.freshcoastgarage.com",
+    "http://127.0.0.1:5000",
+    "http://localhost:5000",
+  ],
+  appUrlPatterns: [
+    "https://denmark.freshcoastgarage.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+  ],
+};
+```
+
+`apiBases` controls where Marketplace listing data is posted. `appUrlPatterns` controls which Denmark app pages can talk to the extension for batch enrich status and commands. After changing this file, reload the extension in `chrome://extensions`.
+
 ## Configure Credentials / Session
 
 There are no extension-specific credentials to configure.
 
 Use the Chrome profile that is currently signed into the Facebook account you want to use. If Marketplace shows a login screen, checkpoint, blocked page, or a different account than expected, fix that in Chrome first. The extension will only see what that active browser session can see.
 
-For Denmark itself, configure the normal app/backend `.env` files. The extension only needs the local API reachable on one of the localhost ports listed above.
+For Denmark itself, configure the normal app/backend `.env` files. The extension only needs the configured API reachable from Chrome.
 
 ## Basic Usage
 

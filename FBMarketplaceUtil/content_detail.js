@@ -9,12 +9,23 @@
     return;
   }
 
-  const API_BASES = [
+  const DEFAULT_API_BASES = [
+    "https://denmark.freshcoastgarage.com",
     "http://127.0.0.1:5000",
     "http://localhost:5000",
     "http://127.0.0.1:3001",
     "http://localhost:3001",
   ];
+  const MARKETPLACE_CONFIG = window.FCG_MARKETPLACE_CONFIG || {};
+  const configuredApiBases = (Array.isArray(MARKETPLACE_CONFIG.apiBases)
+    ? MARKETPLACE_CONFIG.apiBases
+    : DEFAULT_API_BASES
+  )
+    .map((item) => String(item || "").trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+  const API_BASES = Array.from(
+    new Set(configuredApiBases.length ? configuredApiBases : DEFAULT_API_BASES)
+  );
 
   const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

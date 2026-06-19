@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Marketplace Exporter",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "permissions": ["scripting", "activeTab", "storage", "tabs"],
   "host_permissions": [
     "https://www.facebook.com/*",
+    "https://*/*",
     "http://127.0.0.1:3001/*",
     "http://localhost:3001/*",
     "http://127.0.0.1:5000/*",
@@ -31,12 +32,12 @@
   "content_scripts": [
     {
       "matches": ["https://www.facebook.com/marketplace/*"],
-      "js": ["content_detail.js"],
+      "js": ["marketplace_config.js", "content_detail.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["http://localhost/*", "http://127.0.0.1/*"],
-      "js": ["content_app_bridge.js"],
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["marketplace_config.js", "content_app_bridge.js"],
       "run_at": "document_idle"
     }
   ]
