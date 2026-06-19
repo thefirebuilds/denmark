@@ -1,5 +1,6 @@
 const pool = require("../../db");
 const { sendSms } = require("./twilioSms");
+const { getBridgeAlertSettings } = require("./bridgeAlertSettings");
 const {
   getEnabledLocations,
   getPrimaryParkingLocation,
@@ -8,44 +9,6 @@ const {
 let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
 const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
-const DEFAULT_BRIDGE_ALERT_SETTINGS = {
-  enabled: true,
-  heartbeatStaleMinutes: 25,
-  turoNotificationStaleHours: 12,
-};
-
-function coerceNumber(value, fallback, min, max) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
-}
-
-async function getBridgeAlertSettings() {
-  const { rows } = await pool.query(
-    "SELECT value FROM app_settings WHERE key = 'alerts.bridge' LIMIT 1"
-  );
-  const value = rows[0]?.value || {};
-
-  return {
-    enabled: value.enabled !== false,
-    heartbeatStaleMinutes: coerceNumber(
-      value.heartbeatStaleMinutes ??
-        value.heartbeat_stale_minutes ??
-        process.env.BRIDGE_HEARTBEAT_STALE_MINUTES,
-      DEFAULT_BRIDGE_ALERT_SETTINGS.heartbeatStaleMinutes,
-      5,
-      240
-    ),
-    turoNotificationStaleHours: coerceNumber(
-      value.turoNotificationStaleHours ??
-        value.turo_notification_stale_hours ??
-        process.env.BRIDGE_TURO_NOTIFICATION_STALE_HOURS,
-      DEFAULT_BRIDGE_ALERT_SETTINGS.turoNotificationStaleHours,
-      1,
-      168
-    ),
-  };
-}
 
 function normalizeDisplayTimestamp(value, fallback = null) {
   if (!value) return fallback;
@@ -248,7 +211,21 @@ async function recordAlert({ alertKey, alertType, severity, body, delivery, deta
   );
 }
 
+function isBridgeFreshnessAlert(alertType) {
+  return [
+    "bridge_heartbeat_stale",
+    "bridge_turo_notifications_stale",
+  ].includes(String(alertType || ""));
+}
+
 async function sendDedupedAlert(alert) {
+  if (isBridgeFreshnessAlert(alert.alertType)) {
+    const bridgeSettings = await getBridgeAlertSettings();
+    if (!bridgeSettings.enabled) {
+      return { sent: false, skipped: true, reason: "android_bridge_disabled" };
+    }
+  }
+
   if (await hasAlertBeenSent(alert.alertKey)) {
     return { sent: false, skipped: true, reason: "duplicate" };
   }

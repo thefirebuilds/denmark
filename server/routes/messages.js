@@ -1,6 +1,10 @@
 ﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const {
+  getBridgeAlertSettings,
+  isAndroidBridgeEnabled,
+} = require("../services/alerts/bridgeAlertSettings");
 const tripAutomationRules = require("../config/tripAutomationRules.json");
 const {
   ensureVehicleAliasesTable,
@@ -221,13 +225,6 @@ const EMPTY_QUERY_RESULT = Object.freeze({ rows: [] });
 
 let messageQueueCache = null;
 let messageStatsCache = null;
-
-async function isAndroidBridgeEnabled() {
-  const { rows } = await db.query(
-    "SELECT value FROM app_settings WHERE key = 'alerts.bridge' LIMIT 1"
-  );
-  return rows[0]?.value?.enabled !== false;
-}
 
 function getCachedPayload(cache, key, ttlMs) {
   if (!cache || cache.key !== key) return null;
@@ -1492,7 +1489,8 @@ router.get("/stats", async (req, res) => {
     }
 
     await ensureNotificationAckColumns();
-    const androidBridgeEnabled = await isAndroidBridgeEnabled();
+    const bridgeSettings = await getBridgeAlertSettings();
+    const androidBridgeEnabled = bridgeSettings.enabled !== false;
 
     const sql = `
       SELECT
@@ -1621,6 +1619,7 @@ router.get("/stats", async (req, res) => {
       total: Number(row.total_count || 0),
       lastReceived: row.last_received,
       androidBridgeEnabled,
+      androidBridgeSettings: bridgeSettings,
       bridgeHeartbeat: androidBridgeEnabled ? row.bridge_heartbeat || null : null,
       bridgeLastTuroNotification: androidBridgeEnabled
         ? row.bridge_last_turo_notification || null
@@ -3097,7 +3096,8 @@ router.get("/", async (req, res) => {
       LIMIT 1
     `;
 
-    const androidBridgeEnabled = await isAndroidBridgeEnabled();
+    const bridgeSettings = await getBridgeAlertSettings();
+    const androidBridgeEnabled = bridgeSettings.enabled !== false;
     const handoffResult = await timeQueueQuery(
       queueTimings,
       "handoff",

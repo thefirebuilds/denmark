@@ -30,6 +30,10 @@ const {
   DEFAULT_GOOGLE_CALENDAR_SYNC_SETTINGS,
   normalizeGoogleCalendarSyncSettings,
 } = require("../services/googleCalendar/googleCalendarSyncSettings");
+const {
+  DEFAULT_BRIDGE_ALERT_SETTINGS,
+  normalizeBridgeAlertSettings,
+} = require("../services/alerts/bridgeAlertSettings");
 
 const router = express.Router();
 
@@ -76,11 +80,7 @@ const DEFAULT_SETTINGS = {
   "expenses.categories": {
     categories: DEFAULT_EXPENSE_CATEGORIES,
   },
-  "alerts.bridge": {
-    enabled: true,
-    heartbeatStaleMinutes: 25,
-    turoNotificationStaleHours: 12,
-  },
+  "alerts.bridge": DEFAULT_BRIDGE_ALERT_SETTINGS,
   [GOOGLE_CALENDAR_SETTINGS_KEY]: DEFAULT_GOOGLE_CALENDAR_SYNC_SETTINGS,
   [LOCATION_SETTINGS_KEY]: getDefaultLocationSettings(),
   [PUBLIC_BASE_URL_KEY]: {
@@ -143,21 +143,7 @@ function mergeSettings(key, value) {
   }
 
   if (key === "alerts.bridge") {
-    const defaults = defaultForKey(key);
-    const heartbeatStaleMinutes = Number(value.heartbeatStaleMinutes);
-    const turoNotificationStaleHours = Number(value.turoNotificationStaleHours);
-
-    return {
-      enabled: value.enabled !== false,
-      heartbeatStaleMinutes:
-        Number.isFinite(heartbeatStaleMinutes) && heartbeatStaleMinutes >= 5
-          ? Math.min(heartbeatStaleMinutes, 240)
-          : defaults.heartbeatStaleMinutes,
-      turoNotificationStaleHours:
-        Number.isFinite(turoNotificationStaleHours) && turoNotificationStaleHours >= 1
-          ? Math.min(turoNotificationStaleHours, 168)
-          : defaults.turoNotificationStaleHours,
-    };
+    return normalizeBridgeAlertSettings(value);
   }
 
   if (key === GOOGLE_CALENDAR_SETTINGS_KEY) {
