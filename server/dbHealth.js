@@ -27,6 +27,7 @@ function isDatabaseConnectionError(error) {
     text.includes("connection terminated") ||
     text.includes("connection timeout") ||
     text.includes("connect econnrefused") ||
+    text.includes("timeout exceeded when trying to connect") ||
     text.includes("timeout expired") ||
     text.includes("terminating connection")
   );

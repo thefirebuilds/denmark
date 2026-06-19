@@ -96,6 +96,11 @@ async function loadRequestAuth(req, res, next) {
 
     return next();
   } catch (error) {
+    console.warn(
+      `[auth] request auth load failed | path=${req.originalUrl || req.url} error=${
+        error.message || error
+      }`
+    );
     return next(error);
   } finally {
     if (res.locals) {
