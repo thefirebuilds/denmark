@@ -16,6 +16,38 @@ async function getTwilioConfig() {
   };
 }
 
+function getSmsSourceLabel() {
+  const candidates = [
+    process.env.DENMARK_TENANT_LABEL,
+    process.env.PUBLIC_BASE_URL,
+    process.env.FRONTEND_BASE_URL,
+    process.env.APP_BASE_URL,
+    process.env.PGHOST && process.env.PGDATABASE
+      ? `${process.env.PGDATABASE}@${process.env.PGHOST}`
+      : null,
+    process.env.PGDATABASE,
+  ];
+
+  for (const value of candidates) {
+    const text = String(value || "").trim();
+    if (text) return text.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  }
+
+  return "unknown tenant";
+}
+
+function appendSmsSource(body, config) {
+  const source = getSmsSourceLabel();
+  const suffix = `\nSource: ${source} (${config.source || "settings"})`;
+  const text = String(body || "");
+
+  if (text.includes("\nSource: ")) {
+    return text.slice(0, 1500);
+  }
+
+  return `${text}${suffix}`.slice(0, 1500);
+}
+
 async function sendSms(body, options = {}) {
   const config = await getTwilioConfig();
   if (!config.alertsEnabled) {
@@ -37,7 +69,7 @@ async function sendSms(body, options = {}) {
   const payload = new URLSearchParams({
     From: config.from,
     To: options.to || config.to,
-    Body: String(body || "").slice(0, 1500),
+    Body: appendSmsSource(body, config),
   }).toString();
 
   return new Promise((resolve, reject) => {
@@ -96,5 +128,6 @@ async function sendSms(body, options = {}) {
 
 module.exports = {
   getTwilioConfig,
+  getSmsSourceLabel,
   sendSms,
 };

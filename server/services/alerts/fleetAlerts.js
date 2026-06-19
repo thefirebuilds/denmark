@@ -289,17 +289,53 @@ async function collectBridgeHeartbeatAlerts() {
   if (!bridgeSettings.enabled) return [];
 
   const { rows } = await pool.query(`
-    SELECT MAX(received_at) AS last_seen
-    FROM notification_events
-    WHERE classification = 'bridge_heartbeat'
-      OR source = 'android_bridge_heartbeat'
+    WITH latest AS (
+      SELECT
+        MAX(received_at) FILTER (
+          WHERE classification = 'bridge_heartbeat'
+            OR source = 'android_bridge_heartbeat'
+        ) AS last_heartbeat_at,
+        MAX(received_at) FILTER (
+          WHERE COALESCE(classification, '') NOT IN ('bridge_heartbeat', 'bridge_test')
+            AND COALESCE(source, '') <> 'android_bridge_heartbeat'
+            AND (
+              LOWER(COALESCE(app, '')) LIKE '%turo%'
+              OR LOWER(COALESCE(package_name, '')) LIKE '%turo%'
+              OR COALESCE(classification, '') IN (
+                'trip_booked',
+                'trip_changed',
+                'trip_canceled',
+                'trip_cancelled',
+                'guest_message',
+                'payment_notice',
+                'trip_rated',
+                'return_location_check'
+              )
+            )
+        ) AS last_turo_notification_at
+      FROM notification_events
+    )
+    SELECT *
+    FROM latest
   `);
-  const lastSeen = rows[0]?.last_seen;
+  const lastSeen = rows[0]?.last_heartbeat_at;
+  const lastTuroNotificationAt = rows[0]?.last_turo_notification_at;
   const lastSeenMs = lastSeen ? new Date(lastSeen).getTime() : NaN;
+  const lastTuroNotificationMs = lastTuroNotificationAt
+    ? new Date(lastTuroNotificationAt).getTime()
+    : NaN;
   const staleMinutes = bridgeSettings.heartbeatStaleMinutes;
   const staleMs = staleMinutes * 60 * 1000;
+  const turoFreshMs = bridgeSettings.turoNotificationStaleHours * 60 * 60 * 1000;
 
   if (Number.isFinite(lastSeenMs) && Date.now() - lastSeenMs <= staleMs) {
+    return [];
+  }
+
+  if (
+    Number.isFinite(lastTuroNotificationMs) &&
+    Date.now() - lastTuroNotificationMs <= turoFreshMs
+  ) {
     return [];
   }
 
@@ -314,7 +350,7 @@ async function collectBridgeHeartbeatAlerts() {
       body: `Denmark: Android bridge heartbeat is stale. Last seen ${
         lastSeen ? formatChicago(lastSeen) : "never"
       }.`,
-      details: { lastSeen, staleMinutes },
+      details: { lastSeen, lastTuroNotificationAt, staleMinutes },
     },
   ];
 }
