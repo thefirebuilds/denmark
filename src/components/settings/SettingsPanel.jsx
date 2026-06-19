@@ -27,6 +27,7 @@ const DEFAULT_DISPATCH_SETTINGS = {
 
 const DEFAULT_VISIBLE_BUCKETS = DEFAULT_DISPATCH_SETTINGS.visibleBuckets;
 const DEFAULT_BRIDGE_ALERT_SETTINGS = {
+  enabled: true,
   heartbeatStaleMinutes: 25,
   turoNotificationStaleHours: 12,
 };
@@ -178,6 +179,7 @@ function mergeBridgeAlertSettings(settings) {
   const turoNotificationStaleHours = Number(settings?.turoNotificationStaleHours);
 
   return {
+    enabled: settings?.enabled !== false,
     heartbeatStaleMinutes:
       Number.isFinite(heartbeatStaleMinutes) && heartbeatStaleMinutes >= 5
         ? Math.min(heartbeatStaleMinutes, 240)
@@ -664,6 +666,16 @@ function AlertSettingsPanel() {
     );
   }
 
+  function updateEnabled(value) {
+    dirtyRef.current = true;
+    setForm((current) =>
+      mergeBridgeAlertSettings({
+        ...current,
+        enabled: Boolean(value),
+      })
+    );
+  }
+
   return (
     <section className="panel settings-main-panel">
       <div className="panel-header">
@@ -679,6 +691,18 @@ function AlertSettingsPanel() {
       <div className="settings-form">
         <div className="settings-group">
           <div className="settings-group-title">Android bridge</div>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.enabled !== false}
+              onChange={(event) => updateEnabled(event.target.checked)}
+            />
+            <span>Enable Android notification bridge</span>
+          </label>
+          <small className="settings-field-note">
+            When off, Denmark ignores Android bridge posts and stops bridge freshness
+            warnings.
+          </small>
           <div className="settings-form-grid">
             <label className="settings-field">
               <span>Turo notification warning</span>
@@ -687,6 +711,7 @@ function AlertSettingsPanel() {
                 min="1"
                 max="168"
                 step="1"
+                disabled={form.enabled === false}
                 value={form.turoNotificationStaleHours}
                 onChange={(event) =>
                   updateNumberField(
@@ -708,6 +733,7 @@ function AlertSettingsPanel() {
                 min="5"
                 max="240"
                 step="5"
+                disabled={form.enabled === false}
                 value={form.heartbeatStaleMinutes}
                 onChange={(event) =>
                   updateNumberField("heartbeatStaleMinutes", event.target.value)

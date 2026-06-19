@@ -72,6 +72,7 @@ const DEFAULT_SETTINGS = {
     categories: DEFAULT_EXPENSE_CATEGORIES,
   },
   "alerts.bridge": {
+    enabled: true,
     heartbeatStaleMinutes: 25,
     turoNotificationStaleHours: 12,
   },
@@ -141,6 +142,7 @@ function mergeSettings(key, value) {
     const turoNotificationStaleHours = Number(value.turoNotificationStaleHours);
 
     return {
+      enabled: value.enabled !== false,
       heartbeatStaleMinutes:
         Number.isFinite(heartbeatStaleMinutes) && heartbeatStaleMinutes >= 5
           ? Math.min(heartbeatStaleMinutes, 240)

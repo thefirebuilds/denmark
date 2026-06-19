@@ -219,6 +219,13 @@ const EMPTY_QUERY_RESULT = Object.freeze({ rows: [] });
 let messageQueueCache = null;
 let messageStatsCache = null;
 
+async function isAndroidBridgeEnabled() {
+  const { rows } = await db.query(
+    "SELECT value FROM app_settings WHERE key = 'alerts.bridge' LIMIT 1"
+  );
+  return rows[0]?.value?.enabled !== false;
+}
+
 function getCachedPayload(cache, key, ttlMs) {
   if (!cache || cache.key !== key) return null;
   if (Date.now() - cache.createdAt > ttlMs) return null;
@@ -1469,6 +1476,7 @@ router.get("/stats", async (req, res) => {
     }
 
     await ensureNotificationAckColumns();
+    const androidBridgeEnabled = await isAndroidBridgeEnabled();
 
     const sql = `
       SELECT
@@ -1596,8 +1604,11 @@ router.get("/stats", async (req, res) => {
       unknown: Number(row.unknown_count || 0),
       total: Number(row.total_count || 0),
       lastReceived: row.last_received,
-      bridgeHeartbeat: row.bridge_heartbeat || null,
-      bridgeLastTuroNotification: row.bridge_last_turo_notification || null,
+      androidBridgeEnabled,
+      bridgeHeartbeat: androidBridgeEnabled ? row.bridge_heartbeat || null : null,
+      bridgeLastTuroNotification: androidBridgeEnabled
+        ? row.bridge_last_turo_notification || null
+        : null,
       unmatchedNotifications: Number(row.unmatched_notification_count || 0),
     };
 
@@ -1633,6 +1644,17 @@ router.get("/raw", async (req, res) => {
     }
 
     if (type === "android") {
+      if (!(await isAndroidBridgeEnabled())) {
+        return res.json({
+          type,
+          page,
+          limit,
+          total: 0,
+          items: [],
+          disabled: true,
+        });
+      }
+
       await autoAcknowledgeVerifiedReturnNotifications();
 
       const countResult = await db.query(`
@@ -3059,6 +3081,7 @@ router.get("/", async (req, res) => {
       LIMIT 1
     `;
 
+    const androidBridgeEnabled = await isAndroidBridgeEnabled();
     const handoffResult = await timeQueueQuery(
       queueTimings,
       "handoff",
@@ -3086,7 +3109,9 @@ router.get("/", async (req, res) => {
     const unmatchedNotificationsResult = await timeQueueQuery(
       queueTimings,
       "unmatchedNotifications",
-      db.query(unmatchedNotificationsSql)
+      androidBridgeEnabled
+        ? db.query(unmatchedNotificationsSql)
+        : Promise.resolve(EMPTY_QUERY_RESULT)
     );
     const diagnosticResult = await timeQueueQuery(
       queueTimings,

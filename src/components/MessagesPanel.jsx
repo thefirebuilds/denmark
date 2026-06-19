@@ -1269,6 +1269,7 @@ export default function MessagesPanel({
   const [error, setError] = useState("");
   const [newMessageIds, setNewMessageIds] = useState([]);
   const [unreadCount, setUnreadCount] = useState(Number(initialUnreadCount || 0));
+  const [androidBridgeEnabled, setAndroidBridgeEnabled] = useState(true);
   const [bridgeHeartbeat, setBridgeHeartbeat] = useState(null);
   const [bridgeLastTuroNotification, setBridgeLastTuroNotification] =
     useState(null);
@@ -1333,6 +1334,7 @@ export default function MessagesPanel({
       const stats = await res.json();
 
       setUnreadCount(Number(stats.unread || 0));
+      setAndroidBridgeEnabled(stats.androidBridgeEnabled !== false);
       setBridgeHeartbeat(stats.bridgeHeartbeat || null);
       setBridgeLastTuroNotification(stats.bridgeLastTuroNotification || null);
     } catch (err) {
@@ -2243,19 +2245,21 @@ async function handleExportGuestInspectionSheet(message) {
         </div>
 
         <div className="chip">{unreadCount} unread</div>
-        {bridgeHeartbeat?.stale ? (
+        {androidBridgeEnabled && bridgeHeartbeat?.stale ? (
           <div className="chip bridge-heartbeat bridge-heartbeat--stale">
             {formatBridgeHeartbeat(bridgeHeartbeat)}
           </div>
         ) : null}
-        <div
-          className={`chip bridge-heartbeat ${
-            bridgeLastTuroNotification?.stale ? "bridge-heartbeat--stale" : ""
-          }`}
-        >
-          {formatBridgeTuroNotification(bridgeLastTuroNotification)}
-        </div>
-        {visibleUnmatchedNotificationCount > 0 && (
+        {androidBridgeEnabled ? (
+          <div
+            className={`chip bridge-heartbeat ${
+              bridgeLastTuroNotification?.stale ? "bridge-heartbeat--stale" : ""
+            }`}
+          >
+            {formatBridgeTuroNotification(bridgeLastTuroNotification)}
+          </div>
+        ) : null}
+        {androidBridgeEnabled && visibleUnmatchedNotificationCount > 0 && (
           <div className="chip notification-gap-chip">
             {visibleUnmatchedNotificationCount} Bridge Notifications
           </div>

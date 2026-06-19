@@ -10,6 +10,13 @@ const router = express.Router();
 let ensureNotificationEventsTablePromise = null;
 let hasWarnedAboutMissingBridgeSecret = false;
 
+async function isAndroidBridgeEnabled() {
+  const { rows } = await pool.query(
+    "SELECT value FROM app_settings WHERE key = 'alerts.bridge' LIMIT 1"
+  );
+  return rows[0]?.value?.enabled !== false;
+}
+
 function cleanString(value, { maxLength = 4000, allowEmpty = true } = {}) {
   if (value == null) return allowEmpty ? "" : null;
 
@@ -602,6 +609,14 @@ router.post("/turo", async (req, res) => {
   }
 
   try {
+    if (!(await isAndroidBridgeEnabled())) {
+      return res.status(202).json({
+        ok: true,
+        skipped: true,
+        reason: "android bridge disabled",
+      });
+    }
+
     const { event, error } = buildStoredEvent(req.body);
     if (error) {
       return res.status(400).json({ ok: false, error });

@@ -9,6 +9,7 @@ let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
 const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
 const DEFAULT_BRIDGE_ALERT_SETTINGS = {
+  enabled: true,
   heartbeatStaleMinutes: 25,
   turoNotificationStaleHours: 12,
 };
@@ -26,6 +27,7 @@ async function getBridgeAlertSettings() {
   const value = rows[0]?.value || {};
 
   return {
+    enabled: value.enabled !== false,
     heartbeatStaleMinutes: coerceNumber(
       value.heartbeatStaleMinutes ??
         value.heartbeat_stale_minutes ??
@@ -307,6 +309,8 @@ async function collectNewTripBookedAlerts() {
 
 async function collectBridgeHeartbeatAlerts() {
   const bridgeSettings = await getBridgeAlertSettings();
+  if (!bridgeSettings.enabled) return [];
+
   const { rows } = await pool.query(`
     SELECT MAX(received_at) AS last_seen
     FROM notification_events
@@ -340,6 +344,8 @@ async function collectBridgeHeartbeatAlerts() {
 
 async function collectBridgeTuroNotificationAlerts() {
   const bridgeSettings = await getBridgeAlertSettings();
+  if (!bridgeSettings.enabled) return [];
+
   const { rows } = await pool.query(`
     WITH latest AS (
       SELECT

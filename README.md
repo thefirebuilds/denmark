@@ -646,6 +646,9 @@ curl -X POST http://localhost:5000/api/notifications/turo \
 Behavior:
 - if `DENMARK_BRIDGE_SECRET` is set and does not match, the route returns `401`
 - if the secret is missing, the route is allowed but the server logs a warning
+- if **Settings > Alerts > Enable Android notification bridge** is off, the
+  route accepts and skips payloads, Android raw-feed data is hidden, and bridge
+  stale/freshness alerts are suppressed
 - duplicates are deduped by `event_hash`
 - if `event_hash` is omitted, Denmark computes a fallback hash
 

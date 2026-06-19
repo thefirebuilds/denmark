@@ -3148,6 +3148,7 @@ ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO public.app_settings (key, value)
 VALUES
+  ('alerts.bridge', '{"enabled": true, "heartbeatStaleMinutes": 25, "turoNotificationStaleHours": 12}'::jsonb),
   ('auth.public_base_url', '{"publicBaseUrl": ""}'::jsonb),
   ('auth.google_callback_path', '{"googleCallbackPath": "/api/auth/callback"}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
