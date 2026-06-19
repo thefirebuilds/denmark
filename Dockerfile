@@ -9,6 +9,7 @@ RUN npm ci
 COPY index.html vite.config.ts tsconfig*.json eslint.config.js ./
 COPY public ./public
 COPY src ./src
+COPY shared ./shared
 
 # The repo's `npm run build` currently runs `tsc -b` first, while the app is
 # still importing several JSX modules without declarations. Vite builds cleanly,
@@ -38,11 +39,13 @@ RUN apt-get update \
 COPY --from=server-deps /app/server/node_modules ./server/node_modules
 COPY server ./server
 COPY setup ./setup
+COPY shared ./shared
 COPY --from=web-build /app/dist ./dist
 
 RUN mkdir -p ./imports
 
 RUN test -f ./server/db/schema.sql \
+  && test -f ./shared/marketplaceCatalog.mjs \
   && test -f ./setup/bootstrap-db.js \
   && test -f ./setup/verify-db-bootstrap.js \
   && test -f ./setup/restore-json-backup.js \

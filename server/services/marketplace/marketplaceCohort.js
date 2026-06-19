@@ -13,7 +13,7 @@ let marketplaceCatalogModulePromise = null;
 let marketplaceCatalogModuleMtimeMs = null;
 
 async function getMarketplaceCatalogModule() {
-  const catalogPath = path.resolve(__dirname, "../../../src/utils/marketplaceCatalog.js");
+  const catalogPath = path.resolve(__dirname, "../../../shared/marketplaceCatalog.mjs");
   const stat = await fs.promises.stat(catalogPath);
 
   if (!marketplaceCatalogModulePromise || marketplaceCatalogModuleMtimeMs !== stat.mtimeMs) {
