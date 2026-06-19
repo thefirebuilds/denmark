@@ -428,6 +428,168 @@
   line-height: 1.25;
 }
 
+.maintenance-queue-task-details {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.maintenance-queue-task-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.maintenance-queue-task-chip {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.12);
+  color: #bfdbfe;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.maintenance-queue-task-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.maintenance-queue-task-detail-grid div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.maintenance-queue-task-detail-grid span,
+.maintenance-queue-related span,
+.maintenance-queue-reassign label > span {
+  color: rgba(226, 232, 240, 0.62);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.maintenance-queue-task-detail-grid strong {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.maintenance-queue-task-notes,
+.maintenance-queue-task-empty,
+.maintenance-queue-task-context,
+.maintenance-queue-related {
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.maintenance-queue-task-notes {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.maintenance-queue-task-notes p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.maintenance-queue-task-empty,
+.maintenance-queue-task-context {
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.maintenance-queue-related {
+  display: grid;
+  gap: 6px;
+}
+
+.maintenance-queue-related ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.maintenance-queue-reassign {
+  display: grid;
+  gap: 8px;
+}
+
+.maintenance-queue-reassign label {
+  display: grid;
+  gap: 6px;
+}
+
+.maintenance-queue-reassign select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.maintenance-queue-reassign option {
+  background: #111827;
+  color: #f9fafb;
+}
+
+.maintenance-queue-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.maintenance-queue-action {
+  min-height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.maintenance-queue-action--primary {
+  border-color: rgba(96, 165, 250, 0.34);
+  background: rgba(96, 165, 250, 0.13);
+  color: #bfdbfe;
+}
+
+.maintenance-queue-action:hover:not(:disabled),
+.maintenance-queue-action:focus-visible {
+  background: rgba(96, 165, 250, 0.18);
+  outline: 1px solid rgba(96, 165, 250, 0.32);
+  outline-offset: 2px;
+}
+
+.maintenance-queue-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .maintenance-queue-card-head {
   display: flex;
   align-items: center;
@@ -573,7 +735,8 @@
 @media (max-width: 1100px) {
   .fleet-maintenance-meta,
   .fleet-maintenance-grid,
-  .maintenance-queue-grid {
+  .maintenance-queue-grid,
+  .maintenance-queue-task-detail-grid {
     grid-template-columns: 1fr;
   }
 }

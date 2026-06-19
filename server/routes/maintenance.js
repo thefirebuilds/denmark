@@ -326,31 +326,81 @@ router.post("/vehicles/:vin/maintenance-tasks", async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// PATCH maintenance task status
+// PATCH maintenance task status / assignment
 // ------------------------------------------------------------
 router.patch("/maintenance-tasks/:taskId", async (req, res) => {
   try {
     const taskId = Number(req.params.taskId);
-    const status = String(req.body?.status || "").trim().toLowerCase();
+    const statusProvided = Object.prototype.hasOwnProperty.call(req.body || {}, "status");
+    const vehicleVinProvided = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "vehicle_vin"
+    );
+    const status = statusProvided
+      ? String(req.body?.status || "").trim().toLowerCase()
+      : null;
+    const vehicleVin = vehicleVinProvided
+      ? String(req.body?.vehicle_vin || "").trim()
+      : null;
 
     if (!Number.isInteger(taskId) || taskId <= 0) {
       return res.status(400).json({ error: "Invalid taskId" });
     }
 
-    if (!["open", "scheduled", "in_progress", "deferred", "resolved"].includes(status)) {
+    if (!statusProvided && !vehicleVinProvided) {
+      return res.status(400).json({ error: "No task updates provided" });
+    }
+
+    if (
+      statusProvided &&
+      !["open", "scheduled", "in_progress", "deferred", "resolved"].includes(status)
+    ) {
       return res.status(400).json({ error: "Invalid task status" });
+    }
+
+    if (vehicleVinProvided) {
+      if (!vehicleVin) {
+        return res.status(400).json({ error: "vehicle_vin is required" });
+      }
+
+      const vehicleResult = await pool.query(
+        `
+          SELECT vin
+          FROM vehicles
+          WHERE vin = $1
+          LIMIT 1
+        `,
+        [vehicleVin]
+      );
+
+      if (!vehicleResult.rows[0]) {
+        return res.status(404).json({ error: "Vehicle not found" });
+      }
+    }
+
+    const updates = [];
+    const values = [taskId];
+
+    if (statusProvided) {
+      values.push(status);
+      updates.push(`status = $${values.length}`);
+    }
+
+    if (vehicleVinProvided) {
+      values.push(vehicleVin);
+      updates.push(`vehicle_vin = $${values.length}`);
     }
 
     const result = await pool.query(
       `
         UPDATE maintenance_tasks
         SET
-          status = $2,
+          ${updates.join(",\n          ")},
           updated_at = NOW()
         WHERE id = $1
         RETURNING *
       `,
-      [taskId, status]
+      values
     );
 
     if (!result.rows[0]) {

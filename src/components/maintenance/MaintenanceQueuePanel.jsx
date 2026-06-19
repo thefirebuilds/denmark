@@ -133,6 +133,75 @@ function getTaskHistoryStatusLabel(status) {
   return value ? value.replace(/_/g, " ") : "Updated";
 }
 
+function formatQueueTaskDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function humanizeQueueValue(value) {
+  return String(value || "")
+    .trim()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function getQueueItemKey(item) {
+  return String(item?.id || item?.task?.id || item?.linkedRuleCode || "");
+}
+
+function getQueueItemTaskId(item) {
+  const taskId = Number(item?.task?.id);
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : null;
+}
+
+function getQueueItemTaskStatus(item) {
+  return humanizeQueueValue(item?.task?.status || item?.status || item?.ruleStatus || "open");
+}
+
+function getQueueItemNotes(item) {
+  const task = item?.task || {};
+  const context = task.trigger_context || {};
+
+  return [
+    task.description,
+    item?.notes,
+    context.notes,
+    context.note,
+    context.reportedBy ? `Reported by ${context.reportedBy}` : null,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index);
+}
+
+function getQueueItemBlockers(item) {
+  const blockers = [];
+
+  if (item?.blocksRentalWhenOverdue || item?.task?.blocks_rental) {
+    blockers.push("Blocks rentals");
+  }
+
+  if (item?.blocksGuestExportWhenOverdue || item?.task?.blocks_guest_export) {
+    blockers.push("Blocks guest export");
+  }
+
+  return blockers;
+}
+
+function getQueueItemRelatedItems(item) {
+  return Array.isArray(item?.mergedItems) && item.mergedItems.length > 1
+    ? item.mergedItems
+    : [];
+}
+
 function groupFleetItemsByAvailabilityDate(items) {
   const dateGroups = new Map();
 
@@ -224,6 +293,10 @@ export default function MaintenanceQueuePanel({
   const [fleetPlanningItems, setFleetPlanningItems] = useState([]);
   const [fleetPlanningLoading, setFleetPlanningLoading] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [expandedQueueItems, setExpandedQueueItems] = useState(() => new Set());
+  const [reassigningTaskId, setReassigningTaskId] = useState(null);
+  const [reassignVehicleVin, setReassignVehicleVin] = useState("");
+  const [updatingTaskId, setUpdatingTaskId] = useState(null);
 
   const [selectedInspectionItem, setSelectedInspectionItem] = useState(null);
   const [inspectionDrawerOpen, setInspectionDrawerOpen] = useState(false);
@@ -259,6 +332,19 @@ export default function MaintenanceQueuePanel({
     () => groupFleetItemsByAvailabilityDate(fleetPlanningItems),
     [fleetPlanningItems]
   );
+
+  const vehicleOptions = useMemo(() => {
+    return (fleetVehicles || [])
+      .filter((vehicle) => vehicle?.vin)
+      .map((vehicle) => ({
+        vin: vehicle.vin,
+        label:
+          vehicle.nickname ||
+          [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") ||
+          vehicle.vin,
+      }))
+      .sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  }, [fleetVehicles]);
 
   useEffect(() => {
     function handleMaintenanceTasksUpdated() {
@@ -560,6 +646,85 @@ export default function MaintenanceQueuePanel({
     }
   }
 
+  function toggleQueueItem(item) {
+    const key = getQueueItemKey(item);
+    if (!key) return;
+
+    setExpandedQueueItems((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function handleStartReassignTask(item) {
+    const taskId = getQueueItemTaskId(item);
+    if (!taskId) return;
+
+    setReassigningTaskId(taskId);
+    setReassignVehicleVin(
+      item?.task?.vehicle_vin ||
+        item?.vehicleVin ||
+        selectedFleetVehicle?.vin ||
+        ""
+    );
+  }
+
+  function handleCancelReassignTask() {
+    setReassigningTaskId(null);
+    setReassignVehicleVin("");
+  }
+
+  async function handleReassignTask(item) {
+    const taskId = getQueueItemTaskId(item);
+    const targetVin = String(reassignVehicleVin || "").trim();
+
+    if (!taskId || !targetVin) {
+      window.alert("Choose a vehicle before reassigning this task.");
+      return;
+    }
+
+    try {
+      setUpdatingTaskId(taskId);
+
+      const res = await fetch(`/api/maintenance-tasks/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          vehicle_vin: targetVin,
+        }),
+      });
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      handleCancelReassignTask();
+
+      if (selectedVehicleId && selectedFleetVehicle?.vin) {
+        await loadSummaryForSelectedVehicle(selectedFleetVehicle.vin);
+      } else {
+        setRefreshNonce((value) => value + 1);
+      }
+
+      notifyMaintenanceTasksUpdated({
+        task: body?.task || null,
+        taskId,
+        source: "maintenance_queue_reassign",
+      });
+    } catch (err) {
+      console.error("Failed to reassign maintenance task:", err);
+      window.alert(err.message || "Could not reassign task.");
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  }
+
   async function handleResolveTask(item) {
     const taskId = item?.task?.id;
     if (!taskId) {
@@ -577,6 +742,8 @@ export default function MaintenanceQueuePanel({
     if (!confirmed) return;
 
     try {
+      setUpdatingTaskId(taskId);
+
       const res = await fetch(`/api/maintenance-tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         headers: {
@@ -609,6 +776,8 @@ export default function MaintenanceQueuePanel({
     } catch (err) {
       console.error("Failed to resolve maintenance task:", err);
       window.alert(err.message || "Could not mark task done.");
+    } finally {
+      setUpdatingTaskId(null);
     }
   }
 
@@ -720,6 +889,201 @@ export default function MaintenanceQueuePanel({
     }
   }
 
+  function renderQueueItemDetails(item, options = {}) {
+    const taskId = getQueueItemTaskId(item);
+    const task = item?.task || {};
+    const blockers = getQueueItemBlockers(item);
+    const notes = getQueueItemNotes(item);
+    const relatedItems = getQueueItemRelatedItems(item);
+    const createdAt = formatQueueTaskDate(task.created_at || task.createdAt);
+    const updatedAt = formatQueueTaskDate(task.updated_at || task.updatedAt);
+    const triggerContext = task.trigger_context || {};
+    const canReassign = Boolean(taskId && vehicleOptions.length);
+    const isReassigning = taskId && reassigningTaskId === taskId;
+    const isUpdating = taskId && updatingTaskId === taskId;
+    const currentVin =
+      task.vehicle_vin ||
+      item?.vehicleVin ||
+      selectedFleetVehicle?.vin ||
+      "";
+
+    return (
+      <div className="maintenance-queue-task-details">
+        <div className="maintenance-queue-task-chip-row">
+          <span className="maintenance-queue-task-chip">
+            {getQueueItemTaskStatus(item)}
+          </span>
+          <span className="maintenance-queue-task-chip">
+            {humanizeQueueValue(item?.priority || task.priority || "medium")}
+          </span>
+          <span className="maintenance-queue-task-chip">
+            {humanizeQueueValue(task.source || item?.source || "maintenance")}
+          </span>
+        </div>
+
+        <div className="maintenance-queue-task-detail-grid">
+          <div>
+            <span>Type</span>
+            <strong>{humanizeQueueValue(task.task_type || item?.type || "maintenance")}</strong>
+          </div>
+          <div>
+            <span>Created</span>
+            <strong>{createdAt || "Unknown"}</strong>
+          </div>
+          <div>
+            <span>Updated</span>
+            <strong>{updatedAt || "No updates"}</strong>
+          </div>
+          <div>
+            <span>Blockers</span>
+            <strong>{blockers.length ? blockers.join(", ") : "None"}</strong>
+          </div>
+        </div>
+
+        {notes.length ? (
+          <div className="maintenance-queue-task-notes">
+            {notes.map((note, index) => (
+              <p key={`${getQueueItemKey(item)}-note-${index}`}>{note}</p>
+            ))}
+          </div>
+        ) : (
+          <div className="maintenance-queue-task-empty">No notes on this task yet.</div>
+        )}
+
+        {triggerContext.createdFrom || triggerContext.noteSource ? (
+          <div className="maintenance-queue-task-context">
+            {[triggerContext.createdFrom, triggerContext.noteSource]
+              .filter(Boolean)
+              .map(humanizeQueueValue)
+              .join(" - ")}
+          </div>
+        ) : null}
+
+        {relatedItems.length ? (
+          <div className="maintenance-queue-related">
+            <span>Consolidated items</span>
+            <ul>
+              {relatedItems.map((related, index) => (
+                <li key={`${getQueueItemKey(item)}-related-${index}`}>
+                  {related.title || related.task?.title || "Maintenance item"}
+                  {related.task?.status ? ` - ${humanizeQueueValue(related.task.status)}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {isReassigning ? (
+          <div className="maintenance-queue-reassign">
+            <label>
+              <span>Move to vehicle</span>
+              <select
+                value={reassignVehicleVin}
+                onChange={(event) => setReassignVehicleVin(event.target.value)}
+                disabled={isUpdating}
+              >
+                <option value="">Choose vehicle</option>
+                {vehicleOptions.map((vehicle) => (
+                  <option key={vehicle.vin} value={vehicle.vin}>
+                    {vehicle.label}
+                    {vehicle.vin === currentVin ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="maintenance-queue-task-actions">
+              <button
+                type="button"
+                className="maintenance-queue-action maintenance-queue-action--primary"
+                onClick={() => handleReassignTask(item)}
+                disabled={isUpdating || !reassignVehicleVin}
+              >
+                Save move
+              </button>
+              <button
+                type="button"
+                className="maintenance-queue-action"
+                onClick={handleCancelReassignTask}
+                disabled={isUpdating}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="maintenance-queue-task-actions">
+            {item.linkedRuleCode ? (
+              <button
+                type="button"
+                className="maintenance-queue-action"
+                onClick={() =>
+                  options.fleet
+                    ? handleOpenFleetInspectionItem(item)
+                    : handleOpenInspectionItemFromRuleCode(item.linkedRuleCode)
+                }
+              >
+                Open inspection
+              </button>
+            ) : null}
+            {taskId ? (
+              <>
+                <button
+                  type="button"
+                  className="maintenance-queue-action maintenance-queue-action--primary"
+                  onClick={() => handleResolveTask(item)}
+                  disabled={isUpdating}
+                >
+                  {isUpdating ? "Closing..." : "Close task"}
+                </button>
+                <button
+                  type="button"
+                  className="maintenance-queue-action"
+                  onClick={() => handleStartReassignTask(item)}
+                  disabled={!canReassign || isUpdating}
+                >
+                  Reassign
+                </button>
+              </>
+            ) : null}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderQueueItemButton(item, options = {}) {
+    const key = getQueueItemKey(item);
+    const expanded = expandedQueueItems.has(key);
+    const currentMiles =
+      options.currentOdometerMiles ??
+      item.currentOdometerMiles ??
+      maintenanceSummary?.currentOdometerMiles ??
+      selectedFleetVehicle?.current_odometer_miles ??
+      selectedFleetVehicle?.currentOdometerMiles ??
+      null;
+    const subText = item.linkedRuleCode
+      ? getNextIntervalDueText(item, currentMiles)
+      : `${getQueueItemTaskStatus(item)} - View details`;
+
+    return (
+      <>
+        <button
+          type="button"
+          className="maintenance-queue-task-button"
+          onClick={() => toggleQueueItem(item)}
+          aria-expanded={expanded}
+        >
+          <span>{item.title}</span>
+          <small>
+            {options.vehicleLabel ? `${options.vehicleLabel} - ` : ""}
+            {subText}
+          </small>
+        </button>
+        {expanded ? renderQueueItemDetails(item, options) : null}
+      </>
+    );
+  }
+
   const openItemCount = selectedVehicleId
     ? queueItems.length
     : fleetPlanningItems.length;
@@ -784,30 +1148,10 @@ export default function MaintenanceQueuePanel({
                       <ul className="maintenance-queue-task-list">
                         {vehicleGroup.items.map((item) => (
                           <li key={item.id} className="maintenance-queue-task">
-                            {item.linkedRuleCode ? (
-                              <button
-                                type="button"
-                                className="maintenance-queue-task-button"
-                                onClick={() => handleOpenFleetInspectionItem(item)}
-                              >
-                                <span>{item.title}</span>
-                                <small>
-                                  {getNextIntervalDueText(
-                                    item,
-                                    item.currentOdometerMiles
-                                  )}
-                                </small>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="maintenance-queue-task-button"
-                                onClick={() => handleResolveTask(item)}
-                              >
-                                <span>{item.title}</span>
-                                <small>Mark done</small>
-                              </button>
-                            )}
+                            {renderQueueItemButton(item, {
+                              fleet: true,
+                              currentOdometerMiles: item.currentOdometerMiles,
+                            })}
                           </li>
                         ))}
                       </ul>
@@ -860,14 +1204,25 @@ export default function MaintenanceQueuePanel({
                   <button
                     type="button"
                     className="maintenance-queue-task-button"
-                    onClick={() => handleResolveTask(item)}
+                    onClick={() => toggleQueueItem(item)}
+                    aria-expanded={expandedQueueItems.has(getQueueItemKey(item))}
                   >
                     <span>{item.title}</span>
                     <small>
-                      {selectedFleetVehicle?.nickname || "Selected vehicle"} - Mark done
+                      {selectedFleetVehicle?.nickname || "Selected vehicle"} - View details
                     </small>
                   </button>
                 )}
+                {expandedQueueItems.has(getQueueItemKey(item))
+                  ? renderQueueItemDetails(item, {
+                      vehicleLabel: selectedFleetVehicle?.nickname || "Selected vehicle",
+                      currentOdometerMiles:
+                        maintenanceSummary?.currentOdometerMiles ??
+                        selectedFleetVehicle?.current_odometer_miles ??
+                        selectedFleetVehicle?.currentOdometerMiles ??
+                        null,
+                    })
+                  : null}
               </div>
             ))}
           </div>
