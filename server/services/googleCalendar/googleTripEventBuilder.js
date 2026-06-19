@@ -1,3 +1,5 @@
+const { getTripEventIdentity } = require("./googleEventIdentity");
+
 function addMinutes(isoOrDate, minutes) {
   const d = new Date(isoOrDate);
   return new Date(d.getTime() + minutes * 60 * 1000).toISOString();
@@ -28,6 +30,25 @@ function coalesceStage(trip) {
 
 function getVehicleCalendarName(trip) {
   return trip.vehicle_nickname || trip.vehicle_name || "Car";
+}
+
+function withTripIdentity(trip, eventType, payload) {
+  const identity = getTripEventIdentity(trip, eventType);
+
+  return {
+    eventType,
+    eventId: identity.eventId,
+    payload: {
+      ...payload,
+      extendedProperties: {
+        ...(payload.extendedProperties || {}),
+        private: {
+          ...(payload.extendedProperties?.private || {}),
+          ...identity.privateProperties,
+        },
+      },
+    },
+  };
 }
 
 function baseDescriptionLines(trip) {
@@ -68,91 +89,82 @@ function buildUnconfirmedEvent(trip) {
   const startAt = trip.trip_start || trip.created_at || new Date().toISOString();
   const vehicleName = getVehicleCalendarName(trip);
 
-  return {
-    eventType: "unconfirmed",
-    payload: {
-      summary: `Turo unconfirmed: ${vehicleName} / ${trip.guest_name || "Guest"}`,
-      description: [
-        "Action: review and confirm incoming trip",
-        ...baseDescriptionLines(trip),
-      ].join("\n"),
-      start: {
-        dateTime: new Date(startAt).toISOString(),
-        timeZone: "America/Chicago",
-      },
-      end: {
-        dateTime: addMinutes(startAt, 15),
-        timeZone: "America/Chicago",
-      },
-      reminders: {
-        useDefault: false,
-        overrides: [
-          { method: "popup", minutes: 30 },
-          { method: "popup", minutes: 0 },
-        ],
-      },
+  return withTripIdentity(trip, "unconfirmed", {
+    summary: `Turo unconfirmed: ${vehicleName} / ${trip.guest_name || "Guest"}`,
+    description: [
+      "Action: review and confirm incoming trip",
+      ...baseDescriptionLines(trip),
+    ].join("\n"),
+    start: {
+      dateTime: new Date(startAt).toISOString(),
+      timeZone: "America/Chicago",
     },
-  };
+    end: {
+      dateTime: addMinutes(startAt, 15),
+      timeZone: "America/Chicago",
+    },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 30 },
+        { method: "popup", minutes: 0 },
+      ],
+    },
+  });
 }
 
 function buildPickupEvent(trip) {
   const vehicleName = getVehicleCalendarName(trip);
 
-  return {
-    eventType: "pickup",
-    payload: {
-      summary: `Turo pickup: ${vehicleName} / ${trip.guest_name || "Guest"}`,
-      description: [
-        "Action: pickup / handoff",
-        ...baseDescriptionLines(trip),
-      ].join("\n"),
-      start: {
-        dateTime: new Date(trip.trip_start).toISOString(),
-        timeZone: "America/Chicago",
-      },
-      end: {
-        dateTime: addMinutes(trip.trip_start, 15),
-        timeZone: "America/Chicago",
-      },
-      reminders: {
-        useDefault: false,
-        overrides: [
-          { method: "popup", minutes: 30 },
-          { method: "popup", minutes: 0 },
-        ],
-      },
+  return withTripIdentity(trip, "pickup", {
+    summary: `Turo pickup: ${vehicleName} / ${trip.guest_name || "Guest"}`,
+    description: [
+      "Action: pickup / handoff",
+      ...baseDescriptionLines(trip),
+    ].join("\n"),
+    start: {
+      dateTime: new Date(trip.trip_start).toISOString(),
+      timeZone: "America/Chicago",
     },
-  };
+    end: {
+      dateTime: addMinutes(trip.trip_start, 15),
+      timeZone: "America/Chicago",
+    },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 30 },
+        { method: "popup", minutes: 0 },
+      ],
+    },
+  });
 }
 
 function buildReturnEvent(trip) {
   const vehicleName = getVehicleCalendarName(trip);
 
-  return {
-    eventType: "return",
-    payload: {
-      summary: `Turo return: ${vehicleName} / ${trip.guest_name || "Guest"}`,
-      description: [
-        "Action: receive car, check condition, photos, mileage, fuel",
-        ...baseDescriptionLines(trip),
-      ].join("\n"),
-      start: {
-        dateTime: new Date(trip.trip_end).toISOString(),
-        timeZone: "America/Chicago",
-      },
-      end: {
-        dateTime: addMinutes(trip.trip_end, 15),
-        timeZone: "America/Chicago",
-      },
-      reminders: {
-        useDefault: false,
-        overrides: [
-          { method: "popup", minutes: 30 },
-          { method: "popup", minutes: 0 },
-        ],
-      },
+  return withTripIdentity(trip, "return", {
+    summary: `Turo return: ${vehicleName} / ${trip.guest_name || "Guest"}`,
+    description: [
+      "Action: receive car, check condition, photos, mileage, fuel",
+      ...baseDescriptionLines(trip),
+    ].join("\n"),
+    start: {
+      dateTime: new Date(trip.trip_end).toISOString(),
+      timeZone: "America/Chicago",
     },
-  };
+    end: {
+      dateTime: addMinutes(trip.trip_end, 15),
+      timeZone: "America/Chicago",
+    },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 30 },
+        { method: "popup", minutes: 0 },
+      ],
+    },
+  });
 }
 
 function getExpenseCloseoutStart(trip) {
@@ -188,33 +200,30 @@ function buildExpenseCloseoutEvent(trip) {
   }
   if (trip.expense_status) extra.push(`Expense status: ${trip.expense_status}`);
 
-  return {
-    eventType: "expense_closeout",
-    payload: {
-      summary: `Turo closeout: ${vehicleName} / ${trip.guest_name || "Guest"}`,
-      description: [
-        "Action: close out expenses",
-        ...baseDescriptionLines(trip),
-        "",
-        ...extra,
-      ].join("\n"),
-      start: {
-        dateTime: startAt,
-        timeZone: "America/Chicago",
-      },
-      end: {
-        dateTime: addMinutes(startAt, 15),
-        timeZone: "America/Chicago",
-      },
-      reminders: {
-        useDefault: false,
-        overrides: [
-          { method: "popup", minutes: 30 },
-          { method: "popup", minutes: 0 },
-        ],
-      },
+  return withTripIdentity(trip, "expense_closeout", {
+    summary: `Turo closeout: ${vehicleName} / ${trip.guest_name || "Guest"}`,
+    description: [
+      "Action: close out expenses",
+      ...baseDescriptionLines(trip),
+      "",
+      ...extra,
+    ].join("\n"),
+    start: {
+      dateTime: startAt,
+      timeZone: "America/Chicago",
     },
-  };
+    end: {
+      dateTime: addMinutes(startAt, 15),
+      timeZone: "America/Chicago",
+    },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 30 },
+        { method: "popup", minutes: 0 },
+      ],
+    },
+  });
 }
 
 function isCanceledOrDeleted(trip) {

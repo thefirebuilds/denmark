@@ -50,27 +50,75 @@ async function deleteGoogleEventIfPresent(calendar, calendarId, syncRow) {
   }
 }
 
+function getGoogleHttpStatus(err) {
+  return err?.code || err?.response?.status;
+}
+
+async function patchGoogleEvent(calendar, calendarId, eventId, eventPayload) {
+  const updated = await calendar.events.patch({
+    calendarId,
+    eventId,
+    requestBody: eventPayload,
+  });
+
+  return updated.data;
+}
+
+async function insertGoogleEvent(calendar, calendarId, eventPayload, eventId = null) {
+  const created = await calendar.events.insert({
+    calendarId,
+    requestBody: eventId ? { ...eventPayload, id: eventId } : eventPayload,
+  });
+
+  return created.data;
+}
+
+async function upsertPreferredGoogleEvent(calendar, calendarId, preferredEventId, eventPayload) {
+  try {
+    return await insertGoogleEvent(calendar, calendarId, eventPayload, preferredEventId);
+  } catch (err) {
+    if (getGoogleHttpStatus(err) !== 409) {
+      throw err;
+    }
+
+    return patchGoogleEvent(calendar, calendarId, preferredEventId, eventPayload);
+  }
+}
+
 async function upsertGoogleEvent({
   calendar,
   calendarId,
   existingSync,
   eventPayload,
+  preferredEventId = null,
 }) {
-  if (!existingSync || !existingSync.google_event_id || existingSync.sync_status === "deleted") {
-    const created = await calendar.events.insert({
+  const existingEventId =
+    existingSync?.sync_status !== "deleted" ? existingSync?.google_event_id : null;
+
+  if (preferredEventId && existingEventId !== preferredEventId) {
+    const event = await upsertPreferredGoogleEvent(
+      calendar,
       calendarId,
-      requestBody: eventPayload,
-    });
-    return created.data;
+      preferredEventId,
+      eventPayload
+    );
+
+    return {
+      event,
+      replacedEventId: existingEventId || null,
+    };
   }
 
-  const updated = await calendar.events.patch({
-    calendarId,
-    eventId: existingSync.google_event_id,
-    requestBody: eventPayload,
-  });
+  if (!existingEventId) {
+    const event = preferredEventId
+      ? await upsertPreferredGoogleEvent(calendar, calendarId, preferredEventId, eventPayload)
+      : await insertGoogleEvent(calendar, calendarId, eventPayload);
 
-  return updated.data;
+    return { event, replacedEventId: null };
+  }
+
+  const event = await patchGoogleEvent(calendar, calendarId, existingEventId, eventPayload);
+  return { event, replacedEventId: null };
 }
 
 async function syncTripToGoogle(tripId, userId = null, options = {}) {
@@ -128,11 +176,12 @@ async function syncTripToGoogle(tripId, userId = null, options = {}) {
     for (const desired of eventsToSync) {
       const existingSync = existingSyncMap.get(desired.eventType) || null;
 
-      const event = await upsertGoogleEvent({
+      const { event, replacedEventId } = await upsertGoogleEvent({
         calendar,
         calendarId: connection.calendar_id,
         existingSync,
         eventPayload: desired.payload,
+        preferredEventId: desired.eventId,
       });
 
       await upsertTripGoogleSync({
@@ -142,6 +191,12 @@ async function syncTripToGoogle(tripId, userId = null, options = {}) {
         googleEventId: event.id,
         syncStatus: "synced",
       });
+
+      if (replacedEventId) {
+        await deleteGoogleEventIfPresent(calendar, connection.calendar_id, {
+          google_event_id: replacedEventId,
+        });
+      }
 
       results.push({
         eventType: desired.eventType,

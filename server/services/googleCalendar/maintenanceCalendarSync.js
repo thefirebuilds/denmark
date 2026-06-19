@@ -9,6 +9,7 @@ const {
 const {
   isGoogleCalendarSyncEnabled,
 } = require("./googleCalendarSyncSettings");
+const { getMaintenanceEventIdentity } = require("./googleEventIdentity");
 
 const HIGH_PRIORITY_LEVELS = new Set(["urgent", "high"]);
 const SYNC_CACHE_MS = Number(
@@ -112,6 +113,9 @@ function buildMaintenanceEventPayload(notice, tasks) {
     return `- [${priority}] ${title}${description}`;
   });
 
+  const maintenanceKey = getMaintenanceKey(notice, tasks);
+  const identity = getMaintenanceEventIdentity(maintenanceKey);
+
   return {
     summary: `Maintenance: ${vehicleName}`,
     description: [
@@ -140,11 +144,61 @@ function buildMaintenanceEventPayload(notice, tasks) {
     },
     extendedProperties: {
       private: {
-        denmarkEventType: "maintenance_required",
-        denmarkMaintenanceKey: getMaintenanceKey(notice, tasks),
+        ...identity.privateProperties,
       },
     },
   };
+}
+
+function getGoogleHttpStatus(err) {
+  return err?.code || err?.response?.status;
+}
+
+async function deleteGoogleEventById(calendar, calendarId, googleEventId) {
+  if (!googleEventId) return;
+
+  try {
+    await calendar.events.delete({
+      calendarId,
+      eventId: googleEventId,
+    });
+  } catch (err) {
+    const status = getGoogleHttpStatus(err);
+    if (status !== 404 && status !== 410) {
+      throw err;
+    }
+  }
+}
+
+async function patchGoogleEvent(calendar, calendarId, eventId, eventPayload) {
+  const event = await calendar.events.patch({
+    calendarId,
+    eventId,
+    requestBody: eventPayload,
+  });
+
+  return event.data;
+}
+
+async function insertGoogleEvent(calendar, calendarId, eventPayload, eventId) {
+  const event = await calendar.events.insert({
+    calendarId,
+    requestBody: eventId ? { ...eventPayload, id: eventId } : eventPayload,
+  });
+
+  return event.data;
+}
+
+async function upsertPreferredGoogleEvent(calendar, calendarId, eventId, eventPayload) {
+  try {
+    return await insertGoogleEvent(calendar, calendarId, eventPayload, eventId);
+  } catch (err) {
+    if (getGoogleHttpStatus(err) !== 409) {
+      throw err;
+    }
+
+    return patchGoogleEvent(calendar, calendarId, eventId, eventPayload);
+  }
 }
 
 async function getExistingSync(maintenanceKey, connectionId) {
@@ -206,33 +260,44 @@ async function syncNoticeToConnection(notice, target) {
   oauth2Client.setCredentials({ refresh_token: connection.refresh_token });
   const calendar = google.calendar({ version: "v3", auth: oauth2Client });
   const existingSync = await getExistingSync(maintenanceKey, connection.id);
+  const preferredEventId = getMaintenanceEventIdentity(maintenanceKey).eventId;
+  const existingEventId =
+    existingSync?.sync_status !== "deleted" ? existingSync?.google_event_id : null;
 
   try {
     const event =
-      existingSync?.google_event_id && existingSync.sync_status !== "deleted"
-        ? await calendar.events.patch({
-            calendarId: connection.calendar_id,
-            eventId: existingSync.google_event_id,
-            requestBody: eventPayload,
-          })
-        : await calendar.events.insert({
-            calendarId: connection.calendar_id,
-            requestBody: eventPayload,
-          });
+      existingEventId === preferredEventId
+        ? await patchGoogleEvent(
+            calendar,
+            connection.calendar_id,
+            existingEventId,
+            eventPayload
+          )
+        : await upsertPreferredGoogleEvent(
+            calendar,
+            connection.calendar_id,
+            preferredEventId,
+            eventPayload
+          );
 
     await upsertMaintenanceSync({
       maintenanceKey,
       googleCalendarConnectionId: connection.id,
-      googleEventId: event.data.id,
+      googleEventId: event.id,
       syncStatus: "synced",
     });
+
+    if (existingEventId && existingEventId !== event.id) {
+      await deleteGoogleEventById(calendar, connection.calendar_id, existingEventId);
+    }
+
     await markGoogleCalendarConnectionHealth({
       connectionId: connection.id,
       tokenStatus: "valid",
       tokenError: null,
     });
 
-    return { ok: true, maintenanceKey, eventId: event.data.id };
+    return { ok: true, maintenanceKey, eventId: event.id };
   } catch (err) {
     await markGoogleCalendarConnectionHealth({
       connectionId: connection.id,
