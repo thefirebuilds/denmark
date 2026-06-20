@@ -47,6 +47,9 @@ const {
   ensureBusinessMetricsTables,
 } = require("./services/metrics/businessMetricsService");
 const {
+  ensureMetricsIndexes,
+} = require("./services/metrics/metricsIndexes");
+const {
   ensureVehicleOdometerRollupTable,
 } = require("./services/vehicles/odometerRollupService");
 const {
@@ -441,6 +444,7 @@ async function initializeStartupTables() {
     ["notification events", ensureNotificationEventsTable],
     ["vehicle FMV estimates", ensureVehicleFmvEstimatesTable],
     ["business metrics", ensureBusinessMetricsTables],
+    ["metrics indexes", ensureMetricsIndexes],
     ["vehicle odometer rollups", ensureVehicleOdometerRollupTable],
     ["vehicle aliases", ensureVehicleAliasesTable],
     ["income tables", ensureIncomeTables],

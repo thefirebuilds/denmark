@@ -78,28 +78,10 @@ async function fetchActiveVehicles(client) {
   return rows;
 }
 
-async function fetchTripsForVehicles(client, startDate, endDate) {
-  const { rows } = await client.query(
-    `
-      SELECT
-        t.id,
-        t.reservation_id,
-        t.guest_name,
-        t.vehicle_name,
-        t.turo_vehicle_id,
-        t.trip_start,
-        t.trip_end,
-        t.amount,
-        t.fuel_reimbursement_total,
-        t.starting_odometer,
-        t.ending_odometer,
-        t.toll_total,
-        t.toll_charged_total,
-        t.toll_review_status,
-        t.workflow_stage,
-        t.expense_status,
-        t.completed_at,
-        t.canceled_at,
+async function fetchTripsForVehicles(client, startDate, endDate, options = {}) {
+  const includeObdSuggestions = options.includeObdSuggestions === true;
+  const obdSelect = includeObdSuggestions
+    ? `,
         obd_start.odometer AS obd_start_odometer,
         obd_start.recorded_at AS obd_start_recorded_at,
         obd_end.odometer AS obd_end_odometer,
@@ -110,8 +92,10 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
            AND obd_end.odometer >= obd_start.odometer
           THEN obd_end.odometer - obd_start.odometer
           ELSE NULL
-        END AS obd_miles_driven
-      FROM trips t
+        END AS obd_miles_driven`
+    : "";
+  const obdJoins = includeObdSuggestions
+    ? `
       LEFT JOIN vehicles v
         ON (
           v.turo_vehicle_id = t.turo_vehicle_id
@@ -163,7 +147,33 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
           ))) ASC,
           s.id ASC
         LIMIT 1
-      ) obd_end ON true
+      ) obd_end ON true`
+    : "";
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        t.id,
+        t.reservation_id,
+        t.guest_name,
+        t.vehicle_name,
+        t.turo_vehicle_id,
+        t.trip_start,
+        t.trip_end,
+        t.amount,
+        t.fuel_reimbursement_total,
+        t.starting_odometer,
+        t.ending_odometer,
+        t.toll_total,
+        t.toll_charged_total,
+        t.toll_review_status,
+        t.workflow_stage,
+        t.expense_status,
+        t.completed_at,
+        t.canceled_at
+        ${obdSelect}
+      FROM trips t
+      ${obdJoins}
       WHERE t.trip_start <= $2
         AND t.trip_end >= COALESCE($1, t.trip_start)
         AND (
@@ -1583,7 +1593,9 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
   try {
     const [vehicles, trips] = await Promise.all([
       fetchActiveVehicles(client),
-      fetchTripsForVehicles(client, startDate, endDate),
+      fetchTripsForVehicles(client, startDate, endDate, {
+        includeObdSuggestions: true,
+      }),
     ]);
     const reviewMap = await fetchOffTripAuditReviews(client);
 

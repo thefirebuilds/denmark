@@ -32,6 +32,9 @@ const {
   ensureBusinessMetricsTables,
 } = require("../server/services/metrics/businessMetricsService");
 const {
+  ensureMetricsIndexes,
+} = require("../server/services/metrics/metricsIndexes");
+const {
   ensureVehicleOdometerRollupTable,
 } = require("../server/services/vehicles/odometerRollupService");
 const {
@@ -347,6 +350,7 @@ async function runRuntimeEnsures() {
   await ensureMaintenanceGoogleSyncTable();
   await ensureVehicleFmvEstimatesTable();
   await ensureBusinessMetricsTables();
+  await ensureMetricsIndexes();
   await ensureVehicleOdometerRollupTable();
   await ensureVehicleAliasesTable();
   await ensureSystemActivityLogTable();
