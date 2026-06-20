@@ -44,6 +44,11 @@ function formatDateTime(value) {
   });
 }
 
+function formatOdometer(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${Math.round(n).toLocaleString("en-US")} mi` : "â€”";
+}
+
 function getAuditFlags(trip, vehicleStatuses = []) {
   const flags = [];
 
@@ -288,6 +293,20 @@ export default function TripSummaryListPanel({
                       {Number.isFinite(miles) ? miles.toLocaleString("en-US") : "—"}
                     </div>
                   </div>
+                        <div>
+                          <div className="meta-label">Start odometer</div>
+                          <div className="meta-value">
+                            {formatOdometer(trip.starting_odometer)}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="meta-label">End odometer</div>
+                          <div className="meta-value">
+                            {formatOdometer(trip.ending_odometer)}
+                          </div>
+                        </div>
+
                         <div>
                           <div className="meta-label">Tolls</div>
                           <div className="meta-value">
