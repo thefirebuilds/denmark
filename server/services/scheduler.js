@@ -37,6 +37,7 @@ const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
 const { runFleetAlerts } = require("./alerts/fleetAlerts");
 const { refreshVehicleOdometerRollups } = require("./vehicles/odometerRollupService");
 const { logSystemActivity } = require("./systemActivityLog");
+const { isIntegrationEnabled } = require("./integrations/integrationSettings");
 const pool = require("../db");
 
 let tellerSyncInProgress = false;
@@ -291,6 +292,11 @@ function getStartupStatus() {
 }
 
 async function runTellerSync(reason = "interval") {
+  if (!(await isIntegrationEnabled("teller"))) {
+    console.log(`[scheduler] teller skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (tellerSyncInProgress) {
     console.log(`[scheduler] teller skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -336,6 +342,11 @@ async function runTellerSync(reason = "interval") {
 }
 
 async function runTollSync(reason = "interval") {
+  if (!(await isIntegrationEnabled("tolls"))) {
+    console.log(`[scheduler] tolls skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (tollSyncInProgress) {
     console.log(`[scheduler] tolls skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -359,6 +370,11 @@ async function runTollSync(reason = "interval") {
 }
 
 async function runPoll(reason = "interval") {
+  if (!(await isIntegrationEnabled("imap"))) {
+    console.log(`[scheduler] imap skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (pollInProgress) {
     console.log(`[scheduler] imap skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -381,6 +397,11 @@ async function runPoll(reason = "interval") {
 }
 
 async function runBouncie(reason = "interval") {
+  if (!(await isIntegrationEnabled("bouncie"))) {
+    console.log(`[scheduler] bouncie skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (bouncieInProgress) {
     console.log(`[scheduler] bouncie skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -403,6 +424,11 @@ async function runBouncie(reason = "interval") {
 }
 
 async function runDimo(reason = "interval") {
+  if (!(await isIntegrationEnabled("dimo"))) {
+    console.log(`[scheduler] dimo skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (dimoInProgress) {
     console.log(`[scheduler] dimo skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -428,6 +454,11 @@ async function runDimo(reason = "interval") {
 }
 
 async function runGoogleCalendarReconcile(reason = "interval") {
+  if (!(await isIntegrationEnabled("googleCalendar"))) {
+    console.log(`[scheduler] googleCalendar skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (googleCalendarInProgress) {
     console.log(`[scheduler] googleCalendar skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -480,6 +511,11 @@ async function runGoogleCalendarReconcile(reason = "interval") {
 }
 
 async function runFleetFmvRefresh(reason = "interval") {
+  if (!(await isIntegrationEnabled("fmv"))) {
+    console.log(`[scheduler] fmv skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (fmvInProgress) {
     console.log(`[scheduler] fmv skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -513,6 +549,11 @@ async function runFleetFmvRefresh(reason = "interval") {
 }
 
 async function runBusinessMetricsSnapshot(reason = "interval") {
+  if (!(await isIntegrationEnabled("businessMetrics"))) {
+    console.log(`[scheduler] businessMetrics skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
   if (businessMetricsInProgress) {
     console.log(`[scheduler] businessMetrics skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -586,6 +627,15 @@ async function runTelemetryRetention(reason = "interval") {
   } finally {
     telemetryRetentionInProgress = false;
   }
+}
+
+async function runPublicAvailabilityPush(reason = "interval") {
+  if (!(await isIntegrationEnabled("publicAvailability"))) {
+    console.log(`[scheduler] publicAvailability skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
+  await pushPublicAvailabilitySnapshotSafe(reason);
 }
 
 function startScheduler() {
@@ -668,7 +718,7 @@ function startScheduler() {
 
       // Public availability push immediately
       void runStartupTask("publicAvailability", () =>
-        pushPublicAvailabilitySnapshotSafe("server startup")
+        runPublicAvailabilityPush("server startup")
       );
 
       // Google Calendar reconcile immediately

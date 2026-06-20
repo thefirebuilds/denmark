@@ -41,6 +41,34 @@ const DEFAULT_SMS_ALERT_SETTINGS = {
   configured: false,
   source: "database",
 };
+const DEFAULT_INTEGRATION_ENABLEMENT = {
+  imap: true,
+  bouncie: true,
+  dimo: true,
+  teller: true,
+  tolls: true,
+  googleCalendar: true,
+  fmv: true,
+  businessMetrics: true,
+  publicAvailability: true,
+};
+const DEFAULT_IMAP_SETTINGS = {
+  enabled: true,
+  host: "",
+  port: 993,
+  secure: true,
+  user: "",
+  pass: "",
+  passConfigured: false,
+  targetMailboxes: "INBOX",
+  lookbackHours: 72,
+  ingestLimit: 100,
+  connectionTimeout: 90000,
+  greetingTimeout: 30000,
+  socketTimeout: 600000,
+  configured: false,
+  source: "database",
+};
 const DEFAULT_MARKETPLACE_FILTERS = {
   minPrice: "",
   maxPrice: "",
@@ -371,16 +399,21 @@ function toPayloadVehicle(form) {
 
 function SectionList({ activeSection, onChange }) {
   const sections = [
-    { key: "dispatch", title: "Dispatch", sub: "Open trip ordering" },
-    { key: "auth", title: "Authentication", sub: "Public URL and OAuth" },
+    { key: "setup", title: "Setup Checklist", sub: "Tenant readiness" },
+    { key: "users", title: "Users & Access", sub: "Invites and roles" },
     { key: "fleet", title: "Fleet", sub: "Add and identify cars" },
+    { key: "dispatch", title: "Trips & Dispatch", sub: "Open trip ordering" },
+    { key: "messages", title: "Messages & Inbox", sub: "IMAP intake" },
+    { key: "maintenance", title: "Maintenance", sub: "Queue and telemetry" },
     { key: "locations", title: "Locations", sub: "Geofences and entry alerts" },
+    { key: "alerts", title: "Alerts", sub: "Bridge and SMS" },
+    { key: "integrations", title: "Integrations", sub: "External systems" },
+    { key: "backup", title: "Backup & Restore", sub: "Tenant data safety" },
+    { key: "auth", title: "Authentication", sub: "Public URL and OAuth" },
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
     { key: "marketplace", title: "Marketplace", sub: "Search defaults and screening" },
     { key: "website", title: "Website", sub: "Public availability export" },
-    { key: "maintenance", title: "Maintenance", sub: "Alerts, backups, telemetry" },
-    { key: "logs", title: "Logs", sub: "Server console tail" },
-    { key: "integrations", title: "Integrations", sub: "External systems" },
+    { key: "logs", title: "Advanced / Logs", sub: "Server console tail" },
   ];
 
   return (
@@ -406,6 +439,282 @@ function SectionList({ activeSection, onChange }) {
             <span>{section.sub}</span>
           </button>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function SetupChecklistPanel({ onNavigate }) {
+  const [checklist, setChecklist] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+
+  async function loadChecklist() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/setup/checklist`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load setup checklist");
+      }
+
+      setChecklist(json);
+    } catch (err) {
+      setMessage(err.message || "Failed to load setup checklist");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadChecklist();
+  }, []);
+
+  const items = Array.isArray(checklist?.items) ? checklist.items : [];
+  const needsAttention = items.filter((item) => item.status === "needs_attention");
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Setup Checklist</h2>
+          <span>tenant readiness before beta use</span>
+        </div>
+        <button type="button" className="settings-action-btn secondary" onClick={loadChecklist}>
+          Refresh
+        </button>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Readiness</div>
+          <div className="settings-fleet-summary">
+            <div>
+              <strong>{loading ? "..." : checklist?.summary?.ready || 0}</strong>
+              <span>ready</span>
+            </div>
+            <div>
+              <strong>{loading ? "..." : checklist?.summary?.needsAttention || 0}</strong>
+              <span>needs attention</span>
+            </div>
+            <div>
+              <strong>{loading ? "..." : checklist?.summary?.skipped || 0}</strong>
+              <span>skipped</span>
+            </div>
+            <div>
+              <strong>{loading ? "..." : checklist?.summary?.optional || 0}</strong>
+              <span>optional</span>
+            </div>
+          </div>
+          {message ? <span className="settings-message">{message}</span> : null}
+          {!loading && !needsAttention.length ? (
+            <div className="settings-empty-state">
+              No required setup gaps are currently blocking this tenant.
+            </div>
+          ) : null}
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Checklist items</div>
+          <div className="settings-list">
+            {items.map((item) => (
+              <div className="settings-list-row" key={item.key}>
+                <div>
+                  <strong>{item.label}</strong>
+                  <span>{item.detail}</span>
+                </div>
+                <div className="settings-list-row-actions">
+                  <span className="settings-status-badge">{item.status}</span>
+                  {item.section ? (
+                    <button
+                      type="button"
+                      className="settings-action-btn secondary"
+                      onClick={() => onNavigate(item.section)}
+                    >
+                      Open
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {!loading && !items.length ? (
+              <div className="settings-empty-state">No checklist data available.</div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function UsersAccessPanel() {
+  const [users, setUsers] = useState([]);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("operator");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadUsers() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/auth/users`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load users");
+      }
+
+      setUsers(Array.isArray(json.users) ? json.users : []);
+    } catch (err) {
+      setMessage(err.message || "Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  async function invite() {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setMessage("Enter an email address first.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/auth/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail, role }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to invite user");
+      }
+
+      setEmail("");
+      setMessage(`Invited ${json.user?.email || cleanEmail}.`);
+      await loadUsers();
+    } catch (err) {
+      setMessage(err.message || "Failed to invite user");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateUser(userId, patch) {
+    try {
+      setSaving(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/auth/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to update user");
+      }
+
+      setUsers((current) =>
+        current.map((user) => (String(user.id) === String(userId) ? json.user : user))
+      );
+    } catch (err) {
+      setMessage(err.message || "Failed to update user");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Users & Access</h2>
+          <span>invite users and assign tenant roles</span>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Invite user</div>
+          <div className="settings-empty-state">
+            Invited users claim access by signing in with the same email address.
+          </div>
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Email</span>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} />
+            </label>
+            <label className="settings-field">
+              <span>Role</span>
+              <select value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="owner">Owner</option>
+                <option value="operator">Operator</option>
+                <option value="viewer">Viewer</option>
+                <option value="family">Family</option>
+              </select>
+            </label>
+          </div>
+          <div className="settings-form-actions">
+            <button type="button" className="settings-action-btn" disabled={saving} onClick={invite}>
+              {saving ? "Saving..." : "Invite User"}
+            </button>
+            <button type="button" className="settings-action-btn secondary" onClick={loadUsers}>
+              Refresh
+            </button>
+            {message ? <span className="settings-message">{message}</span> : null}
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Current users</div>
+          <div className="settings-list">
+            {users.map((user) => (
+              <div className="settings-list-row" key={user.id}>
+                <div>
+                  <strong>{user.email}</strong>
+                  <span>
+                    {user.display_name || (user.invited ? "Invited user" : "Signed-in user")}
+                  </span>
+                </div>
+                <div className="settings-list-row-actions">
+                  <select
+                    value={user.role || "viewer"}
+                    disabled={saving}
+                    onChange={(e) => updateUser(user.id, { role: e.target.value })}
+                  >
+                    <option value="owner">Owner</option>
+                    <option value="operator">Operator</option>
+                    <option value="viewer">Viewer</option>
+                    <option value="family">Family</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="settings-action-btn secondary"
+                    disabled={saving}
+                    onClick={() => updateUser(user.id, { is_active: !user.is_active })}
+                  >
+                    {user.is_active ? "Disable" : "Enable"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!loading && !users.length ? (
+              <div className="settings-empty-state">No users found.</div>
+            ) : null}
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -594,6 +903,240 @@ function DispatchSettingsPanel({ settings, onSaved }) {
         {message && !saving && message !== "Saved" ? (
           <div className="settings-message">{message}</div>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+function MessagesSettingsPanel() {
+  const [form, setForm] = useState(DEFAULT_IMAP_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function updateField(field, value) {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  async function loadImapSettings() {
+    try {
+      setLoading(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/integrations.imap`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load IMAP settings");
+      }
+
+      setForm({
+        ...DEFAULT_IMAP_SETTINGS,
+        ...(json.value || {}),
+        pass: "",
+      });
+    } catch (err) {
+      setMessage(err.message || "Failed to load IMAP settings");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadImapSettings();
+  }, []);
+
+  function payload() {
+    return {
+      enabled: form.enabled !== false,
+      host: form.host,
+      port: Number(form.port || 993),
+      secure: form.secure !== false,
+      user: form.user,
+      pass: form.pass || "__KEEP__",
+      targetMailboxes: form.targetMailboxes,
+      lookbackHours: Number(form.lookbackHours || 72),
+      ingestLimit: Number(form.ingestLimit || 100),
+      connectionTimeout: Number(form.connectionTimeout || 90000),
+      greetingTimeout: Number(form.greetingTimeout || 30000),
+      socketTimeout: Number(form.socketTimeout || 600000),
+    };
+  }
+
+  async function saveImapSettings() {
+    try {
+      setSaving(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/integrations.imap`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload()),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save IMAP settings");
+      }
+
+      setForm({
+        ...DEFAULT_IMAP_SETTINGS,
+        ...(json.value || {}),
+        pass: "",
+      });
+      setMessage("IMAP settings saved.");
+    } catch (err) {
+      setMessage(err.message || "Failed to save IMAP settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function testConnection() {
+    try {
+      setTesting(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/integrations.imap/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload()),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || json.ok === false) {
+        throw new Error(json?.error || "IMAP test failed");
+      }
+
+      setMessage(
+        `IMAP connected. Checked ${(json.checkedMailboxes || []).join(", ") || "INBOX"}.`
+      );
+    } catch (err) {
+      setMessage(err.message || "IMAP test failed");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Messages & Inbox</h2>
+          <span>Turo email intake and message setup</span>
+        </div>
+      </div>
+
+      <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">IMAP intake</div>
+          <div className="settings-empty-state">
+            Configure the mailbox Denmark scans for Turo messages. Leave disabled
+            for tenants that will not use email intake.
+          </div>
+
+          <label className="settings-check-row">
+            <input
+              type="checkbox"
+              checked={form.enabled !== false}
+              onChange={(e) => updateField("enabled", e.target.checked)}
+            />
+            <span>Enable IMAP message intake</span>
+          </label>
+
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Host</span>
+              <input
+                value={form.host || ""}
+                onChange={(e) => updateField("host", e.target.value)}
+                placeholder="imap.example.com"
+              />
+            </label>
+            <label className="settings-field">
+              <span>Port</span>
+              <input
+                type="number"
+                value={form.port || 993}
+                onChange={(e) => updateField("port", e.target.value)}
+              />
+            </label>
+            <label className="settings-field">
+              <span>User</span>
+              <input
+                value={form.user || ""}
+                onChange={(e) => updateField("user", e.target.value)}
+                placeholder="turo@example.com"
+              />
+            </label>
+            <label className="settings-field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={form.pass || ""}
+                onChange={(e) => updateField("pass", e.target.value)}
+                placeholder={form.passConfigured ? "Saved; leave blank to keep" : "App password"}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Mailboxes</span>
+              <input
+                value={form.targetMailboxes || "INBOX"}
+                onChange={(e) => updateField("targetMailboxes", e.target.value)}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Lookback hours</span>
+              <input
+                type="number"
+                value={form.lookbackHours || 72}
+                onChange={(e) => updateField("lookbackHours", e.target.value)}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Ingest limit</span>
+              <input
+                type="number"
+                value={form.ingestLimit || 100}
+                onChange={(e) => updateField("ingestLimit", e.target.value)}
+              />
+            </label>
+            <div className="settings-field">
+              <span>Source</span>
+              <strong>{loading ? "Loading..." : form.source || "database"}</strong>
+            </div>
+          </div>
+
+          <label className="settings-check-row">
+            <input
+              type="checkbox"
+              checked={form.secure !== false}
+              onChange={(e) => updateField("secure", e.target.checked)}
+            />
+            <span>Use TLS</span>
+          </label>
+
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={saving || loading}
+              onClick={saveImapSettings}
+            >
+              {saving ? "Saving..." : "Save IMAP"}
+            </button>
+            <button
+              type="button"
+              className="settings-action-btn secondary"
+              disabled={testing || loading}
+              onClick={testConnection}
+            >
+              {testing ? "Testing..." : "Test Connection"}
+            </button>
+            {message ? <span className="settings-message">{message}</span> : null}
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -2943,6 +3486,12 @@ function GoogleCalendarCard({
                 {cleanupPreview.removableEvents ?? cleanupPreview.removedEvents ?? 0}
               </strong>
             </span>
+            {cleanupPreview.safety?.ignoredPrefixOnlyEvents ? (
+              <span>
+                Ignored prefix-only{" "}
+                <strong>{cleanupPreview.safety.ignoredPrefixOnlyEvents}</strong>
+              </span>
+            ) : null}
           </div>
         ) : null}
         <div className="settings-form-actions">
@@ -2980,6 +3529,54 @@ function GoogleCalendarCard({
   );
 }
 
+const INTEGRATION_SWITCH_LABELS = [
+  ["imap", "IMAP message intake", "Polls the configured mailbox for Turo messages."],
+  ["googleCalendar", "Google Calendar sync", "Creates and updates trip/maintenance calendar events."],
+  ["dimo", "DIMO telemetry", "Polls shared DIMO vehicles for location, odometer, and diagnostics."],
+  ["bouncie", "Bouncie telemetry", "Polls Bouncie devices where configured."],
+  ["teller", "Teller and Mercury banking", "Runs banking import jobs for expense review."],
+  ["tolls", "Toll import", "Runs toll import jobs."],
+  ["fmv", "FMV estimates", "Refreshes market value estimates when stale."],
+  ["businessMetrics", "Business metrics snapshots", "Creates periodic business metric snapshots."],
+  ["publicAvailability", "Public availability push", "Pushes availability snapshots to a public site."],
+];
+
+function IntegrationSwitchesCard({ switches, onChange, saving }) {
+  const value = {
+    ...DEFAULT_INTEGRATION_ENABLEMENT,
+    ...(switches || {}),
+  };
+
+  return (
+    <div className="settings-group">
+      <div className="settings-group-title">Tenant automation switches</div>
+      <div className="settings-empty-state">
+        Disable optional integrations on test tenants or for customers who do not use
+        that provider. Disabled jobs are skipped by the scheduler.
+      </div>
+      <div className="settings-vehicle-list">
+        {INTEGRATION_SWITCH_LABELS.map(([key, label, description]) => (
+          <div className="settings-vehicle-row" key={key}>
+            <div>
+              <strong>{label}</strong>
+              <span>{description}</span>
+            </div>
+            <label className="settings-check-row">
+              <input
+                type="checkbox"
+                checked={value[key] !== false}
+                disabled={saving}
+                onChange={(e) => onChange(key, e.target.checked)}
+              />
+              <span>{value[key] !== false ? "Enabled" : "Disabled"}</span>
+            </label>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
   const [connections, setConnections] = useState(null);
@@ -2987,6 +3584,9 @@ function IntegrationsSettingsPanel() {
   const [dimoConfig, setDimoConfig] = useState(null);
   const [dimoStatus, setDimoStatus] = useState([]);
   const [googleCalendarStatus, setGoogleCalendarStatus] = useState(null);
+  const [integrationSwitches, setIntegrationSwitches] = useState(
+    DEFAULT_INTEGRATION_ENABLEMENT
+  );
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -3000,6 +3600,7 @@ function IntegrationsSettingsPanel() {
     useState(null);
   const [savingGoogleCalendarSyncEnabled, setSavingGoogleCalendarSyncEnabled] =
     useState(false);
+  const [savingIntegrationSwitches, setSavingIntegrationSwitches] = useState(false);
   const [message, setMessage] = useState("");
 
   async function loadTellerState() {
@@ -3014,6 +3615,7 @@ function IntegrationsSettingsPanel() {
         dimoConfigRes,
         dimoStatusRes,
         googleCalendarStatusRes,
+        integrationSwitchesRes,
       ] = await Promise.all([
         fetch(`${API_BASE}/api/teller/connect/config`),
         fetch(`${API_BASE}/api/teller/connections`),
@@ -3021,6 +3623,7 @@ function IntegrationsSettingsPanel() {
         fetch(`${API_BASE}/api/dimo/config`),
         fetch(`${API_BASE}/api/dimo/status`),
         fetch(`${API_BASE}/api/integrations/google-calendar/status`),
+        fetch(`${API_BASE}/api/settings/integrations.enabled`),
       ]);
 
       const configJson = await configRes.json().catch(() => ({}));
@@ -3029,6 +3632,9 @@ function IntegrationsSettingsPanel() {
       const dimoConfigJson = await dimoConfigRes.json().catch(() => ({}));
       const dimoStatusJson = await dimoStatusRes.json().catch(() => []);
       const googleCalendarStatusJson = await googleCalendarStatusRes
+        .json()
+        .catch(() => ({}));
+      const integrationSwitchesJson = await integrationSwitchesRes
         .json()
         .catch(() => ({}));
 
@@ -3065,12 +3671,22 @@ function IntegrationsSettingsPanel() {
         );
       }
 
+      if (!integrationSwitchesRes.ok) {
+        throw new Error(
+          integrationSwitchesJson?.error || "Failed to load integration switches"
+        );
+      }
+
       setConfig(configJson);
       setConnections(connectionsJson);
       setMercuryConfig(mercuryConfigJson);
       setDimoConfig(dimoConfigJson);
       setDimoStatus(Array.isArray(dimoStatusJson) ? dimoStatusJson : []);
       setGoogleCalendarStatus(googleCalendarStatusJson);
+      setIntegrationSwitches({
+        ...DEFAULT_INTEGRATION_ENABLEMENT,
+        ...(integrationSwitchesJson.value || {}),
+      });
     } catch (err) {
       setMessage(err.message || "Failed to load integrations");
     } finally {
@@ -3281,6 +3897,40 @@ function IntegrationsSettingsPanel() {
     }
   }
 
+  async function setIntegrationEnabled(key, enabled) {
+    const next = {
+      ...DEFAULT_INTEGRATION_ENABLEMENT,
+      ...(integrationSwitches || {}),
+      [key]: enabled,
+    };
+
+    try {
+      setSavingIntegrationSwitches(true);
+      setIntegrationSwitches(next);
+      const res = await fetch(`${API_BASE}/api/settings/integrations.enabled`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save integration switch");
+      }
+
+      setIntegrationSwitches({
+        ...DEFAULT_INTEGRATION_ENABLEMENT,
+        ...(json.value || next),
+      });
+      setMessage(`${key} ${enabled ? "enabled" : "disabled"} for this tenant.`);
+    } catch (err) {
+      setMessage(err.message || "Failed to save integration switch");
+      await loadTellerState();
+    } finally {
+      setSavingIntegrationSwitches(false);
+    }
+  }
+
   async function previewGoogleCalendarCleanup() {
     try {
       setPreviewingGoogleCalendarCleanup(true);
@@ -3376,6 +4026,12 @@ function IntegrationsSettingsPanel() {
       </div>
 
       <div className="settings-form">
+        <IntegrationSwitchesCard
+          switches={integrationSwitches}
+          saving={savingIntegrationSwitches}
+          onChange={setIntegrationEnabled}
+        />
+
         <DimoShareCard
           config={dimoConfig}
           status={dimoStatus}
@@ -4075,8 +4731,6 @@ function TelemetrySettingsPanel() {
 function MaintenanceSettingsPanel() {
   return (
     <div className="settings-maintenance-stack">
-      <AlertSettingsPanel />
-      <DatabaseSettingsPanel />
       <TelemetrySettingsPanel />
     </div>
   );
@@ -4222,6 +4876,22 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
+    if (activeSection === "setup") {
+      return {
+        title: "Tenant readiness",
+        body:
+          "This checklist is the beta onboarding map. Required items should be ready; optional integrations can be skipped deliberately.",
+      };
+    }
+
+    if (activeSection === "users") {
+      return {
+        title: "Access model",
+        body:
+          "Invite users by email, then assign the least powerful role that fits their work. Owners can change settings and manage other users.",
+      };
+    }
+
     if (activeSection === "auth") {
       return {
         title: "OAuth redirect",
@@ -4235,6 +4905,30 @@ function SettingsHelpPanel({ activeSection }) {
         title: "Website export",
         body:
           "The public site is fed by JSON from Denmark, not by direct database access. The pull endpoint is live JSON; the push path posts signed snapshots when availability-relevant records change.",
+      };
+    }
+
+    if (activeSection === "messages") {
+      return {
+        title: "Inbox intake",
+        body:
+          "IMAP is the simplest high-value integration for beta tenants because it can create trip/message context before telemetry or banking exists.",
+      };
+    }
+
+    if (activeSection === "alerts") {
+      return {
+        title: "Noise control",
+        body:
+          "SMS and Android bridge alerts should be explicit per tenant. If a tenant does not use the bridge, disable it here so stale notices stay quiet.",
+      };
+    }
+
+    if (activeSection === "backup") {
+      return {
+        title: "Tenant safety",
+        body:
+          "Backup and restore are the escape hatch for migration and disaster recovery. Validate staged files before replacing tenant data.",
       };
     }
 
@@ -4264,9 +4958,9 @@ function SettingsHelpPanel({ activeSection }) {
 
     if (activeSection === "integrations") {
       return {
-        title: "Banking setup",
+        title: "Integration control",
         body:
-          "Teller uses bank enrollments, while Mercury uses its direct API token. Both land in the same Inbox review and expense matching flow.",
+          "Use the switches to disable optional provider jobs on test tenants. Provider cards still show whether the underlying credentials are configured.",
       };
     }
 
@@ -4274,7 +4968,7 @@ function SettingsHelpPanel({ activeSection }) {
       return {
         title: "Maintenance ops",
         body:
-          "Operational maintenance settings now collect bridge alert timing, database backup and restore, and DIMO telemetry debug output in one place.",
+          "This section is now focused on fleet maintenance and telemetry diagnostics. Alerts and backup have their own sections.",
       };
     }
 
@@ -4310,23 +5004,33 @@ export default function SettingsPanel({
   dispatchSettings,
   onDispatchSettingsSaved,
 }) {
-  const [activeSection, setActiveSection] = useState("dispatch");
+  const [activeSection, setActiveSection] = useState("setup");
 
   return (
     <>
       <SectionList activeSection={activeSection} onChange={setActiveSection} />
 
-      {activeSection === "dispatch" ? (
+      {activeSection === "setup" ? (
+        <SetupChecklistPanel onNavigate={setActiveSection} />
+      ) : activeSection === "users" ? (
+        <UsersAccessPanel />
+      ) : activeSection === "dispatch" ? (
         <DispatchSettingsPanel
           settings={dispatchSettings}
           onSaved={onDispatchSettingsSaved}
         />
       ) : activeSection === "fleet" ? (
         <FleetSettingsPanel />
+      ) : activeSection === "messages" ? (
+        <MessagesSettingsPanel />
       ) : activeSection === "auth" ? (
         <AuthPublicUrlSettingsPanel />
       ) : activeSection === "locations" ? (
         <LocationsSettingsPanel />
+      ) : activeSection === "alerts" ? (
+        <AlertSettingsPanel />
+      ) : activeSection === "backup" ? (
+        <DatabaseSettingsPanel />
       ) : activeSection === "expenses" ? (
         <ExpenseSettingsPanel />
       ) : activeSection === "marketplace" ? (

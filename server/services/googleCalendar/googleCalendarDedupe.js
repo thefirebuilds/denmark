@@ -14,9 +14,7 @@ function isDenmarkEvent(event) {
     return true;
   }
 
-  return DENMARK_SUMMARY_PREFIXES.some((prefix) =>
-    String(event?.summary || "").startsWith(prefix)
-  );
+  return String(event?.id || "").startsWith("denmark");
 }
 
 function getEventTimeKey(event, side) {
@@ -177,6 +175,19 @@ async function previewGoogleCalendarDuplicateCleanup(calendar, calendarId, optio
     scannedEvents: events.length,
     duplicateGroups,
     removableEvents,
+    safety: {
+      rule: "metadata_or_deterministic_denmark_id_only",
+      ignoredPrefixOnlyEvents: events.filter((event) => {
+        const privateProps = event?.extendedProperties?.private || {};
+        const hasMetadata =
+          privateProps.denmarkTripEventKey || privateProps.denmarkMaintenanceKey;
+        const hasDenmarkId = String(event?.id || "").startsWith("denmark");
+        const hasPrefix = DENMARK_SUMMARY_PREFIXES.some((prefix) =>
+          String(event?.summary || "").startsWith(prefix)
+        );
+        return hasPrefix && !hasMetadata && !hasDenmarkId;
+      }).length,
+    },
   };
 }
 

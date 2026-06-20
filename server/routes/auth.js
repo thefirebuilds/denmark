@@ -7,10 +7,14 @@ const {
 } = require("../auth/oidcProvider");
 const { isAuthEnforced } = require("../auth/config");
 const { requireAuth } = require("../auth/middleware");
+const { requireRole } = require("../auth/middleware");
 const {
   createAuthAuditLog,
   ensureAuthTables,
   getAuditRequestMeta,
+  inviteUser,
+  listUsers,
+  updateUser,
   upsertUserFromOidcProfile,
 } = require("../auth/store");
 const {
@@ -264,6 +268,43 @@ router.get("/me", requireAuth, (req, res) => {
     permissions: req.auth.permissions || [],
     auth_enforced: true,
   });
+});
+
+router.get("/auth/users", requireRole("owner"), async (req, res) => {
+  try {
+    return res.json({ ok: true, users: await listUsers() });
+  } catch (error) {
+    return res.status(error.status || 500).json({
+      error: error.message || "failed to list users",
+    });
+  }
+});
+
+router.post("/auth/users", requireRole("owner"), async (req, res) => {
+  try {
+    const user = await inviteUser({
+      email: req.body?.email,
+      role: req.body?.role || "viewer",
+      displayName: req.body?.display_name || req.body?.displayName || null,
+    });
+
+    return res.status(201).json({ ok: true, user });
+  } catch (error) {
+    return res.status(error.status || 500).json({
+      error: error.message || "failed to invite user",
+    });
+  }
+});
+
+router.patch("/auth/users/:id", requireRole("owner"), async (req, res) => {
+  try {
+    const user = await updateUser(req.params.id, req.body || {});
+    return res.json({ ok: true, user });
+  } catch (error) {
+    return res.status(error.status || 500).json({
+      error: error.message || "failed to update user",
+    });
+  }
 });
 
 module.exports = router;

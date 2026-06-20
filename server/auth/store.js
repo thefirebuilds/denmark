@@ -226,10 +226,13 @@ async function upsertUserFromOidcProfile(
         is_active
       )
       VALUES ($1, $2, $3, $4, $5, TRUE)
-      ON CONFLICT (provider, provider_subject)
+      ON CONFLICT (email)
       DO UPDATE SET
+        provider = EXCLUDED.provider,
+        provider_subject = EXCLUDED.provider_subject,
         email = EXCLUDED.email,
         display_name = EXCLUDED.display_name,
+        is_active = TRUE,
         updated_at = NOW()
       RETURNING
         id,
@@ -278,6 +281,137 @@ async function upsertUserFromOidcProfile(
   };
 }
 
+async function listUsers(client = pool) {
+  await ensureAuthTables(client);
+  const { rows } = await client.query(`
+    SELECT
+      id,
+      provider,
+      provider_subject,
+      email,
+      display_name,
+      role,
+      is_active,
+      created_at,
+      updated_at
+    FROM public.app_users
+    ORDER BY email ASC
+  `);
+
+  return rows.map((row) => ({
+    ...row,
+    role: normalizeRole(row.role),
+    invited: row.provider === "pending",
+  }));
+}
+
+async function inviteUser({ email, role = "viewer", displayName = null }, client = pool) {
+  await ensureAuthTables(client);
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    const err = new Error("Email is required");
+    err.status = 400;
+    throw err;
+  }
+
+  const normalizedRole = normalizeRole(role);
+  const { rows } = await client.query(
+    `
+      INSERT INTO public.app_users (
+        provider,
+        provider_subject,
+        email,
+        display_name,
+        role,
+        is_active
+      )
+      VALUES ('pending', $1, $1, $2, $3, TRUE)
+      ON CONFLICT (email)
+      DO UPDATE SET
+        role = EXCLUDED.role,
+        display_name = COALESCE(EXCLUDED.display_name, public.app_users.display_name),
+        is_active = TRUE,
+        updated_at = NOW()
+      RETURNING
+        id,
+        provider,
+        provider_subject,
+        email,
+        display_name,
+        role,
+        is_active,
+        created_at,
+        updated_at
+    `,
+    [normalizedEmail, normalizeDisplayName(displayName), normalizedRole]
+  );
+
+  const row = rows[0];
+  await logSystemActivity({
+    client,
+    category: "admin",
+    eventType: "user_invited",
+    severity: "notice",
+    actorType: "system",
+    subjectType: "app_user",
+    subjectId: String(row.id),
+    subjectLabel: row.email,
+    source: "auth",
+    details: {
+      role: normalizeRole(row.role),
+    },
+  }).catch(() => null);
+
+  return {
+    ...row,
+    role: normalizeRole(row.role),
+    invited: row.provider === "pending",
+  };
+}
+
+async function updateUser(userId, patch = {}, client = pool) {
+  await ensureAuthTables(client);
+  const role = patch.role === undefined ? undefined : normalizeRole(patch.role);
+  const isActive =
+    patch.is_active === undefined && patch.isActive === undefined
+      ? undefined
+      : (patch.is_active ?? patch.isActive) !== false;
+
+  const { rows } = await client.query(
+    `
+      UPDATE public.app_users
+      SET
+        role = COALESCE($2, role),
+        is_active = COALESCE($3, is_active),
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
+        id,
+        provider,
+        provider_subject,
+        email,
+        display_name,
+        role,
+        is_active,
+        created_at,
+        updated_at
+    `,
+    [userId, role, isActive]
+  );
+
+  if (!rows[0]) {
+    const err = new Error("User not found");
+    err.status = 404;
+    throw err;
+  }
+
+  return {
+    ...rows[0],
+    role: normalizeRole(rows[0].role),
+    invited: rows[0].provider === "pending",
+  };
+}
+
 module.exports = {
   ensureAuthTables,
   getUserById,
@@ -286,5 +420,8 @@ module.exports = {
   createAuthAuditLog,
   getAuditRequestMeta,
   upsertUserFromOidcProfile,
+  listUsers,
+  inviteUser,
+  updateUser,
   hashServiceToken,
 };

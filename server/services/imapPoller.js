@@ -1,14 +1,10 @@
 const { ImapFlow } = require("imapflow");
 const { simpleParser } = require("mailparser");
 const saveMessage = require("./saveMessage");
-
-const TARGET_MAILBOXES = (
-  process.env.IMAP_TARGET_MAILBOXES ||
-  "INBOX"
-)
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+const {
+  getEffectiveImapSettings,
+  splitMailboxes,
+} = require("./integrations/imapSettings");
 
 function clean(value) {
   if (value == null) return "";
@@ -36,18 +32,37 @@ function hoursAgoDate(hours) {
 }
 
 async function pollImap() {
+  const settings = await getEffectiveImapSettings();
+
+  if (settings.enabled === false) {
+    console.log("[imap] poll skipped | enabled=false");
+    return {
+      skipped: true,
+      reason: "disabled",
+    };
+  }
+
+  if (!settings.configured) {
+    console.log("[imap] poll skipped | configured=false");
+    return {
+      skipped: true,
+      reason: "not_configured",
+    };
+  }
+
+  const targetMailboxes = splitMailboxes(settings.targetMailboxes);
   const client = new ImapFlow({
-    host: process.env.IMAP_HOST,
-    port: Number(process.env.IMAP_PORT || 993),
-    secure: true,
+    host: settings.host,
+    port: Number(settings.port || 993),
+    secure: settings.secure !== false,
     auth: {
-      user: process.env.IMAP_USER,
-      pass: process.env.IMAP_PASS,
+      user: settings.user,
+      pass: settings.pass,
     },
     logger: false,
-    connectionTimeout: Number(process.env.IMAP_CONNECTION_TIMEOUT || 90000),
-    greetingTimeout: Number(process.env.IMAP_GREETING_TIMEOUT || 30000),
-    socketTimeout: Number(process.env.IMAP_SOCKET_TIMEOUT || 600000),
+    connectionTimeout: Number(settings.connectionTimeout || 90000),
+    greetingTimeout: Number(settings.greetingTimeout || 30000),
+    socketTimeout: Number(settings.socketTimeout || 600000),
   });
 
   client.on("error", (err) => {
@@ -70,16 +85,16 @@ async function pollImap() {
   const SAMPLE_LIMIT = 5;
 
   try {
-    const LOOKBACK_HOURS = Number(process.env.IMAP_LOOKBACK_HOURS || 72);
-    const INGEST_LIMIT = Number(process.env.IMAP_INGEST_LIMIT || 100);
+    const LOOKBACK_HOURS = Number(settings.lookbackHours || 72);
+    const INGEST_LIMIT = Number(settings.ingestLimit || 100);
 
     console.log(
-      `[imap] poll start | mailboxes=${TARGET_MAILBOXES.join(",")} lookbackHours=${LOOKBACK_HOURS}`
+      `[imap] poll start | mailboxes=${targetMailboxes.join(",")} lookbackHours=${LOOKBACK_HOURS} source=${settings.source || "settings"}`
     );
 
     await client.connect();
 
-    for (const mailbox of TARGET_MAILBOXES) {
+    for (const mailbox of targetMailboxes.length ? targetMailboxes : ["INBOX"]) {
       let lock;
 
       try {
