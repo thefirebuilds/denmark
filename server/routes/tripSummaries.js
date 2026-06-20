@@ -222,12 +222,69 @@ const TRIP_SUMMARY_SELECT = `
     ti.last_message_at,
     ti.last_unread_at,
     t.trip_details_url,
-    t.guest_profile_url
+    t.guest_profile_url,
+    dimo_start.odometer AS obd_start_odometer,
+    dimo_start.recorded_at AS obd_start_recorded_at,
+    dimo_end.odometer AS obd_end_odometer,
+    dimo_end.recorded_at AS obd_end_recorded_at,
+    CASE
+      WHEN dimo_start.odometer IS NOT NULL
+       AND dimo_end.odometer IS NOT NULL
+       AND dimo_end.odometer >= dimo_start.odometer
+      THEN dimo_end.odometer - dimo_start.odometer
+      ELSE NULL
+    END AS obd_miles_driven
   FROM trips t
   LEFT JOIN trip_intelligence ti
     ON ti.id = t.id
   LEFT JOIN vehicles v
     ON v.turo_vehicle_id = t.turo_vehicle_id
+  LEFT JOIN LATERAL (
+    SELECT
+      ROUND(s.odometer)::integer AS odometer,
+      COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at
+    FROM vehicle_telemetry_snapshots s
+    WHERE s.service_name = 'dimo'
+      AND s.odometer IS NOT NULL
+      AND t.trip_start IS NOT NULL
+      AND (
+        (v.dimo_token_id IS NOT NULL AND s.dimo_token_id = v.dimo_token_id)
+        OR (v.vin IS NOT NULL AND LOWER(s.vin) = LOWER(v.vin))
+      )
+      AND COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+        BETWEEN (t.trip_start AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
+            AND (t.trip_start AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
+    ORDER BY
+      ABS(EXTRACT(EPOCH FROM (
+        COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+        - (t.trip_start AT TIME ZONE 'America/Chicago')
+      ))) ASC,
+      s.id ASC
+    LIMIT 1
+  ) dimo_start ON true
+  LEFT JOIN LATERAL (
+    SELECT
+      ROUND(s.odometer)::integer AS odometer,
+      COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at
+    FROM vehicle_telemetry_snapshots s
+    WHERE s.service_name = 'dimo'
+      AND s.odometer IS NOT NULL
+      AND t.trip_end IS NOT NULL
+      AND (
+        (v.dimo_token_id IS NOT NULL AND s.dimo_token_id = v.dimo_token_id)
+        OR (v.vin IS NOT NULL AND LOWER(s.vin) = LOWER(v.vin))
+      )
+      AND COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+        BETWEEN (t.trip_end AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
+            AND (t.trip_end AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
+    ORDER BY
+      ABS(EXTRACT(EPOCH FROM (
+        COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+        - (t.trip_end AT TIME ZONE 'America/Chicago')
+      ))) ASC,
+      s.id ASC
+    LIMIT 1
+  ) dimo_end ON true
 `;
 
 router.get("/", async (req, res) => {

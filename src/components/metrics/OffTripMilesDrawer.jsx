@@ -29,6 +29,14 @@ function formatTripReference(reservationId, guestName, emptyLabel) {
   return guestName;
 }
 
+function hasObdSuggestion(trip) {
+  return (
+    Number.isFinite(Number(trip?.obd_start_odometer)) ||
+    Number.isFinite(Number(trip?.obd_end_odometer)) ||
+    Number.isFinite(Number(trip?.obd_miles_driven))
+  );
+}
+
 export default function OffTripMilesDrawer({
   open,
   loading = false,
@@ -531,6 +539,37 @@ export default function OffTripMilesDrawer({
                               {formatNumber(trip.ending_odometer)} mi
                             </div>
                           </div>
+
+                          {hasObdSuggestion(trip) ? (
+                            <>
+                              <div className="metrics-audit-field">
+                                <div className="metrics-audit-label">DIMO OBD start</div>
+                                <div className="metrics-audit-value">
+                                  {trip.obd_start_odometer == null
+                                    ? "-"
+                                    : `${formatNumber(trip.obd_start_odometer)} mi`}
+                                </div>
+                              </div>
+
+                              <div className="metrics-audit-field">
+                                <div className="metrics-audit-label">DIMO OBD end</div>
+                                <div className="metrics-audit-value">
+                                  {trip.obd_end_odometer == null
+                                    ? "-"
+                                    : `${formatNumber(trip.obd_end_odometer)} mi`}
+                                </div>
+                              </div>
+
+                              <div className="metrics-audit-field">
+                                <div className="metrics-audit-label">DIMO OBD miles</div>
+                                <div className="metrics-audit-value">
+                                  {trip.obd_miles_driven == null
+                                    ? "-"
+                                    : `${formatNumber(trip.obd_miles_driven, 1)} mi`}
+                                </div>
+                              </div>
+                            </>
+                          ) : null}
 
                           <div className="metrics-audit-field">
                             <div className="metrics-audit-label">Reason</div>

@@ -99,8 +99,71 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
         workflow_stage,
         expense_status,
         completed_at,
-        canceled_at
+        canceled_at,
+        obd_start.odometer AS obd_start_odometer,
+        obd_start.recorded_at AS obd_start_recorded_at,
+        obd_end.odometer AS obd_end_odometer,
+        obd_end.recorded_at AS obd_end_recorded_at,
+        CASE
+          WHEN obd_start.odometer IS NOT NULL
+           AND obd_end.odometer IS NOT NULL
+           AND obd_end.odometer >= obd_start.odometer
+          THEN obd_end.odometer - obd_start.odometer
+          ELSE NULL
+        END AS obd_miles_driven
       FROM trips
+      LEFT JOIN vehicles v
+        ON (
+          v.turo_vehicle_id = trips.turo_vehicle_id
+          OR LOWER(v.nickname) = LOWER(trips.vehicle_name)
+          OR LOWER(v.turo_vehicle_name) = LOWER(trips.vehicle_name)
+        )
+      LEFT JOIN LATERAL (
+        SELECT
+          ROUND(s.odometer)::integer AS odometer,
+          COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.service_name = 'dimo'
+          AND s.odometer IS NOT NULL
+          AND trips.trip_start IS NOT NULL
+          AND (
+            (v.dimo_token_id IS NOT NULL AND s.dimo_token_id = v.dimo_token_id)
+            OR (v.vin IS NOT NULL AND LOWER(s.vin) = LOWER(v.vin))
+          )
+          AND COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+            BETWEEN (trips.trip_start AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
+                AND (trips.trip_start AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
+        ORDER BY
+          ABS(EXTRACT(EPOCH FROM (
+            COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+            - (trips.trip_start AT TIME ZONE 'America/Chicago')
+          ))) ASC,
+          s.id ASC
+        LIMIT 1
+      ) obd_start ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          ROUND(s.odometer)::integer AS odometer,
+          COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.service_name = 'dimo'
+          AND s.odometer IS NOT NULL
+          AND trips.trip_end IS NOT NULL
+          AND (
+            (v.dimo_token_id IS NOT NULL AND s.dimo_token_id = v.dimo_token_id)
+            OR (v.vin IS NOT NULL AND LOWER(s.vin) = LOWER(v.vin))
+          )
+          AND COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+            BETWEEN (trips.trip_end AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
+                AND (trips.trip_end AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
+        ORDER BY
+          ABS(EXTRACT(EPOCH FROM (
+            COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
+            - (trips.trip_end AT TIME ZONE 'America/Chicago')
+          ))) ASC,
+          s.id ASC
+        LIMIT 1
+      ) obd_end ON true
       WHERE trip_start <= $2
         AND trip_end >= COALESCE($1, trip_start)
         AND (
@@ -499,9 +562,26 @@ function calculateTripOffTripMiles(trips) {
   };
 }
 
+function getObdOdometerSuggestionFields(trip) {
+  const start = toNumber(trip?.obd_start_odometer, null);
+  const end = toNumber(trip?.obd_end_odometer, null);
+
+  return {
+    obd_start_odometer: start,
+    obd_start_recorded_at: trip?.obd_start_recorded_at ?? null,
+    obd_end_odometer: end,
+    obd_end_recorded_at: trip?.obd_end_recorded_at ?? null,
+    obd_miles_driven:
+      start != null && end != null && end >= start
+        ? clampNonNegative(end - start)
+        : null,
+    odometer_suggestion_source:
+      start != null || end != null ? "dimo_obd" : null,
+  };
+}
+
 function calculateTripOffTripAudit(trips, endDate = null) {
   const odometerTrips = (trips || [])
-    .filter((trip) => toNumber(trip?.starting_odometer, null) != null)
     .slice()
     .sort((a, b) => {
       const startDiff =
@@ -520,6 +600,22 @@ function calculateTripOffTripAudit(trips, endDate = null) {
     const endOdometer = toNumber(trip.ending_odometer, null);
 
     if (startOdometer == null) {
+      skippedTrips.push({
+        trip_id: trip?.id ?? null,
+        reservation_id: trip?.reservation_id ?? null,
+        guest_name: trip?.guest_name ?? null,
+        trip_start: trip?.trip_start ?? null,
+        trip_end: trip?.trip_end ?? null,
+        starting_odometer: null,
+        ending_odometer: endOdometer,
+        reason: "missing starting odometer",
+        associated_open_trip: isTripActiveAtRangeEnd(trip, endDate),
+        anchor_previous_reservation_id: lastClosedTrip?.reservation_id ?? null,
+        anchor_previous_guest_name: lastClosedTrip?.guest_name ?? null,
+        anchor_previous_trip_end: lastClosedTrip?.trip_end ?? null,
+        anchor_previous_ending_odometer: lastKnownOdometer,
+        ...getObdOdometerSuggestionFields(trip),
+      });
       continue;
     }
 
@@ -575,6 +671,7 @@ function calculateTripOffTripAudit(trips, endDate = null) {
         anchor_previous_guest_name: lastClosedTrip?.guest_name ?? null,
         anchor_previous_trip_end: lastClosedTrip?.trip_end ?? null,
         anchor_previous_ending_odometer: lastKnownOdometer,
+        ...getObdOdometerSuggestionFields(trip),
       });
       continue;
     }
@@ -593,6 +690,7 @@ function calculateTripOffTripAudit(trips, endDate = null) {
         anchor_previous_guest_name: lastClosedTrip?.guest_name ?? null,
         anchor_previous_trip_end: lastClosedTrip?.trip_end ?? null,
         anchor_previous_ending_odometer: lastKnownOdometer,
+        ...getObdOdometerSuggestionFields(trip),
       });
       continue;
     }
@@ -611,6 +709,7 @@ function calculateTripOffTripAudit(trips, endDate = null) {
         anchor_previous_guest_name: lastClosedTrip?.guest_name ?? null,
         anchor_previous_trip_end: lastClosedTrip?.trip_end ?? null,
         anchor_previous_ending_odometer: lastKnownOdometer,
+        ...getObdOdometerSuggestionFields(trip),
       });
       continue;
     }

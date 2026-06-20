@@ -46,7 +46,24 @@ function formatDateTime(value) {
 
 function formatOdometer(value) {
   const n = Number(value);
-  return Number.isFinite(n) ? `${Math.round(n).toLocaleString("en-US")} mi` : "â€”";
+  return Number.isFinite(n) ? `${Math.round(n).toLocaleString("en-US")} mi` : "-";
+}
+
+function formatObdSuggestion(trip) {
+  const start = Number(trip?.obd_start_odometer);
+  const end = Number(trip?.obd_end_odometer);
+  const miles = Number(trip?.obd_miles_driven);
+
+  if (Number.isFinite(start) && Number.isFinite(end)) {
+    const mileageLabel = Number.isFinite(miles)
+      ? ` (${Math.round(miles).toLocaleString("en-US")} mi)`
+      : "";
+    return `${formatOdometer(start)} -> ${formatOdometer(end)}${mileageLabel}`;
+  }
+
+  if (Number.isFinite(start)) return `Start ${formatOdometer(start)}`;
+  if (Number.isFinite(end)) return `End ${formatOdometer(end)}`;
+  return "-";
 }
 
 function getAuditFlags(trip, vehicleStatuses = []) {
@@ -293,26 +310,34 @@ export default function TripSummaryListPanel({
                       {Number.isFinite(miles) ? miles.toLocaleString("en-US") : "—"}
                     </div>
                   </div>
-                        <div>
-                          <div className="meta-label">Start odometer</div>
-                          <div className="meta-value">
-                            {formatOdometer(trip.starting_odometer)}
-                          </div>
-                        </div>
 
-                        <div>
-                          <div className="meta-label">End odometer</div>
-                          <div className="meta-value">
-                            {formatOdometer(trip.ending_odometer)}
-                          </div>
-                        </div>
+                  <div>
+                    <div className="meta-label">Start odometer</div>
+                    <div className="meta-value">
+                      {formatOdometer(trip.starting_odometer)}
+                    </div>
+                  </div>
 
-                        <div>
-                          <div className="meta-label">Tolls</div>
-                          <div className="meta-value">
-                            {money(trip.toll_total)} · {trip.toll_review_status || "none"}
-                          </div>
-                        </div>
+                  <div>
+                    <div className="meta-label">End odometer</div>
+                    <div className="meta-value">
+                      {formatOdometer(trip.ending_odometer)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="meta-label">OBD suggestion</div>
+                    <div className="meta-value">
+                      {formatObdSuggestion(trip)}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="meta-label">Tolls</div>
+                    <div className="meta-value">
+                      {money(trip.toll_total)} · {trip.toll_review_status || "none"}
+                    </div>
+                  </div>
 
                   <div>
                     <div className="meta-label">Updated</div>

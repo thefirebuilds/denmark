@@ -86,6 +86,16 @@ function toNullableNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function formatReadonlyOdometer(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${Math.round(n).toLocaleString("en-US")} mi` : "";
+}
+
+function formatReadonlyMiles(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${Math.round(n).toLocaleString("en-US")} mi` : "";
+}
+
 function getVehicleOptionLabel(vehicle) {
   const nickname = String(vehicle?.nickname || "").trim();
   if (nickname) return nickname;
@@ -649,6 +659,21 @@ async function handleSubmit(e) {
                   value={usedMileage == null ? "" : usedMileage}
                   readOnly
                 />
+              </label>
+
+              <label className="trip-summary-drawer-field">
+                <span className="trip-summary-drawer-label">OBD Start Suggestion</span>
+                <input value={formatReadonlyOdometer(trip.obd_start_odometer)} readOnly />
+              </label>
+
+              <label className="trip-summary-drawer-field">
+                <span className="trip-summary-drawer-label">OBD End Suggestion</span>
+                <input value={formatReadonlyOdometer(trip.obd_end_odometer)} readOnly />
+              </label>
+
+              <label className="trip-summary-drawer-field">
+                <span className="trip-summary-drawer-label">OBD Miles Suggestion</span>
+                <input value={formatReadonlyMiles(trip.obd_miles_driven)} readOnly />
               </label>
             </div>
           </section>
