@@ -44,21 +44,25 @@ Do not commit production secrets to git.
 
 At minimum, production needs a real `SESSION_SECRET` and database connection settings such as `PGHOST`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`.
 
-For Google/OIDC login in the container deployment, set these to the public URL users open in their browser:
+For Google/OIDC login in the container deployment, keep provider identity in `.env`:
 
 ```dotenv
-FRONTEND_BASE_URL=https://your-denmark-domain.example
-OIDC_REDIRECT_URI=https://your-denmark-domain.example/api/auth/callback
+AUTH_ENFORCED=true
+AUTH_COOKIE_SECURE=true
 OIDC_ISSUER_URL=https://accounts.google.com
 OIDC_PROVIDER_NAME=google
 OIDC_SCOPES=openid profile email
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
 ```
 
-Then add the exact `OIDC_REDIRECT_URI` value to the Google Cloud Console OAuth client under **Authorized redirect URIs**.
+After bootstrap, open **Settings > Authentication** in Denmark, save the tenant's public app base URL, and copy the computed login redirect URI into the Google Cloud Console OAuth client under **Authorized redirect URIs**.
 
-If `FRONTEND_BASE_URL` is missing, the app will try to redirect back to the request origin. Setting it explicitly is still recommended behind reverse proxies.
+If Google Calendar uses the same OAuth client, also copy the computed Calendar redirect URI from the same settings panel.
 
 If Google asks which account to use on every login, check `OIDC_PROMPT`. Leave it empty for normal login behavior; `select_account` intentionally asks every time.
+
+For the full tenant setup flow, see [Installation](docs/INSTALLATION.md) and [Initial Configuration](docs/INITIAL_CONFIGURATION.md).
 
 ## Start The App
 
