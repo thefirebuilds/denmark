@@ -207,6 +207,12 @@ function formatHeading(value) {
   return `${compass} ${Math.round(heading)}°`;
 }
 
+function formatSpeedMph(value) {
+  const speed = Number(value);
+  if (!Number.isFinite(speed)) return null;
+  return `${Math.max(0, Math.round(speed))} mph`;
+}
+
 function HeadingChip({ heading, label }) {
   const normalizedHeading = normalizeHeading(heading);
   if (normalizedHeading == null || !label) return null;
@@ -1079,6 +1085,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 const stale = isStale(vehicle.lastSeen);
                 const running = vehicle.isRunning === true;
                 const headingLabel = formatHeading(vehicle.heading);
+                const speedLabel = formatSpeedMph(vehicle.speed);
                 const telemetryIssue = formatTelemetryIssue(vehicle);
                 const containingGeoLocation = geoLocationsVisible
                   ? getContainingGeoLocation(vehicle, namedLocations)
@@ -1106,17 +1113,18 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                         {running ? (
                           <em className="fleet-map-running-label">
                             Running
-                            {Number.isFinite(Number(vehicle.speed))
-                              ? ` Â· ${Math.round(Number(vehicle.speed))} mph`
-                              : ""}
                           </em>
                         ) : null}
                         <span>
                           {formatCoordinate(vehicle.lat)},{" "}
                           {formatCoordinate(vehicle.lon)}
                         </span>
-                        {headingLabel ? (
-                          <span>Heading {headingLabel}</span>
+                        {headingLabel || speedLabel ? (
+                          <span>
+                            {[headingLabel ? `Heading ${headingLabel}` : "", speedLabel]
+                              .filter(Boolean)
+                              .join(" | ")}
+                          </span>
                         ) : null}
                         {containingGeoLocation ? (
                           <span>Inside {containingGeoLocation.label}</span>
@@ -1191,6 +1199,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
               const stale = isStale(vehicle.lastSeen);
               const running = vehicle.isRunning === true;
               const headingLabel = formatHeading(vehicle.heading);
+              const speedLabel = formatSpeedMph(vehicle.speed);
               const telemetryIssue = formatTelemetryIssue(vehicle);
               const containingGeoLocation = geoLocationsVisible
                 ? getContainingGeoLocation(vehicle, namedLocations)
@@ -1226,6 +1235,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                     {formatLastSeenLabel(vehicle.lastSeenType)} ·{" "}
                     {formatFreshness(vehicle.lastSeen)}
                     {telemetryIssue ? ` · ${telemetryIssue}` : ""}
+                    {speedLabel ? ` · ${speedLabel}` : ""}
                     {headingLabel ? (
                       <>
                         {" · "}

@@ -148,10 +148,44 @@ function addDays(date, days) {
   return d;
 }
 
+function parseDateOnly(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function getCustomDateRange(rangeKey) {
+  const match = String(rangeKey || "")
+    .trim()
+    .toLowerCase()
+    .match(/^custom:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/);
+
+  if (!match) return null;
+
+  const firstDate = parseDateOnly(match[1]);
+  const secondDate = parseDateOnly(match[2]);
+  if (!firstDate || !secondDate) return null;
+
+  const start = firstDate <= secondDate ? firstDate : secondDate;
+  const end = firstDate <= secondDate ? secondDate : firstDate;
+
+  return {
+    key: "custom",
+    startDate: startOfDay(start),
+    endDate: endOfDay(end),
+  };
+}
+
 function getDateRange(rangeKey = "30d") {
   const now = new Date();
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
+  const customRange = getCustomDateRange(rangeKey);
+
+  if (customRange) return customRange;
 
   switch (String(rangeKey).toLowerCase()) {
     case "7":

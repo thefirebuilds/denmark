@@ -2281,6 +2281,38 @@
   color: #eef4ff;
 }
 
+.metrics-range-chip--custom {
+  cursor: default;
+}
+
+.metrics-custom-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: #8fa6ca;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.metrics-custom-range input {
+  min-height: 34px;
+  border: 1px solid #22304d;
+  border-radius: 8px;
+  background: #0f1729;
+  color: #eef4ff;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.metrics-custom-range__error {
+  margin-top: 6px;
+  color: #fca5a5;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
 /* --------------------------------------------------------------
    Capital recovery progress
 -------------------------------------------------------------- */

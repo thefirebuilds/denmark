@@ -113,6 +113,36 @@ function formatShortDate(value) {
   });
 }
 
+function parseCustomRange(range) {
+  const match = String(range || "").match(
+    /^custom:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/
+  );
+  if (!match) return null;
+  return {
+    start: match[1],
+    end: match[2],
+  };
+}
+
+function formatRangeLabel(range) {
+  const option = RANGE_OPTIONS.find((item) => item.value === range);
+  if (option) return option.label;
+
+  const custom = parseCustomRange(range);
+  if (!custom) return "Period";
+
+  return `${formatShortDate(custom.start)} to ${formatShortDate(custom.end)}`;
+}
+
+function getInclusiveDateDays(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const first = start <= end ? start : end;
+  const last = start <= end ? end : start;
+  return Math.max(1, Math.floor((last.getTime() - first.getTime()) / 86400000) + 1);
+}
+
 function buildSparklinePath(points, key, width, height, maxValue) {
   if (!Array.isArray(points) || points.length === 0) return "";
 
@@ -463,6 +493,11 @@ function getRangeRecoveryFactor(range) {
   if (value === "7d") return 7 / 30.4375;
   if (value === "30d") return 1;
   if (value === "90d") return 3;
+  const custom = parseCustomRange(value);
+  if (custom) {
+    const days = getInclusiveDateDays(custom.start, custom.end);
+    return days == null ? null : days / 30.4375;
+  }
   if (value === "ytd") {
     const now = new Date();
     const start = new Date(now.getFullYear(), 0, 1);
@@ -515,7 +550,7 @@ function CapitalBasisProgress({ stats, selectedRange }) {
       ? "90D pace"
       : selectedRange === "ytd"
       ? "YTD pace"
-      : "Period pace";
+      : `${formatRangeLabel(selectedRange)} pace`;
 
   return (
     <section className="capital-basis-progress" aria-label="Capital basis recovery progress">
@@ -584,6 +619,14 @@ function CapitalBasisProgress({ stats, selectedRange }) {
 export default function MetricsPanel() {
   const metricsLoadSeq = useRef(0);
   const [selectedRange, setSelectedRange] = useState("30d");
+  const initialCustomRange = useMemo(() => parseCustomRange(selectedRange), []);
+  const [customStartDate, setCustomStartDate] = useState(
+    initialCustomRange?.start || ""
+  );
+  const [customEndDate, setCustomEndDate] = useState(
+    initialCustomRange?.end || ""
+  );
+  const [customRangeError, setCustomRangeError] = useState("");
   const [summary, setSummary] = useState(null);
   const [businessMetrics, setBusinessMetrics] = useState(null);
   const [parkingMetrics, setParkingMetrics] = useState(null);
@@ -627,6 +670,34 @@ export default function MetricsPanel() {
   const [businessInputsSectionOpen, setBusinessInputsSectionOpen] = useState(false);
   const [businessSettingsOpen, setBusinessSettingsOpen] = useState(false);
   const [expandedBusinessProfiles, setExpandedBusinessProfiles] = useState({});
+
+  function selectPresetRange(range) {
+    setCustomRangeError("");
+    setSelectedRange(range);
+  }
+
+  function applyCustomRange() {
+    if (!customStartDate || !customEndDate) {
+      setCustomRangeError("Choose a start and end date.");
+      return;
+    }
+
+    const days = getInclusiveDateDays(customStartDate, customEndDate);
+    if (days == null) {
+      setCustomRangeError("Use valid calendar dates.");
+      return;
+    }
+
+    const start =
+      customStartDate <= customEndDate ? customStartDate : customEndDate;
+    const end =
+      customStartDate <= customEndDate ? customEndDate : customStartDate;
+
+    setCustomRangeError("");
+    setCustomStartDate(start);
+    setCustomEndDate(end);
+    setSelectedRange(`custom:${start}:${end}`);
+  }
 
   async function loadMetrics(
     range,
@@ -1598,12 +1669,54 @@ const mileageStats = useMemo(() => {
                     className={`metrics-range-chip ${
                       selectedRange === option.value ? "is-active" : ""
                     }`}
-                    onClick={() => setSelectedRange(option.value)}
+                    onClick={() => selectPresetRange(option.value)}
                   >
                     {option.label}
                   </button>
                 ))}
+                <span
+                  className={`metrics-range-chip metrics-range-chip--custom ${
+                    parseCustomRange(selectedRange) ? "is-active" : ""
+                  }`}
+                >
+                  {parseCustomRange(selectedRange)
+                    ? formatRangeLabel(selectedRange)
+                    : "Custom"}
+                </span>
               </div>
+              <div className="metrics-custom-range">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(event) => {
+                    setCustomRangeError("");
+                    setCustomStartDate(event.target.value);
+                  }}
+                  aria-label="Metrics range start date"
+                />
+                <span>to</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(event) => {
+                    setCustomRangeError("");
+                    setCustomEndDate(event.target.value);
+                  }}
+                  aria-label="Metrics range end date"
+                />
+                <button
+                  type="button"
+                  className="metrics-topbar__button"
+                  onClick={applyCustomRange}
+                >
+                  Apply
+                </button>
+              </div>
+              {customRangeError ? (
+                <div className="metrics-custom-range__error">
+                  {customRangeError}
+                </div>
+              ) : null}
             </div>
           </div>
 

@@ -64,6 +64,40 @@ function shouldShowCurrentLocation(trip) {
   return stage === "ready_for_handoff" || stage === "in_progress";
 }
 
+function normalizeHeading(value) {
+  const heading = Number(value);
+  if (!Number.isFinite(heading)) return null;
+  return ((heading % 360) + 360) % 360;
+}
+
+function headingToCompass(value) {
+  const heading = normalizeHeading(value);
+  if (heading == null) return null;
+  const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return directions[Math.round(heading / 45) % directions.length];
+}
+
+function formatVehicleHeading(vehicle) {
+  const heading = normalizeHeading(
+    vehicle?.telemetry?.location?.heading ?? vehicle?.heading
+  );
+  if (heading == null) return "";
+  return `${headingToCompass(heading)} ${Math.round(heading)} deg`;
+}
+
+function formatVehicleSpeed(vehicle) {
+  const speed = Number(vehicle?.telemetry?.speed ?? vehicle?.speed);
+  if (!Number.isFinite(speed)) return "";
+  return `${Math.max(0, Math.round(speed))} mph`;
+}
+
+function getVehicleGpsSummary(vehicle) {
+  if (!vehicle) return "";
+  return [formatVehicleSpeed(vehicle), formatVehicleHeading(vehicle)]
+    .filter(Boolean)
+    .join(" | ");
+}
+
 function getTripEndMs(trip) {
   const ms = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
   return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
@@ -390,6 +424,8 @@ const mappedTrips = useMemo(() => {
         : "Awaiting telemetry"
       : "—";
 
+    const gpsSummaryText =
+      showCurrentLocation && matchedVehicle ? getVehicleGpsSummary(matchedVehicle) : "";
     const { previousTrip, nextTrip } = findAdjacentTrips(trip, vehicleTimeline);
     const urgency = deriveOperationalUrgency(trip, previousTrip, nextTrip);
 
@@ -418,6 +454,7 @@ if (urgency.dependencyNote) {
       returnEtaText: deriveEtaText(trip),
       etaLabel: deriveEtaLabel(trip),
       locationText,
+      gpsSummaryText,
       meta4Label: meta4.label,
       meta4Value: meta4.value,
       previousTrip,
@@ -653,7 +690,10 @@ if (urgency.dependencyNote) {
                     {shouldShowCurrentLocation(trip) && (
                       <div className="trip-fact-row">
                         <span className="trip-fact-label">Current location:</span>
-                        <span className="trip-fact-value">{trip.locationText}</span>
+                        <span className="trip-fact-value">
+                          {trip.locationText}
+                          {trip.gpsSummaryText ? ` | ${trip.gpsSummaryText}` : ""}
+                        </span>
                       </div>
                     )}
 
@@ -741,7 +781,10 @@ if (urgency.dependencyNote) {
   {shouldShowCurrentLocation(trip) && (
     <div className="trip-fact-row">
       <span className="trip-fact-label">Current location:</span>
-      <span className="trip-fact-value">{trip.locationText}</span>
+      <span className="trip-fact-value">
+        {trip.locationText}
+        {trip.gpsSummaryText ? ` | ${trip.gpsSummaryText}` : ""}
+      </span>
     </div>
   )}
 
