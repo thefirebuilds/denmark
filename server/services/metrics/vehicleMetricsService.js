@@ -82,24 +82,24 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
   const { rows } = await client.query(
     `
       SELECT
-        id,
-        reservation_id,
-        guest_name,
-        vehicle_name,
-        turo_vehicle_id,
-        trip_start,
-        trip_end,
-        amount,
-        fuel_reimbursement_total,
-        starting_odometer,
-        ending_odometer,
-        toll_total,
-        toll_charged_total,
-        toll_review_status,
-        workflow_stage,
-        expense_status,
-        completed_at,
-        canceled_at,
+        t.id,
+        t.reservation_id,
+        t.guest_name,
+        t.vehicle_name,
+        t.turo_vehicle_id,
+        t.trip_start,
+        t.trip_end,
+        t.amount,
+        t.fuel_reimbursement_total,
+        t.starting_odometer,
+        t.ending_odometer,
+        t.toll_total,
+        t.toll_charged_total,
+        t.toll_review_status,
+        t.workflow_stage,
+        t.expense_status,
+        t.completed_at,
+        t.canceled_at,
         obd_start.odometer AS obd_start_odometer,
         obd_start.recorded_at AS obd_start_recorded_at,
         obd_end.odometer AS obd_end_odometer,
@@ -111,12 +111,12 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
           THEN obd_end.odometer - obd_start.odometer
           ELSE NULL
         END AS obd_miles_driven
-      FROM trips
+      FROM trips t
       LEFT JOIN vehicles v
         ON (
-          v.turo_vehicle_id = trips.turo_vehicle_id
-          OR LOWER(v.nickname) = LOWER(trips.vehicle_name)
-          OR LOWER(v.turo_vehicle_name) = LOWER(trips.vehicle_name)
+          v.turo_vehicle_id = t.turo_vehicle_id
+          OR LOWER(v.nickname) = LOWER(t.vehicle_name)
+          OR LOWER(v.turo_vehicle_name) = LOWER(t.vehicle_name)
         )
       LEFT JOIN LATERAL (
         SELECT
@@ -125,18 +125,18 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
         FROM vehicle_telemetry_snapshots s
         WHERE s.service_name = 'dimo'
           AND s.odometer IS NOT NULL
-          AND trips.trip_start IS NOT NULL
+          AND t.trip_start IS NOT NULL
           AND (
             (v.dimo_token_id IS NOT NULL AND s.dimo_token_id = v.dimo_token_id)
             OR (v.vin IS NOT NULL AND LOWER(s.vin) = LOWER(v.vin))
           )
           AND COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
-            BETWEEN (trips.trip_start AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
-                AND (trips.trip_start AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
+            BETWEEN (t.trip_start AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
+                AND (t.trip_start AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
         ORDER BY
           ABS(EXTRACT(EPOCH FROM (
             COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
-            - (trips.trip_start AT TIME ZONE 'America/Chicago')
+            - (t.trip_start AT TIME ZONE 'America/Chicago')
           ))) ASC,
           s.id ASC
         LIMIT 1
@@ -148,27 +148,27 @@ async function fetchTripsForVehicles(client, startDate, endDate) {
         FROM vehicle_telemetry_snapshots s
         WHERE s.service_name = 'dimo'
           AND s.odometer IS NOT NULL
-          AND trips.trip_end IS NOT NULL
+          AND t.trip_end IS NOT NULL
           AND (
             (v.dimo_token_id IS NOT NULL AND s.dimo_token_id = v.dimo_token_id)
             OR (v.vin IS NOT NULL AND LOWER(s.vin) = LOWER(v.vin))
           )
           AND COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
-            BETWEEN (trips.trip_end AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
-                AND (trips.trip_end AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
+            BETWEEN (t.trip_end AT TIME ZONE 'America/Chicago') - INTERVAL '3 hours'
+                AND (t.trip_end AT TIME ZONE 'America/Chicago') + INTERVAL '3 hours'
         ORDER BY
           ABS(EXTRACT(EPOCH FROM (
             COALESCE(s.odometer_last_updated, s.vehicle_last_updated, s.captured_at)
-            - (trips.trip_end AT TIME ZONE 'America/Chicago')
+            - (t.trip_end AT TIME ZONE 'America/Chicago')
           ))) ASC,
           s.id ASC
         LIMIT 1
       ) obd_end ON true
-      WHERE trip_start <= $2
-        AND trip_end >= COALESCE($1, trip_start)
+      WHERE t.trip_start <= $2
+        AND t.trip_end >= COALESCE($1, t.trip_start)
         AND (
-          canceled_at IS NULL
-          OR COALESCE(amount, 0) > 0
+          t.canceled_at IS NULL
+          OR COALESCE(t.amount, 0) > 0
         )
     `,
     [startDate, endDate]
