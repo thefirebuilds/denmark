@@ -68,20 +68,26 @@ function getHighPriorityTasks(notice) {
   );
 }
 
-function getMaintenanceKey(notice, tasks) {
+function normalizeMaintenanceAvailableKey(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "available-now";
+
+  date.setSeconds(0, 0);
+  return date.toISOString();
+}
+
+function getMaintenanceKey(notice) {
   const vehicleKey =
     notice?.maintenance_vehicle_vin ||
     notice?.maintenance_vehicle_name ||
     notice?.vehicle_name ||
     "vehicle";
   const tripKey = notice?.trip_id || notice?.reservation_id || "unscheduled";
-  const taskKey = tasks
-    .map((task) => task.id || task.title)
-    .filter(Boolean)
-    .sort()
-    .join("-");
+  const availableKey = normalizeMaintenanceAvailableKey(
+    notice?.maintenance_available_at
+  );
 
-  return `maintenance:${tripKey}:${vehicleKey}:${taskKey || "high-priority"}`;
+  return `maintenance:${tripKey}:${vehicleKey}:${availableKey}`;
 }
 
 function formatEventDate(value) {
@@ -113,7 +119,7 @@ function buildMaintenanceEventPayload(notice, tasks) {
     return `- [${priority}] ${title}${description}`;
   });
 
-  const maintenanceKey = getMaintenanceKey(notice, tasks);
+  const maintenanceKey = getMaintenanceKey(notice);
   const identity = getMaintenanceEventIdentity(maintenanceKey);
 
   return {
@@ -249,7 +255,7 @@ async function syncNoticeToConnection(notice, target) {
   const tasks = getHighPriorityTasks(notice);
   if (!tasks.length || !notice?.maintenance_available_at) return null;
 
-  const maintenanceKey = getMaintenanceKey(notice, tasks);
+  const maintenanceKey = getMaintenanceKey(notice);
   const eventPayload = buildMaintenanceEventPayload(notice, tasks);
   if (!eventPayload) return null;
 
@@ -337,7 +343,7 @@ async function syncHighPriorityMaintenanceCalendarNotices(notices = []) {
 
   for (const notice of candidates) {
     const tasks = getHighPriorityTasks(notice);
-    const maintenanceKey = getMaintenanceKey(notice, tasks);
+    const maintenanceKey = getMaintenanceKey(notice);
     if (recentSyncs.has(maintenanceKey)) continue;
 
     for (const target of targets) {

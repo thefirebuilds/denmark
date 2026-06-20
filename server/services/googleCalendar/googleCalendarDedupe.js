@@ -30,7 +30,12 @@ function getDedupeKey(event) {
     return `trip:${privateProps.denmarkTripEventKey}`;
   }
   if (privateProps.denmarkMaintenanceKey) {
-    return `maintenance:${privateProps.denmarkMaintenanceKey}`;
+    return [
+      "maintenance",
+      String(event?.summary || "").trim().toLowerCase(),
+      getEventTimeKey(event, "start"),
+      getEventTimeKey(event, "end"),
+    ].join("|");
   }
 
   return [
