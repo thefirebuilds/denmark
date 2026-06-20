@@ -482,11 +482,26 @@ router.put(`/${IMAP_SETTINGS_KEY}`, async (req, res) => {
 router.post(`/${IMAP_SETTINGS_KEY}/test`, async (req, res) => {
   try {
     const current = await getEffectiveImapSettings();
-    const input = normalizeImapSettings(req.body?.value ?? req.body, current);
+    const rawInput =
+      req.body?.value && typeof req.body.value === "object"
+        ? req.body.value
+        : req.body || {};
+    const requestedPass = rawInput.pass;
+    const preservePassword =
+      requestedPass === undefined ||
+      requestedPass === null ||
+      String(requestedPass).trim() === "" ||
+      requestedPass === "__KEEP__";
+    const input = normalizeImapSettings(
+      {
+        ...rawInput,
+        pass: preservePassword ? current.pass : requestedPass,
+      },
+      current
+    );
     const testSettings = {
       ...current,
       ...input,
-      pass: input.pass || current.pass,
     };
     const result = await testImapConnection(testSettings);
     res.json(result);

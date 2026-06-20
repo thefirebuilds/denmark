@@ -139,6 +139,21 @@ function splitMailboxes(value) {
     .filter(Boolean);
 }
 
+function getImapErrorMessage(err) {
+  const parts = [
+    err?.message,
+    err?.response,
+    err?.code,
+    err?.authenticationFailed ? "authentication failed" : "",
+  ]
+    .map((part) => cleanString(part))
+    .filter(Boolean);
+
+  const uniqueParts = [...new Set(parts)];
+  if (!uniqueParts.length) return "IMAP connection test failed";
+  return `IMAP connection test failed: ${uniqueParts.join(" | ")}`;
+}
+
 async function testImapConnection(settings) {
   const config = normalizeImapSettings(settings);
   if (!hasCompleteImapCredentials(config)) {
@@ -177,6 +192,10 @@ async function testImapConnection(settings) {
     }
 
     return { ok: true, checkedMailboxes: checked };
+  } catch (err) {
+    const wrapped = new Error(getImapErrorMessage(err));
+    wrapped.status = err.status || 502;
+    throw wrapped;
   } finally {
     try {
       if (client.usable) await client.logout();
