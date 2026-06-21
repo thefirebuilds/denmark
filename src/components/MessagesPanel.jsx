@@ -23,6 +23,7 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
+const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 90 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
   "maintenance_required",
   "closeout_required",
@@ -1308,6 +1309,7 @@ export default function MessagesPanel({
   const knownQueueItemIdsRef = useRef(new Set());
   const queueChimeWatermarkRef = useRef(Date.now());
   const messagesRef = useRef([]);
+  const recentlyResolvedMessageIdsRef = useRef(new Map());
   const audioRef = useRef(null);
   const highlightTimeoutRef = useRef(null);
   const prepExportRef = useRef(null);
@@ -1315,6 +1317,7 @@ export default function MessagesPanel({
   const consumedInitialLiveMessagesRef = useRef(false);
   const completedSyntheticTaskIdsRef = useRef(completedSyntheticTaskIds);
   const lastFullQueueRefreshAtRef = useRef(0);
+  const forceMessageQueueRefreshRef = useRef(false);
 
   useEffect(() => {
     completedSyntheticTaskIdsRef.current = completedSyntheticTaskIds;
@@ -1341,6 +1344,39 @@ export default function MessagesPanel({
     } catch (err) {
       console.error("Failed loading message stats:", err);
     }
+  }
+
+  function pruneRecentlyResolvedMessages() {
+    const now = Date.now();
+    for (const [id, expiresAt] of recentlyResolvedMessageIdsRef.current.entries()) {
+      if (expiresAt <= now) {
+        recentlyResolvedMessageIdsRef.current.delete(id);
+      }
+    }
+  }
+
+  function rememberResolvedMessages(ids) {
+    const expiresAt = Date.now() + RECENTLY_RESOLVED_MESSAGE_TTL_MS;
+    Array.from(ids || [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+      .forEach((id) => {
+        recentlyResolvedMessageIdsRef.current.set(id, expiresAt);
+      });
+  }
+
+  function wasRecentlyResolved(message) {
+    pruneRecentlyResolvedMessages();
+    const ids = [
+      message?.id,
+      message?.messageId,
+      message?.latest_message_id,
+      ...(Array.isArray(message?.message_ids) ? message.message_ids : []),
+    ]
+      .map((id) => String(id || "").trim())
+      .filter(Boolean);
+
+    return ids.some((id) => recentlyResolvedMessageIdsRef.current.has(id));
   }
 
   async function loadRawFeed(type = rawFeedType, page = rawFeedPage) {
@@ -1408,6 +1444,13 @@ async function handleMarkAsRead(messageId) {
   const previousUnreadCount = unreadCount;
 
   try {
+    rememberResolvedMessages([
+      queueItemId,
+      message?.messageId,
+      message?.latest_message_id,
+      ...(Array.isArray(message?.message_ids) ? message.message_ids : []),
+      ...ids,
+    ]);
     setMessages((prev) => prev.filter((msg) => msg.id !== queueItemId));
     setNewMessageIds((prev) => prev.filter((id) => id !== queueItemId));
     seenIdsRef.current.delete(queueItemId);
@@ -1457,6 +1500,7 @@ async function handleMarkAsRead(messageId) {
         .map(String)
     );
     resolvedIds.add(String(queueItemId));
+    rememberResolvedMessages(resolvedIds);
 
     setMessages((prev) =>
       prev.filter((msg) => !resolvedIds.has(String(msg.id)))
@@ -1472,6 +1516,7 @@ async function handleMarkAsRead(messageId) {
       Math.max(0, prev - Number(data?.resolved_count || ids.length))
     );
     notifyMessageStatsUpdated();
+    forceMessageQueueRefreshRef.current = true;
   } catch (err) {
     setMessages(previousMessages);
     setNewMessageIds(previousNewMessageIds);
@@ -1931,7 +1976,10 @@ async function handleExportGuestInspectionSheet(message) {
       }
       const endpoint = showingTripMessages
         ? `/api/trips/${selectedTrip.id}/messages`
-        : `/api/messages?limit=10${useFastQueue ? "&fast=1" : ""}&debug=1`;
+        : `/api/messages?limit=10${useFastQueue ? "&fast=1" : ""}&debug=1${
+            forceMessageQueueRefreshRef.current ? `&cacheBust=${Date.now()}` : ""
+          }`;
+      forceMessageQueueRefreshRef.current = false;
 
       const requestStartedAt = performance.now();
       const res = await fetch(endpoint);
@@ -1997,9 +2045,12 @@ async function handleExportGuestInspectionSheet(message) {
         !visibleMessages.some((message) => message.id === focusedCloseoutTask.id)
           ? [focusedCloseoutTask, ...visibleMessages]
           : visibleMessages;
+      const unsuppressedMessages = displayMessages.filter(
+        (message) => !wasRecentlyResolved(message)
+      );
 
-      const nextIds = displayMessages.map((msg) => msg.id);
-      const nextIdKeys = displayMessages.map((msg) => String(msg.id));
+      const nextIds = unsuppressedMessages.map((msg) => msg.id);
+      const nextIdKeys = unsuppressedMessages.map((msg) => String(msg.id));
       const seenIds = seenIdsRef.current;
       const knownQueueItemIds = knownQueueItemIdsRef.current;
 
@@ -2011,7 +2062,7 @@ async function handleExportGuestInspectionSheet(message) {
         queueChimeWatermarkRef.current = Date.now();
       } else {
         const watermark = queueChimeWatermarkRef.current;
-        const freshMessages = displayMessages.filter((message) => {
+        const freshMessages = unsuppressedMessages.filter((message) => {
           const idKey = String(message.id);
           if (knownQueueItemIds.has(idKey)) return false;
 
@@ -2045,8 +2096,8 @@ async function handleExportGuestInspectionSheet(message) {
         queueChimeWatermarkRef.current = Date.now();
       }
 
-      messagesRef.current = displayMessages;
-      setMessages(displayMessages);
+      messagesRef.current = unsuppressedMessages;
+      setMessages(unsuppressedMessages);
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load messages");

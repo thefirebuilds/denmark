@@ -1777,12 +1777,11 @@ router.get("/", async (req, res) => {
     const candidateLimit = Math.max(limit * 20, 100);
     const fast = String(req.query.fast || "").trim() === "1";
     const includeDebug = String(req.query.debug || "").trim() === "1";
+    const cacheBust = String(req.query.cacheBust || "").trim() !== "";
     const cacheKey = `limit:${limit}:fast:${fast ? "1" : "0"}`;
-    const cached = getCachedPayload(
-      messageQueueCache,
-      cacheKey,
-      MESSAGE_QUEUE_CACHE_MS
-    );
+    const cached = cacheBust
+      ? null
+      : getCachedPayload(messageQueueCache, cacheKey, MESSAGE_QUEUE_CACHE_MS);
 
     if (cached) {
       setQueueTimingHeader(res, queueStartedAt, { cache: 0 });
