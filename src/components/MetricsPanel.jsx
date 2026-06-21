@@ -1779,12 +1779,20 @@ const mileageStats = useMemo(() => {
                 value={`${formatCurrencyCompact(
                   summary.vehicle_run_rate?.operating_run_rate_daily
                 )}/day`}
-                subtitle={`${formatCurrencyCompact(
-                  summary.vehicle_run_rate?.operating_run_rate_expenses
-                )} opex over ${formatNumber(
-                  summary.vehicle_run_rate?.period_days ?? summary.calendar_days ?? 0
-                )} days`}
-                tone="warning"
+                subtitle={formatCurrencyTrend(
+                  summary.vehicle_run_rate?.operating_run_rate_daily_delta
+                )}
+                tone={
+                  Number(
+                    summary.vehicle_run_rate?.operating_run_rate_daily_delta ?? 0
+                  ) > 0
+                    ? "warning"
+                    : Number(
+                        summary.vehicle_run_rate?.operating_run_rate_daily_delta ?? 0
+                      ) < 0
+                    ? "positive"
+                    : undefined
+                }
               />
 
               <MetricCard

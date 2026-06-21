@@ -280,6 +280,29 @@ function isCapitalLayoutExpense(expense) {
   );
 }
 
+function getPreviousDateRange(startDate, endDate) {
+  if (!startDate || !endDate) return { startDate: null, endDate: null };
+
+  const days = getCalendarDaysInRange(startDate, endDate);
+  if (!days) return { startDate: null, endDate: null };
+
+  const previousEnd = new Date(startDate);
+  previousEnd.setDate(previousEnd.getDate() - 1);
+  previousEnd.setHours(23, 59, 59, 999);
+
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(previousStart.getDate() - days + 1);
+  previousStart.setHours(0, 0, 0, 0);
+
+  return { startDate: previousStart, endDate: previousEnd };
+}
+
+function getOperatingExpenseTotal(expenses = []) {
+  return expenses
+    .filter((expense) => !isCapitalLayoutExpense(expense))
+    .reduce((sum, expense) => sum + getExpenseTotal(expense), 0);
+}
+
 async function fetchTollExposureForVehicles(client, startDate, endDate) {
   const dateFilter = startDate
     ? `tc.trxn_at >= $1::timestamp AND tc.trxn_at <= $2::timestamp`
@@ -1030,6 +1053,14 @@ async function getVehicleMetrics(rangeKey = "30d") {
     const vehicles = await fetchActiveVehicles(client);
     const trips = await fetchTripsForVehicles(client, startDate, endDate);
     const expenses = await fetchExpensesForVehicles(client, startDate, endDate);
+    const previousRange = getPreviousDateRange(startDate, endDate);
+    const previousExpenses = previousRange.startDate
+      ? await fetchExpensesForVehicles(
+          client,
+          previousRange.startDate,
+          previousRange.endDate
+        )
+      : [];
     const tollExposureRows = await fetchTollExposureForVehicles(
       client,
       startDate,
@@ -1626,6 +1657,16 @@ async function getVehicleMetrics(rangeKey = "30d") {
       0
     );
     const runRateDaily = safeDivide(runRateExpenses, periodDays);
+    const previousPeriodDays = previousRange.startDate
+      ? Math.max(
+          1,
+          getCalendarDaysInRange(previousRange.startDate, previousRange.endDate)
+        )
+      : 0;
+    const previousRunRateExpenses = getOperatingExpenseTotal(previousExpenses);
+    const previousRunRateDaily = previousPeriodDays
+      ? safeDivide(previousRunRateExpenses, previousPeriodDays)
+      : 0;
 
     return {
       range: key,
@@ -1633,6 +1674,10 @@ async function getVehicleMetrics(rangeKey = "30d") {
         period_days: periodDays,
         operating_run_rate_expenses: roundMoney(runRateExpenses),
         operating_run_rate_daily: roundMoney(runRateDaily),
+        previous_operating_run_rate_daily: roundMoney(previousRunRateDaily),
+        operating_run_rate_daily_delta: roundMoney(
+          runRateDaily - previousRunRateDaily
+        ),
         operating_run_rate_daily_per_vehicle: roundMoney(
           safeDivide(runRateDaily, responseVehicles.length)
         ),
