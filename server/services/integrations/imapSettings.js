@@ -1,5 +1,6 @@
 const { ImapFlow } = require("imapflow");
 const pool = require("../../db");
+const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
 
 const SETTINGS_KEY = "integrations.imap";
 
@@ -17,6 +18,7 @@ const DEFAULT_IMAP_SETTINGS = Object.freeze({
   greetingTimeout: 30000,
   socketTimeout: 600000,
 });
+const SECRET_PLACEHOLDER = "__KEEP__";
 
 function cleanString(value) {
   return String(value || "").trim();
@@ -47,6 +49,14 @@ function envImapSettings() {
 function normalizeImapSettings(value = {}, fallback = DEFAULT_IMAP_SETTINGS) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const base = fallback || DEFAULT_IMAP_SETTINGS;
+  const passEncrypted = cleanString(
+    input.passEncrypted ?? input.pass_encrypted ?? base.passEncrypted
+  );
+  let pass = cleanString(input.pass ?? base.pass);
+
+  if (!pass && passEncrypted) {
+    pass = decrypt(passEncrypted);
+  }
 
   return {
     enabled: input.enabled !== undefined ? input.enabled !== false : base.enabled !== false,
@@ -54,7 +64,8 @@ function normalizeImapSettings(value = {}, fallback = DEFAULT_IMAP_SETTINGS) {
     port: cleanNumber(input.port ?? base.port, 993),
     secure: input.secure !== undefined ? input.secure !== false : base.secure !== false,
     user: cleanString(input.user ?? base.user),
-    pass: cleanString(input.pass ?? base.pass),
+    pass,
+    passEncrypted,
     targetMailboxes: cleanString(input.targetMailboxes ?? input.target_mailboxes ?? base.targetMailboxes) || "INBOX",
     lookbackHours: cleanNumber(input.lookbackHours ?? input.lookback_hours ?? base.lookbackHours, 72),
     ingestLimit: cleanNumber(input.ingestLimit ?? input.ingest_limit ?? base.ingestLimit, 100),
@@ -69,13 +80,72 @@ function hasCompleteImapCredentials(settings) {
 }
 
 function sanitizeImapSettings(settings, { source = "database" } = {}) {
+  const normalized = normalizeImapSettings(settings);
   return {
-    ...settings,
-    pass: settings?.pass ? "" : "",
-    passConfigured: Boolean(settings?.pass),
-    configured: hasCompleteImapCredentials(settings),
+    enabled: normalized.enabled,
+    host: normalized.host,
+    port: normalized.port,
+    secure: normalized.secure,
+    user: normalized.user,
+    pass: "",
+    passEncrypted: undefined,
+    passConfigured: Boolean(normalized.pass),
+    targetMailboxes: normalized.targetMailboxes,
+    lookbackHours: normalized.lookbackHours,
+    ingestLimit: normalized.ingestLimit,
+    connectionTimeout: normalized.connectionTimeout,
+    greetingTimeout: normalized.greetingTimeout,
+    socketTimeout: normalized.socketTimeout,
+    configured: hasCompleteImapCredentials(normalized),
     source,
   };
+}
+
+function buildStoredImapSettings(settings) {
+  const normalized = normalizeImapSettings(settings);
+  const stored = {
+    enabled: normalized.enabled,
+    host: normalized.host,
+    port: normalized.port,
+    secure: normalized.secure,
+    user: normalized.user,
+    targetMailboxes: normalized.targetMailboxes,
+    lookbackHours: normalized.lookbackHours,
+    ingestLimit: normalized.ingestLimit,
+    connectionTimeout: normalized.connectionTimeout,
+    greetingTimeout: normalized.greetingTimeout,
+    socketTimeout: normalized.socketTimeout,
+  };
+
+  if (normalized.pass) {
+    stored.passEncrypted = encrypt(normalized.pass);
+  }
+
+  return stored;
+}
+
+async function migrateStoredImapPasswordIfNeeded(rawValue, client = pool) {
+  if (
+    !rawValue ||
+    typeof rawValue !== "object" ||
+    Array.isArray(rawValue) ||
+    !cleanString(rawValue.pass) ||
+    cleanString(rawValue.passEncrypted ?? rawValue.pass_encrypted)
+  ) {
+    return rawValue;
+  }
+
+  const stored = buildStoredImapSettings(rawValue);
+  await client.query(
+    `
+      UPDATE app_settings
+      SET value = $2::jsonb,
+          updated_at = NOW()
+      WHERE key = $1
+    `,
+    [SETTINGS_KEY, JSON.stringify(stored)]
+  );
+  return stored;
 }
 
 async function getStoredImapSettings(client = pool) {
@@ -83,7 +153,10 @@ async function getStoredImapSettings(client = pool) {
     "SELECT value FROM app_settings WHERE key = $1 LIMIT 1",
     [SETTINGS_KEY]
   );
-  return rows[0]?.value ? normalizeImapSettings(rows[0].value, envImapSettings()) : null;
+  if (!rows[0]?.value) return null;
+
+  const migratedValue = await migrateStoredImapPasswordIfNeeded(rows[0].value, client);
+  return normalizeImapSettings(migratedValue, envImapSettings());
 }
 
 async function getEffectiveImapSettings(client = pool) {
@@ -110,9 +183,9 @@ async function saveImapSettings(input = {}, client = pool) {
     input.pass === undefined ||
     input.pass === null ||
     String(input.pass).trim() === "" ||
-    input.pass === "__KEEP__";
+    input.pass === SECRET_PLACEHOLDER;
 
-  const next = normalizeImapSettings({
+  const next = buildStoredImapSettings({
     ...current,
     ...input,
     pass: preservePassword ? current.pass : input.pass,
@@ -208,6 +281,7 @@ async function testImapConnection(settings) {
 module.exports = {
   SETTINGS_KEY,
   DEFAULT_IMAP_SETTINGS,
+  SECRET_PLACEHOLDER,
   normalizeImapSettings,
   sanitizeImapSettings,
   getEffectiveImapSettings,

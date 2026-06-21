@@ -67,7 +67,11 @@ These names replace generic parked/location labels in fleet panels when a vehicl
 
 ## 5. Trip And Message Intake
 
-For Turo email ingestion, configure IMAP in `.env` for now:
+For Turo email ingestion, configure IMAP in Settings > Messages & Inbox.
+Denmark stores the IMAP password encrypted in `app_settings` using
+`TOKEN_ENCRYPTION_KEY`, so set that key before saving tenant credentials.
+
+`.env` can still provide bootstrap/default values:
 
 ```dotenv
 IMAP_HOST=imap.example.com
@@ -84,7 +88,8 @@ Then verify:
 - Open Trips panel shows reservations discovered from email.
 - Message-only stub trips are reviewed and corrected where needed.
 
-Current gap: IMAP credentials are not yet managed in Settings. This should become a tenant setup panel with a "test connection" button.
+After saving in Settings, the database row should contain `passEncrypted`, not
+plain `pass`.
 
 ## 6. Android Notification Bridge
 

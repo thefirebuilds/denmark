@@ -72,6 +72,16 @@ Generate a session secret:
 openssl rand -base64 48
 ```
 
+Generate and keep a stable token encryption key:
+
+```bash
+openssl rand -hex 32
+```
+
+Do not rotate `TOKEN_ENCRYPTION_KEY` without re-saving encrypted tenant
+secrets. It protects database-stored integration secrets such as Google
+Calendar refresh tokens and IMAP passwords.
+
 Keep these in `.env` for now because they are deployment/runtime secrets:
 
 - `PG*`
