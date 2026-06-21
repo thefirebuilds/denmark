@@ -267,6 +267,19 @@ async function fetchExpensesForVehicles(client, startDate, endDate) {
   return rows;
 }
 
+function isCapitalLayoutExpense(expense) {
+  if (expense?.is_capitalized === true) return true;
+
+  const category = String(expense?.category || "").trim().toLowerCase();
+  return (
+    category.includes("onboarding") ||
+    category.includes("startup") ||
+    category.includes("capital") ||
+    category.includes("acquisition") ||
+    category.includes("purchase")
+  );
+}
+
 async function fetchTollExposureForVehicles(client, startDate, endDate) {
   const dateFilter = startDate
     ? `tc.trxn_at >= $1::timestamp AND tc.trxn_at <= $2::timestamp`
@@ -1029,6 +1042,18 @@ async function getVehicleMetrics(rangeKey = "30d") {
     );
     const capitalMetricsRows = await getCapitalMetricsByVehicle(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
+    const allRangeStart =
+      startDate ||
+      [
+        ...vehicles.map((vehicle) => vehicle.onboarding_date),
+        ...trips.map((trip) => trip.trip_start),
+        ...expenses.map((expense) => expense.date),
+      ]
+        .map((value) => (value ? new Date(value) : null))
+        .filter((date) => date && !Number.isNaN(date.getTime()))
+        .sort((a, b) => a.getTime() - b.getTime())[0] ||
+      endDate;
+    const periodDays = Math.max(1, getCalendarDaysInRange(allRangeStart, endDate));
 
     const odometerMap = toMapBy(odometerAnchors, (row) =>
       String(row.vehicle_id)
@@ -1132,6 +1157,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
         shared_expenses: 0,
         apportioned_expenses: 0,
         total_expenses: 0,
+        operating_run_rate_expenses: 0,
+        operating_run_rate_daily: 0,
+        operating_run_rate_period_days: periodDays,
         net_profit: 0,
         trip_count_overlapping: 0,
         trip_count_prorated: 0,
@@ -1337,6 +1365,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
     for (const expense of expenses) {
       const total = getExpenseTotal(expense);
       const scope = String(expense.expense_scope || "direct").toLowerCase();
+      const includeInRunRate = !isCapitalLayoutExpense(expense);
 
       let resolvedVehicleId =
         expense.vehicle_id != null ? String(expense.vehicle_id) : null;
@@ -1354,6 +1383,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
           const metrics = vehicleMetrics.get(resolvedVehicleId);
 
           metrics.direct_expenses += total;
+          if (includeInRunRate) {
+            metrics.operating_run_rate_expenses += total;
+          }
 
           if (
             String(expense.category || "").toLowerCase() === "tolls" ||
@@ -1374,6 +1406,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
             metrics.shared_expenses += evenShare;
           } else {
             metrics.general_expenses += evenShare;
+          }
+          if (includeInRunRate) {
+            metrics.operating_run_rate_expenses += evenShare;
           }
 
           if (
@@ -1403,6 +1438,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
             : safeDivide(1, activeVehicleCount, 0);
 
           metrics.apportioned_expenses += total * share;
+          if (includeInRunRate) {
+            metrics.operating_run_rate_expenses += total * share;
+          }
 
           if (
             String(expense.category || "").toLowerCase() === "tolls" ||
@@ -1445,6 +1483,12 @@ async function getVehicleMetrics(rangeKey = "30d") {
           toNumber(metrics.general_expenses) +
           toNumber(metrics.shared_expenses) +
           toNumber(metrics.apportioned_expenses)
+      );
+      metrics.operating_run_rate_expenses = roundMoney(
+        metrics.operating_run_rate_expenses
+      );
+      metrics.operating_run_rate_daily = roundMoney(
+        safeDivide(metrics.operating_run_rate_expenses, periodDays)
       );
 
       metrics.net_profit = roundMoney(
@@ -1577,8 +1621,24 @@ async function getVehicleMetrics(rangeKey = "30d") {
       return String(a.nickname || "").localeCompare(String(b.nickname || ""));
     });
 
+    const runRateExpenses = responseVehicles.reduce(
+      (sum, item) => sum + toNumber(item.operating_run_rate_expenses),
+      0
+    );
+    const runRateDaily = safeDivide(runRateExpenses, periodDays);
+
     return {
       range: key,
+      summary: {
+        period_days: periodDays,
+        operating_run_rate_expenses: roundMoney(runRateExpenses),
+        operating_run_rate_daily: roundMoney(runRateDaily),
+        operating_run_rate_daily_per_vehicle: roundMoney(
+          safeDivide(runRateDaily, responseVehicles.length)
+        ),
+        operating_run_rate_vehicle_count: responseVehicles.length,
+        excludes_capital_layout: true,
+      },
       vehicles: responseVehicles,
     };
   } finally {

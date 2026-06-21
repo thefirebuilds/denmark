@@ -731,7 +731,10 @@ export default function MetricsPanel() {
 
     if (metricsLoadSeq.current !== loadSeq) return;
 
-    setSummary(summaryData);
+    setSummary({
+      ...(summaryData || {}),
+      vehicle_run_rate: vehiclesData?.summary || null,
+    });
     setTrends(trendsData);
     setVehicles(
       Array.isArray(vehiclesData)
@@ -1320,8 +1323,8 @@ export default function MetricsPanel() {
             Number(b?.calendar_days_available ?? summary?.calendar_days ?? 0)
           : 0;
 
-      const aTollRisk = getVehicleTollRiskScore(a);
-      const bTollRisk = getVehicleTollRiskScore(b);
+      const aRunRate = Number(a?.operating_run_rate_daily ?? 0);
+      const bRunRate = Number(b?.operating_run_rate_daily ?? 0);
 
       const aRecoveryPct = getCapitalRecoveryPct(a);
       const bRecoveryPct = getCapitalRecoveryPct(b);
@@ -1352,8 +1355,8 @@ export default function MetricsPanel() {
           return bTrips - aTrips;
         case "value_desc":
           return bValue - aValue;
-        case "toll_risk_desc":
-          return bTollRisk - aTollRisk || bProfit - aProfit;
+        case "run_rate_desc":
+          return bRunRate - aRunRate || bProfit - aProfit;
         case "recovery_desc":
           return bRecoveryPct - aRecoveryPct;
         case "capital_remaining_asc":
@@ -1769,6 +1772,19 @@ const mileageStats = useMemo(() => {
                     ? "positive"
                     : undefined
                 }
+              />
+
+              <MetricCard
+                label="Run Rate"
+                value={`${formatCurrencyCompact(
+                  summary.vehicle_run_rate?.operating_run_rate_daily
+                )}/day`}
+                subtitle={`${formatCurrencyCompact(
+                  summary.vehicle_run_rate?.operating_run_rate_expenses
+                )} opex over ${formatNumber(
+                  summary.vehicle_run_rate?.period_days ?? summary.calendar_days ?? 0
+                )} days`}
+                tone="warning"
               />
 
               <MetricCard
@@ -3025,7 +3041,7 @@ const mileageStats = useMemo(() => {
                   <option value="rev_day_desc">Rev / Day ↓</option>
                   <option value="rev_mile_desc">Rev / Mile ↓</option>
                   <option value="trips_desc">Trips ↓</option>
-                  <option value="toll_risk_desc">Toll Risk ↓</option>
+                  <option value="run_rate_desc">Run Rate ↓</option>
                   <option value="recovery_desc">Recovery % ↓</option>
                   <option value="capital_remaining_asc">Capital Remaining ↑</option>
                   <option value="payoff_date_asc">Payoff Soonest</option>
@@ -3068,7 +3084,7 @@ const mileageStats = useMemo(() => {
               <div className="vehicle-compare-header__cell">Rev / Day</div>
               <div className="vehicle-compare-header__cell">Rev / Mile</div>
               <div className="vehicle-compare-header__cell">Trips</div>
-              <div className="vehicle-compare-header__cell">Toll Risk</div>
+              <div className="vehicle-compare-header__cell">Run Rate</div>
               <div className="vehicle-compare-header__cell"></div>
             </div>
 

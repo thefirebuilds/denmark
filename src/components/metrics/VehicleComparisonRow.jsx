@@ -16,59 +16,6 @@ function getPayoffPaceTone(recoveryPct, timelinePct) {
   return "onpace";
 }
 
-function getTollRisk(vehicle) {
-  const unresolvedTotal = Number(vehicle?.unresolved_toll_charge_total ?? 0);
-  const unresolvedCount = Number(vehicle?.unresolved_toll_charge_count ?? 0);
-  const tollChargeTotal = Number(vehicle?.toll_charge_total ?? 0);
-
-  if (unresolvedTotal > 0 || unresolvedCount > 0) {
-    const unresolvedShare =
-      tollChargeTotal > 0 ? unresolvedTotal / tollChargeTotal : 1;
-
-    if (unresolvedTotal >= 75 || unresolvedShare >= 0.35) {
-      return { label: "High", tone: "negative" };
-    }
-
-    return { label: "Watch", tone: "warning" };
-  }
-
-  const tollsPaid = Number(vehicle?.tolls_paid ?? 0);
-  const recovered = Number(vehicle?.tolls_recovered ?? 0);
-  const outstanding = Number(vehicle?.tolls_attributed_outstanding ?? 0);
-  const unattributed = Number(vehicle?.tolls_unattributed ?? 0);
-
-  const recoveryRate = tollsPaid > 0 ? recovered / tollsPaid : 1;
-  const effectiveRecoveryRate =
-    tollsPaid > 0 ? (recovered + outstanding) / tollsPaid : 1;
-  const leakageShare = tollsPaid > 0 ? unattributed / tollsPaid : 0;
-
-  if (outstanding <= 0) {
-    return { label: "Low", tone: "positive" };
-  }
-
-  if (tollsPaid <= 0 && unattributed <= 0) {
-    return { label: "Low", tone: "positive" };
-  }
-
-  if (
-    unattributed >= 75 ||
-    leakageShare >= 0.35 ||
-    effectiveRecoveryRate < 0.5
-  ) {
-    return { label: "High", tone: "negative" };
-  }
-
-  if (
-    unattributed > 0 ||
-    recoveryRate < 0.8 ||
-    effectiveRecoveryRate < 0.9
-  ) {
-    return { label: "Watch", tone: "warning" };
-  }
-
-  return { label: "Low", tone: "positive" };
-}
-
 function getMileageConfidenceTone(confidence) {
   const value = String(confidence || "").toLowerCase();
 
@@ -205,7 +152,9 @@ export default function VehicleComparisonRow({
   const bookedDays = Number(vehicle?.booked_vehicle_days ?? 0);
   const availableDays = Number(vehicle?.calendar_days_available ?? calendarDays ?? 0);
   const occupancy = availableDays > 0 ? bookedDays / availableDays : 0;
-  const tollRisk = getTollRisk(vehicle);
+  const runRateDaily = Number(vehicle?.operating_run_rate_daily ?? 0);
+  const runRateExpenses = Number(vehicle?.operating_run_rate_expenses ?? 0);
+  const runRateDays = Number(vehicle?.operating_run_rate_period_days ?? 0);
   const mileageConfidence = String(vehicle?.mileage_confidence || "unknown");
   const mileageConfidenceTone = getMileageConfidenceTone(mileageConfidence);
   const capitalBasis = Number(vehicle?.capital_basis ?? 0);
@@ -332,10 +281,11 @@ export default function VehicleComparisonRow({
         </div>
 
         <div className="vehicle-compare__cell">
-          <div
-            className={`vehicle-compare__value vehicle-compare__value--${tollRisk.tone}`}
-          >
-            {tollRisk.label}
+          <div className="vehicle-compare__value">
+            {formatCurrencyCompact(runRateDaily)}
+          </div>
+          <div className="vehicle-compare__label">
+            / day
           </div>
         </div>
 
@@ -398,6 +348,17 @@ export default function VehicleComparisonRow({
                 >
                   View detail
                 </button>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Run Rate</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatCurrencyCompact(runRateDaily)}/day
+                </div>
+                <div className="vehicle-compare__detail-hint">
+                  {formatCurrencyCompact(runRateExpenses)} operating spend over{" "}
+                  {formatNumber(runRateDays)} days; excludes capital layout
+                </div>
               </div>
 
               <div className="vehicle-compare__detail-stat">
