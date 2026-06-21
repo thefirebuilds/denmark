@@ -122,6 +122,8 @@ In Settings > Maintenance > Alerts:
 3. Click Send Test.
 
 Legacy `TWILIO_*` env vars are still used as fallback until tenant settings are saved.
+After saving in Settings, the database row should contain `authTokenEncrypted`,
+not plain `authToken`, `auth_token`, `clientSecret`, or `client_secret`.
 
 ## 8. Google Calendar
 

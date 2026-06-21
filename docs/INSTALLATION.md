@@ -80,7 +80,9 @@ openssl rand -hex 32
 
 Do not rotate `TOKEN_ENCRYPTION_KEY` without re-saving encrypted tenant
 secrets. It protects database-stored integration secrets such as Google
-Calendar refresh tokens and IMAP passwords.
+Calendar refresh tokens, IMAP passwords, and SMS/Twilio auth tokens.
+It also protects database-stored Bouncie and Teller access tokens as they are
+created or migrated.
 
 Keep these in `.env` for now because they are deployment/runtime secrets:
 
@@ -90,6 +92,25 @@ Keep these in `.env` for now because they are deployment/runtime secrets:
 - `DENMARK_BRIDGE_SECRET`
 - OIDC/Google client secret
 - provider credentials that do not yet have tenant settings UI
+
+Database connection settings are a bootstrap dependency: Denmark needs them
+before it can connect to Postgres and read encrypted tenant settings. Move them
+out of `.env` with Docker secrets, host-mounted secret files, or your platform's
+secret manager, but do not store the primary Postgres connection password only
+inside the same database it unlocks.
+
+The app and setup scripts support Docker-style secret file variables for the
+core bootstrap secrets:
+
+```dotenv
+PGPASSWORD_FILE=/run/secrets/denmark_pgpassword
+SESSION_SECRET_FILE=/run/secrets/denmark_session_secret
+TOKEN_ENCRYPTION_KEY_FILE=/run/secrets/denmark_token_encryption_key
+DENMARK_BRIDGE_SECRET_FILE=/run/secrets/denmark_bridge_secret
+BOUNCIE_CLIENT_SECRET_FILE=/run/secrets/denmark_bouncie_client_secret
+TELLER_CERT_BASE64_FILE=/run/secrets/denmark_teller_cert_base64
+TELLER_KEY_BASE64_FILE=/run/secrets/denmark_teller_key_base64
+```
 
 ## Install
 

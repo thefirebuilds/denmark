@@ -3,6 +3,8 @@ const path = require("path");
 const axios = require("axios");
 const https = require("https");
 const pool = require("../../db");
+const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
+const { getRuntimeSecret } = require("../../config/runtimeSecrets");
 
 // ------------------------------------------------------------
 // /server/services/teller/teller.js
@@ -18,8 +20,8 @@ dotenv.config({
   path: path.resolve(__dirname, "../../../.env"),
 });
 
-const certBase64 = process.env.TELLER_CERT_BASE64?.trim();
-const keyBase64 = process.env.TELLER_KEY_BASE64?.trim();
+const certBase64 = getRuntimeSecret("TELLER_CERT_BASE64");
+const keyBase64 = getRuntimeSecret("TELLER_KEY_BASE64");
 
 if (!certBase64) {
   throw new Error("Missing TELLER_CERT_BASE64 in project .env");
@@ -38,12 +40,58 @@ const agent = new https.Agent({
 });
 
 const API = "https://api.teller.io";
+let ensureTellerTokenSecretColumnsPromise = null;
+
+async function ensureTellerTokenSecretColumns() {
+  if (!ensureTellerTokenSecretColumnsPromise) {
+    ensureTellerTokenSecretColumnsPromise = pool.query(`
+      ALTER TABLE teller_tokens
+        ADD COLUMN IF NOT EXISTS access_token_encrypted text,
+        ALTER COLUMN access_token DROP NOT NULL
+    `);
+  }
+
+  return ensureTellerTokenSecretColumnsPromise;
+}
+
+function hydrateTellerToken(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    access_token: row.access_token || (row.access_token_encrypted ? decrypt(row.access_token_encrypted) : ""),
+  };
+}
+
+async function migrateTellerTokenIfNeeded(row) {
+  if (!row?.access_token || row.access_token_encrypted) return row;
+
+  const encrypted = encrypt(row.access_token);
+  await pool.query(
+    `
+      UPDATE teller_tokens
+      SET access_token = NULL,
+          access_token_encrypted = $2
+      WHERE id = $1
+    `,
+    [row.id, encrypted]
+  );
+  return {
+    ...row,
+    access_token: null,
+    access_token_encrypted: encrypted,
+  };
+}
 
 async function getAccessTokens() {
+  await ensureTellerTokenSecretColumns();
   const result = await pool.query(
-    "SELECT id, access_token FROM teller_tokens ORDER BY id ASC"
+    "SELECT id, access_token, access_token_encrypted, created_at FROM teller_tokens ORDER BY id ASC"
   );
-  return result.rows.filter((row) => row.access_token);
+  const rows = [];
+  for (const row of result.rows) {
+    rows.push(hydrateTellerToken(await migrateTellerTokenIfNeeded(row)));
+  }
+  return rows.filter((row) => row.access_token);
 }
 
 async function getTokenSummary() {
@@ -58,6 +106,7 @@ async function getTokenSummary() {
 }
 
 async function saveAccessToken(accessToken) {
+  await ensureTellerTokenSecretColumns();
   const token = String(accessToken || "").trim();
 
   if (!token) {
@@ -66,34 +115,25 @@ async function saveAccessToken(accessToken) {
     throw err;
   }
 
-  const result = await pool.query(
-    `
-      INSERT INTO teller_tokens (access_token)
-      SELECT $1
-      WHERE NOT EXISTS (
-        SELECT 1 FROM teller_tokens WHERE access_token = $1
-      )
-      RETURNING id, created_at
-    `,
-    [token]
-  );
-
-  if (result.rows[0]) {
-    return { created: true, token: result.rows[0] };
+  const existingTokens = await getAccessTokens();
+  const existing = existingTokens.find((row) => row.access_token === token);
+  if (existing) {
+    return {
+      created: false,
+      token: { id: existing.id, created_at: existing.created_at || null },
+    };
   }
 
-  const existing = await pool.query(
+  const result = await pool.query(
     `
-      SELECT id, created_at
-      FROM teller_tokens
-      WHERE access_token = $1
-      ORDER BY id DESC
-      LIMIT 1
+      INSERT INTO teller_tokens (access_token, access_token_encrypted)
+      VALUES (NULL, $1)
+      RETURNING id, created_at
     `,
-    [token]
+    [encrypt(token)]
   );
 
-  return { created: false, token: existing.rows[0] || null };
+  return { created: true, token: result.rows[0] || null };
 }
 
 async function getAccounts(token) {

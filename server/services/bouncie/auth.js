@@ -1,9 +1,11 @@
 const pool = require("../../db");
+const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
+const { getRuntimeSecret } = require("../../config/runtimeSecrets");
 
-const CLIENT_ID = process.env.BOUNCIE_CLIENT_ID;
-const CLIENT_SECRET = process.env.BOUNCIE_CLIENT_SECRET;
-const AUTH_CODE = process.env.BOUNCIE_AUTH_CODE;
-const REDIRECT_URI = process.env.BOUNCIE_REDIRECT_URI;
+const CLIENT_ID = getRuntimeSecret("BOUNCIE_CLIENT_ID");
+const CLIENT_SECRET = getRuntimeSecret("BOUNCIE_CLIENT_SECRET");
+const AUTH_CODE = getRuntimeSecret("BOUNCIE_AUTH_CODE");
+const REDIRECT_URI = getRuntimeSecret("BOUNCIE_REDIRECT_URI");
 
 const TOKEN_URL = "https://auth.bouncie.com/oauth/token";
 const TOKEN_LIFETIME_SECONDS = 3600;
@@ -15,15 +17,91 @@ class BouncieAuthError extends Error {
   }
 }
 
+let ensureTokenSecretColumnsPromise = null;
+
+function decryptMaybe(value) {
+  return value ? decrypt(value) : null;
+}
+
+async function ensureTokenSecretColumns() {
+  if (!ensureTokenSecretColumnsPromise) {
+    ensureTokenSecretColumnsPromise = pool.query(`
+      ALTER TABLE api_auth_tokens
+        ADD COLUMN IF NOT EXISTS access_token_encrypted text,
+        ADD COLUMN IF NOT EXISTS refresh_token_encrypted text,
+        ADD COLUMN IF NOT EXISTS raw_token_encrypted text
+    `);
+  }
+
+  return ensureTokenSecretColumnsPromise;
+}
+
+async function migrateStoredTokenIfNeeded(row) {
+  if (!row) return null;
+  if (
+    !row.access_token ||
+    row.access_token_encrypted ||
+    row.service_name !== "bouncie"
+  ) {
+    return row;
+  }
+
+  const encryptedAccessToken = encrypt(row.access_token);
+  const encryptedRefreshToken = row.refresh_token ? encrypt(row.refresh_token) : null;
+  const encryptedRawToken = row.raw_token ? encrypt(JSON.stringify(row.raw_token)) : null;
+
+  await pool.query(
+    `
+      UPDATE api_auth_tokens
+      SET access_token = NULL,
+          refresh_token = NULL,
+          raw_token = NULL,
+          access_token_encrypted = $2,
+          refresh_token_encrypted = $3,
+          raw_token_encrypted = $4,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `,
+    [row.id, encryptedAccessToken, encryptedRefreshToken, encryptedRawToken]
+  );
+
+  return {
+    ...row,
+    access_token: null,
+    refresh_token: null,
+    raw_token: null,
+    access_token_encrypted: encryptedAccessToken,
+    refresh_token_encrypted: encryptedRefreshToken,
+    raw_token_encrypted: encryptedRawToken,
+  };
+}
+
+function hydrateTokenRow(row) {
+  if (!row) return null;
+  const rawTokenText = decryptMaybe(row.raw_token_encrypted);
+  return {
+    ...row,
+    access_token: row.access_token || decryptMaybe(row.access_token_encrypted),
+    refresh_token: row.refresh_token || decryptMaybe(row.refresh_token_encrypted),
+    raw_token: row.raw_token || (rawTokenText ? JSON.parse(rawTokenText) : null),
+  };
+}
+
 async function getStoredToken() {
+  await ensureTokenSecretColumns();
   const result = await pool.query(
     `
       SELECT
+        id,
+        service_name,
         access_token,
         refresh_token,
+        access_token_encrypted,
+        refresh_token_encrypted,
         token_type,
         expires_at,
         raw_token,
+        raw_token_encrypted,
         updated_at
       FROM api_auth_tokens
       WHERE service_name = 'bouncie'
@@ -31,7 +109,7 @@ async function getStoredToken() {
     `
   );
 
-  return result.rows[0] || null;
+  return hydrateTokenRow(await migrateStoredTokenIfNeeded(result.rows[0] || null));
 }
 
 function isTokenExpired(tokenRow, bufferSeconds = 60) {
@@ -45,11 +123,17 @@ function isTokenExpired(tokenRow, bufferSeconds = 60) {
 }
 
 async function saveToken(accessToken, rawToken = null) {
+  await ensureTokenSecretColumns();
   const expiresAt = new Date(
     Date.now() + TOKEN_LIFETIME_SECONDS * 1000
   ).toISOString();
 
   const tokenType = rawToken?.token_type || "Bearer";
+  const encryptedAccessToken = encrypt(accessToken);
+  const encryptedRefreshToken = rawToken?.refresh_token
+    ? encrypt(rawToken.refresh_token)
+    : null;
+  const encryptedRawToken = rawToken ? encrypt(JSON.stringify(rawToken)) : null;
 
   const result = await pool.query(
     `
@@ -57,33 +141,39 @@ async function saveToken(accessToken, rawToken = null) {
         service_name,
         access_token,
         refresh_token,
+        access_token_encrypted,
+        refresh_token_encrypted,
         token_type,
         expires_at,
         raw_token,
+        raw_token_encrypted,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb, CURRENT_TIMESTAMP)
+      VALUES ($1, NULL, NULL, $2, $3, $4, $5, NULL, $6, CURRENT_TIMESTAMP)
       ON CONFLICT (service_name)
       DO UPDATE SET
-        access_token = EXCLUDED.access_token,
-        refresh_token = EXCLUDED.refresh_token,
+        access_token = NULL,
+        refresh_token = NULL,
+        access_token_encrypted = EXCLUDED.access_token_encrypted,
+        refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
         token_type = EXCLUDED.token_type,
         expires_at = EXCLUDED.expires_at,
-        raw_token = EXCLUDED.raw_token,
+        raw_token = NULL,
+        raw_token_encrypted = EXCLUDED.raw_token_encrypted,
         updated_at = CURRENT_TIMESTAMP
       RETURNING *
     `,
     [
       "bouncie",
-      accessToken,
-      rawToken?.refresh_token || null,
+      encryptedAccessToken,
+      encryptedRefreshToken,
       tokenType,
       expiresAt,
-      rawToken ? JSON.stringify(rawToken) : null,
+      encryptedRawToken,
     ]
   );
 
-  return result.rows[0];
+  return hydrateTokenRow(result.rows[0]);
 }
 
 async function exchangeAuthCode() {
@@ -179,6 +269,7 @@ async function invalidateStoredToken() {
       UPDATE api_auth_tokens
       SET
         access_token = NULL,
+        access_token_encrypted = NULL,
         expires_at = NULL,
         updated_at = CURRENT_TIMESTAMP
       WHERE service_name = 'bouncie'

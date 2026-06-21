@@ -18,6 +18,10 @@ const { Pool } = requireAppDependency("pg");
 requireAppDependency("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
 
 const appPool = require("../server/db");
+const {
+  getRuntimeNumber,
+  getRuntimeSecret,
+} = require("../server/config/runtimeSecrets");
 const { ensureAuthTables } = require("../server/auth/store");
 const {
   ensureGoogleCalendarConnectionHealthColumns,
@@ -108,11 +112,11 @@ const RUNTIME_DEPENDENCY_TABLES = ["vehicles", "trips", "teller_transactions"];
 
 function getConnectionConfig() {
   return {
-    host: process.env.PGHOST || "localhost",
-    port: Number(process.env.PGPORT || 5432),
-    database: process.env.PGDATABASE || "denmark",
-    user: process.env.PGUSER || "postgres",
-    password: String(process.env.PGPASSWORD || ""),
+    host: getRuntimeSecret("PGHOST", "localhost"),
+    port: getRuntimeNumber("PGPORT", 5432),
+    database: getRuntimeSecret("PGDATABASE", "denmark"),
+    user: getRuntimeSecret("PGUSER", "postgres"),
+    password: getRuntimeSecret("PGPASSWORD", ""),
   };
 }
 

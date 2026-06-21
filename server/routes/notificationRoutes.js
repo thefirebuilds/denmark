@@ -5,6 +5,7 @@ const {
   syncTripToSelectedGoogleCalendars,
 } = require("../services/googleCalendar/googleTripSync");
 const { isAndroidBridgeEnabled } = require("../services/alerts/bridgeAlertSettings");
+const { getRuntimeSecret } = require("../config/runtimeSecrets");
 
 const router = express.Router();
 
@@ -578,7 +579,7 @@ router.post("/turo", async (req, res) => {
     maxLength: 500,
     allowEmpty: false,
   });
-  const configuredSecret = cleanString(process.env.DENMARK_BRIDGE_SECRET, {
+  const configuredSecret = cleanString(getRuntimeSecret("DENMARK_BRIDGE_SECRET"), {
     maxLength: 500,
     allowEmpty: false,
   });

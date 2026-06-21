@@ -1,9 +1,10 @@
 const crypto = require("crypto");
+const { getRuntimeSecret } = require("../../config/runtimeSecrets");
 
 const ALGORITHM = "aes-256-gcm";
 
 function getKey() {
-  const raw = process.env.TOKEN_ENCRYPTION_KEY;
+  const raw = getRuntimeSecret("TOKEN_ENCRYPTION_KEY");
   if (!raw) {
     throw new Error("Missing TOKEN_ENCRYPTION_KEY");
   }

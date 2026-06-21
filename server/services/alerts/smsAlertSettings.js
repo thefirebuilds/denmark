@@ -1,4 +1,5 @@
 const pool = require("../../db");
+const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
 
 const SETTINGS_KEY = "alerts.sms";
 const SECRET_MASK = "********";
@@ -32,12 +33,22 @@ function envSmsSettings() {
 }
 
 function normalizeSmsAlertSettings(value = {}) {
+  const authTokenEncrypted = cleanString(
+    value.authTokenEncrypted ?? value.auth_token_encrypted
+  );
+  let authToken = cleanString(
+    value.authToken ?? value.auth_token ?? value.clientSecret ?? value.client_secret
+  );
+
+  if (!authToken && authTokenEncrypted) {
+    authToken = decrypt(authTokenEncrypted);
+  }
+
   return {
     enabled: value.enabled !== false,
     accountSid: cleanString(value.accountSid ?? value.account_sid),
-    authToken: cleanString(
-      value.authToken ?? value.auth_token ?? value.clientSecret ?? value.client_secret
-    ),
+    authToken,
+    authTokenEncrypted,
     senderNumber: cleanString(
       value.senderNumber ?? value.sender_number ?? value.from ?? value.fromNumber
     ),
@@ -64,16 +75,63 @@ function maskSecret(value) {
 }
 
 function sanitizeSmsAlertSettings(settings, { source = "database" } = {}) {
+  const normalized = normalizeSmsAlertSettings(settings);
   return {
-    enabled: settings.enabled !== false,
-    accountSid: settings.accountSid || "",
-    authToken: settings.authToken ? maskSecret(settings.authToken) : "",
-    authTokenConfigured: Boolean(settings.authToken),
-    senderNumber: settings.senderNumber || "",
-    receiverNumber: settings.receiverNumber || "",
-    configured: hasCompleteCredentials(settings),
+    enabled: normalized.enabled !== false,
+    accountSid: normalized.accountSid || "",
+    authToken: normalized.authToken ? maskSecret(normalized.authToken) : "",
+    authTokenEncrypted: undefined,
+    authTokenConfigured: Boolean(normalized.authToken),
+    senderNumber: normalized.senderNumber || "",
+    receiverNumber: normalized.receiverNumber || "",
+    configured: hasCompleteCredentials(normalized),
     source,
   };
+}
+
+function buildStoredSmsAlertSettings(settings) {
+  const normalized = normalizeSmsAlertSettings(settings);
+  const stored = {
+    enabled: normalized.enabled,
+    accountSid: normalized.accountSid,
+    senderNumber: normalized.senderNumber,
+    receiverNumber: normalized.receiverNumber,
+  };
+
+  if (normalized.authToken) {
+    stored.authTokenEncrypted = encrypt(normalized.authToken);
+  }
+
+  return stored;
+}
+
+async function migrateStoredSmsSecretIfNeeded(rawValue) {
+  if (
+    !rawValue ||
+    typeof rawValue !== "object" ||
+    Array.isArray(rawValue) ||
+    !cleanString(
+      rawValue.authToken ??
+        rawValue.auth_token ??
+        rawValue.clientSecret ??
+        rawValue.client_secret
+    ) ||
+    cleanString(rawValue.authTokenEncrypted ?? rawValue.auth_token_encrypted)
+  ) {
+    return rawValue;
+  }
+
+  const stored = buildStoredSmsAlertSettings(rawValue);
+  await pool.query(
+    `
+      UPDATE app_settings
+      SET value = $2::jsonb,
+          updated_at = NOW()
+      WHERE key = $1
+    `,
+    [SETTINGS_KEY, JSON.stringify(stored)]
+  );
+  return stored;
 }
 
 async function getStoredSmsAlertSettings() {
@@ -82,7 +140,10 @@ async function getStoredSmsAlertSettings() {
     [SETTINGS_KEY]
   );
 
-  return rows[0]?.value ? normalizeSmsAlertSettings(rows[0].value) : null;
+  if (!rows[0]?.value) return null;
+
+  const migratedValue = await migrateStoredSmsSecretIfNeeded(rows[0].value);
+  return normalizeSmsAlertSettings(migratedValue);
 }
 
 async function getEffectiveSmsAlertSettings() {
@@ -117,7 +178,7 @@ async function saveSmsAlertSettings(input = {}) {
     nextInput.authToken = current.authToken || "";
   }
 
-  const settings = normalizeSmsAlertSettings({
+  const settings = buildStoredSmsAlertSettings({
     ...current,
     ...nextInput,
   });

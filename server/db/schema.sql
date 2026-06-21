@@ -316,9 +316,12 @@ CREATE TABLE public.api_auth_tokens (
     service_name text NOT NULL,
     access_token text,
     refresh_token text,
+    access_token_encrypted text,
+    refresh_token_encrypted text,
     token_type text DEFAULT 'Bearer'::text,
     expires_at timestamp without time zone,
     raw_token jsonb,
+    raw_token_encrypted text,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
@@ -1089,7 +1092,8 @@ ALTER SEQUENCE public.teller_ignore_rules_id_seq OWNED BY public.teller_ignore_r
 
 CREATE TABLE public.teller_tokens (
     id integer NOT NULL,
-    access_token text NOT NULL,
+    access_token text,
+    access_token_encrypted text,
     created_at timestamp without time zone DEFAULT now()
 );
 

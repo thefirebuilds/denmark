@@ -5,19 +5,24 @@ const {
   markDatabaseUnavailable,
   summarizeError,
 } = require("./dbHealth");
+const {
+  getRuntimeNumber,
+  getRuntimeSecret,
+} = require("./config/runtimeSecrets");
 
 const pool = new Pool({
-  host: process.env.PGHOST || "localhost",
-  port: Number(process.env.PGPORT || 5432),
-  database: process.env.PGDATABASE || "denmark",
-  user: process.env.PGUSER || "postgres",
-  password: String(process.env.PGPASSWORD || ""),
-  max: Number(process.env.PGPOOL_MAX || 6),
-  idleTimeoutMillis: Number(process.env.PGIDLE_TIMEOUT_MS || 30000),
-  connectionTimeoutMillis: Number(process.env.PGCONNECT_TIMEOUT_MS || 5000),
+  host: getRuntimeSecret("PGHOST", "localhost"),
+  port: getRuntimeNumber("PGPORT", 5432),
+  database: getRuntimeSecret("PGDATABASE", "denmark"),
+  user: getRuntimeSecret("PGUSER", "postgres"),
+  password: getRuntimeSecret("PGPASSWORD", ""),
+  max: getRuntimeNumber("PGPOOL_MAX", 6),
+  idleTimeoutMillis: getRuntimeNumber("PGIDLE_TIMEOUT_MS", 30000),
+  connectionTimeoutMillis: getRuntimeNumber("PGCONNECT_TIMEOUT_MS", 5000),
   keepAlive: true,
-  keepAliveInitialDelayMillis: Number(
-    process.env.PGKEEPALIVE_INITIAL_DELAY_MS || 10000
+  keepAliveInitialDelayMillis: getRuntimeNumber(
+    "PGKEEPALIVE_INITIAL_DELAY_MS",
+    10000
   ),
 });
 

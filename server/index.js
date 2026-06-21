@@ -72,6 +72,7 @@ const {
 const { isAuthEnforced } = require("./auth/config");
 const { getOidcConfig } = require("./auth/oidcProvider");
 const { ensureAuthTables } = require("./auth/store");
+const { getRuntimeSecret } = require("./config/runtimeSecrets");
 const {
   RETRY_AFTER_SECONDS,
   buildDatabaseUnavailablePayload,
@@ -96,7 +97,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 app.set("trust proxy", 1);
 const SESSION_SECRET =
-  process.env.SESSION_SECRET ||
+  getRuntimeSecret("SESSION_SECRET") ||
   (process.env.NODE_ENV === "production" ? null : "denmark-local-dev-session-secret");
 
 if (!SESSION_SECRET) {

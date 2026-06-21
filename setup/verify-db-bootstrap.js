@@ -18,6 +18,10 @@ requireAppDependency("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
 const {
   REQUIRED_UNIQUE_CONSTRAINTS,
 } = require("../server/services/database/applicationUniqueConstraints");
+const {
+  getRuntimeNumber,
+  getRuntimeSecret,
+} = require("../server/config/runtimeSecrets");
 
 const REQUIRED_TABLES = [
   "api_auth_tokens",
@@ -70,11 +74,11 @@ const REQUIRED_TABLES = [
 
 function getConnectionConfig() {
   return {
-    host: process.env.PGHOST || "localhost",
-    port: Number(process.env.PGPORT || 5432),
-    database: process.env.PGDATABASE || "denmark",
-    user: process.env.PGUSER || "postgres",
-    password: String(process.env.PGPASSWORD || ""),
+    host: getRuntimeSecret("PGHOST", "localhost"),
+    port: getRuntimeNumber("PGPORT", 5432),
+    database: getRuntimeSecret("PGDATABASE", "denmark"),
+    user: getRuntimeSecret("PGUSER", "postgres"),
+    password: getRuntimeSecret("PGPASSWORD", ""),
   };
 }
 
