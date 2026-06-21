@@ -36,33 +36,36 @@ function normalizeMatchValue(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function getVehicleTripKeys(vehicle) {
-  return [
-    vehicle?.turo_vehicle_id,
-    vehicle?.vin,
-    vehicle?.nickname,
-    vehicle?.turo_vehicle_name,
-    vehicle?.vehicle_name,
-    ...(Array.isArray(vehicle?.aliases) ? vehicle.aliases : []),
-  ]
+function getVehicleNameKeys(vehicle) {
+  return [vehicle?.nickname, vehicle?.turo_vehicle_name, vehicle?.vehicle_name]
+    .concat(Array.isArray(vehicle?.aliases) ? vehicle.aliases : [])
     .map(normalizeMatchValue)
     .filter(Boolean);
 }
 
 function tripMatchesVehicle(vehicle, trip) {
-  const vehicleKeys = getVehicleTripKeys(vehicle);
-  if (!vehicleKeys.length) return false;
+  const vehicleTuroId = normalizeMatchValue(
+    vehicle?.turo_vehicle_id ?? vehicle?.turoVehicleId
+  );
+  const tripTuroId = normalizeMatchValue(trip?.turo_vehicle_id);
+  if (vehicleTuroId && tripTuroId) {
+    return vehicleTuroId === tripTuroId;
+  }
 
-  const tripKeys = [
-    trip?.turo_vehicle_id,
-    trip?.vehicle_vin,
-    trip?.vehicle_nickname,
-    trip?.vehicle_name,
-  ]
+  const vehicleVin = normalizeMatchValue(vehicle?.vin);
+  const tripVin = normalizeMatchValue(trip?.vehicle_vin ?? trip?.vehicleVin);
+  if (vehicleVin && tripVin) {
+    return vehicleVin === tripVin;
+  }
+
+  const vehicleNames = getVehicleNameKeys(vehicle);
+  if (!vehicleNames.length) return false;
+
+  const tripNames = [trip?.vehicle_nickname, trip?.vehicle_name]
     .map(normalizeMatchValue)
     .filter(Boolean);
 
-  return tripKeys.some((tripKey) => vehicleKeys.includes(tripKey));
+  return tripNames.some((tripName) => vehicleNames.includes(tripName));
 }
 
 function sortFleetPlanningQueue(items) {

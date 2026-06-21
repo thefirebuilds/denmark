@@ -2549,6 +2549,7 @@ router.get("/", async (req, res) => {
             NULLIF(mt.vehicle_vin, ''),
             LOWER(NULLIF(COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
           ) AS vehicle_key,
+          resolved_vehicle.id AS vehicle_id,
           COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin) AS vehicle_name,
           COALESCE(resolved_vehicle.vin, mt.vehicle_vin) AS vehicle_vin,
           COUNT(*) AS open_task_count,
@@ -2622,6 +2623,7 @@ router.get("/", async (req, res) => {
             NULLIF(mt.vehicle_vin, ''),
             LOWER(NULLIF(COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin), ''))
           ),
+          resolved_vehicle.id,
           COALESCE(resolved_vehicle.nickname, related_trip.vehicle_name, mt.vehicle_vin),
           COALESCE(resolved_vehicle.vin, mt.vehicle_vin)
       ),
@@ -2664,12 +2666,16 @@ router.get("/", async (req, res) => {
             AND COALESCE(active.closed_out, false) = false
             AND (
               (
-                active.turo_vehicle_id IS NOT NULL
-                AND NULLIF(CAST(active.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
+                open_vehicle_tasks.vehicle_id IS NOT NULL
+                AND active_v.id = open_vehicle_tasks.vehicle_id
               )
               OR (
                 open_vehicle_tasks.vehicle_vin IS NOT NULL
                 AND active_v.vin = open_vehicle_tasks.vehicle_vin
+              )
+              OR (
+                active.turo_vehicle_id IS NOT NULL
+                AND NULLIF(CAST(active.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
               )
               OR (
                 COALESCE(active.vehicle_name, '') <> ''
@@ -2706,12 +2712,16 @@ router.get("/", async (req, res) => {
             AND COALESCE(upcoming.closed_out, false) = false
             AND (
               (
-                upcoming.turo_vehicle_id IS NOT NULL
-                AND NULLIF(CAST(upcoming.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
+                open_vehicle_tasks.vehicle_id IS NOT NULL
+                AND upcoming_v.id = open_vehicle_tasks.vehicle_id
               )
               OR (
                 open_vehicle_tasks.vehicle_vin IS NOT NULL
                 AND upcoming_v.vin = open_vehicle_tasks.vehicle_vin
+              )
+              OR (
+                upcoming.turo_vehicle_id IS NOT NULL
+                AND NULLIF(CAST(upcoming.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
               )
               OR (
                 COALESCE(upcoming.vehicle_name, '') <> ''
