@@ -140,6 +140,15 @@ export function formatRegistration(month, year) {
   return `${String(month).padStart(2, "0")}/${year}`;
 }
 
+function pickFirstFilled(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+  return null;
+}
+
 export function buildExportFileName(vehicle, suffix = "") {
   const name = vehicle?.nickname || "vehicle";
   const today = new Date().toLocaleDateString("en-US", {
@@ -834,6 +843,400 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
 
   const merged = [...taskItems, ...ruleItems];
   return mergeQueueItems(merged);
+}
+
+function normalizeTelematicsSourceLabel(source) {
+  const value = String(source || "").trim().toLowerCase();
+  if (value === "bouncie") return "Bouncie";
+  if (value === "dimo") return "DIMO";
+  return value ? value.toUpperCase() : "";
+}
+
+function formatTelematicsLastCall(value) {
+  if (!value) return "No call-in recorded";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown call-in";
+
+  const minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+  if (minutes < 60) return `${minutes || 1} min ago`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hr ago`;
+
+  const days = Math.round(hours / 24);
+  return `${days} days ago`;
+}
+
+export function buildTelematicsStatus(fleetVehicle = null) {
+  const sources = Array.isArray(fleetVehicle?.telemetry_source)
+    ? fleetVehicle.telemetry_source
+    : [];
+  const sourceLabel = sources
+    .map(normalizeTelematicsSourceLabel)
+    .filter(Boolean)
+    .join(" + ");
+  const lastCallRaw =
+    fleetVehicle?.telemetry?.last_comm ||
+    fleetVehicle?.telemetry?.timestamps?.location_last_updated ||
+    fleetVehicle?.telemetry?.timestamps?.ignition_last_updated ||
+    null;
+  const lastCallDate = lastCallRaw ? new Date(lastCallRaw) : null;
+  const ageHours =
+    lastCallDate && !Number.isNaN(lastCallDate.getTime())
+      ? (Date.now() - lastCallDate.getTime()) / (1000 * 60 * 60)
+      : null;
+  const tone =
+    ageHours == null
+      ? "unknown"
+      : ageHours <= 24
+      ? "pass"
+      : ageHours <= 72
+      ? "attention"
+      : "fail";
+
+  return {
+    sourceLabel: sourceLabel || "No telematics source",
+    lastCallLabel: formatTelematicsLastCall(lastCallRaw),
+    tone,
+  };
+}
+
+export function buildTelemetryLocation(fleetVehicle = null) {
+  const location = fleetVehicle?.telemetry?.location || {};
+  const lat = Number(location.lat);
+  const lon = Number(location.lon);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return null;
+  }
+
+  return {
+    lat,
+    lon,
+    label: `${lat.toFixed(5)}, ${lon.toFixed(5)}`,
+    lastUpdated:
+      location.last_updated ||
+      fleetVehicle?.telemetry?.timestamps?.location_last_updated ||
+      fleetVehicle?.telemetry?.timestamps?.vehicle_last_updated ||
+      fleetVehicle?.telemetry?.timestamps?.captured_at ||
+      fleetVehicle?.telemetry?.last_comm ||
+      null,
+  };
+}
+
+export function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
+  const mil = liveDiagnostics?.mil || fleetVehicle?.telemetry?.mil || {};
+  const count =
+    mil.dtc_count === null || mil.dtc_count === undefined || mil.dtc_count === ""
+      ? null
+      : Number(mil.dtc_count);
+  const dtcCountIsZero = Number.isFinite(count) && count === 0;
+  const sourceLabel =
+    liveDiagnostics?.source === "dimo_latest_signals" ||
+    mil.source === "dimo_latest_signals"
+      ? "DIMO latest signals"
+      : null;
+  const sourcedDetail = (detail) =>
+    sourceLabel ? `${detail} from ${sourceLabel}` : detail;
+  const codes = !dtcCountIsZero && Array.isArray(mil.qualified_dtc_list)
+    ? mil.qualified_dtc_list
+        .map((item) => {
+          if (typeof item === "string") return item;
+          return item?.code || item?.dtc || item?.name || "";
+        })
+        .map((item) => String(item || "").trim().toUpperCase())
+        .filter(Boolean)
+    : [];
+  const lastUpdated = mil.last_updated || null;
+  const firstReportedAt = mil.first_reported_at || null;
+
+  if (mil.mil_on === true) {
+    return {
+      tone: "fail",
+      label: codes.length ? `MIL on: ${codes.join(", ")}` : "MIL on",
+      detail: sourcedDetail(
+        codes.length
+          ? `${codes.length} decoded DTC${codes.length === 1 ? "" : "s"} reported`
+          : "Check-engine light is on, but no decoded DTCs were reported yet"
+      ),
+      lastUpdated,
+      firstReportedAt,
+      sourceLabel,
+    };
+  }
+
+  if (codes.length || count > 0) {
+    return {
+      tone: "fail",
+      label: codes.length ? `DTC: ${codes.join(", ")}` : `${count} DTC active`,
+      detail: sourcedDetail("Diagnostic trouble code reported by telematics"),
+      lastUpdated,
+      firstReportedAt,
+      sourceLabel,
+    };
+  }
+
+  if (mil.mil_on === false) {
+    return {
+      tone: "pass",
+      label: "MIL clear",
+      detail: sourcedDetail("No active check-engine light reported"),
+      lastUpdated,
+      firstReportedAt,
+      sourceLabel,
+    };
+  }
+
+  return {
+    tone: "unknown",
+    label: "No MIL reading",
+    detail: sourcedDetail("No diagnostic status reported yet"),
+    lastUpdated,
+    firstReportedAt,
+    sourceLabel,
+  };
+}
+
+function formatEngineTemp(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `${Math.round(num)} F`;
+}
+
+export function buildEngineTemperatureStatus(fleetVehicle = null) {
+  const engine = fleetVehicle?.telemetry?.engine || {};
+  const latestTemp = Number(engine.coolant_temp);
+  const range = engine.coolant_temp_range || {};
+  const minTemp = Number(range.min_f);
+  const maxTemp = Number(range.max_f);
+  const sampleCount = Number(range.sample_count || 0);
+  const latestText = Number.isFinite(latestTemp)
+    ? formatEngineTemp(latestTemp)
+    : "No reading";
+  const rangeText =
+    Number.isFinite(minTemp) && Number.isFinite(maxTemp)
+      ? `${formatEngineTemp(minTemp)} - ${formatEngineTemp(maxTemp)}`
+      : "Range unavailable";
+  const overtemp = Boolean(
+    engine.overtemp ||
+      range.last_overtemp_at ||
+      (Number.isFinite(latestTemp) && latestTemp >= 240) ||
+      (Number.isFinite(maxTemp) && maxTemp >= 240)
+  );
+  const warm = !overtemp && Number.isFinite(maxTemp) && maxTemp >= 225;
+  const tone = overtemp
+    ? "fail"
+    : warm
+    ? "attention"
+    : Number.isFinite(latestTemp) || sampleCount > 0
+    ? "pass"
+    : "unknown";
+  const detail = overtemp
+    ? `Overtemp alert${
+        range.last_overtemp_at
+          ? ` at ${formatTelematicsLastCall(range.last_overtemp_at)}`
+          : ""
+      }`
+    : sampleCount > 0
+    ? `14-day range: ${rangeText}`
+    : "No DIMO engine temp history";
+
+  return {
+    latestText,
+    rangeText,
+    detail,
+    tone,
+  };
+}
+
+function formatEngineRpm(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `${Math.round(num).toLocaleString("en-US")} RPM`;
+}
+
+export function buildEngineRpmStatus(fleetVehicle = null) {
+  const engine = fleetVehicle?.telemetry?.engine || {};
+  const latestRpm = Number(engine.rpm);
+  const range = engine.rpm_range || {};
+  const maxRpm = Number(range.max_rpm);
+  const sampleCount = Number(range.sample_count || 0);
+  const latestText = Number.isFinite(latestRpm)
+    ? formatEngineRpm(latestRpm)
+    : "No reading";
+  const maxText = Number.isFinite(maxRpm)
+    ? formatEngineRpm(maxRpm)
+    : "Max unavailable";
+  const detail =
+    sampleCount > 0
+      ? `14-day observed max: ${maxText}`
+      : "No DIMO tachometer history";
+
+  return {
+    latestText,
+    maxText,
+    detail,
+    tone: Number.isFinite(latestRpm) || sampleCount > 0 ? "pass" : "unknown",
+  };
+}
+
+export function mapMaintenanceSummaryToGuestInspectionVehicle(
+  summary,
+  {
+    fallbackId = null,
+    fallbackVehicle = null,
+    fleetVehicle = null,
+    liveDiagnostics = null,
+  } = {}
+) {
+  const sourceVehicle = summary?.vehicle || fallbackVehicle || fleetVehicle || {};
+  const tasks = Array.isArray(summary?.tasks) ? summary.tasks : [];
+  const ruleStatuses = Array.isArray(summary?.ruleStatuses)
+    ? summary.ruleStatuses
+    : [];
+  const notes = Array.isArray(summary?.guestVisibleConditionNotes)
+    ? summary.guestVisibleConditionNotes
+        .map((note) => {
+          if (typeof note === "string") return note.trim();
+          if (note && typeof note === "object") {
+            return String(note.description || note.title || "").trim();
+          }
+          return "";
+        })
+        .filter(Boolean)
+    : [];
+  const historyMap = buildInspectionHistoryMap(summary || {});
+  const oilServiceDue = getNextServiceDue(summary || {}, {
+    ruleCodes: ["oil_change", "brake_inspection"],
+    label: "Next service due",
+  });
+  const nextServiceDue =
+    oilServiceDue?.text && oilServiceDue.text !== "Unknown"
+      ? oilServiceDue
+      : getNextServiceDue(summary || {});
+  const actionableTasks = tasks.filter(
+    (task) =>
+      String(task?.status || "").toLowerCase() === "open" &&
+      !isTaskSatisfiedByRule(task, summary || {})
+  );
+  const hasBlockingIssue = Boolean(summary?.blocksRental || summary?.blocksGuestExport);
+  const hasNeedsReview = Boolean(summary?.needsReview);
+  const hasOpenTasks = actionableTasks.length > 0;
+  const overallStatus =
+    hasBlockingIssue || hasNeedsReview || hasOpenTasks ? "attention" : "pass";
+  const vin = pickFirstFilled(sourceVehicle.vin, fleetVehicle?.vin, fallbackVehicle?.vin);
+  const plate = pickFirstFilled(
+    sourceVehicle.license_plate,
+    sourceVehicle.licensePlate,
+    sourceVehicle.plate,
+    fleetVehicle?.license_plate,
+    fallbackVehicle?.license_plate,
+    fallbackVehicle?.plate
+  );
+  const licenseState = pickFirstFilled(
+    sourceVehicle.registration?.state,
+    sourceVehicle.license_state,
+    sourceVehicle.licenseState,
+    fleetVehicle?.registration?.state,
+    fleetVehicle?.license_state,
+    fallbackVehicle?.license_state
+  );
+  const registrationMonth = pickFirstFilled(
+    sourceVehicle.registration?.month,
+    sourceVehicle.registration_month,
+    sourceVehicle.registrationMonth,
+    fleetVehicle?.registration?.month,
+    fleetVehicle?.registration_month,
+    fallbackVehicle?.registration_month
+  );
+  const registrationYear = pickFirstFilled(
+    sourceVehicle.registration?.year,
+    sourceVehicle.registration_year,
+    sourceVehicle.registrationYear,
+    fleetVehicle?.registration?.year,
+    fleetVehicle?.registration_year,
+    fallbackVehicle?.registration_year
+  );
+
+  return {
+    id:
+      fallbackId ||
+      normalizeVehicleKey(sourceVehicle.nickname || sourceVehicle.vin || "vehicle"),
+    nickname: sourceVehicle.nickname || fallbackVehicle?.nickname || "Vehicle",
+    year: sourceVehicle.year || fallbackVehicle?.year || "",
+    make: sourceVehicle.make || fallbackVehicle?.make || "",
+    model: sourceVehicle.model || fallbackVehicle?.model || "",
+    vin: vin || null,
+    vin_last6: getVinLast6(vin),
+    rockauto_url:
+      sourceVehicle.rockauto_url ||
+      sourceVehicle.rockautoUrl ||
+      fleetVehicle?.rockauto_url ||
+      fleetVehicle?.rockautoUrl ||
+      fallbackVehicle?.rockauto_url ||
+      fallbackVehicle?.rockautoUrl ||
+      "",
+    currentOdometerMiles:
+      summary?.currentOdometerMiles ??
+      sourceVehicle.currentOdometerMiles ??
+      sourceVehicle.current_odometer_miles ??
+      fallbackVehicle?.currentOdometerMiles ??
+      fallbackVehicle?.current_odometer_miles ??
+      null,
+    currentOdometerSource:
+      summary?.currentOdometerSource ??
+      sourceVehicle.currentOdometerSource ??
+      fallbackVehicle?.currentOdometerSource ??
+      null,
+    onboardingOdometerMiles:
+      summary?.onboardingOdometerMiles ??
+      sourceVehicle.onboardingOdometerMiles ??
+      fallbackVehicle?.onboardingOdometerMiles ??
+      null,
+    totalTuroMiles:
+      summary?.totalTuroMiles ?? sourceVehicle.totalTuroMiles ?? null,
+    countedTuroMileageTrips:
+      summary?.countedTuroMileageTrips ?? sourceVehicle.countedTuroMileageTrips ?? null,
+    next_service_due: nextServiceDue,
+    plate: plate || "-",
+    license_plate: plate || "",
+    license_state: licenseState || "TX",
+    registration_month: registrationMonth ?? "",
+    registration_year: registrationYear ?? "",
+    registration_expires:
+      sourceVehicle.registration?.code ||
+      sourceVehicle.registration_expires ||
+      fallbackVehicle?.registration_expires ||
+      formatRegistration(registrationMonth, registrationYear),
+    lockbox_pin:
+      pickFirstFilled(
+        sourceVehicle.lockbox_pin,
+        sourceVehicle.lockboxPin,
+        fleetVehicle?.lockbox_pin,
+        fleetVehicle?.lockboxPin,
+        fallbackVehicle?.lockbox_pin,
+        fallbackVehicle?.lockboxPin
+      ) || "",
+    rentable: !summary?.blocksRental,
+    in_service: fleetVehicle?.in_service !== false,
+    map_vehicle_id: fleetVehicle?.id ?? sourceVehicle.id ?? fallbackId,
+    overall_status: overallStatus,
+    export_ready: !summary?.blocksGuestExport,
+    telematics: buildTelematicsStatus(fleetVehicle || fallbackVehicle),
+    telemetry_location: buildTelemetryLocation(fleetVehicle || fallbackVehicle),
+    mil_status: buildMilStatus(fleetVehicle || fallbackVehicle, liveDiagnostics),
+    engine_temperature: buildEngineTemperatureStatus(fleetVehicle || fallbackVehicle),
+    engine_rpm: buildEngineRpmStatus(fleetVehicle || fallbackVehicle),
+    body_condition: notes.length ? "documented" : "good",
+    body_notes: notes.length
+      ? notes
+      : ["No guest-visible cosmetic notes recorded"],
+    inspection_items: ruleStatuses.map((rule) =>
+      mapRuleStatusToInspectionItem(rule, historyMap)
+    ),
+    queue_items: buildQueueItemsFromSummary(summary || {}, historyMap),
+  };
 }
 
 export function sortQueue(items) {

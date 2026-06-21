@@ -15,10 +15,8 @@ import { openPrintDialogForElement } from "../utils/printUtils";
 import {
   buildExportFileName,
   buildPreflightDueItems,
-  buildInspectionHistoryMap,
-  getNextServiceDue,
   getVinLast6,
-  mapRuleStatusToInspectionItem,
+  mapMaintenanceSummaryToGuestInspectionVehicle,
 } from "../utils/maintUtils";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
@@ -329,67 +327,26 @@ function buildPrepVehicle(message, vehicle = null) {
 }
 
 function buildGuestInspectionVehicle(message, vehicle = null, summary = null) {
-  const source = summary?.vehicle || vehicle || {};
-  const notes = Array.isArray(summary?.guestVisibleConditionNotes)
-    ? summary.guestVisibleConditionNotes
-        .map((note) => {
-          if (typeof note === "string") return note.trim();
-          if (note && typeof note === "object") {
-            return String(note.description || note.title || "").trim();
-          }
-          return "";
-        })
-        .filter(Boolean)
-    : [];
-  const historyMap = buildInspectionHistoryMap(summary || {});
-  const ruleStatuses = Array.isArray(summary?.ruleStatuses)
-    ? summary.ruleStatuses
-    : [];
-  const vin = source.vin || vehicle?.vin || message?.vehicle_vin || null;
-  const plate =
-    source.license_plate ||
-    source.licensePlate ||
-    source.plate ||
-    vehicle?.license_plate ||
-    vehicle?.plate ||
-    "";
-
-  return {
-    ...source,
+  const fallbackVehicle = {
+    ...(vehicle || {}),
     nickname:
-      source.nickname ||
       vehicle?.nickname ||
       message?.vehicle_nickname ||
       message?.vehicle_name ||
       "Vehicle",
-    year: source.year || vehicle?.year || "",
-    make: source.make || vehicle?.make || "",
-    model: source.model || vehicle?.model || "",
-    vin,
-    vin_last6: getVinLast6(vin),
-    plate,
-    license_plate: plate,
-    registration_expires:
-      source.registration?.code ||
-      source.registration_expires ||
-      vehicle?.registration_expires ||
-      "",
-    body_condition: notes.length ? "documented" : "good",
-    body_notes: notes.length
-      ? notes
-      : ["No guest-visible cosmetic notes recorded"],
-    currentOdometerMiles:
-      summary?.currentOdometerMiles ??
-      source.currentOdometerMiles ??
-      source.current_odometer_miles ??
-      vehicle?.current_odometer_miles ??
-      vehicle?.odometer ??
-      null,
-    next_service_due: getNextServiceDue(summary || {}),
-    inspection_items: ruleStatuses.map((rule) =>
-      mapRuleStatusToInspectionItem(rule, historyMap)
-    ),
+    vin: vehicle?.vin || message?.vehicle_vin || null,
   };
+
+  return mapMaintenanceSummaryToGuestInspectionVehicle(summary || {}, {
+    fallbackId:
+      message?.turo_vehicle_id ||
+      message?.vehicle_vin ||
+      message?.vehicle_nickname ||
+      message?.vehicle_name ||
+      null,
+    fallbackVehicle,
+    fleetVehicle: vehicle,
+  });
 }
 
 function getMaintenanceTripState(message) {
