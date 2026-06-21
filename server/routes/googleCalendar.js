@@ -25,6 +25,9 @@ const {
   previewGoogleCalendarDuplicateCleanup,
   runGoogleCalendarDuplicateCleanup,
 } = require("../services/googleCalendar/googleCalendarDedupe");
+const {
+  cleanupSyncedMaintenanceCalendarEvents,
+} = require("../services/googleCalendar/maintenanceCalendarSync");
 const { logRequestActivity } = require("../services/systemActivityLog");
 const {
   resolveAuthPublicUrlSettings,
@@ -262,6 +265,34 @@ router.post("/dedupe/run", async (req, res, next) => {
       details: {
         scannedEvents: result.scannedEvents,
         duplicateGroups: result.duplicateGroups,
+        removedEvents: result.removedEvents,
+        failedEvents: result.failedEvents,
+      },
+    }).catch(() => null);
+
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/maintenance-events/cleanup", async (req, res, next) => {
+  try {
+    const result = await cleanupSyncedMaintenanceCalendarEvents({
+      userId: getRouteUserId(req),
+    });
+
+    await logRequestActivity(req, {
+      category: "integration",
+      eventType: "google_calendar_maintenance_cleanup_run",
+      severity: result.ok ? "notice" : "warning",
+      outcome: result.ok ? "success" : "failure",
+      subjectType: "google_calendar",
+      subjectId: result.calendarId,
+      source: "google-calendar",
+      details: {
+        scannedEvents: result.scannedEvents,
+        trackedEvents: result.trackedEvents,
         removedEvents: result.removedEvents,
         failedEvents: result.failedEvents,
       },

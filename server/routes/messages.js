@@ -9,9 +9,6 @@ const tripAutomationRules = require("../config/tripAutomationRules.json");
 const {
   ensureVehicleAliasesTable,
 } = require("../services/vehicles/vehicleAliases");
-const {
-  syncHighPriorityMaintenanceCalendarNotices,
-} = require("../services/googleCalendar/maintenanceCalendarSync");
 
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
@@ -1248,6 +1245,23 @@ function mapLateTollNoticeRow(row) {
   };
 }
 
+function getLocalDateKey(value, timeZone = "America/Chicago") {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function isMaintenanceAvailableToday(value) {
+  if (!value) return true;
+  return getLocalDateKey(value) === getLocalDateKey(new Date());
+}
+
 function mapMaintenanceNoticeRow(row) {
   const now = Date.now();
   const tripStart = row.trip_start ? new Date(row.trip_start).getTime() : null;
@@ -1278,7 +1292,9 @@ function mapMaintenanceNoticeRow(row) {
   const taskLabel = `${groupedTasks.length} maintenance planning item${
     groupedTasks.length === 1 ? "" : "s"
   }`;
-  const subject = hasProjectionTasks
+  const subject = isMaintenanceAvailableToday(row.maintenance_available_at)
+    ? `${vehicleName} is available today - go do ${taskLabel}`
+    : hasProjectionTasks
     ? isActiveTrip
       ? `${taskLabel} during ${vehicleName}'s current trip`
       : `${taskLabel} will come due during ${vehicleName}'s trip`
@@ -3224,20 +3240,6 @@ router.get("/", async (req, res) => {
       mapInspectionExportNoticeRow
     );
     const maintenanceNotices = maintenanceResult.rows.map(mapMaintenanceNoticeRow);
-    syncHighPriorityMaintenanceCalendarNotices(maintenanceNotices)
-      .then((result) => {
-        if (result?.processed > 0) {
-          console.log(
-            `[maintenance-calendar] synced ${result.processed} high-priority maintenance event(s)`
-          );
-        }
-      })
-      .catch((err) => {
-        console.warn(
-          "[maintenance-calendar] sync failed:",
-          err.message || err
-        );
-      });
     const prepTaskTripIds = new Set(
       [...handoffNotices, ...inspectionExportNotices]
         .map((row) => row.trip_id)

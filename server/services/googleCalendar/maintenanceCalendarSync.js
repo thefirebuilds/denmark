@@ -160,6 +160,45 @@ function getGoogleHttpStatus(err) {
   return err?.code || err?.response?.status;
 }
 
+function isMaintenanceCalendarEvent(event) {
+  const privateProps = event?.extendedProperties?.private || {};
+  if (privateProps.denmarkMaintenanceKey) return true;
+
+  const summary = String(event?.summary || "");
+  const eventId = String(event?.id || "");
+  return eventId.startsWith("denmark") && summary.startsWith("Maintenance:");
+}
+
+async function listMaintenanceCalendarEvents(
+  calendar,
+  calendarId,
+  { pastDays = 365, futureDays = 730 } = {}
+) {
+  const now = Date.now();
+  const timeMin = new Date(now - pastDays * 24 * 60 * 60 * 1000).toISOString();
+  const timeMax = new Date(now + futureDays * 24 * 60 * 60 * 1000).toISOString();
+  const events = [];
+  let pageToken = null;
+
+  do {
+    const response = await calendar.events.list({
+      calendarId,
+      singleEvents: true,
+      showDeleted: false,
+      maxResults: 2500,
+      orderBy: "startTime",
+      timeMin,
+      timeMax,
+      pageToken,
+    });
+
+    events.push(...(response.data.items || []).filter(isMaintenanceCalendarEvent));
+    pageToken = response.data.nextPageToken || null;
+  } while (pageToken);
+
+  return events;
+}
+
 async function deleteGoogleEventById(calendar, calendarId, googleEventId) {
   if (!googleEventId) return;
 
@@ -369,7 +408,89 @@ async function syncHighPriorityMaintenanceCalendarNotices(notices = []) {
   };
 }
 
+async function cleanupSyncedMaintenanceCalendarEvents({ userId = null } = {}) {
+  await ensureMaintenanceGoogleSyncTable();
+
+  const connection = await getGoogleCalendarConnection(userId);
+  if (!connection?.refresh_token || !connection.calendar_id) {
+    const err = new Error("No connected Google Calendar is available for cleanup");
+    err.status = 404;
+    throw err;
+  }
+
+  const oauth2Client = getOAuthClient();
+  oauth2Client.setCredentials({ refresh_token: connection.refresh_token });
+  const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+  const syncRows = await pool.query(
+    `
+      SELECT id, google_event_id
+      FROM public.maintenance_google_sync
+      WHERE google_calendar_connection_id = $1
+        AND google_event_id IS NOT NULL
+        AND sync_status IS DISTINCT FROM 'deleted'
+    `,
+    [connection.id]
+  );
+  const calendarEvents = await listMaintenanceCalendarEvents(
+    calendar,
+    connection.calendar_id
+  );
+  const eventIds = [
+    ...new Set([
+      ...syncRows.rows.map((row) => row.google_event_id).filter(Boolean),
+      ...calendarEvents.map((event) => event.id).filter(Boolean),
+    ]),
+  ];
+
+  const removed = [];
+  const failed = [];
+
+  for (const eventId of eventIds) {
+    try {
+      await deleteGoogleEventById(calendar, connection.calendar_id, eventId);
+      removed.push(eventId);
+    } catch (err) {
+      failed.push({
+        eventId,
+        error: err.message || "delete failed",
+      });
+    }
+  }
+
+  if (removed.length) {
+    await pool.query(
+      `
+        UPDATE public.maintenance_google_sync
+        SET sync_status = 'deleted',
+            updated_at = NOW()
+        WHERE google_calendar_connection_id = $1
+          AND google_event_id = ANY($2::text[])
+      `,
+      [connection.id, removed]
+    );
+  }
+
+  await markGoogleCalendarConnectionHealth({
+    connectionId: connection.id,
+    tokenStatus: failed.length ? "invalid" : "valid",
+    tokenError: failed[0]?.error || null,
+  });
+
+  return {
+    ok: failed.length === 0,
+    calendarId: connection.calendar_id,
+    scannedEvents: calendarEvents.length,
+    trackedEvents: syncRows.rowCount,
+    removedEvents: removed.length,
+    failedEvents: failed.length,
+    removed,
+    failed,
+  };
+}
+
 module.exports = {
   ensureMaintenanceGoogleSyncTable,
+  cleanupSyncedMaintenanceCalendarEvents,
   syncHighPriorityMaintenanceCalendarNotices,
 };

@@ -3345,11 +3345,13 @@ function GoogleCalendarCard({
   cleanupPreview,
   previewingCleanup,
   runningCleanup,
+  runningMaintenanceCleanup,
   savingSyncEnabled,
   onConnect,
   onSync,
   onPreviewCleanup,
   onRunCleanup,
+  onCleanupMaintenanceEvents,
   onSyncEnabledChange,
 }) {
   const syncEnabled = status?.syncEnabled !== false;
@@ -3393,7 +3395,7 @@ function GoogleCalendarCard({
         <span>
           {savingSyncEnabled
             ? "Saving calendar sync setting..."
-            : "Enable trip and maintenance event syncing for this tenant"}
+            : "Enable trip event syncing for this tenant"}
         </span>
       </label>
 
@@ -3463,8 +3465,8 @@ function GoogleCalendarCard({
         <div>
           <strong>Duplicate cleanup</strong>
           <span>
-            Scans Denmark trip and maintenance events on the selected calendar,
-            then removes duplicate copies while keeping the newest shared event.
+            Scans Denmark trip events on the selected calendar, then removes
+            duplicate copies while keeping the newest shared event.
           </span>
         </div>
         {cleanupPreview ? (
@@ -3525,13 +3527,35 @@ function GoogleCalendarCard({
           </button>
         </div>
       </div>
+
+      <div className="settings-calendar-cleanup">
+        <div>
+          <strong>Maintenance calendar cleanup</strong>
+          <span>
+            Removes Denmark-created maintenance reminders from the selected
+            calendar. Maintenance planning stays in the message queue.
+          </span>
+        </div>
+        <div className="settings-form-actions">
+          <button
+            type="button"
+            className="settings-action-btn settings-action-btn--danger"
+            disabled={loading || runningMaintenanceCleanup || !status?.connected}
+            onClick={onCleanupMaintenanceEvents}
+          >
+            {runningMaintenanceCleanup
+              ? "Removing..."
+              : "Remove Maintenance Events"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 const INTEGRATION_SWITCH_LABELS = [
   ["imap", "IMAP message intake", "Polls the configured mailbox for Turo messages."],
-  ["googleCalendar", "Google Calendar sync", "Creates and updates trip/maintenance calendar events."],
+  ["googleCalendar", "Google Calendar sync", "Creates and updates trip calendar events."],
   ["dimo", "DIMO telemetry", "Polls shared DIMO vehicles for location, odometer, and diagnostics."],
   ["bouncie", "Bouncie telemetry", "Polls Bouncie devices where configured."],
   ["teller", "Teller and Mercury banking", "Runs banking import jobs for expense review."],
@@ -3596,6 +3620,10 @@ function IntegrationsSettingsPanel() {
     useState(false);
   const [runningGoogleCalendarCleanup, setRunningGoogleCalendarCleanup] =
     useState(false);
+  const [
+    runningGoogleCalendarMaintenanceCleanup,
+    setRunningGoogleCalendarMaintenanceCleanup,
+  ] = useState(false);
   const [googleCalendarCleanupPreview, setGoogleCalendarCleanupPreview] =
     useState(null);
   const [savingGoogleCalendarSyncEnabled, setSavingGoogleCalendarSyncEnabled] =
@@ -4012,6 +4040,40 @@ function IntegrationsSettingsPanel() {
     }
   }
 
+  async function cleanupGoogleCalendarMaintenanceEvents() {
+    const confirmed = window.confirm(
+      "Remove Denmark-created maintenance reminders from the selected Google Calendar? Trip events will be left alone."
+    );
+    if (!confirmed) return;
+
+    try {
+      setRunningGoogleCalendarMaintenanceCleanup(true);
+      setMessage("");
+
+      const res = await fetch(
+        `${API_BASE}/api/integrations/google-calendar/maintenance-events/cleanup`,
+        { method: "POST" }
+      );
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to remove maintenance events");
+      }
+
+      setGoogleCalendarCleanupPreview(null);
+      setMessage(
+        `Removed ${json.removedEvents || 0} maintenance calendar event${
+          Number(json.removedEvents || 0) === 1 ? "" : "s"
+        }${json.failedEvents ? ` with ${json.failedEvents} failure(s)` : ""}.`
+      );
+      await loadTellerState();
+    } catch (err) {
+      setMessage(err.message || "Failed to remove maintenance calendar events");
+    } finally {
+      setRunningGoogleCalendarMaintenanceCleanup(false);
+    }
+  }
+
   const latestConnected = connections?.latest_connected_at
     ? new Date(connections.latest_connected_at).toLocaleString()
     : "Never";
@@ -4045,11 +4107,13 @@ function IntegrationsSettingsPanel() {
           cleanupPreview={googleCalendarCleanupPreview}
           previewingCleanup={previewingGoogleCalendarCleanup}
           runningCleanup={runningGoogleCalendarCleanup}
+          runningMaintenanceCleanup={runningGoogleCalendarMaintenanceCleanup}
           savingSyncEnabled={savingGoogleCalendarSyncEnabled}
           onConnect={connectGoogleCalendar}
           onSync={syncGoogleCalendar}
           onPreviewCleanup={previewGoogleCalendarCleanup}
           onRunCleanup={runGoogleCalendarCleanup}
+          onCleanupMaintenanceEvents={cleanupGoogleCalendarMaintenanceEvents}
           onSyncEnabledChange={setGoogleCalendarSyncEnabled}
         />
 
