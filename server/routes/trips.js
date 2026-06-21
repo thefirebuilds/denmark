@@ -1345,8 +1345,33 @@ router.get("/:id/messages", async (req, res) => {
           (
             SELECT MIN(active.trip_end)
             FROM trips active
-            LEFT JOIN vehicles active_v
-              ON active_v.turo_vehicle_id = active.turo_vehicle_id
+            LEFT JOIN LATERAL (
+              SELECT v.*
+              FROM vehicles v
+              WHERE (
+                  active.turo_vehicle_id IS NOT NULL
+                  AND v.turo_vehicle_id = active.turo_vehicle_id
+                )
+                OR (
+                  COALESCE(active.vehicle_name, '') <> ''
+                  AND LOWER(v.nickname) = LOWER(active.vehicle_name)
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM vehicle_aliases va
+                  WHERE va.vehicle_id = v.id
+                    AND va.active = true
+                    AND COALESCE(active.vehicle_name, '') <> ''
+                    AND LOWER(va.alias) = LOWER(active.vehicle_name)
+                )
+              ORDER BY
+                CASE
+                  WHEN active.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = active.turo_vehicle_id THEN 1
+                  WHEN COALESCE(active.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(active.vehicle_name) THEN 2
+                  ELSE 3
+                END
+              LIMIT 1
+            ) active_v ON true
             WHERE COALESCE(active.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
               AND COALESCE(active.status, '') <> 'canceled'
               AND COALESCE(active.closed_out, false) = false
@@ -1354,15 +1379,22 @@ router.get("/:id/messages", async (req, res) => {
               AND active.trip_end > NOW()
               AND (
                 (
-                  resolved_vehicle.turo_vehicle_id IS NOT NULL
+                  resolved_vehicle.id IS NOT NULL
+                  AND active_v.id = resolved_vehicle.id
+                )
+                OR (
+                  resolved_vehicle.id IS NULL
+                  AND resolved_vehicle.turo_vehicle_id IS NOT NULL
                   AND active.turo_vehicle_id = resolved_vehicle.turo_vehicle_id
                 )
                 OR (
-                  mt.vehicle_vin IS NOT NULL
+                  resolved_vehicle.id IS NULL
+                  AND mt.vehicle_vin IS NOT NULL
                   AND active_v.vin = mt.vehicle_vin
                 )
                 OR (
-                  COALESCE(resolved_vehicle.nickname, '') <> ''
+                  resolved_vehicle.id IS NULL
+                  AND COALESCE(resolved_vehicle.nickname, '') <> ''
                   AND LOWER(COALESCE(active.vehicle_name, '')) = LOWER(resolved_vehicle.nickname)
                 )
                 OR EXISTS (
@@ -1370,6 +1402,7 @@ router.get("/:id/messages", async (req, res) => {
                   FROM vehicle_aliases va
                   WHERE va.vehicle_id = active_v.id
                     AND va.active = true
+                    AND resolved_vehicle.id IS NULL
                     AND COALESCE(active.vehicle_name, '') <> ''
                     AND LOWER(va.alias) = LOWER(resolved_vehicle.nickname)
                 )
@@ -1449,6 +1482,7 @@ router.get("/:id/messages", async (req, res) => {
         t.status,
         t.turo_vehicle_id,
         mt.vehicle_vin,
+        resolved_vehicle.id,
         resolved_vehicle.turo_vehicle_id,
         COALESCE(resolved_vehicle.nickname, t.vehicle_name, mt.vehicle_vin),
         COALESCE(resolved_vehicle.vin, mt.vehicle_vin)

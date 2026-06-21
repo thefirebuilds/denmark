@@ -2657,8 +2657,33 @@ router.get("/", async (req, res) => {
             active.workflow_stage,
             active.status
           FROM trips active
-          LEFT JOIN vehicles active_v
-            ON active_v.turo_vehicle_id = active.turo_vehicle_id
+          LEFT JOIN LATERAL (
+            SELECT v.*
+            FROM vehicles v
+            WHERE (
+                active.turo_vehicle_id IS NOT NULL
+                AND v.turo_vehicle_id = active.turo_vehicle_id
+              )
+              OR (
+                COALESCE(active.vehicle_name, '') <> ''
+                AND LOWER(v.nickname) = LOWER(active.vehicle_name)
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM vehicle_aliases va
+                WHERE va.vehicle_id = v.id
+                  AND va.active = true
+                  AND COALESCE(active.vehicle_name, '') <> ''
+                  AND LOWER(va.alias) = LOWER(active.vehicle_name)
+              )
+            ORDER BY
+              CASE
+                WHEN active.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = active.turo_vehicle_id THEN 1
+                WHEN COALESCE(active.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(active.vehicle_name) THEN 2
+                ELSE 3
+              END
+            LIMIT 1
+          ) active_v ON true
           WHERE active.trip_start <= NOW()
             AND active.trip_end > NOW()
             AND COALESCE(active.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
@@ -2670,15 +2695,18 @@ router.get("/", async (req, res) => {
                 AND active_v.id = open_vehicle_tasks.vehicle_id
               )
               OR (
-                open_vehicle_tasks.vehicle_vin IS NOT NULL
+                open_vehicle_tasks.vehicle_id IS NULL
+                AND open_vehicle_tasks.vehicle_vin IS NOT NULL
                 AND active_v.vin = open_vehicle_tasks.vehicle_vin
               )
               OR (
-                active.turo_vehicle_id IS NOT NULL
+                open_vehicle_tasks.vehicle_id IS NULL
+                AND active.turo_vehicle_id IS NOT NULL
                 AND NULLIF(CAST(active.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
               )
               OR (
-                COALESCE(active.vehicle_name, '') <> ''
+                open_vehicle_tasks.vehicle_id IS NULL
+                AND COALESCE(active.vehicle_name, '') <> ''
                 AND LOWER(active.vehicle_name) = LOWER(open_vehicle_tasks.vehicle_name)
               )
               OR EXISTS (
@@ -2686,6 +2714,7 @@ router.get("/", async (req, res) => {
                 FROM vehicle_aliases va
                 WHERE va.vehicle_id = active_v.id
                   AND va.active = true
+                  AND open_vehicle_tasks.vehicle_id IS NULL
                   AND COALESCE(active.vehicle_name, '') <> ''
                   AND LOWER(va.alias) = LOWER(open_vehicle_tasks.vehicle_name)
               )
@@ -2703,8 +2732,33 @@ router.get("/", async (req, res) => {
             upcoming.workflow_stage,
             upcoming.status
           FROM trips upcoming
-          LEFT JOIN vehicles upcoming_v
-            ON upcoming_v.turo_vehicle_id = upcoming.turo_vehicle_id
+          LEFT JOIN LATERAL (
+            SELECT v.*
+            FROM vehicles v
+            WHERE (
+                upcoming.turo_vehicle_id IS NOT NULL
+                AND v.turo_vehicle_id = upcoming.turo_vehicle_id
+              )
+              OR (
+                COALESCE(upcoming.vehicle_name, '') <> ''
+                AND LOWER(v.nickname) = LOWER(upcoming.vehicle_name)
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM vehicle_aliases va
+                WHERE va.vehicle_id = v.id
+                  AND va.active = true
+                  AND COALESCE(upcoming.vehicle_name, '') <> ''
+                  AND LOWER(va.alias) = LOWER(upcoming.vehicle_name)
+              )
+            ORDER BY
+              CASE
+                WHEN upcoming.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = upcoming.turo_vehicle_id THEN 1
+                WHEN COALESCE(upcoming.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(upcoming.vehicle_name) THEN 2
+                ELSE 3
+              END
+            LIMIT 1
+          ) upcoming_v ON true
           WHERE active_trip.id IS NULL
             AND upcoming.trip_start > NOW()
             AND COALESCE(upcoming.workflow_stage, '') NOT IN ('complete', 'closed', 'canceled')
@@ -2716,15 +2770,18 @@ router.get("/", async (req, res) => {
                 AND upcoming_v.id = open_vehicle_tasks.vehicle_id
               )
               OR (
-                open_vehicle_tasks.vehicle_vin IS NOT NULL
+                open_vehicle_tasks.vehicle_id IS NULL
+                AND open_vehicle_tasks.vehicle_vin IS NOT NULL
                 AND upcoming_v.vin = open_vehicle_tasks.vehicle_vin
               )
               OR (
-                upcoming.turo_vehicle_id IS NOT NULL
+                open_vehicle_tasks.vehicle_id IS NULL
+                AND upcoming.turo_vehicle_id IS NOT NULL
                 AND NULLIF(CAST(upcoming.turo_vehicle_id AS text), '') = open_vehicle_tasks.vehicle_key
               )
               OR (
-                COALESCE(upcoming.vehicle_name, '') <> ''
+                open_vehicle_tasks.vehicle_id IS NULL
+                AND COALESCE(upcoming.vehicle_name, '') <> ''
                 AND LOWER(upcoming.vehicle_name) = LOWER(open_vehicle_tasks.vehicle_name)
               )
               OR EXISTS (
@@ -2732,6 +2789,7 @@ router.get("/", async (req, res) => {
                 FROM vehicle_aliases va
                 WHERE va.vehicle_id = upcoming_v.id
                   AND va.active = true
+                  AND open_vehicle_tasks.vehicle_id IS NULL
                   AND COALESCE(upcoming.vehicle_name, '') <> ''
                   AND LOWER(va.alias) = LOWER(open_vehicle_tasks.vehicle_name)
               )
