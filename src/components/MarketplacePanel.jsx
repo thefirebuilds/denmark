@@ -511,6 +511,14 @@ function hasMarketplaceEnrichment(item) {
   );
 }
 
+function isExtensionContextInvalidatedError(value) {
+  return /extension context invalidated/i.test(String(value || ""));
+}
+
+function getExtensionContextInvalidatedMessage() {
+  return "Chrome extension was reloaded. Refresh this Denmark tab, then try Enrich visible again.";
+}
+
 function formatEnrichVisibleStatus(status, now = Date.now()) {
   if (!status) return null;
 
@@ -867,7 +875,22 @@ export default function MarketplacePanel() {
     }
 
     function handleStatus(event) {
-      const nextStatus = event.detail || null;
+      const detail = event.detail || null;
+      const nextStatus =
+        detail && isExtensionContextInvalidatedError(detail.error)
+          ? {
+              ...detail,
+              running: false,
+              error: getExtensionContextInvalidatedMessage(),
+              extensionContextInvalidated: true,
+            }
+          : detail;
+      if (nextStatus?.extensionContextInvalidated) {
+        setExtensionReady(false);
+        if (typeof document !== "undefined") {
+          document.documentElement.removeAttribute(ENRICH_READY_ATTR);
+        }
+      }
       enrichVisibleStatusRef.current = nextStatus;
       setEnrichVisibleStatus(nextStatus);
     }

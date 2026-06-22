@@ -34,6 +34,24 @@
     window.dispatchEvent(new CustomEvent(STATUS_EVENT, { detail }));
   }
 
+  function isExtensionContextInvalidatedError(value) {
+    return /extension context invalidated/i.test(String(value || ""));
+  }
+
+  function emitErrorStatus(detail, err) {
+    const error = err?.message || String(err);
+    const extensionContextInvalidated = isExtensionContextInvalidatedError(error);
+    if (extensionContextInvalidated) {
+      document.documentElement.removeAttribute(READY_ATTR);
+    }
+    emitStatus({
+      ...detail,
+      running: false,
+      error,
+      extensionContextInvalidated,
+    });
+  }
+
   document.documentElement.setAttribute(READY_ATTR, "1");
   window.dispatchEvent(new CustomEvent(READY_EVENT));
 
@@ -63,13 +81,11 @@
       });
       if (response) emitStatus(response);
     } catch (err) {
-      emitStatus({
-        running: false,
+      emitErrorStatus({
         total: urls.length,
         completed: 0,
         failed: 0,
-        error: err?.message || String(err),
-      });
+      }, err);
     }
   });
 
@@ -80,13 +96,11 @@
       });
       if (response) emitStatus(response);
     } catch (err) {
-      emitStatus({
-        running: false,
+      emitErrorStatus({
         total: 0,
         completed: 0,
         failed: 0,
-        error: err?.message || String(err),
-      });
+      }, err);
     }
   });
 
