@@ -18,6 +18,9 @@ const {
 const {
   ensureVehicleAliasesTable,
 } = require("../services/vehicles/vehicleAliases");
+const {
+  ensureTripRuntimeSchema,
+} = require("../services/trips/tripRuntimeSchema");
 
 const {
   transitionTripStage,
@@ -507,6 +510,7 @@ const TRIP_SELECT = `
 router.get("/", async (req, res) => {
   try {
     await ensureVehicleAliasesTable();
+    await ensureTripRuntimeSchema();
 
     const scope = String(req.query.scope || "open").toLowerCase();
     const stage = String(req.query.stage || "").trim().toLowerCase();
@@ -1230,6 +1234,7 @@ router.patch("/:id/stage", async (req, res) => {
 router.get("/:id/messages", async (req, res) => {
   try {
     await ensureVehicleAliasesTable();
+    await ensureTripRuntimeSchema();
 
     const tripId = Number(req.params.id);
 
@@ -1656,7 +1661,16 @@ router.get("/:id/messages", async (req, res) => {
 
     res.json(combined);
   } catch (err) {
-    console.error("GET /api/trips/:id/messages failed:", err.message || err);
+    console.error("GET /api/trips/:id/messages failed:", {
+      message: err.message || String(err),
+      code: err.code,
+      detail: err.detail,
+      hint: err.hint,
+      position: err.position,
+      table: err.table,
+      column: err.column,
+      constraint: err.constraint,
+    });
     res.status(500).json({ error: "Failed to load trip messages" });
   }
 });

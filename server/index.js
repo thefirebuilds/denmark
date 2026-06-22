@@ -56,6 +56,9 @@ const {
   ensureVehicleAliasesTable,
 } = require("./services/vehicles/vehicleAliases");
 const {
+  ensureTripRuntimeSchema,
+} = require("./services/trips/tripRuntimeSchema");
+const {
   ensureVehicleIdentityConstraints,
 } = require("./services/vehicles/vehicleIdentityConstraints");
 const {
@@ -448,6 +451,7 @@ async function initializeStartupTables() {
     ["metrics indexes", ensureMetricsIndexes],
     ["vehicle odometer rollups", ensureVehicleOdometerRollupTable],
     ["vehicle aliases", ensureVehicleAliasesTable],
+    ["trip runtime schema", ensureTripRuntimeSchema],
     ["income tables", ensureIncomeTables],
     ["fleet alerts", ensureFleetAlertTables],
     ["Google Calendar health columns", ensureGoogleCalendarConnectionHealthColumns],
