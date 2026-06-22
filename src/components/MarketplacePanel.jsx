@@ -47,6 +47,10 @@ const DEFAULT_FILTERS = {
 const MARKETPLACE_FETCH_LIMIT = 1000;
 const MARKETPLACE_VISIBLE_LIMIT = 100;
 const MARKETPLACE_AVAILABILITY_REFRESH_LIMIT = 3;
+const MARKETPLACE_AVAILABILITY_MIN_DELAY_MS = 6000;
+const MARKETPLACE_AVAILABILITY_MAX_DELAY_MS = 12000;
+const MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS = 18000;
+const MARKETPLACE_FULL_ENRICH_MAX_DELAY_MS = 42000;
 const RATING_TOOLTIP =
   "10-point rating based on peer-relative price, newer year, lower mileage, distance from Buda, and interior signal. Tan/beige/grey interiors get -1, black gets +0.5, leather gets +1. Listings flagged as suspect are heavily penalized.";
 const ENRICH_URL_FLAG = "fcg_enrich=1";
@@ -522,28 +526,35 @@ function formatEnrichVisibleStatus(status, now = Date.now()) {
 
   const progress = `${status.completed}/${status.total} complete`;
   const phase = String(status.phase || "").toLowerCase();
+  const updatedAt = Number(status.updatedAt || 0);
+  const staleSeconds =
+    status.running && updatedAt > 0
+      ? Math.floor((now - updatedAt) / 1000)
+      : 0;
+  const staleSuffix =
+    staleSeconds >= 45 ? `; no extension update for ${staleSeconds}s` : "";
 
   if (phase === "waiting" && status.nextOpenAt) {
     const seconds = Math.max(
       0,
       Math.ceil((Number(status.nextOpenAt) - now) / 1000)
     );
-    return `Batch enrich: ${progress}; next ad opens in ${seconds}s`;
+    return `Batch enrich: ${progress}; next ad opens in ${seconds}s${staleSuffix}`;
   }
 
   if (phase === "opening") {
-    return `Batch enrich: ${progress}; opening next ad`;
+    return `Batch enrich: ${progress}; opening next ad${staleSuffix}`;
   }
 
   if (phase === "requested") {
-    return `Batch enrich: ${progress}; contacting extension`;
+    return `Batch enrich: ${progress}; contacting extension${staleSuffix}`;
   }
 
   if (phase === "processing" && status.currentUrl) {
-    return `Batch enrich: ${progress}; scraping current ad`;
+    return `Batch enrich: ${progress}; scraping current ad${staleSuffix}`;
   }
 
-  return `Batch enrich: ${progress}`;
+  return `Batch enrich: ${progress}${staleSuffix}`;
 }
 
 function buildEnrichUrl(url) {
@@ -1500,8 +1511,8 @@ async function loadListings({ preserveSelection = true } = {}) {
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
         detail: {
           urls,
-          minDelayMs: 18000,
-          maxDelayMs: 42000,
+          minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
+          maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
           availabilityOnly: true,
         },
       })
@@ -1538,8 +1549,8 @@ async function loadListings({ preserveSelection = true } = {}) {
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
         detail: {
           urls,
-          minDelayMs: 18000,
-          maxDelayMs: 42000,
+          minDelayMs: MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS,
+          maxDelayMs: MARKETPLACE_FULL_ENRICH_MAX_DELAY_MS,
         },
       })
     );
@@ -1600,8 +1611,8 @@ async function loadListings({ preserveSelection = true } = {}) {
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
         detail: {
           urls,
-          minDelayMs: 18000,
-          maxDelayMs: 42000,
+          minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
+          maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
           availabilityOnly: true,
         },
       })
