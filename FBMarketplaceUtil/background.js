@@ -279,6 +279,7 @@ function getQueueStatus() {
     phase: enrichQueueState.phase,
     nextOpenAt: enrichQueueState.nextOpenAt,
     error: enrichQueueState.error,
+    updatedAt: Date.now(),
   };
 }
 
@@ -574,6 +575,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     void finishCurrentEnrichTab(false, senderTabId);
     sendResponse?.({ ok: true, stopped: true });
+    return true;
+  }
+
+  if (message?.type === "fcg-get-enrich-queue-status") {
+    sendResponse?.(getQueueStatus());
     return true;
   }
 

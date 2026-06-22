@@ -53,6 +53,7 @@ const ENRICH_URL_FLAG = "fcg_enrich=1";
 const ENRICH_VISIBLE_EVENT = "fcg-marketplace-enrich-visible";
 const ENRICH_STATUS_EVENT = "fcg-marketplace-enrich-status";
 const ENRICH_READY_EVENT = "fcg-marketplace-extension-ready";
+const ENRICH_STATUS_REQUEST_EVENT = "fcg-marketplace-enrich-status-request";
 const ENRICH_READY_ATTR = "data-fcg-marketplace-extension-ready";
 
 function toNumberOrNull(value) {
@@ -534,6 +535,10 @@ function formatEnrichVisibleStatus(status, now = Date.now()) {
     return `Batch enrich: ${progress}; opening next ad`;
   }
 
+  if (phase === "requested") {
+    return `Batch enrich: ${progress}; contacting extension`;
+  }
+
   if (phase === "processing" && status.currentUrl) {
     return `Batch enrich: ${progress}; scraping current ad`;
   }
@@ -833,6 +838,7 @@ export default function MarketplacePanel() {
 
     function handleReady() {
       setExtensionReady(true);
+      window.dispatchEvent(new CustomEvent(ENRICH_STATUS_REQUEST_EVENT));
     }
 
     function handleStatus(event) {
@@ -847,6 +853,20 @@ export default function MarketplacePanel() {
       window.removeEventListener(ENRICH_STATUS_EVENT, handleStatus);
     };
   }, []);
+
+  useEffect(() => {
+    if (!extensionReady) return undefined;
+
+    window.dispatchEvent(new CustomEvent(ENRICH_STATUS_REQUEST_EVENT));
+
+    if (!enrichVisibleStatus?.running) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      window.dispatchEvent(new CustomEvent(ENRICH_STATUS_REQUEST_EVENT));
+    }, 10000);
+
+    return () => window.clearInterval(intervalId);
+  }, [extensionReady, enrichVisibleStatus?.running]);
 
   const ignoreKeywords = useMemo(
     () => normalizeIgnoreKeywords(ignoreKeywordsText),
@@ -1466,6 +1486,16 @@ async function loadListings({ preserveSelection = true } = {}) {
       return;
     }
 
+    setEnrichVisibleStatus({
+      running: true,
+      total: urls.length,
+      completed: 0,
+      failed: 0,
+      remaining: urls.length,
+      phase: "requested",
+      error: "",
+    });
+
     window.dispatchEvent(
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
         detail: {
@@ -1493,6 +1523,16 @@ async function loadListings({ preserveSelection = true } = {}) {
       });
       return;
     }
+
+    setEnrichVisibleStatus({
+      running: true,
+      total: urls.length,
+      completed: 0,
+      failed: 0,
+      remaining: urls.length,
+      phase: "requested",
+      error: "",
+    });
 
     window.dispatchEvent(
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
@@ -1546,12 +1586,23 @@ async function loadListings({ preserveSelection = true } = {}) {
       return;
     }
 
+    setEnrichVisibleStatus({
+      running: true,
+      total: urls.length,
+      completed: 0,
+      failed: 0,
+      remaining: urls.length,
+      phase: "requested",
+      error: "",
+    });
+
     window.dispatchEvent(
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
         detail: {
           urls,
           minDelayMs: 18000,
           maxDelayMs: 42000,
+          availabilityOnly: true,
         },
       })
     );

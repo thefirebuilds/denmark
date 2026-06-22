@@ -11,6 +11,7 @@
   const START_EVENT = "fcg-marketplace-enrich-visible";
   const STATUS_EVENT = "fcg-marketplace-enrich-status";
   const READY_EVENT = "fcg-marketplace-extension-ready";
+  const STATUS_REQUEST_EVENT = "fcg-marketplace-enrich-status-request";
   const READY_ATTR = "data-fcg-marketplace-extension-ready";
 
   function escapeRegex(value) {
@@ -54,6 +55,23 @@
       emitStatus({
         running: false,
         total: urls.length,
+        completed: 0,
+        failed: 0,
+        error: err?.message || String(err),
+      });
+    }
+  });
+
+  window.addEventListener(STATUS_REQUEST_EVENT, async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "fcg-get-enrich-queue-status",
+      });
+      if (response) emitStatus(response);
+    } catch (err) {
+      emitStatus({
+        running: false,
+        total: 0,
         completed: 0,
         failed: 0,
         error: err?.message || String(err),

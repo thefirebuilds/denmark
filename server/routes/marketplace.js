@@ -421,7 +421,16 @@ function broadcastMarketplaceUpdate(payload = {}) {
   })}\n\n`;
 
   for (const res of clients) {
-    res.write(message);
+    if (res.destroyed || res.writableEnded) {
+      clients.delete(res);
+      continue;
+    }
+
+    try {
+      res.write(message);
+    } catch {
+      clients.delete(res);
+    }
   }
 }
 
@@ -605,6 +614,7 @@ router.get("/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
   res.write(
@@ -616,8 +626,23 @@ router.get("/stream", (req, res) => {
   );
 
   clients.add(res);
+  const heartbeat = setInterval(() => {
+    if (res.destroyed || res.writableEnded) {
+      clearInterval(heartbeat);
+      clients.delete(res);
+      return;
+    }
+
+    try {
+      res.write(`: heartbeat ${new Date().toISOString()}\n\n`);
+    } catch {
+      clearInterval(heartbeat);
+      clients.delete(res);
+    }
+  }, 15000);
 
   req.on("close", () => {
+    clearInterval(heartbeat);
     clients.delete(res);
   });
 });
