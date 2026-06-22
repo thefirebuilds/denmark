@@ -126,8 +126,9 @@ function hasMarketplaceSoldMarker(item) {
 
     return (
       /^sold\b/i.test(text) ||
-      /^sold\b[\s:|-]+\$?\d/i.test(text) ||
-      /^sold\b[\s:|-]+(?:just listed|listed\b)/i.test(text)
+      /^sold\b[\s:|·•\-–—]+\$?\d/i.test(text) ||
+      /^sold\b[\s:|·•\-–—]+(?:just listed|listed\b)/i.test(text) ||
+      /^sold\b[\s:|·•\-–—]+(?:19\d{2}|20\d{2})\b/i.test(text)
     );
   });
 }

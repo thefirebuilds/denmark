@@ -39,6 +39,12 @@
     /This listing is no longer available/i,
     /It may have been sold or expired/i,
   ];
+  const SOLD_LISTING_PATTERNS = [
+    /^sold\b/i,
+    /^sold\b[\s:|·•\-–—]+\$?\d/i,
+    /^sold\b[\s:|·•\-–—]+(?:just listed|listed\b)/i,
+    /^sold\b[\s:|·•\-–—]+(?:19\d{2}|20\d{2})\b/i,
+  ];
 
   function normalizeUrl(u) {
     if (!u) return null;
@@ -152,6 +158,23 @@
     return UNAVAILABLE_PAGE_PATTERNS.some((pattern) => pattern.test(normalized));
   }
 
+  function isSoldListingPage(text = "") {
+    const normalized = clean(text || document.body?.innerText || "");
+    if (!normalized) return false;
+
+    const candidates = [
+      document.querySelector("h1")?.innerText,
+      document.querySelector('meta[property="og:title"]')?.getAttribute("content"),
+      normalized,
+    ]
+      .map((value) => clean(value))
+      .filter(Boolean);
+
+    return candidates.some((candidate) =>
+      SOLD_LISTING_PATTERNS.some((pattern) => pattern.test(candidate))
+    );
+  }
+
   function logAutoEnrichDiagnostics(stage, extra = {}) {
     const bodyText = clean(document.body?.innerText || "");
     const headings = Array.from(document.querySelectorAll("h1, h2, h3"))
@@ -164,6 +187,7 @@
       hash: location.hash,
       title: document.title,
       unavailableDetected: isUnavailableListingPage(bodyText),
+      soldDetected: isSoldListingPage(bodyText),
       headingSample: headings,
       bodySample: bodyText.slice(0, 600),
       ...extra,
@@ -506,7 +530,7 @@
 
   async function enrichListing() {
     try {
-      if (isUnavailableListingPage()) {
+      if (isUnavailableListingPage() || isSoldListingPage()) {
         logAutoEnrichDiagnostics("unavailable-page-before-ignore");
         const ignored = await ignoreListing();
         logAutoEnrichDiagnostics("unavailable-page-ignore-result", { ignored });
@@ -588,7 +612,7 @@
     await sleep(500);
 
     let ok = true;
-    if (isUnavailableListingPage()) {
+    if (isUnavailableListingPage() || isSoldListingPage()) {
       logAutoEnrichDiagnostics("availability-check-unavailable");
       ok = await ignoreListing();
     } else {
