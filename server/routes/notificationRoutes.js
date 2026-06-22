@@ -6,6 +6,7 @@ const {
 } = require("../services/googleCalendar/googleTripSync");
 const { isAndroidBridgeEnabled } = require("../services/alerts/bridgeAlertSettings");
 const { getRuntimeSecret } = require("../config/runtimeSecrets");
+const { triggerImapPoll } = require("../services/imapOnDemand");
 
 const router = express.Router();
 
@@ -337,6 +338,15 @@ function summarizeForLog(value, maxLength = 90) {
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 3)}...`;
 }
 
+function shouldTriggerImapForNotification(classification) {
+  return ![
+    "bridge_heartbeat",
+    "bridge_test",
+    "partner_offer",
+    "unknown",
+  ].includes(String(classification || ""));
+}
+
 async function ensureNotificationEventsTable() {
   if (!ensureNotificationEventsTablePromise) {
     ensureNotificationEventsTablePromise = pool
@@ -618,6 +628,16 @@ router.post("/turo", async (req, res) => {
     }
 
     const result = await upsertTuroNotificationEvent(event);
+
+    if (result.inserted && shouldTriggerImapForNotification(result.classification)) {
+      const pollResult = triggerImapPoll(`android-notification:${result.classification}`, {
+        delayMs: 2500,
+        debounceMs: 60 * 1000,
+      });
+      console.log(
+        `[notifications/turo] imap trigger class=${result.classification} ${JSON.stringify(pollResult)}`
+      );
+    }
 
     if (result.inserted && result.id && result.classification === "trip_returned") {
       syncReturnedTripCalendarNotice(event, result.id);

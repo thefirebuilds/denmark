@@ -10,6 +10,15 @@ const {
   ensureVehicleAliasesTable,
 } = require("../services/vehicles/vehicleAliases");
 
+const bridgeEmailMismatchGraceMinutes = Number(
+  process.env.BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES || 5
+);
+const BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES = Number.isFinite(
+  bridgeEmailMismatchGraceMinutes
+)
+  ? Math.max(0, bridgeEmailMismatchGraceMinutes)
+  : 5;
+
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
 
@@ -2252,6 +2261,7 @@ router.get("/", async (req, res) => {
           AND COALESCE(ne.source, '') <> 'android_bridge_heartbeat'
           AND ne.acknowledged_at IS NULL
           AND ne.received_at >= NOW() - INTERVAL '48 hours'
+          AND ne.received_at <= NOW() - (${BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES} * INTERVAL '1 minute')
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%prepare for checkout%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%complete checkout when your car is returned%'
           AND LOWER(CONCAT_WS(' ', ne.title, ne.body, ne.big_text, ne.sub_text)) NOT LIKE '%partner offer%'
