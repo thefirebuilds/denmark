@@ -274,28 +274,8 @@ function isCapitalLayoutExpense(expense) {
 
   const category = String(expense?.category || "").trim().toLowerCase();
   const normalizedCategory = category.replace(/[^a-z0-9]+/g, " ");
-  const notes = String(expense?.notes || "").trim().toLowerCase();
-  const vendor = String(expense?.vendor || "").trim().toLowerCase();
-  const text = [category, notes, vendor].filter(Boolean).join(" ");
 
-  if (normalizedCategory === "vehicle onboard") return true;
-
-  return (
-    category.includes("onboarding") ||
-    normalizedCategory.includes("vehicle onboard") ||
-    category.includes("startup") ||
-    category.includes("capital") ||
-    category.includes("acquisition") ||
-    category.includes("purchase") ||
-    text.includes("vehicle onboarding") ||
-    text.includes("vehicle onboard") ||
-    text.includes("car purchase") ||
-    text.includes("vehicle purchase") ||
-    text.includes("purchase price") ||
-    text.includes("down payment") ||
-    text.includes("cash layout") ||
-    text.includes("capital basis")
-  );
+  return normalizedCategory === "vehicle onboard";
 }
 
 function getPreviousDateRange(startDate, endDate) {
