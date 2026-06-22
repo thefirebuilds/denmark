@@ -827,6 +827,19 @@ async function collectLocationEntryAlerts() {
                 AND dimo_token_id IS NOT NULL
             )
           )
+          OR (
+            s.external_vehicle_key IS NOT NULL
+            AND s.external_vehicle_key IN (
+              SELECT external_vehicle_key
+              FROM vehicles
+              WHERE id = latest.vehicle_id
+                AND external_vehicle_key IS NOT NULL
+            )
+          )
+          OR (
+            s.nickname IS NOT NULL
+            AND LOWER(s.nickname) = LOWER(latest.vehicle_name)
+          )
         )
       ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
       LIMIT 1
@@ -897,6 +910,38 @@ async function collectLocationEntryAlerts() {
   return alerts;
 }
 
+async function sendTripUnderwayAlert(trip, options = {}) {
+  if (!trip?.id) {
+    return { sent: false, skipped: true, reason: "missing_trip" };
+  }
+
+  await ensureFleetAlertTables();
+
+  const guest = cleanText(trip.guest_name, "Guest");
+  const vehicle = cleanText(trip.vehicle_name, "vehicle");
+  const source = cleanText(options.source || options.serviceName, "telemetry");
+  const signal = cleanText(options.reason || options.signal, "engine started");
+  const startedAt = options.startedAt || trip.stage_updated_at || new Date().toISOString();
+
+  return sendDedupedAlert({
+    alertKey: `trip-underway:${trip.id}`,
+    alertType: "trip_underway",
+    severity: "info",
+    body: `Denmark: ${guest}'s trip with ${vehicle} is underway. ${signal}. Seen ${formatChicago(
+      startedAt
+    )}.`,
+    details: {
+      tripId: trip.id,
+      reservationId: trip.reservation_id || null,
+      guest,
+      vehicle,
+      source,
+      signal,
+      startedAt,
+    },
+  });
+}
+
 async function collectFleetAlerts() {
   const groups = await Promise.all([
     collectNewTripBookedAlerts(),
@@ -957,4 +1002,5 @@ async function runFleetAlerts(reason = "interval") {
 module.exports = {
   ensureFleetAlertTables,
   runFleetAlerts,
+  sendTripUnderwayAlert,
 };

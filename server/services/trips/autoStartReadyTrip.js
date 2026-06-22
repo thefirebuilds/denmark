@@ -1,4 +1,5 @@
 const { transitionTripStage } = require("./transitionTripStage");
+const { sendTripUnderwayAlert } = require("../alerts/fleetAlerts");
 
 function toNumber(value) {
   if (value == null || value === "") return null;
@@ -175,11 +176,23 @@ async function maybeAutoStartReadyTripFromTelemetry(client, telemetry) {
     }) from ${telemetry.serviceName || "telemetry"}: ${signal.reason}`
   );
 
-  return transitionTripStage(trip.id, "in_progress", {
+  const result = await transitionTripStage(trip.id, "in_progress", {
     changedBy: `system:${telemetry.serviceName || "telemetry"}`,
     reason: `auto-start from ${telemetry.serviceName || "telemetry"} telemetry near scheduled trip start: ${signal.reason}`,
     currentOdometer: telemetry?.odometer,
   });
+
+  void sendTripUnderwayAlert(result, {
+    source: telemetry.serviceName || "telemetry",
+    reason: signal.reason,
+    startedAt: eventTimestamp,
+  }).catch((err) => {
+    console.warn(
+      `[alerts] trip underway alert failed | trip=${trip.id} error=${err.message || err}`
+    );
+  });
+
+  return result;
 }
 
 module.exports = {
