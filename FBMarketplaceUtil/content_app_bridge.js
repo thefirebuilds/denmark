@@ -42,6 +42,17 @@
     const minDelayMs = Number(event.detail?.minDelayMs || 0);
     const maxDelayMs = Number(event.detail?.maxDelayMs || minDelayMs || 0);
     const availabilityOnly = Boolean(event.detail?.availabilityOnly);
+    emitStatus({
+      running: urls.length > 0,
+      total: urls.length,
+      completed: 0,
+      failed: 0,
+      remaining: urls.length,
+      phase: "bridge",
+      error: urls.length ? "" : "No visible listings to enrich",
+      updatedAt: Date.now(),
+    });
+
     try {
       const response = await chrome.runtime.sendMessage({
         type: "fcg-start-enrich-queue",

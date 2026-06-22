@@ -554,6 +554,10 @@ function formatEnrichVisibleStatus(status, now = Date.now()) {
     return `Batch enrich: ${progress}; contacting extension${staleSuffix}${targetSuffix}`;
   }
 
+  if (phase === "bridge") {
+    return `Batch enrich: ${progress}; extension acknowledged${staleSuffix}${targetSuffix}`;
+  }
+
   if (phase === "processing" && status.currentUrl) {
     return `Batch enrich: ${progress}; scraping current ad${staleSuffix}${targetSuffix}`;
   }
@@ -672,6 +676,8 @@ export default function MarketplacePanel() {
   const [groupedSortBy, setGroupedSortBy] = useState({});
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const eventSourceRef = useRef(null);
+  const enrichVisibleStatusRef = useRef(null);
+  const enrichStartSeqRef = useRef(0);
   const ignoreKeywordsHydratedRef = useRef(false);
   const ignoreKeywordsTextRef = useRef(DEFAULT_IGNORE_KEYWORDS);
   const ignoreKeywordsSaveSeqRef = useRef(0);
@@ -745,6 +751,10 @@ export default function MarketplacePanel() {
       maxMiles: milesMax,
     };
   }, [priceMin, priceMax, milesMin, milesMax]);
+
+  useEffect(() => {
+    enrichVisibleStatusRef.current = enrichVisibleStatus;
+  }, [enrichVisibleStatus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -857,7 +867,9 @@ export default function MarketplacePanel() {
     }
 
     function handleStatus(event) {
-      setEnrichVisibleStatus(event.detail || null);
+      const nextStatus = event.detail || null;
+      enrichVisibleStatusRef.current = nextStatus;
+      setEnrichVisibleStatus(nextStatus);
     }
 
     window.addEventListener(ENRICH_READY_EVENT, handleReady);
@@ -1485,23 +1497,38 @@ async function loadListings({ preserveSelection = true } = {}) {
     }
   }
 
-  function enrichVisibleListings() {
-    const urls = displayListings
-      .filter((item) => item?.url && !hasMarketplaceEnrichment(item))
-      .map((item) => item.url);
-
+  function startMarketplaceExtensionBatch({
+    urls,
+    minDelayMs,
+    maxDelayMs,
+    availabilityOnly = false,
+    emptyError = "No visible listings to enrich.",
+    setupError = "Reload the Chrome extension and refresh this page to enable batch enrich.",
+  }) {
     if (!extensionReady) {
       setEnrichVisibleStatus({
         running: false,
         total: 0,
         completed: 0,
         failed: 0,
-        error: "Reload the Chrome extension and refresh this page to enable batch enrich.",
+        error: setupError,
       });
       return;
     }
 
-    setEnrichVisibleStatus({
+    if (!urls.length) {
+      setEnrichVisibleStatus({
+        running: false,
+        total: 0,
+        completed: 0,
+        failed: 0,
+        error: emptyError,
+      });
+      return;
+    }
+
+    const requestSeq = ++enrichStartSeqRef.current;
+    const requestedStatus = {
       running: true,
       total: urls.length,
       completed: 0,
@@ -1509,17 +1536,49 @@ async function loadListings({ preserveSelection = true } = {}) {
       remaining: urls.length,
       phase: "requested",
       error: "",
-    });
+      requestedAt: Date.now(),
+    };
+    enrichVisibleStatusRef.current = requestedStatus;
+    setEnrichVisibleStatus(requestedStatus);
 
     window.dispatchEvent(
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
         detail: {
           urls,
-          minDelayMs: MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS,
-          maxDelayMs: MARKETPLACE_FULL_ENRICH_MAX_DELAY_MS,
+          minDelayMs,
+          maxDelayMs,
+          availabilityOnly,
         },
       })
     );
+
+    window.setTimeout(() => {
+      const latest = enrichVisibleStatusRef.current;
+      if (requestSeq !== enrichStartSeqRef.current) return;
+      if (!latest?.running || latest.phase !== "requested" || latest.updatedAt) return;
+
+      setEnrichVisibleStatus({
+        running: false,
+        total: urls.length,
+        completed: 0,
+        failed: 0,
+        error:
+          "The Chrome extension did not acknowledge the batch request. Reload the unpacked extension, refresh Denmark, and try again.",
+      });
+    }, 3500);
+  }
+
+  function enrichVisibleListings() {
+    const urls = displayListings
+      .filter((item) => item?.url && !hasMarketplaceEnrichment(item))
+      .map((item) => item.url);
+
+    startMarketplaceExtensionBatch({
+      urls,
+      minDelayMs: MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS,
+      maxDelayMs: MARKETPLACE_FULL_ENRICH_MAX_DELAY_MS,
+      emptyError: "No visible listings need detail enrichment.",
+    });
   }
 
   function enrichGroupListings(items) {
@@ -1527,36 +1586,12 @@ async function loadListings({ preserveSelection = true } = {}) {
       .filter((item) => item?.url && !hasMarketplaceEnrichment(item))
       .map((item) => item.url);
 
-    if (!extensionReady) {
-      setEnrichVisibleStatus({
-        running: false,
-        total: 0,
-        completed: 0,
-        failed: 0,
-        error: "Reload the Chrome extension and refresh this page to enable batch enrich.",
-      });
-      return;
-    }
-
-    setEnrichVisibleStatus({
-      running: true,
-      total: urls.length,
-      completed: 0,
-      failed: 0,
-      remaining: urls.length,
-      phase: "requested",
-      error: "",
+    startMarketplaceExtensionBatch({
+      urls,
+      minDelayMs: MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS,
+      maxDelayMs: MARKETPLACE_FULL_ENRICH_MAX_DELAY_MS,
+      emptyError: "No listings in this group need detail enrichment.",
     });
-
-    window.dispatchEvent(
-      new CustomEvent(ENRICH_VISIBLE_EVENT, {
-        detail: {
-          urls,
-          minDelayMs: MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS,
-          maxDelayMs: MARKETPLACE_FULL_ENRICH_MAX_DELAY_MS,
-        },
-      })
-    );
   }
 
   function refreshLimitedAvailability() {
@@ -1578,48 +1613,15 @@ async function loadListings({ preserveSelection = true } = {}) {
       MARKETPLACE_AVAILABILITY_REFRESH_LIMIT
     );
 
-    if (!extensionReady) {
-      setEnrichVisibleStatus({
-        running: false,
-        total: 0,
-        completed: 0,
-        failed: 0,
-        error: "Reload the Chrome extension and refresh this page to enable availability checks.",
-      });
-      return;
-    }
-
-    if (!urls.length) {
-      setEnrichVisibleStatus({
-        running: false,
-        total: 0,
-        completed: 0,
-        failed: 0,
-        error: "No visible listings are available to check.",
-      });
-      return;
-    }
-
-    setEnrichVisibleStatus({
-      running: true,
-      total: urls.length,
-      completed: 0,
-      failed: 0,
-      remaining: urls.length,
-      phase: "requested",
-      error: "",
+    startMarketplaceExtensionBatch({
+      urls,
+      minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
+      maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
+      availabilityOnly: true,
+      emptyError: "No visible listings are available to check.",
+      setupError:
+        "Reload the Chrome extension and refresh this page to enable availability checks.",
     });
-
-    window.dispatchEvent(
-      new CustomEvent(ENRICH_VISIBLE_EVENT, {
-        detail: {
-          urls,
-          minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
-          maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
-          availabilityOnly: true,
-        },
-      })
-    );
   }
 
   async function recordListingOpen(id) {
