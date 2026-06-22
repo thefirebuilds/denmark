@@ -44,10 +44,14 @@ const enrichQueueState = {
   currentTabId: null,
   currentUrl: null,
   currentWatchdogTimer: null,
+  nextTabTimer: null,
+  hardTimeoutTimer: null,
   sourceWindowId: null,
   minDelayMs: 0,
   maxDelayMs: 0,
   availabilityOnly: false,
+  phase: "idle",
+  nextOpenAt: null,
   error: "",
 };
 
@@ -116,13 +120,34 @@ function clearCurrentWatchdog() {
   enrichQueueState.currentWatchdogTimer = null;
 }
 
+function clearNextTabTimer() {
+  if (!enrichQueueState.nextTabTimer) return;
+  clearTimeout(enrichQueueState.nextTabTimer);
+  enrichQueueState.nextTabTimer = null;
+  enrichQueueState.nextOpenAt = null;
+}
+
+function clearHardTimeout() {
+  if (!enrichQueueState.hardTimeoutTimer) return;
+  clearTimeout(enrichQueueState.hardTimeoutTimer);
+  enrichQueueState.hardTimeoutTimer = null;
+}
+
+function clearQueueTimers() {
+  clearCurrentWatchdog();
+  clearNextTabTimer();
+  clearHardTimeout();
+}
+
 async function finishCurrentEnrichTab(success, tabId = enrichQueueState.currentTabId) {
   clearCurrentWatchdog();
+  clearHardTimeout();
 
   if (success) {
     enrichQueueState.completed += 1;
     enrichQueueState.currentTabId = null;
     enrichQueueState.currentUrl = null;
+    enrichQueueState.phase = enrichQueueState.pending.length ? "waiting" : "idle";
     await broadcastQueueStatus();
 
     if (tabId) {
@@ -136,14 +161,26 @@ async function finishCurrentEnrichTab(success, tabId = enrichQueueState.currentT
   }
 
   enrichQueueState.failed += 1;
-  enrichQueueState.running = false;
-  enrichQueueState.error = `Enrich failed for ${enrichQueueState.currentUrl || "current listing"}`;
+  const failedUrl = enrichQueueState.currentUrl;
   enrichQueueState.currentTabId = null;
+  enrichQueueState.error = `Skipped stalled listing: ${failedUrl || "current listing"}`;
   enrichQueueState.currentUrl = null;
+  enrichQueueState.phase = "waiting";
   await broadcastQueueStatus();
+
+  if (tabId) {
+    chrome.tabs.remove(tabId, () => {
+      void scheduleNextEnrichTab();
+    });
+  } else {
+    await scheduleNextEnrichTab();
+  }
 }
 
 async function scheduleNextEnrichTab() {
+  clearNextTabTimer();
+  if (!enrichQueueState.running) return;
+
   const minDelayMs = Math.max(0, Number(enrichQueueState.minDelayMs || 0));
   const maxDelayMs = Math.max(minDelayMs, Number(enrichQueueState.maxDelayMs || 0));
   const delayMs =
@@ -156,7 +193,13 @@ async function scheduleNextEnrichTab() {
     return;
   }
 
-  setTimeout(() => {
+  enrichQueueState.phase = "waiting";
+  enrichQueueState.nextOpenAt = Date.now() + delayMs;
+  await broadcastQueueStatus();
+
+  enrichQueueState.nextTabTimer = setTimeout(() => {
+    enrichQueueState.nextTabTimer = null;
+    enrichQueueState.nextOpenAt = null;
     void openNextEnrichTab();
   }, delayMs);
 }
@@ -223,6 +266,15 @@ function armCurrentTabWatchdog(tabId) {
   }, 4500);
 }
 
+function armCurrentTabHardTimeout(tabId) {
+  clearHardTimeout();
+  enrichQueueState.hardTimeoutTimer = setTimeout(() => {
+    if (!tabId || tabId !== enrichQueueState.currentTabId) return;
+    enrichQueueState.error = "Listing tab timed out; moving to the next visible listing";
+    void finishCurrentEnrichTab(false, tabId);
+  }, Number(MARKETPLACE_CONFIG.enrichTabTimeoutMs || 45000));
+}
+
 function getQueueStatus() {
   return {
     running: enrichQueueState.running,
@@ -231,6 +283,8 @@ function getQueueStatus() {
     failed: enrichQueueState.failed,
     remaining: enrichQueueState.pending.length,
     currentUrl: enrichQueueState.currentUrl,
+    phase: enrichQueueState.phase,
+    nextOpenAt: enrichQueueState.nextOpenAt,
     error: enrichQueueState.error,
   };
 }
@@ -254,28 +308,43 @@ async function broadcastQueueStatus() {
 async function openNextEnrichTab() {
   if (!enrichQueueState.running) return;
   if (enrichQueueState.currentTabId) return;
+  clearNextTabTimer();
 
   const nextUrl = enrichQueueState.pending.shift();
   if (!nextUrl) {
     enrichQueueState.running = false;
     enrichQueueState.currentUrl = null;
+    enrichQueueState.phase = "idle";
     await broadcastQueueStatus();
     return;
   }
 
   enrichQueueState.currentUrl = nextUrl;
   enrichQueueState.error = "";
+  enrichQueueState.phase = "opening";
   await broadcastQueueStatus();
 
-  const tab = await chrome.tabs.create({
-    url: buildEnrichUrl(nextUrl),
-    active: true,
-    windowId: enrichQueueState.sourceWindowId || undefined,
-  });
+  try {
+    const tab = await chrome.tabs.create({
+      url: buildEnrichUrl(nextUrl),
+      active: true,
+      windowId: enrichQueueState.sourceWindowId || undefined,
+    });
 
-  enrichQueueState.currentTabId = tab.id || null;
-  armCurrentTabWatchdog(enrichQueueState.currentTabId);
-  await broadcastQueueStatus();
+    enrichQueueState.currentTabId = tab.id || null;
+    enrichQueueState.phase = "processing";
+    armCurrentTabWatchdog(enrichQueueState.currentTabId);
+    armCurrentTabHardTimeout(enrichQueueState.currentTabId);
+    await broadcastQueueStatus();
+  } catch (err) {
+    enrichQueueState.failed += 1;
+    enrichQueueState.currentTabId = null;
+    enrichQueueState.currentUrl = null;
+    enrichQueueState.error = err?.message || "Could not open listing tab";
+    enrichQueueState.phase = "waiting";
+    await broadcastQueueStatus();
+    await scheduleNextEnrichTab();
+  }
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -471,6 +540,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       : [];
 
     enrichQueueState.pending = [...urls];
+    clearQueueTimers();
     enrichQueueState.running = urls.length > 0;
     enrichQueueState.total = urls.length;
     enrichQueueState.completed = 0;

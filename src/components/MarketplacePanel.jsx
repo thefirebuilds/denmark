@@ -506,6 +506,41 @@ function hasMarketplaceEnrichment(item) {
   );
 }
 
+function formatEnrichVisibleStatus(status, now = Date.now()) {
+  if (!status) return null;
+
+  if (!status.running) {
+    if (status.error) return `Batch enrich: ${status.error}`;
+    if (status.total) {
+      return `Batch enrich finished: ${status.completed}/${status.total} complete${
+        status.failed ? `, ${status.failed} skipped` : ""
+      }`;
+    }
+    return null;
+  }
+
+  const progress = `${status.completed}/${status.total} complete`;
+  const phase = String(status.phase || "").toLowerCase();
+
+  if (phase === "waiting" && status.nextOpenAt) {
+    const seconds = Math.max(
+      0,
+      Math.ceil((Number(status.nextOpenAt) - now) / 1000)
+    );
+    return `Batch enrich: ${progress}; next ad opens in ${seconds}s`;
+  }
+
+  if (phase === "opening") {
+    return `Batch enrich: ${progress}; opening next ad`;
+  }
+
+  if (phase === "processing" && status.currentUrl) {
+    return `Batch enrich: ${progress}; scraping current ad`;
+  }
+
+  return `Batch enrich: ${progress}`;
+}
+
 function buildEnrichUrl(url) {
   if (!url) return "#";
   const normalized = String(url);
@@ -612,6 +647,7 @@ export default function MarketplacePanel() {
   const [ignoreKeywordsReady, setIgnoreKeywordsReady] = useState(false);
   const [extensionReady, setExtensionReady] = useState(false);
   const [enrichVisibleStatus, setEnrichVisibleStatus] = useState(null);
+  const [enrichStatusNow, setEnrichStatusNow] = useState(Date.now());
   const [viewMode, setViewMode] = useState("flat");
   const [groupedSortBy, setGroupedSortBy] = useState({});
   const [collapsedGroups, setCollapsedGroups] = useState({});
@@ -733,6 +769,16 @@ export default function MarketplacePanel() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!enrichVisibleStatus?.running) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      setEnrichStatusNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [enrichVisibleStatus?.running]);
 
   useEffect(() => {
     if (!ignoreKeywordsReady) return undefined;
@@ -2001,13 +2047,7 @@ async function loadListings({ preserveSelection = true } = {}) {
 
       {enrichVisibleStatus ? (
         <div className="marketplace-enrich-status">
-          {enrichVisibleStatus.running
-            ? `Batch enrich: ${enrichVisibleStatus.completed}/${enrichVisibleStatus.total} complete`
-            : enrichVisibleStatus.error
-              ? `Batch enrich: ${enrichVisibleStatus.error}`
-              : enrichVisibleStatus.total
-                ? `Batch enrich finished: ${enrichVisibleStatus.completed}/${enrichVisibleStatus.total} complete`
-                : null}
+          {formatEnrichVisibleStatus(enrichVisibleStatus, enrichStatusNow)}
         </div>
       ) : null}
 
