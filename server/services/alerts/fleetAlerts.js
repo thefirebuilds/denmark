@@ -910,6 +910,210 @@ async function collectLocationEntryAlerts() {
   return alerts;
 }
 
+async function sendLocationEntryAlertsForSnapshot(snapshotId) {
+  const normalizedSnapshotId = Number(snapshotId);
+  if (!Number.isInteger(normalizedSnapshotId) || normalizedSnapshotId <= 0) {
+    return { checked: false, sent: 0, skipped: 0, reason: "invalid_snapshot" };
+  }
+
+  const locations = (await getEnabledLocations()).filter(
+    (location) => location.alertOnEntry !== false
+  );
+  if (!locations.length) {
+    return { checked: true, sent: 0, skipped: 0, reason: "no_locations" };
+  }
+
+  await ensureFleetAlertTables();
+
+  const { rows } = await pool.query(
+    `
+      WITH current_snapshot AS (
+        SELECT
+          s.id AS snapshot_id,
+          s.service_name,
+          s.vin,
+          s.dimo_token_id,
+          s.external_vehicle_key,
+          s.provider_vehicle_id,
+          s.imei,
+          s.nickname,
+          s.latitude,
+          s.longitude,
+          COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.id = $1
+          AND s.latitude IS NOT NULL
+          AND s.longitude IS NOT NULL
+      ),
+      matched_vehicle AS (
+        SELECT
+          v.id AS vehicle_id,
+          COALESCE(NULLIF(trim(v.nickname), ''), cs.nickname, v.vin, 'vehicle') AS vehicle_name,
+          v.vin AS vehicle_vin,
+          v.dimo_token_id AS vehicle_dimo_token_id,
+          v.external_vehicle_key AS vehicle_external_vehicle_key,
+          v.bouncie_vehicle_id AS vehicle_bouncie_vehicle_id,
+          cs.*
+        FROM current_snapshot cs
+        JOIN vehicles v
+          ON (
+            cs.vin IS NOT NULL
+            AND cs.vin <> ''
+            AND v.vin IS NOT NULL
+            AND LOWER(cs.vin) = LOWER(v.vin)
+          )
+          OR (
+            cs.dimo_token_id IS NOT NULL
+            AND v.dimo_token_id IS NOT NULL
+            AND cs.dimo_token_id = v.dimo_token_id
+          )
+          OR (
+            cs.external_vehicle_key IS NOT NULL
+            AND v.external_vehicle_key IS NOT NULL
+            AND cs.external_vehicle_key = v.external_vehicle_key
+          )
+          OR (
+            cs.provider_vehicle_id IS NOT NULL
+            AND v.bouncie_vehicle_id IS NOT NULL
+            AND cs.provider_vehicle_id = v.bouncie_vehicle_id
+          )
+          OR (
+            cs.nickname IS NOT NULL
+            AND v.nickname IS NOT NULL
+            AND LOWER(cs.nickname) = LOWER(v.nickname)
+          )
+        WHERE COALESCE(v.is_active, true) = true
+        ORDER BY
+          CASE
+            WHEN cs.vin IS NOT NULL AND v.vin IS NOT NULL AND LOWER(cs.vin) = LOWER(v.vin) THEN 0
+            WHEN cs.dimo_token_id IS NOT NULL AND v.dimo_token_id IS NOT NULL AND cs.dimo_token_id = v.dimo_token_id THEN 1
+            ELSE 2
+          END
+        LIMIT 1
+      )
+      SELECT
+        mv.*,
+        previous.latitude AS previous_latitude,
+        previous.longitude AS previous_longitude,
+        previous.seen_at AS previous_seen_at
+      FROM matched_vehicle mv
+      LEFT JOIN LATERAL (
+        SELECT
+          s.latitude,
+          s.longitude,
+          COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.id <> mv.snapshot_id
+          AND s.latitude IS NOT NULL
+          AND s.longitude IS NOT NULL
+          AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) < mv.seen_at
+          AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) >= mv.seen_at - INTERVAL '24 hours'
+          AND (
+            (
+              mv.vehicle_vin IS NOT NULL
+              AND s.vin IS NOT NULL
+              AND LOWER(s.vin) = LOWER(mv.vehicle_vin)
+            )
+            OR (
+              mv.vehicle_dimo_token_id IS NOT NULL
+              AND s.dimo_token_id IS NOT NULL
+              AND s.dimo_token_id = mv.vehicle_dimo_token_id
+            )
+            OR (
+              mv.vehicle_external_vehicle_key IS NOT NULL
+              AND s.external_vehicle_key IS NOT NULL
+              AND s.external_vehicle_key = mv.vehicle_external_vehicle_key
+            )
+            OR (
+              mv.vehicle_bouncie_vehicle_id IS NOT NULL
+              AND s.provider_vehicle_id IS NOT NULL
+              AND s.provider_vehicle_id = mv.vehicle_bouncie_vehicle_id
+            )
+            OR (
+              mv.vehicle_name IS NOT NULL
+              AND s.nickname IS NOT NULL
+              AND LOWER(s.nickname) = LOWER(mv.vehicle_name)
+            )
+          )
+        ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+        LIMIT 1
+      ) previous ON true
+    `,
+    [normalizedSnapshotId]
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return { checked: true, sent: 0, skipped: 0, reason: "no_matched_vehicle" };
+  }
+
+  const lat = toNumber(row.latitude);
+  const lon = toNumber(row.longitude);
+  if (lat == null || lon == null) {
+    return { checked: true, sent: 0, skipped: 0, reason: "no_coordinates" };
+  }
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const location of locations) {
+    const milesAway = distanceMiles(lat, lon, location.latitude, location.longitude);
+    if (milesAway > location.radiusMiles) continue;
+
+    const previousLat = toNumber(row.previous_latitude);
+    const previousLon = toNumber(row.previous_longitude);
+    const wasAlreadyInside =
+      previousLat != null &&
+      previousLon != null &&
+      distanceMiles(
+        previousLat,
+        previousLon,
+        location.latitude,
+        location.longitude
+      ) <= location.radiusMiles;
+
+    if (wasAlreadyInside) {
+      skipped += 1;
+      continue;
+    }
+
+    const seenAt = row.seen_at || new Date().toISOString();
+    const seenHour = new Date(seenAt);
+    if (!Number.isNaN(seenHour.getTime())) {
+      seenHour.setMinutes(0, 0, 0);
+    }
+    const bucket = Number.isNaN(seenHour.getTime())
+      ? String(row.snapshot_id)
+      : seenHour.toISOString();
+    const vehicle = row.vehicle_name || "vehicle";
+
+    const result = await sendDedupedAlert({
+      alertKey: `location-entry:${location.id}:${row.vehicle_id}:${bucket}`,
+      alertType: "location_entry",
+      severity: "info",
+      body: `Denmark: ${vehicle} entered ${location.label}. Seen ${formatChicago(
+        seenAt
+      )}.`,
+      details: {
+        vehicleId: row.vehicle_id,
+        vehicle,
+        snapshotId: row.snapshot_id,
+        serviceName: row.service_name,
+        seenAt,
+        location,
+        milesAway,
+        previousSeenAt: row.previous_seen_at,
+        trigger: "telemetry_insert",
+      },
+    });
+
+    if (result.sent) sent += 1;
+    else skipped += 1;
+  }
+
+  return { checked: true, sent, skipped };
+}
+
 async function sendTripUnderwayAlert(trip, options = {}) {
   if (!trip?.id) {
     return { sent: false, skipped: true, reason: "missing_trip" };
@@ -1002,5 +1206,6 @@ async function runFleetAlerts(reason = "interval") {
 module.exports = {
   ensureFleetAlertTables,
   runFleetAlerts,
+  sendLocationEntryAlertsForSnapshot,
   sendTripUnderwayAlert,
 };

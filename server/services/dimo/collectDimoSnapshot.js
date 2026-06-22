@@ -17,6 +17,9 @@ const {
   maybeAutoAdvanceTurnaroundTripFromTelemetry,
 } = require("../trips/autoAdvanceTurnaroundTrip");
 const {
+  sendLocationEntryAlertsForSnapshot,
+} = require("../alerts/fleetAlerts");
+const {
   stageStartingOdometerFromTelemetry,
 } = require("../trips/stageStartingOdometer");
 const { saveTelemetryRawPayload } = require("../telemetry/rawPayloadStore");
@@ -900,6 +903,11 @@ async function persistDimoTelemetry({ normalized, raw }) {
     const rawResult = await insertVehicleTelemetrySignalValues(rawRows, client);
 
     await client.query("COMMIT");
+    void sendLocationEntryAlertsForSnapshot(snapshot.id).catch((err) => {
+      console.warn(
+        `[dimo] location entry alert failed | snapshot=${snapshot.id} error=${err.message || err}`
+      );
+    });
 
     return {
       snapshotId: snapshot.id,

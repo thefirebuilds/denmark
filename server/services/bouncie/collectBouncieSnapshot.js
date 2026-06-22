@@ -14,6 +14,9 @@ const {
   assignTripToTelemetrySnapshot,
   ensureTelemetryTripAttributionSchema,
 } = require("../telemetry/tripAttribution");
+const {
+  sendLocationEntryAlertsForSnapshot,
+} = require("../alerts/fleetAlerts");
 
 function toIntegerOrNull(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -390,6 +393,7 @@ async function main() {
     let stagedStartingOdometers = 0;
     let autoStarted = 0;
     let autoAdvancedTurnaround = 0;
+    const insertedSnapshotIds = [];
 
     for (const vehicle of vehicles) {
       const snapshot = normalizeVehicle(vehicle);
@@ -411,7 +415,9 @@ async function main() {
         dbClient,
         snapshot
       );
-      await insertSnapshot(dbClient, snapshot);
+      const snapshotResult = await insertSnapshot(dbClient, snapshot);
+      const snapshotId = snapshotResult.rows[0]?.id;
+      if (snapshotId) insertedSnapshotIds.push(snapshotId);
       await insertOdometerHistory(dbClient, snapshot);
 
       if (stagedOdometerResult) stagedStartingOdometers += 1;
@@ -421,6 +427,13 @@ async function main() {
     }
 
     await dbClient.query("COMMIT");
+    for (const snapshotId of insertedSnapshotIds) {
+      void sendLocationEntryAlertsForSnapshot(snapshotId).catch((err) => {
+        console.warn(
+          `[bouncie] location entry alert failed | snapshot=${snapshotId} error=${err.message || err}`
+        );
+      });
+    }
     console.log(
       `[bouncie] snapshot done | inserted=${inserted} stagedStartingOdometers=${stagedStartingOdometers} autoStarted=${autoStarted} autoAdvancedTurnaround=${autoAdvancedTurnaround}`
     );
