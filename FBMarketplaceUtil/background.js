@@ -31,6 +31,8 @@ const API_BASES = normalizeConfigList(
 
 const AUTO_ENRICH_FLAG = "fcg_enrich=1";
 const AVAILABILITY_CHECK_FLAG = "fcg_check_available=1";
+const NEXT_ENRICH_TAB_ALARM = "fcg-marketplace-next-enrich-tab";
+const HARD_TIMEOUT_ALARM = "fcg-marketplace-hard-timeout";
 const APP_URL_PATTERNS = normalizeConfigList(
   MARKETPLACE_CONFIG.appUrlPatterns,
   DEFAULT_APP_URL_PATTERNS
@@ -44,8 +46,7 @@ const enrichQueueState = {
   currentTabId: null,
   currentUrl: null,
   currentWatchdogTimer: null,
-  nextTabTimer: null,
-  hardTimeoutTimer: null,
+  hardTimeoutTabId: null,
   sourceWindowId: null,
   minDelayMs: 0,
   maxDelayMs: 0,
@@ -121,16 +122,13 @@ function clearCurrentWatchdog() {
 }
 
 function clearNextTabTimer() {
-  if (!enrichQueueState.nextTabTimer) return;
-  clearTimeout(enrichQueueState.nextTabTimer);
-  enrichQueueState.nextTabTimer = null;
+  chrome.alarms.clear(NEXT_ENRICH_TAB_ALARM);
   enrichQueueState.nextOpenAt = null;
 }
 
 function clearHardTimeout() {
-  if (!enrichQueueState.hardTimeoutTimer) return;
-  clearTimeout(enrichQueueState.hardTimeoutTimer);
-  enrichQueueState.hardTimeoutTimer = null;
+  chrome.alarms.clear(HARD_TIMEOUT_ALARM);
+  enrichQueueState.hardTimeoutTabId = null;
 }
 
 function clearQueueTimers() {
@@ -196,12 +194,7 @@ async function scheduleNextEnrichTab() {
   enrichQueueState.phase = "waiting";
   enrichQueueState.nextOpenAt = Date.now() + delayMs;
   await broadcastQueueStatus();
-
-  enrichQueueState.nextTabTimer = setTimeout(() => {
-    enrichQueueState.nextTabTimer = null;
-    enrichQueueState.nextOpenAt = null;
-    void openNextEnrichTab();
-  }, delayMs);
+  chrome.alarms.create(NEXT_ENRICH_TAB_ALARM, { when: enrichQueueState.nextOpenAt });
 }
 
 async function inspectUnavailableListingTab(tabId) {
@@ -268,11 +261,11 @@ function armCurrentTabWatchdog(tabId) {
 
 function armCurrentTabHardTimeout(tabId) {
   clearHardTimeout();
-  enrichQueueState.hardTimeoutTimer = setTimeout(() => {
-    if (!tabId || tabId !== enrichQueueState.currentTabId) return;
-    enrichQueueState.error = "Listing tab timed out; moving to the next visible listing";
-    void finishCurrentEnrichTab(false, tabId);
-  }, Number(MARKETPLACE_CONFIG.enrichTabTimeoutMs || 45000));
+  if (!tabId) return;
+  enrichQueueState.hardTimeoutTabId = tabId;
+  chrome.alarms.create(HARD_TIMEOUT_ALARM, {
+    when: Date.now() + Number(MARKETPLACE_CONFIG.enrichTabTimeoutMs || 45000),
+  });
 }
 
 function getQueueStatus() {
@@ -605,9 +598,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId !== enrichQueueState.currentTabId) return;
   clearCurrentWatchdog();
+  clearHardTimeout();
   enrichQueueState.currentTabId = null;
   enrichQueueState.currentUrl = null;
   if (enrichQueueState.running) {
     void openNextEnrichTab();
+  }
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === NEXT_ENRICH_TAB_ALARM) {
+    enrichQueueState.nextOpenAt = null;
+    void openNextEnrichTab();
+    return;
+  }
+
+  if (alarm.name === HARD_TIMEOUT_ALARM) {
+    const tabId = enrichQueueState.currentTabId;
+    if (!tabId || tabId !== enrichQueueState.hardTimeoutTabId) return;
+    enrichQueueState.error = "Listing tab timed out; moving to the next visible listing";
+    void finishCurrentEnrichTab(false, tabId);
   }
 });
