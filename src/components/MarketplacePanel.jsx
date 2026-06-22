@@ -533,28 +533,32 @@ function formatEnrichVisibleStatus(status, now = Date.now()) {
       : 0;
   const staleSuffix =
     staleSeconds >= 45 ? `; no extension update for ${staleSeconds}s` : "";
+  const targetHost = Array.isArray(status.targetHosts) && status.targetHosts.length
+    ? status.targetHosts[0]
+    : null;
+  const targetSuffix = targetHost ? `; target ${targetHost}` : "";
 
   if (phase === "waiting" && status.nextOpenAt) {
     const seconds = Math.max(
       0,
       Math.ceil((Number(status.nextOpenAt) - now) / 1000)
     );
-    return `Batch enrich: ${progress}; next ad opens in ${seconds}s${staleSuffix}`;
+    return `Batch enrich: ${progress}; next ad opens in ${seconds}s${staleSuffix}${targetSuffix}`;
   }
 
   if (phase === "opening") {
-    return `Batch enrich: ${progress}; opening next ad${staleSuffix}`;
+    return `Batch enrich: ${progress}; opening next ad${staleSuffix}${targetSuffix}`;
   }
 
   if (phase === "requested") {
-    return `Batch enrich: ${progress}; contacting extension${staleSuffix}`;
+    return `Batch enrich: ${progress}; contacting extension${staleSuffix}${targetSuffix}`;
   }
 
   if (phase === "processing" && status.currentUrl) {
-    return `Batch enrich: ${progress}; scraping current ad${staleSuffix}`;
+    return `Batch enrich: ${progress}; scraping current ad${staleSuffix}${targetSuffix}`;
   }
 
-  return `Batch enrich: ${progress}${staleSuffix}`;
+  return `Batch enrich: ${progress}${staleSuffix}${targetSuffix}`;
 }
 
 function buildEnrichUrl(url) {
@@ -1511,9 +1515,8 @@ async function loadListings({ preserveSelection = true } = {}) {
       new CustomEvent(ENRICH_VISIBLE_EVENT, {
         detail: {
           urls,
-          minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
-          maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
-          availabilityOnly: true,
+          minDelayMs: MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS,
+          maxDelayMs: MARKETPLACE_FULL_ENRICH_MAX_DELAY_MS,
         },
       })
     );

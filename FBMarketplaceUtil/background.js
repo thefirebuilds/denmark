@@ -280,6 +280,13 @@ function getQueueStatus() {
     nextOpenAt: enrichQueueState.nextOpenAt,
     error: enrichQueueState.error,
     updatedAt: Date.now(),
+    targetHosts: API_BASES.map((base) => {
+      try {
+        return new URL(base).host;
+      } catch {
+        return String(base || "");
+      }
+    }).filter(Boolean),
   };
 }
 
