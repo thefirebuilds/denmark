@@ -865,6 +865,60 @@ function resolveAnchorStart(anchor) {
   };
 }
 
+function calculateFleetOperatingMileageBasis({
+  vehicles = [],
+  trips = [],
+  odometerAnchors = [],
+  startDate,
+  endDate,
+}) {
+  const odometerMap = toMapBy(odometerAnchors, (row) => String(row.vehicle_id));
+  const maps = buildTripVehicleKeyMaps(vehicles);
+  const vehicleTrips = new Map();
+
+  for (const vehicle of vehicles) {
+    vehicleTrips.set(String(vehicle.id), []);
+  }
+
+  for (const trip of trips) {
+    const vehicleId = resolveTripVehicleId(trip, maps);
+    if (!vehicleId || !vehicleTrips.has(vehicleId)) continue;
+    vehicleTrips.get(vehicleId).push(trip);
+  }
+
+  return vehicles.reduce((sum, vehicle) => {
+    const vehicleId = String(vehicle.id);
+    const anchor = odometerMap.get(vehicleId) || {};
+    const resolvedStart = resolveAnchorStart(anchor);
+    const resolvedEnd =
+      anchor?.end_odometer != null ? toNumber(anchor.end_odometer) : null;
+
+    let totalMiles = 0;
+    if (
+      resolvedStart.odometer != null &&
+      resolvedEnd != null &&
+      resolvedEnd >= resolvedStart.odometer
+    ) {
+      totalMiles = resolvedEnd - resolvedStart.odometer;
+    }
+
+    const tripMiles = (vehicleTrips.get(vehicleId) || []).reduce(
+      (tripSum, trip) =>
+        tripSum +
+        getTripProratedValue(
+          getTripMiles(trip),
+          trip.trip_start,
+          trip.trip_end,
+          startDate,
+          endDate
+        ),
+      0
+    );
+
+    return sum + (totalMiles > 0 ? totalMiles : tripMiles > 0 ? tripMiles : 0);
+  }, 0);
+}
+
 function getRangeDayCount(startDate, endDate) {
   const end = endDate ? new Date(endDate) : null;
   if (!(end instanceof Date) || Number.isNaN(end.getTime())) {
@@ -1059,6 +1113,13 @@ async function getVehicleMetrics(rangeKey = "30d") {
           previousRange.endDate
         )
       : [];
+    const previousTrips = previousRange.startDate
+      ? await fetchTripsForVehicles(
+          client,
+          previousRange.startDate,
+          previousRange.endDate
+        )
+      : [];
     const tollExposureRows = await fetchTollExposureForVehicles(
       client,
       startDate,
@@ -1069,6 +1130,13 @@ async function getVehicleMetrics(rangeKey = "30d") {
       startDate,
       endDate
     );
+    const previousOdometerAnchors = previousRange.startDate
+      ? await fetchVehicleOdometerAnchors(
+          client,
+          previousRange.startDate,
+          previousRange.endDate
+        )
+      : [];
     const capitalMetricsRows = await getCapitalMetricsByVehicle(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const allRangeStart =
@@ -1689,6 +1757,20 @@ async function getVehicleMetrics(rangeKey = "30d") {
     const previousRunRateDaily = previousPeriodDays
       ? safeDivide(previousRunRateExpenses, previousPeriodDays)
       : 0;
+    const previousRunRateMiles = previousRange.startDate
+      ? calculateFleetOperatingMileageBasis({
+          vehicles,
+          trips: previousTrips,
+          odometerAnchors: previousOdometerAnchors,
+          startDate: previousRange.startDate,
+          endDate: previousRange.endDate,
+        })
+      : 0;
+    const previousExpensePerMile = safeDivide(
+      previousRunRateExpenses,
+      previousRunRateMiles
+    );
+    const expensePerMile = safeDivide(runRateExpenses, runRateMiles);
 
     return {
       range: key,
@@ -1696,12 +1778,14 @@ async function getVehicleMetrics(rangeKey = "30d") {
         period_days: periodDays,
         operating_run_rate_expenses: roundMoney(runRateExpenses),
         operating_run_rate_daily: roundMoney(runRateDaily),
-        operating_expense_per_mile: roundMoney(
-          safeDivide(runRateExpenses, runRateMiles)
-        ),
+        operating_expense_per_mile: roundMoney(expensePerMile),
         operating_expense_per_mile_basis:
           runRateMiles > 0 ? "vehicle_miles" : "missing",
         operating_expense_per_mile_miles: roundNumber(runRateMiles, 1),
+        previous_operating_expense_per_mile: roundMoney(previousExpensePerMile),
+        operating_expense_per_mile_delta: roundMoney(
+          expensePerMile - previousExpensePerMile
+        ),
         previous_operating_run_rate_daily: roundMoney(previousRunRateDaily),
         operating_run_rate_daily_delta: roundMoney(
           runRateDaily - previousRunRateDaily

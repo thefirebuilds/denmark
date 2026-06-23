@@ -1800,9 +1800,20 @@ const mileageStats = useMemo(() => {
                 value={formatCurrencyCompact(
                   summary.vehicle_run_rate?.operating_expense_per_mile
                 )}
-                subtitle={`${formatNumber(
-                  summary.vehicle_run_rate?.operating_expense_per_mile_miles
-                )} mi basis`}
+                subtitle={formatCurrencyTrend(
+                  summary.vehicle_run_rate?.operating_expense_per_mile_delta
+                )}
+                tone={
+                  Number(
+                    summary.vehicle_run_rate?.operating_expense_per_mile_delta ?? 0
+                  ) > 0
+                    ? "warning"
+                    : Number(
+                        summary.vehicle_run_rate?.operating_expense_per_mile_delta ?? 0
+                      ) < 0
+                    ? "positive"
+                    : undefined
+                }
               />
 
               <MetricCard
