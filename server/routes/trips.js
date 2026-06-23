@@ -1557,14 +1557,42 @@ router.get("/:id/messages", async (req, res) => {
       LIMIT 1
     `;
 
-    const [{ rows }, maintenanceResult, handoffResult, inspectionExportResult] = await Promise.all([
-      pool.query(query, [tripId]),
-      pool.query(maintenanceQuery, [tripId]),
-      pool.query(handoffQuery, [tripId]),
-      pool.query(inspectionExportQuery, [tripId]),
+    let rows;
+    try {
+      const result = await pool.query(query, [tripId]);
+      rows = result.rows;
+    } catch (err) {
+      err.tripMessagePhase = "base messages";
+      throw err;
+    }
+
+    async function runOptionalTripMessageQuery(name, sql) {
+      try {
+        const result = await pool.query(sql, [tripId]);
+        return result.rows;
+      } catch (err) {
+        console.warn(`GET /api/trips/:id/messages optional ${name} failed:`, {
+          tripId,
+          message: err.message || String(err),
+          code: err.code,
+          detail: err.detail,
+          hint: err.hint,
+          position: err.position,
+          table: err.table,
+          column: err.column,
+          constraint: err.constraint,
+        });
+        return [];
+      }
+    }
+
+    const [maintenanceRows, handoffRows, inspectionExportRows] = await Promise.all([
+      runOptionalTripMessageQuery("maintenance notices", maintenanceQuery),
+      runOptionalTripMessageQuery("handoff notices", handoffQuery),
+      runOptionalTripMessageQuery("inspection export notices", inspectionExportQuery),
     ]);
 
-    const maintenanceNotices = maintenanceResult.rows.map((row) => {
+    const maintenanceNotices = maintenanceRows.map((row) => {
       const now = Date.now();
       const tripStart = row.trip_start ? new Date(row.trip_start).getTime() : null;
       const tripEnd = row.trip_end ? new Date(row.trip_end).getTime() : null;
@@ -1611,8 +1639,8 @@ router.get("/:id/messages", async (req, res) => {
       };
     });
 
-    const handoffNotices = handoffResult.rows.map(mapHandoffNoticeRow);
-    const inspectionExportNotices = inspectionExportResult.rows.map(
+    const handoffNotices = handoffRows.map(mapHandoffNoticeRow);
+    const inspectionExportNotices = inspectionExportRows.map(
       mapInspectionExportNoticeRow
     );
     const hasPrepTask =
@@ -1662,6 +1690,8 @@ router.get("/:id/messages", async (req, res) => {
     res.json(combined);
   } catch (err) {
     console.error("GET /api/trips/:id/messages failed:", {
+      tripId: req.params.id,
+      phase: err.tripMessagePhase || "route",
       message: err.message || String(err),
       code: err.code,
       detail: err.detail,
