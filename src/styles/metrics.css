@@ -2089,7 +2089,7 @@
   display: grid;
   grid-template-columns:
     minmax(180px, 1.6fr)
-    repeat(9, minmax(74px, 1fr))
+    repeat(10, minmax(74px, 1fr))
     28px;
   gap: 8px;
   align-items: center;
