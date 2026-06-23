@@ -2580,15 +2580,18 @@ async function handleExportGuestInspectionSheet(message) {
             const canShowOperationalTripNotice =
               isOperationalTripNotice(message) && !canConfirmBooking;
             const canShowMaintenance = isMaintenanceNotice(message);
+            const maintenanceVehicleKey = getMaintenanceVehicleKey(message);
             const hasMaintenanceDetails =
               Number(message.maintenance_task_count || 0) > 0 &&
               Array.isArray(message.maintenance_tasks) &&
               message.maintenance_tasks.length > 0;
             const canCompleteSyntheticTask = isCompletableSyntheticTask(message);
             const canOpenMaintenanceQueue =
-              (hasMaintenanceDetails &&
+              Boolean(maintenanceVehicleKey) &&
+              ((hasMaintenanceDetails &&
                 (canShowMaintenance || canAdvanceHandoff || canExportInspection)) ||
-              canReviewDiagnostic;
+                canExportInspection ||
+                canReviewDiagnostic);
             const canReply =
               !!buildReplyUrl(message) &&
               !canCompleteSyntheticTask &&
@@ -3280,7 +3283,7 @@ async function handleExportGuestInspectionSheet(message) {
                         className="message-action"
                         onClick={(event) => {
                           event.stopPropagation();
-                          onOpenMaintenanceVehicle?.(getMaintenanceVehicleKey(message));
+                          onOpenMaintenanceVehicle?.(maintenanceVehicleKey);
                         }}
                       >
                         {`Maintenance queue for ${
