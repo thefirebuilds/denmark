@@ -21,6 +21,9 @@ const {
 const {
   ensureTripRuntimeSchema,
 } = require("../services/trips/tripRuntimeSchema");
+const {
+  ensureMessageRuntimeSchema,
+} = require("../services/messageRuntimeSchema");
 
 const {
   transitionTripStage,
@@ -1235,6 +1238,7 @@ router.get("/:id/messages", async (req, res) => {
   try {
     await ensureVehicleAliasesTable();
     await ensureTripRuntimeSchema();
+    await ensureMessageRuntimeSchema();
 
     const tripId = Number(req.params.id);
 
