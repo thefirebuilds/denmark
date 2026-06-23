@@ -247,6 +247,115 @@ function formatMileageIncluded(value) {
   return `${miles.toLocaleString()} mi allowed`;
 }
 
+function parseMoneyNumber(value) {
+  if (value == null) return null;
+  const n = Number(String(value).replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseIntegerNumber(value) {
+  if (value == null) return null;
+  const n = Number(String(value).replace(/[,\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseTuroShortDateTime(datePart, timePart) {
+  const dateMatch = String(datePart || "").match(
+    /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/
+  );
+  const timeMatch = String(timePart || "")
+    .replace(/\u202f|\u00a0/g, " ")
+    .match(/(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m?\.?/i);
+
+  if (!dateMatch || !timeMatch) return null;
+
+  const month = Number(dateMatch[1]) - 1;
+  const day = Number(dateMatch[2]);
+  const rawYear = Number(dateMatch[3]);
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  let hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2] || 0);
+  const meridiem = timeMatch[3].toLowerCase();
+
+  if (meridiem === "p" && hour < 12) hour += 12;
+  if (meridiem === "a" && hour === 12) hour = 0;
+
+  const parsed = new Date(year, month, day, hour, minute);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function extractTripChangeDeltas(message) {
+  const text = String(
+    message?.normalized_text_body || message?.text_body || ""
+  ).replace(/\u202f|\u00a0/g, " ");
+  const deltas = {};
+
+  const earningsNew =
+    parseMoneyNumber(message?.new_total_earnings ?? message?.amount) ??
+    parseMoneyNumber(
+      text.match(/Your new total earnings will be \$([0-9,]+(?:\.\d{2})?)/i)?.[1]
+    );
+  const earningsPrior =
+    parseMoneyNumber(message?.prior_trip_amount) ??
+    parseMoneyNumber(text.match(/You earn\s*\n?\s*\$([0-9,]+(?:\.\d{2})?)\s+\$([0-9,]+(?:\.\d{2})?)/i)?.[2]);
+
+  if (earningsNew != null) {
+    deltas.newEarnings = earningsNew;
+  }
+  if (earningsNew != null && earningsPrior != null) {
+    deltas.priorEarnings = earningsPrior;
+    deltas.earningsDelta = earningsNew - earningsPrior;
+  } else {
+    const explicitDelta = parseMoneyNumber(
+      message?.additional_earnings ?? message?.earnings_delta
+    );
+    if (explicitDelta != null) deltas.earningsDelta = explicitDelta;
+  }
+
+  const milesMatch = text.match(
+    /Total distance included\s*\n?\s*([0-9,]+)\s*miles?\s+([0-9,]+)\s*miles?/i
+  );
+  if (milesMatch) {
+    const newMiles = parseIntegerNumber(milesMatch[1]);
+    const priorMiles = parseIntegerNumber(milesMatch[2]);
+    if (newMiles != null) deltas.newMiles = newMiles;
+    if (newMiles != null && priorMiles != null) {
+      deltas.priorMiles = priorMiles;
+      deltas.milesDelta = newMiles - priorMiles;
+    }
+  }
+
+  const endMatch = text.match(
+    /Trip end\s*\n\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\n\s*([0-9:]+\s*[ap]\.?m?\.?)\s*\n\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s+([0-9:]+\s*[ap]\.?m?\.?)/i
+  );
+  if (endMatch) {
+    const newEnd = parseTuroShortDateTime(endMatch[1], endMatch[2]);
+    const priorEnd = parseTuroShortDateTime(endMatch[3], endMatch[4]);
+    if (newEnd) deltas.newEnd = newEnd;
+    if (newEnd && priorEnd) {
+      deltas.priorEnd = priorEnd;
+      deltas.endDeltaDays =
+        (newEnd.getTime() - priorEnd.getTime()) / 86400000;
+    }
+  }
+
+  return deltas;
+}
+
+function formatSignedMiles(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+  return `${sign}${Math.abs(Math.round(n)).toLocaleString()} mi`;
+}
+
+function formatTripEndDayDelta(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || Math.abs(n) < 0.01) return "";
+  const direction = n > 0 ? "Extended" : "Shortened";
+  return `${direction} ${Math.abs(n).toFixed(1)} days`;
+}
+
 function formatMaintenancePlanDate(value) {
   if (!value) return "Available now";
 
@@ -880,19 +989,42 @@ function buildFuelCloseoutDetail(message) {
 
 function buildTripChangedDetail(message) {
   const parts = [];
+  const deltas = extractTripChangeDeltas(message);
 
   if (message?.new_trip_end) {
     parts.push(`New trip end: ${formatTripTime(message.new_trip_end)}`);
   }
 
-  const newTotal = Number(message?.new_total_earnings ?? message?.amount);
-  if (Number.isFinite(newTotal)) {
-    const delta = Number(message?.additional_earnings ?? message?.earnings_delta);
-    if (Number.isFinite(delta) && Math.abs(delta) >= 0.005) {
-      parts.push(`Additional earnings: ${formatSignedMoney(delta)}`);
-    }
+  const dayDelta = formatTripEndDayDelta(deltas.endDeltaDays);
+  if (dayDelta) {
+    parts.push(dayDelta);
+  }
 
-    parts.push(`New total: ${formatMoney(newTotal)}`);
+  const newTotal = Number(deltas.newEarnings ?? message?.new_total_earnings ?? message?.amount);
+  if (Number.isFinite(newTotal)) {
+    const delta = Number(
+      deltas.earningsDelta ?? message?.additional_earnings ?? message?.earnings_delta
+    );
+    if (Number.isFinite(delta) && Math.abs(delta) >= 0.005) {
+      const prior =
+        Number.isFinite(Number(deltas.priorEarnings))
+          ? ` (${formatMoney(deltas.priorEarnings)} -> ${formatMoney(newTotal)})`
+          : "";
+      parts.push(`Earnings: ${formatSignedMoney(delta)}${prior}`);
+    } else {
+      parts.push(`New total: ${formatMoney(newTotal)}`);
+    }
+  }
+
+  if (Number.isFinite(Number(deltas.milesDelta))) {
+    const prior =
+      Number.isFinite(Number(deltas.priorMiles)) &&
+      Number.isFinite(Number(deltas.newMiles))
+        ? ` (${Number(deltas.priorMiles).toLocaleString()} -> ${Number(
+            deltas.newMiles
+          ).toLocaleString()})`
+        : "";
+    parts.push(`Miles: ${formatSignedMiles(deltas.milesDelta)}${prior}`);
   }
 
   return parts.join(" - ");
