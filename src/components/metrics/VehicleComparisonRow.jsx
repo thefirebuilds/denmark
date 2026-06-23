@@ -93,6 +93,13 @@ function formatRevenuePerMileBasis(value) {
   return "No miles";
 }
 
+function formatExpensePerMileBasis(value) {
+  const basis = String(value || "").toLowerCase();
+  if (basis === "trip_miles") return "Operating spend / trip mile";
+  if (basis === "total_miles") return "Operating spend / total mile";
+  return "No miles";
+}
+
 function getPayoffConfidenceTone(confidence) {
   const value = String(confidence || "").toLowerCase();
   if (value === "high") return "positive";
@@ -188,6 +195,7 @@ export default function VehicleComparisonRow({
     vehicle?.revenue_per_booked_day ?? vehicle?.income_per_booked_day ?? 0
   );
   const revenuePerMile = Number(vehicle?.revenue_per_mile ?? 0);
+  const expensePerMile = Number(vehicle?.operating_expense_per_mile ?? 0);
   const unallocatedMiles = Number(vehicle?.unallocated_miles ?? 0);
   const hasFmvEstimate = Number.isFinite(fmvEstimateMid) && fmvEstimateMid > 0;
   const fmvChangeTone =
@@ -271,6 +279,12 @@ export default function VehicleComparisonRow({
         <div className="vehicle-compare__cell">
           <div className="vehicle-compare__value">
             {formatCurrencyCompact(revenuePerMile)}
+          </div>
+        </div>
+
+        <div className="vehicle-compare__cell">
+          <div className="vehicle-compare__value">
+            {formatCurrencyCompact(expensePerMile)}
           </div>
         </div>
 
@@ -382,6 +396,18 @@ export default function VehicleComparisonRow({
                 </div>
                 <div className="vehicle-compare__detail-hint">
                   {formatRevenuePerMileBasis(vehicle?.revenue_per_mile_basis)}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Expense / Mile</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatCurrencyCompact(expensePerMile)}
+                </div>
+                <div className="vehicle-compare__detail-hint">
+                  {formatExpensePerMileBasis(
+                    vehicle?.operating_expense_per_mile_basis
+                  )}
                 </div>
               </div>
             </div>

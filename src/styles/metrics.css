@@ -1766,7 +1766,7 @@
 .vehicle-compare__summary {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(180px, 1.6fr) repeat(9, minmax(74px, 1fr)) 28px;
+  grid-template-columns: minmax(180px, 1.6fr) repeat(10, minmax(74px, 1fr)) 28px;
   gap: 8px;
   align-items: center;
   text-align: left;
@@ -1937,7 +1937,8 @@
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(7),
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(8),
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(9),
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(10) {
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(10),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(11) {
     display: none;
   }
 }
@@ -1966,7 +1967,7 @@
   display: grid;
   grid-template-columns:
     minmax(180px, 1.6fr)
-    repeat(9, minmax(74px, 1fr))
+    repeat(10, minmax(74px, 1fr))
     28px;
   gap: 8px;
   align-items: center;
@@ -2167,10 +2168,12 @@
   .vehicle-compare-header .vehicle-compare-header__cell:nth-child(8),
   .vehicle-compare-header .vehicle-compare-header__cell:nth-child(9),
   .vehicle-compare-header .vehicle-compare-header__cell:nth-child(10),
+  .vehicle-compare-header .vehicle-compare-header__cell:nth-child(11),
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(7),
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(8),
   .vehicle-compare__summary .vehicle-compare__cell:nth-child(9),
-  .vehicle-compare__summary .vehicle-compare__cell:nth-child(10) {
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(10),
+  .vehicle-compare__summary .vehicle-compare__cell:nth-child(11) {
     display: none;
   }
 }

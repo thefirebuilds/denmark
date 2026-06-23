@@ -1796,6 +1796,16 @@ const mileageStats = useMemo(() => {
               />
 
               <MetricCard
+                label="Expense / Mile"
+                value={formatCurrencyCompact(
+                  summary.vehicle_run_rate?.operating_expense_per_mile
+                )}
+                subtitle={`${formatNumber(
+                  summary.vehicle_run_rate?.operating_expense_per_mile_miles
+                )} mi basis`}
+              />
+
+              <MetricCard
                 label="Rev / Calendar Day"
                 value={formatCurrencyCompact(summary.revenue_per_calendar_day)}
                 subtitle={formatCurrencyTrend(
@@ -3091,6 +3101,7 @@ const mileageStats = useMemo(() => {
               <div className="vehicle-compare-header__cell">Occupancy</div>
               <div className="vehicle-compare-header__cell">Rev / Day</div>
               <div className="vehicle-compare-header__cell">Rev / Mile</div>
+              <div className="vehicle-compare-header__cell">Exp / Mile</div>
               <div className="vehicle-compare-header__cell">Trips</div>
               <div className="vehicle-compare-header__cell">Run Rate</div>
               <div className="vehicle-compare-header__cell"></div>

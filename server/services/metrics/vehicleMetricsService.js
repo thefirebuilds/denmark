@@ -1189,6 +1189,8 @@ async function getVehicleMetrics(rangeKey = "30d") {
         operating_run_rate_expenses: 0,
         operating_run_rate_daily: 0,
         operating_run_rate_period_days: periodDays,
+        operating_expense_per_mile: 0,
+        operating_expense_per_mile_basis: "missing",
         net_profit: 0,
         trip_count_overlapping: 0,
         trip_count_prorated: 0,
@@ -1520,6 +1522,22 @@ async function getVehicleMetrics(rangeKey = "30d") {
         safeDivide(metrics.operating_run_rate_expenses, periodDays)
       );
 
+      const operatingExpenseMiles =
+        toNumber(metrics.total_miles) > 0
+          ? toNumber(metrics.total_miles)
+          : toNumber(metrics.trip_miles) > 0
+          ? toNumber(metrics.trip_miles)
+          : 0;
+      metrics.operating_expense_per_mile = roundMoney(
+        safeDivide(metrics.operating_run_rate_expenses, operatingExpenseMiles)
+      );
+      metrics.operating_expense_per_mile_basis =
+        toNumber(metrics.total_miles) > 0
+          ? "total_miles"
+          : toNumber(metrics.trip_miles) > 0
+          ? "trip_miles"
+          : "missing";
+
       metrics.net_profit = roundMoney(
         toNumber(metrics.trip_income) +
           toNumber(metrics.other_income) -
@@ -1654,6 +1672,12 @@ async function getVehicleMetrics(rangeKey = "30d") {
       (sum, item) => sum + toNumber(item.operating_run_rate_expenses),
       0
     );
+    const runRateMiles = responseVehicles.reduce((sum, item) => {
+      const basis = String(item?.operating_expense_per_mile_basis || "").toLowerCase();
+      if (basis === "total_miles") return sum + toNumber(item.total_miles);
+      if (basis === "trip_miles") return sum + toNumber(item.trip_miles);
+      return sum;
+    }, 0);
     const runRateDaily = safeDivide(runRateExpenses, periodDays);
     const previousPeriodDays = previousRange.startDate
       ? Math.max(
@@ -1672,6 +1696,12 @@ async function getVehicleMetrics(rangeKey = "30d") {
         period_days: periodDays,
         operating_run_rate_expenses: roundMoney(runRateExpenses),
         operating_run_rate_daily: roundMoney(runRateDaily),
+        operating_expense_per_mile: roundMoney(
+          safeDivide(runRateExpenses, runRateMiles)
+        ),
+        operating_expense_per_mile_basis:
+          runRateMiles > 0 ? "vehicle_miles" : "missing",
+        operating_expense_per_mile_miles: roundNumber(runRateMiles, 1),
         previous_operating_run_rate_daily: roundMoney(previousRunRateDaily),
         operating_run_rate_daily_delta: roundMoney(
           runRateDaily - previousRunRateDaily
