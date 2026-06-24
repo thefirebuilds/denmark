@@ -41,6 +41,12 @@ const DEFAULT_SMS_ALERT_SETTINGS = {
   configured: false,
   source: "database",
 };
+const DEFAULT_VOLTAGE_ALERT_SETTINGS = {
+  enabled: true,
+  boardEnabled: true,
+  smsEnabled: true,
+  lowVoltageThreshold: 12.2,
+};
 const DEFAULT_INTEGRATION_ENABLEMENT = {
   imap: true,
   bouncie: true,
@@ -241,6 +247,22 @@ function mergeSmsAlertSettings(settings) {
     receiverNumber: String(settings?.receiverNumber || ""),
     configured: Boolean(settings?.configured),
     source: String(settings?.source || "database"),
+  };
+}
+
+function mergeVoltageAlertSettings(settings) {
+  const threshold = Number(
+    settings?.lowVoltageThreshold ?? settings?.low_voltage_threshold
+  );
+  return {
+    ...DEFAULT_VOLTAGE_ALERT_SETTINGS,
+    ...(settings || {}),
+    enabled: settings?.enabled !== false,
+    boardEnabled: settings?.boardEnabled ?? settings?.board_enabled ?? true,
+    smsEnabled: settings?.smsEnabled ?? settings?.sms_enabled ?? true,
+    lowVoltageThreshold: Number.isFinite(threshold)
+      ? Math.max(10, Math.min(13.5, threshold))
+      : DEFAULT_VOLTAGE_ALERT_SETTINGS.lowVoltageThreshold,
   };
 }
 
@@ -1145,13 +1167,16 @@ function MessagesSettingsPanel() {
 function AlertSettingsPanel() {
   const [form, setForm] = useState(DEFAULT_BRIDGE_ALERT_SETTINGS);
   const [smsForm, setSmsForm] = useState(DEFAULT_SMS_ALERT_SETTINGS);
+  const [voltageForm, setVoltageForm] = useState(DEFAULT_VOLTAGE_ALERT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingSms, setSavingSms] = useState(false);
   const [sendingSmsTest, setSendingSmsTest] = useState(false);
   const [message, setMessage] = useState("");
   const dirtyRef = useRef(false);
+  const voltageDirtyRef = useRef(false);
   const saveSeqRef = useRef(0);
+  const voltageSaveSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -1159,12 +1184,14 @@ function AlertSettingsPanel() {
     async function loadSettings() {
       try {
         setLoading(true);
-        const [bridgeRes, smsRes] = await Promise.all([
+        const [bridgeRes, smsRes, voltageRes] = await Promise.all([
           fetch(`${API_BASE}/api/settings/alerts.bridge`),
           fetch(`${API_BASE}/api/settings/alerts.sms`),
+          fetch(`${API_BASE}/api/settings/alerts.voltage`),
         ]);
         const bridgeJson = await bridgeRes.json().catch(() => ({}));
         const smsJson = await smsRes.json().catch(() => ({}));
+        const voltageJson = await voltageRes.json().catch(() => ({}));
 
         if (!bridgeRes.ok) {
           throw new Error(bridgeJson?.error || "Failed to load alert settings");
@@ -1172,11 +1199,16 @@ function AlertSettingsPanel() {
         if (!smsRes.ok) {
           throw new Error(smsJson?.error || "Failed to load SMS settings");
         }
+        if (!voltageRes.ok) {
+          throw new Error(voltageJson?.error || "Failed to load voltage settings");
+        }
 
         if (cancelled) return;
         dirtyRef.current = false;
+        voltageDirtyRef.current = false;
         setForm(mergeBridgeAlertSettings(bridgeJson.value));
         setSmsForm(mergeSmsAlertSettings(smsJson.value));
+        setVoltageForm(mergeVoltageAlertSettings(voltageJson.value));
         setMessage("");
       } catch (err) {
         if (!cancelled) {
@@ -1235,6 +1267,48 @@ function AlertSettingsPanel() {
     return () => window.clearTimeout(timeoutId);
   }, [form]);
 
+  useEffect(() => {
+    if (!voltageDirtyRef.current) return undefined;
+
+    const payload = mergeVoltageAlertSettings(voltageForm);
+    const saveSeq = voltageSaveSeqRef.current + 1;
+    voltageSaveSeqRef.current = saveSeq;
+
+    setSaving(true);
+    setMessage("Saving...");
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/settings/alerts.voltage`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: payload }),
+        });
+        const json = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          throw new Error(json?.error || "Failed to save voltage alert settings");
+        }
+
+        if (saveSeq !== voltageSaveSeqRef.current) return;
+
+        voltageDirtyRef.current = false;
+        setVoltageForm(mergeVoltageAlertSettings(json.value || payload));
+        setMessage("Saved");
+      } catch (err) {
+        if (saveSeq === voltageSaveSeqRef.current) {
+          setMessage(err.message || "Failed to save voltage alert settings");
+        }
+      } finally {
+        if (saveSeq === voltageSaveSeqRef.current) {
+          setSaving(false);
+        }
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [voltageForm]);
+
   function updateNumberField(key, value) {
     dirtyRef.current = true;
     setForm((current) =>
@@ -1258,6 +1332,16 @@ function AlertSettingsPanel() {
   function updateSmsField(key, value) {
     setSmsForm((current) =>
       mergeSmsAlertSettings({
+        ...current,
+        [key]: value,
+      })
+    );
+  }
+
+  function updateVoltageField(key, value) {
+    voltageDirtyRef.current = true;
+    setVoltageForm((current) =>
+      mergeVoltageAlertSettings({
         ...current,
         [key]: value,
       })
@@ -1440,6 +1524,66 @@ function AlertSettingsPanel() {
             credential changes.
           </small>
         </form>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Battery voltage</div>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={voltageForm.enabled !== false}
+              onChange={(event) =>
+                updateVoltageField("enabled", event.target.checked)
+              }
+            />
+            <span>Enable low-voltage alerts</span>
+          </label>
+          <small className="settings-field-note">
+            Denmark watches the latest valid telematics voltage for each active
+            vehicle. Values below the threshold create urgent board signals and
+            can send SMS texts.
+          </small>
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Low-voltage threshold</span>
+              <input
+                type="number"
+                min="10"
+                max="13.5"
+                step="0.1"
+                disabled={voltageForm.enabled === false}
+                value={voltageForm.lowVoltageThreshold}
+                onChange={(event) =>
+                  updateVoltageField("lowVoltageThreshold", event.target.value)
+                }
+              />
+              <small className="settings-field-note">
+                Default is 12.2v. Readings below this create an urgent signal.
+              </small>
+            </label>
+            <label className="settings-checkbox-row settings-checkbox-row--field">
+              <input
+                type="checkbox"
+                checked={voltageForm.boardEnabled !== false}
+                disabled={voltageForm.enabled === false}
+                onChange={(event) =>
+                  updateVoltageField("boardEnabled", event.target.checked)
+                }
+              />
+              <span>Show on dispatch board</span>
+            </label>
+            <label className="settings-checkbox-row settings-checkbox-row--field">
+              <input
+                type="checkbox"
+                checked={voltageForm.smsEnabled !== false}
+                disabled={voltageForm.enabled === false}
+                onChange={(event) =>
+                  updateVoltageField("smsEnabled", event.target.checked)
+                }
+              />
+              <span>Send SMS text</span>
+            </label>
+          </div>
+        </div>
 
         <div className="settings-group">
           <div className="settings-group-title">Android bridge</div>

@@ -1434,6 +1434,54 @@ function mapVehicleDiagnosticNoticeRow(row) {
   };
 }
 
+function mapLowVoltageNoticeRow(row) {
+  const voltage = Number(row.battery_voltage);
+  const threshold = Number(row.low_voltage_threshold || 12.2);
+  const vehicleName = row.vehicle_nickname || row.nickname || row.vin || "vehicle";
+  const lastSeen = normalizeDiagnosticDisplayTimestamp(row,
+    row.recorded_at || row.vehicle_last_updated || row.captured_at,
+    row.captured_at
+  );
+  const voltageLabel = Number.isFinite(voltage)
+    ? `${voltage.toFixed(2)}v`
+    : "low voltage";
+  const thresholdLabel = Number.isFinite(threshold)
+    ? `${threshold.toFixed(2)}v`
+    : "threshold";
+  const dateKey = getLocalDateKey(lastSeen || new Date());
+  const diagnosticKey = [
+    "battery_voltage_low",
+    row.vehicle_id || row.vin || row.id,
+    thresholdLabel,
+    dateKey,
+  ].join(":");
+
+  return {
+    id: `vehicle-diagnostic:${diagnosticKey}`,
+    messageId: `vehicle-diagnostic:${diagnosticKey}`,
+    subject: `${vehicleName} battery voltage is low`,
+    status: "read",
+    timestamp: lastSeen,
+    notification_created_at: lastSeen,
+    type: "vehicle_diagnostic_alert",
+    vehicle_name: vehicleName,
+    vehicle_nickname: row.vehicle_nickname,
+    vehicle_vin: row.vin,
+    diagnostic_source: row.service_name || "telematics",
+    diagnostic_label: `battery voltage ${voltageLabel} below ${thresholdLabel}`,
+    diagnostic_codes: [],
+    diagnostic_mil_on: false,
+    diagnostic_dtc_count: 0,
+    diagnostic_key: diagnosticKey,
+    diagnostic_legacy_keys: [],
+    diagnostic_first_reported_at: lastSeen,
+    diagnostic_last_seen: lastSeen,
+    diagnostic_battery_voltage: Number.isFinite(voltage) ? voltage : null,
+    diagnostic_low_voltage_threshold: Number.isFinite(threshold) ? threshold : null,
+    created_at: lastSeen,
+  };
+}
+
 function mapGoogleCalendarReconnectNoticeRow(row) {
   const checkedAt = row.token_checked_at || row.updated_at || new Date().toISOString();
   const calendarName = row.calendar_summary || row.calendar_id || "selected calendar";
@@ -2543,6 +2591,78 @@ router.get("/", async (req, res) => {
       LIMIT 10
     `;
 
+    const lowVoltageSql = `
+      WITH voltage_settings AS (
+        SELECT
+          COALESCE(
+            NULLIF(app_settings.value->>'lowVoltageThreshold', '')::numeric,
+            12.2
+          ) AS low_voltage_threshold,
+          COALESCE((app_settings.value->>'enabled')::boolean, true) AS enabled,
+          COALESCE((app_settings.value->>'boardEnabled')::boolean, true) AS board_enabled
+        FROM (SELECT 1) seed
+        LEFT JOIN app_settings
+          ON app_settings.key = 'alerts.voltage'
+      )
+      SELECT
+        latest.*,
+        v.id AS vehicle_id,
+        v.nickname AS vehicle_nickname,
+        settings.low_voltage_threshold
+      FROM vehicles v
+      CROSS JOIN voltage_settings settings
+      JOIN LATERAL (
+        SELECT
+          s.id,
+          s.service_name,
+          s.vin,
+          s.nickname,
+          s.battery_voltage,
+          s.battery_voltage_last_updated,
+          s.vehicle_last_updated,
+          s.captured_at,
+          COALESCE(
+            s.battery_voltage_last_updated,
+            s.vehicle_last_updated,
+            s.captured_at
+          ) AS recorded_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.battery_voltage IS NOT NULL
+          AND s.battery_voltage BETWEEN 5 AND 16
+          AND (
+            (
+              v.vin IS NOT NULL
+              AND v.vin <> ''
+              AND s.vin IS NOT NULL
+              AND s.vin <> ''
+              AND LOWER(s.vin) = LOWER(v.vin)
+            )
+            OR (
+              v.dimo_token_id IS NOT NULL
+              AND s.dimo_token_id = v.dimo_token_id
+            )
+            OR (
+              v.external_vehicle_key IS NOT NULL
+              AND v.external_vehicle_key <> ''
+              AND s.external_vehicle_key = v.external_vehicle_key
+            )
+          )
+        ORDER BY COALESCE(
+          s.battery_voltage_last_updated,
+          s.vehicle_last_updated,
+          s.captured_at
+        ) DESC NULLS LAST,
+        s.id DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE COALESCE(v.is_active, true) = true
+        AND settings.enabled = true
+        AND settings.board_enabled = true
+        AND latest.battery_voltage < settings.low_voltage_threshold
+      ORDER BY latest.battery_voltage ASC, latest.recorded_at DESC NULLS LAST
+      LIMIT 10
+    `;
+
     const maintenanceSql = `
       WITH active_maintenance_tasks AS (
         SELECT mt.*
@@ -3227,6 +3347,11 @@ router.get("/", async (req, res) => {
       "diagnostics",
       db.query(diagnosticSql)
     );
+    const lowVoltageResult = await timeQueueQuery(
+      queueTimings,
+      "lowVoltage",
+      db.query(lowVoltageSql)
+    );
     const maintenanceResult = fast
       ? EMPTY_QUERY_RESULT
       : await timeQueueQuery(
@@ -3275,7 +3400,10 @@ router.get("/", async (req, res) => {
     const visibleMaintenanceNotices = maintenanceNotices.filter(
       (item) => !prepTaskTripIds.has(Number(item.trip_id))
     );
-    const diagnosticNotices = diagnosticResult.rows.map(mapVehicleDiagnosticNoticeRow);
+    const diagnosticNotices = [
+      ...diagnosticResult.rows.map(mapVehicleDiagnosticNoticeRow),
+      ...lowVoltageResult.rows.map(mapLowVoltageNoticeRow),
+    ];
     let visibleDiagnosticNotices = diagnosticNotices;
 
     if (diagnosticNotices.length) {

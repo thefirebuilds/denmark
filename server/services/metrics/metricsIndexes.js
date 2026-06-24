@@ -6,6 +6,41 @@ async function ensureMetricsIndexes(client = pool) {
   if (!ensureMetricsIndexesPromise) {
     ensureMetricsIndexesPromise = (async () => {
       await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_vts_battery_lower_vin_latest
+        ON public.vehicle_telemetry_snapshots (
+          lower(vin),
+          COALESCE(battery_voltage_last_updated, vehicle_last_updated, captured_at) DESC NULLS LAST,
+          id DESC
+        )
+        WHERE battery_voltage IS NOT NULL
+          AND vin IS NOT NULL
+          AND vin <> ''
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_vts_battery_dimo_token_latest
+        ON public.vehicle_telemetry_snapshots (
+          dimo_token_id,
+          COALESCE(battery_voltage_last_updated, vehicle_last_updated, captured_at) DESC NULLS LAST,
+          id DESC
+        )
+        WHERE battery_voltage IS NOT NULL
+          AND dimo_token_id IS NOT NULL
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_vts_battery_external_key_latest
+        ON public.vehicle_telemetry_snapshots (
+          external_vehicle_key,
+          COALESCE(battery_voltage_last_updated, vehicle_last_updated, captured_at) DESC NULLS LAST,
+          id DESC
+        )
+        WHERE battery_voltage IS NOT NULL
+          AND external_vehicle_key IS NOT NULL
+          AND external_vehicle_key <> ''
+      `);
+
+      await client.query(`
         CREATE INDEX IF NOT EXISTS idx_vts_location_lower_vin_latest
         ON public.vehicle_telemetry_snapshots (
           lower(vin),

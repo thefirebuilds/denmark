@@ -35,6 +35,11 @@ const {
   normalizeBridgeAlertSettings,
 } = require("../services/alerts/bridgeAlertSettings");
 const {
+  SETTINGS_KEY: VOLTAGE_ALERT_SETTINGS_KEY,
+  DEFAULT_VOLTAGE_ALERT_SETTINGS,
+  normalizeVoltageAlertSettings,
+} = require("../services/alerts/voltageAlertSettings");
+const {
   SETTINGS_KEY: SMS_ALERT_SETTINGS_KEY,
   DEFAULT_SMS_ALERT_SETTINGS,
   normalizeSmsAlertSettings,
@@ -106,6 +111,7 @@ const DEFAULT_SETTINGS = {
     categories: DEFAULT_EXPENSE_CATEGORIES,
   },
   "alerts.bridge": DEFAULT_BRIDGE_ALERT_SETTINGS,
+  [VOLTAGE_ALERT_SETTINGS_KEY]: DEFAULT_VOLTAGE_ALERT_SETTINGS,
   [SMS_ALERT_SETTINGS_KEY]: DEFAULT_SMS_ALERT_SETTINGS,
   [INTEGRATION_ENABLEMENT_KEY]: DEFAULT_INTEGRATION_ENABLEMENT,
   [IMAP_SETTINGS_KEY]: DEFAULT_IMAP_SETTINGS,
@@ -172,6 +178,10 @@ function mergeSettings(key, value) {
 
   if (key === "alerts.bridge") {
     return normalizeBridgeAlertSettings(value);
+  }
+
+  if (key === VOLTAGE_ALERT_SETTINGS_KEY) {
+    return normalizeVoltageAlertSettings(value);
   }
 
   if (key === SMS_ALERT_SETTINGS_KEY) {

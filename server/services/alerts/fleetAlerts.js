@@ -1,6 +1,7 @@
 const pool = require("../../db");
 const { sendSms } = require("./twilioSms");
 const { getBridgeAlertSettings } = require("./bridgeAlertSettings");
+const { getVoltageAlertSettings } = require("./voltageAlertSettings");
 const {
   getEnabledLocations,
   getPrimaryParkingLocation,
@@ -131,6 +132,17 @@ function toNumber(value) {
   if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function getChicagoDateKey(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 function distanceMiles(aLat, aLon, bLat, bLon) {
@@ -540,6 +552,102 @@ async function collectDtcAlerts() {
         lastSeen
       )}.${firstReported}`,
       details: row,
+    };
+  });
+}
+
+async function collectLowVoltageAlerts() {
+  const settings = await getVoltageAlertSettings();
+  if (settings.enabled === false || settings.smsEnabled === false) return [];
+
+  const threshold = Number(settings.lowVoltageThreshold || 12.2);
+  const { rows } = await pool.query(
+    `
+      SELECT
+        v.id AS vehicle_id,
+        v.vin,
+        COALESCE(v.nickname, latest.nickname, v.vin, CONCAT('Vehicle ', v.id)) AS vehicle_name,
+        latest.id AS snapshot_id,
+        latest.service_name,
+        latest.battery_voltage,
+        latest.battery_voltage_last_updated,
+        latest.vehicle_last_updated,
+        latest.captured_at,
+        COALESCE(
+          latest.battery_voltage_last_updated,
+          latest.vehicle_last_updated,
+          latest.captured_at
+        ) AS recorded_at
+      FROM vehicles v
+      JOIN LATERAL (
+        SELECT
+          s.id,
+          s.service_name,
+          s.nickname,
+          s.battery_voltage,
+          s.battery_voltage_last_updated,
+          s.vehicle_last_updated,
+          s.captured_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.battery_voltage IS NOT NULL
+          AND s.battery_voltage BETWEEN 5 AND 16
+          AND (
+            (
+              v.vin IS NOT NULL
+              AND v.vin <> ''
+              AND s.vin IS NOT NULL
+              AND s.vin <> ''
+              AND LOWER(s.vin) = LOWER(v.vin)
+            )
+            OR (
+              v.dimo_token_id IS NOT NULL
+              AND s.dimo_token_id = v.dimo_token_id
+            )
+            OR (
+              v.external_vehicle_key IS NOT NULL
+              AND v.external_vehicle_key <> ''
+              AND s.external_vehicle_key = v.external_vehicle_key
+            )
+          )
+        ORDER BY COALESCE(
+          s.battery_voltage_last_updated,
+          s.vehicle_last_updated,
+          s.captured_at
+        ) DESC NULLS LAST,
+        s.id DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE COALESCE(v.is_active, true) = true
+        AND latest.battery_voltage < $1::numeric
+      ORDER BY latest.battery_voltage ASC, recorded_at DESC NULLS LAST
+    `,
+    [threshold]
+  );
+
+  return rows.map((row) => {
+    const voltage = Number(row.battery_voltage);
+    const roundedVoltage = Number.isFinite(voltage) ? voltage.toFixed(2) : "unknown";
+    const recordedAt = normalizeDisplayTimestamp(
+      row.recorded_at || row.captured_at,
+      row.captured_at
+    );
+    const dateKey = getChicagoDateKey(recordedAt);
+
+    return {
+      alertKey: `battery-voltage-low:${row.vehicle_id}:${dateKey}:${threshold.toFixed(
+        2
+      )}`,
+      alertType: "battery_voltage_low",
+      severity: "urgent",
+      body: `Denmark: ${row.vehicle_name} battery voltage is ${roundedVoltage}v, below the ${threshold.toFixed(
+        2
+      )}v alert threshold. Seen ${formatChicago(recordedAt)} via ${
+        row.service_name || "telematics"
+      }.`,
+      details: {
+        ...row,
+        threshold,
+      },
     };
   });
 }
@@ -1152,6 +1260,7 @@ async function collectFleetAlerts() {
     collectBridgeHeartbeatAlerts(),
     collectBridgeTuroNotificationAlerts(),
     collectDtcAlerts(),
+    collectLowVoltageAlerts(),
     collectOverdueReturnAlerts(),
     collectReturnedToParkingSpotAlerts(),
     collectLocationEntryAlerts(),
