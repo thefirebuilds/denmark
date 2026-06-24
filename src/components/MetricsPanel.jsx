@@ -1264,6 +1264,24 @@ export default function MetricsPanel() {
     return Number(summary.revenue_per_overlapping_trip ?? 0);
   }, [summary]);
 
+  const avgRevenuePerTripYoYDelta =
+    summary?.avg_revenue_per_trip_yoy_delta == null
+      ? null
+      : Number(summary.avg_revenue_per_trip_yoy_delta);
+  const avgRevenuePerTripCountLabel = `${formatNumber(
+    summary?.trip_count_overlapping
+  )} overlapping trips`;
+  const avgRevenuePerTripYoYSubtitle =
+    avgRevenuePerTripYoYDelta == null
+      ? `${avgRevenuePerTripCountLabel} · No last-year comp`
+      : `${avgRevenuePerTripCountLabel} · ${formatCurrencyTrend(
+          avgRevenuePerTripYoYDelta,
+          "vs same range last year"
+        )} · ${formatNumber(
+          summary?.avg_revenue_per_trip_last_year_period
+            ?.trip_count_overlapping ?? 0
+        )} trips last year`;
+
   const filteredAndSortedVehicles = useMemo(() => {
     const next = [...vehicles].filter((vehicle) => {
       const profit = Number(vehicle?.net_profit ?? 0);
@@ -1857,7 +1875,16 @@ const mileageStats = useMemo(() => {
               <MetricCard
                 label="Avg Rev / Trip"
                 value={formatCurrencyCompact(avgRevenuePerTrip)}
-                subtitle={`${formatNumber(summary.trip_count_overlapping)} overlapping trips`}
+                subtitle={avgRevenuePerTripYoYSubtitle}
+                tone={
+                  avgRevenuePerTripYoYDelta == null
+                    ? undefined
+                    : avgRevenuePerTripYoYDelta > 0
+                    ? "positive"
+                    : avgRevenuePerTripYoYDelta < 0
+                    ? "warning"
+                    : undefined
+                }
               />
             </div>
           </section>

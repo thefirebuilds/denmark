@@ -276,6 +276,22 @@ function getPreviousDateRange(startDate, endDate) {
   return { startDate: previousStart, endDate: previousEnd };
 }
 
+function getYearOverYearDateRange(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return { startDate: null, endDate: null };
+  }
+
+  const previousStart = new Date(startDate);
+  previousStart.setFullYear(previousStart.getFullYear() - 1);
+  previousStart.setHours(0, 0, 0, 0);
+
+  const previousEnd = new Date(endDate);
+  previousEnd.setFullYear(previousEnd.getFullYear() - 1);
+  previousEnd.setHours(23, 59, 59, 999);
+
+  return { startDate: previousStart, endDate: previousEnd };
+}
+
 function addDaysToDate(value, days) {
   const date = new Date(value);
   date.setDate(date.getDate() + days);
@@ -963,12 +979,23 @@ async function getTollMetricsDetail(rangeKey = "30d") {
 async function getSummaryMetrics(rangeKey = "30d") {
   const { key, startDate, endDate } = getDateRange(rangeKey);
   const previousRange = getPreviousDateRange(startDate, endDate);
+  const yearOverYearRange =
+    key === "all"
+      ? { startDate: null, endDate: null }
+      : getYearOverYearDateRange(startDate, endDate);
   const client = await pool.connect();
 
   try {
     const trips = await fetchTripsInRange(client, startDate, endDate);
     const previousTrips = previousRange.startDate
       ? await fetchTripsInRange(client, previousRange.startDate, previousRange.endDate)
+      : [];
+    const yearOverYearTrips = yearOverYearRange.startDate
+      ? await fetchTripsInRange(
+          client,
+          yearOverYearRange.startDate,
+          yearOverYearRange.endDate
+        )
       : [];
     const incomeTransactions = await fetchIncomeTransactionsInRange(
       client,
@@ -1006,6 +1033,16 @@ async function getSummaryMetrics(rangeKey = "30d") {
         ),
       0
     );
+    const yearOverYearTripIncome = yearOverYearTrips.reduce(
+      (sum, trip) =>
+        sum +
+        getTripProratedAmount(
+          trip,
+          yearOverYearRange.startDate,
+          yearOverYearRange.endDate
+        ),
+      0
+    );
     const fuelReimbursements = trips.reduce(
       (sum, trip) =>
         sum + getTripFuelReimbursementValue(trip, startDate, endDate),
@@ -1021,6 +1058,16 @@ async function getSummaryMetrics(rangeKey = "30d") {
         ),
       0
     );
+    const yearOverYearFuelReimbursements = yearOverYearTrips.reduce(
+      (sum, trip) =>
+        sum +
+        getTripFuelReimbursementValue(
+          trip,
+          yearOverYearRange.startDate,
+          yearOverYearRange.endDate
+        ),
+      0
+    );
     const tollRevenue = trips.reduce(
       (sum, trip) =>
         sum + getTripRecognizedTollRevenueValue(trip, startDate, endDate),
@@ -1033,6 +1080,16 @@ async function getSummaryMetrics(rangeKey = "30d") {
           trip,
           previousRange.startDate,
           previousRange.endDate
+        ),
+      0
+    );
+    const yearOverYearTollRevenue = yearOverYearTrips.reduce(
+      (sum, trip) =>
+        sum +
+        getTripRecognizedTollRevenueValue(
+          trip,
+          yearOverYearRange.startDate,
+          yearOverYearRange.endDate
         ),
       0
     );
@@ -1098,6 +1155,7 @@ async function getSummaryMetrics(rangeKey = "30d") {
     const tripLengthDistribution = buildTripLengthDistribution(trips);
 
     const tripCountOverlapping = trips.length;
+    const yearOverYearTripCountOverlapping = yearOverYearTrips.length;
 
     const tripCountProrated = trips.reduce(
       (sum, trip) => sum + getTripProratedCount(trip, startDate, endDate),
@@ -1230,6 +1288,19 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
     const revenue = tripIncome + otherIncome;
     const previousOtherIncome = previousFuelReimbursements + previousTollRevenue;
     const previousRevenue = previousTripIncome + previousOtherIncome;
+    const yearOverYearOtherIncome =
+      yearOverYearFuelReimbursements + yearOverYearTollRevenue;
+    const yearOverYearRevenue =
+      yearOverYearTripIncome + yearOverYearOtherIncome;
+    const revenuePerOverlappingTrip = safeDivide(revenue, tripCountOverlapping);
+    const yearOverYearRevenuePerOverlappingTrip = safeDivide(
+      yearOverYearRevenue,
+      yearOverYearTripCountOverlapping
+    );
+    const avgRevenuePerTripYoyDelta =
+      yearOverYearTripCountOverlapping > 0
+        ? revenuePerOverlappingTrip - yearOverYearRevenuePerOverlappingTrip
+        : null;
     const revenuePerCalendarDay = safeDivide(revenue, calendarDays);
     const previousRevenuePerCalendarDay = safeDivide(
       previousRevenue,
@@ -1334,9 +1405,35 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
           }
         : null,
 
-      revenue_per_overlapping_trip: roundMoney(
-        safeDivide(revenue, tripCountOverlapping)
-      ),
+      revenue_per_overlapping_trip: roundMoney(revenuePerOverlappingTrip),
+      last_year_revenue_per_overlapping_trip:
+        yearOverYearTripCountOverlapping > 0
+          ? roundMoney(yearOverYearRevenuePerOverlappingTrip)
+          : null,
+      avg_revenue_per_trip_yoy_delta:
+        avgRevenuePerTripYoyDelta == null
+          ? null
+          : roundMoney(avgRevenuePerTripYoyDelta),
+      avg_revenue_per_trip_yoy_delta_pct:
+        avgRevenuePerTripYoyDelta == null ||
+        !yearOverYearRevenuePerOverlappingTrip
+          ? null
+          : roundNumber(
+              avgRevenuePerTripYoyDelta / yearOverYearRevenuePerOverlappingTrip,
+              4
+            ),
+      avg_revenue_per_trip_last_year_period: yearOverYearRange.startDate
+        ? {
+            start_date: yearOverYearRange.startDate.toISOString(),
+            end_date: yearOverYearRange.endDate.toISOString(),
+            revenue: roundMoney(yearOverYearRevenue),
+            trip_count_overlapping: yearOverYearTripCountOverlapping,
+            revenue_per_overlapping_trip:
+              yearOverYearTripCountOverlapping > 0
+                ? roundMoney(yearOverYearRevenuePerOverlappingTrip)
+                : null,
+          }
+        : null,
       revenue_per_prorated_trip: roundMoney(
         safeDivide(revenue, tripCountProrated)
       ),
