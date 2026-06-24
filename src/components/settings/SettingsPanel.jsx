@@ -4816,11 +4816,21 @@ function formatLogLine(entry) {
   return `[${formatLogTimestamp(entry?.at)}] ${level} ${entry?.message || ""}`;
 }
 
+function getLogLevelClass(entry) {
+  const level = String(entry?.level || "log").trim().toLowerCase();
+  if (level === "error") return "settings-log-line--error";
+  if (level === "warn") return "settings-log-line--warn";
+  if (level === "debug") return "settings-log-line--debug";
+  if (level === "info") return "settings-log-line--info";
+  return "settings-log-line--log";
+}
+
 function ServerLogsSettingsPanel() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [liveFollow, setLiveFollow] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [followTail, setFollowTail] = useState(true);
   const logRef = useRef(null);
 
   async function loadLogs({ append = false } = {}) {
@@ -4859,17 +4869,17 @@ function ServerLogsSettingsPanel() {
   }, []);
 
   useEffect(() => {
-    if (!liveFollow) return undefined;
+    if (!autoRefresh) return undefined;
     const interval = window.setInterval(() => {
       loadLogs({ append: true });
     }, 3000);
     return () => window.clearInterval(interval);
-  }, [liveFollow, entries]);
+  }, [autoRefresh, entries]);
 
   useEffect(() => {
-    if (!liveFollow || !logRef.current) return;
+    if (!followTail || !logRef.current) return;
     logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [entries, liveFollow]);
+  }, [entries, followTail]);
 
   return (
     <section className="panel settings-main-panel">
@@ -4882,10 +4892,18 @@ function ServerLogsSettingsPanel() {
           <label className="settings-checkbox-row settings-log-follow">
             <input
               type="checkbox"
-              checked={liveFollow}
-              onChange={(event) => setLiveFollow(event.target.checked)}
+              checked={autoRefresh}
+              onChange={(event) => setAutoRefresh(event.target.checked)}
             />
-            <span>Live follow</span>
+            <span>Auto-refresh</span>
+          </label>
+          <label className="settings-checkbox-row settings-log-follow">
+            <input
+              type="checkbox"
+              checked={followTail}
+              onChange={(event) => setFollowTail(event.target.checked)}
+            />
+            <span>Follow tail</span>
           </label>
           <button
             type="button"
@@ -4909,13 +4927,24 @@ function ServerLogsSettingsPanel() {
 
           {message ? <span className="settings-message">{message}</span> : null}
 
-          <pre ref={logRef} className="settings-json-view settings-log-view">
-            {entries.length
-              ? entries.map(formatLogLine).join("\n")
-              : loading
-                ? "Loading server logs..."
-                : "No server log entries captured yet."}
-          </pre>
+          <div ref={logRef} className="settings-json-view settings-log-view">
+            {entries.length ? (
+              entries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className={`settings-log-line ${getLogLevelClass(entry)}`}
+                >
+                  {formatLogLine(entry)}
+                </div>
+              ))
+            ) : (
+              <div className="settings-log-line settings-log-line--empty">
+                {loading
+                  ? "Loading server logs..."
+                  : "No server log entries captured yet."}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </section>

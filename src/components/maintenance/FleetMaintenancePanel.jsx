@@ -1815,6 +1815,7 @@ export default function FleetMaintenancePanel({
       setAddingTodo(false);
     } catch (err) {
       console.error("Failed to create maintenance to-do:", err);
+      setAddingTodo(true);
       setTodoError(err.message || "Could not create maintenance to-do.");
     } finally {
       setSavingTodo(false);

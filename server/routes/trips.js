@@ -1492,6 +1492,8 @@ router.get("/:id/messages", async (req, res) => {
         t.turo_vehicle_id,
         mt.vehicle_vin,
         resolved_vehicle.id,
+        resolved_vehicle.nickname,
+        resolved_vehicle.vin,
         resolved_vehicle.turo_vehicle_id,
         COALESCE(resolved_vehicle.nickname, t.vehicle_name, mt.vehicle_vin),
         COALESCE(resolved_vehicle.vin, mt.vehicle_vin)

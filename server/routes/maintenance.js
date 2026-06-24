@@ -4,6 +4,7 @@
 // ------------------------------------------------------------
 
 const express = require("express");
+const crypto = require("crypto");
 
 const {
   getVehicleMaintenanceSummary,
@@ -80,6 +81,10 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
     input.reportedBy == null || String(input.reportedBy).trim() === ""
       ? null
       : String(input.reportedBy).trim();
+  const sourceKey =
+    input.sourceKey == null || String(input.sourceKey).trim() === ""
+      ? `manual:${vehicleVin}:${crypto.randomUUID()}`
+      : String(input.sourceKey).trim();
 
   const result = await client.query(
     `
@@ -94,6 +99,7 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
         blocks_guest_export,
         needs_review,
         source,
+        source_key,
         trigger_type,
         trigger_context
       )
@@ -108,8 +114,9 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
         $6,
         true,
         $7,
+        $8,
         'manual',
-        $8::jsonb
+        $9::jsonb
       )
       RETURNING *
     `,
@@ -121,6 +128,7 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
       Boolean(input.blocksRental),
       Boolean(input.blocksGuestExport),
       source,
+      sourceKey,
       JSON.stringify({
         reportedBy,
         noteSource: input.noteSource || source,

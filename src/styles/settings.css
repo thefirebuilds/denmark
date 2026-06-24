@@ -680,6 +680,34 @@
   white-space: nowrap;
 }
 
+.settings-log-line {
+  padding: 2px 0;
+  border-left: 3px solid transparent;
+  padding-left: 8px;
+}
+
+.settings-log-line--error {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.32);
+  border-left-color: #ef4444;
+  font-weight: 800;
+}
+
+.settings-log-line--warn {
+  color: #fde68a;
+  background: rgba(113, 63, 18, 0.22);
+  border-left-color: #f59e0b;
+}
+
+.settings-log-line--debug,
+.settings-log-line--info {
+  color: #bfdbfe;
+}
+
+.settings-log-line--empty {
+  color: var(--muted);
+}
+
 .rail-btn {
   font-size: 0.78rem;
   font-weight: 800;
