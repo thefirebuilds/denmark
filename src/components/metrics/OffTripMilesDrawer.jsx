@@ -174,7 +174,7 @@ export default function OffTripMilesDrawer({
             <div className="metrics-audit-empty">Failed to load audit: {error}</div>
           ) : !audit?.segments?.length && !audit?.skipped_trips?.length ? (
             <div className="metrics-audit-empty">
-              No off-trip mileage segments or unallocated mileage clues in this range.
+              No off-trip mileage segments or unaccounted mileage clues in this range.
             </div>
           ) : (
             <>
@@ -218,11 +218,11 @@ export default function OffTripMilesDrawer({
               {audit.skipped_trips?.length ? (
                 <section className="metrics-audit-section">
                   <div className="metrics-audit-callout">
-                    <strong>Unallocated mileage clues</strong>
+                    <strong>Unaccounted mileage clues</strong>
                     <span>
                       Excluded trips are usually open trips, missing odometer
                       readings, or odometer regressions. Those miles can sit in
-                      the unallocated bucket until the trip is closed or reviewed.
+                      the unaccounted bucket until the trip is closed or reviewed.
                     </span>
                   </div>
                 </section>

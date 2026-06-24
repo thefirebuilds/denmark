@@ -1419,14 +1419,23 @@ const mileageStats = useMemo(() => {
     (sum, vehicle) => sum + Number(vehicle?.off_trip_miles ?? 0),
     0
   );
-  const explicitUnallocatedMiles = vehicles.reduce(
-    (sum, vehicle) => sum + Number(vehicle?.unallocated_miles ?? 0),
+  const accountedOffTripMiles = vehicles.reduce(
+    (sum, vehicle) => sum + Number(vehicle?.accounted_off_trip_miles ?? 0),
     0
   );
-  const unallocatedMiles =
-    explicitUnallocatedMiles > 0
-      ? Math.max(0, explicitUnallocatedMiles)
-      : Math.max(0, totalMiles - tripMiles - offTripMiles);
+  const hasExplicitUnaccountedMiles = vehicles.some(
+    (vehicle) =>
+      vehicle?.unaccounted_miles != null || vehicle?.unallocated_miles != null
+  );
+  const explicitUnaccountedMiles = vehicles.reduce(
+    (sum, vehicle) =>
+      sum +
+      Number(vehicle?.unaccounted_miles ?? vehicle?.unallocated_miles ?? 0),
+    0
+  );
+  const unaccountedMiles = hasExplicitUnaccountedMiles
+    ? Math.max(0, explicitUnaccountedMiles)
+    : Math.max(0, totalMiles - tripMiles - accountedOffTripMiles);
 
   const revenue = Number(summary?.revenue ?? 0);
   const expenses = Number(summary?.expenses ?? 0);
@@ -1437,7 +1446,8 @@ const mileageStats = useMemo(() => {
     totalMiles,
     tripMiles,
     offTripMiles,
-    unallocatedMiles,
+    accountedOffTripMiles,
+    unaccountedMiles,
     revenuePerTripMile: safeDivide(revenue, tripMiles),
     profitPerTripMile: safeDivide(netProfit, tripMiles),
     expensePerMile: safeDivide(expenses, totalMiles),
@@ -1446,7 +1456,7 @@ const mileageStats = useMemo(() => {
     profitPerTotalMile: safeDivide(netProfit, totalMiles),
     tripMileUtilization: safeDivide(tripMiles, totalMiles),
     offTripShare: safeDivide(offTripMiles, totalMiles),
-    unallocatedShare: safeDivide(unallocatedMiles, totalMiles),
+    unaccountedShare: safeDivide(unaccountedMiles, totalMiles),
     bookedMilesPerTrip: safeDivide(tripMiles, trips),
   };
 }, [vehicles, summary]);
@@ -2917,14 +2927,14 @@ const mileageStats = useMemo(() => {
               />
 
               <MetricCard
-                label="Unallocated Miles"
-                value={`${formatNumber(mileageStats.unallocatedMiles)} mi`}
+                label="Unaccounted Miles"
+                value={`${formatNumber(mileageStats.unaccountedMiles)} mi`}
                 tone={
-                  mileageStats.unallocatedShare >= 0.25
+                  mileageStats.unaccountedShare >= 0.25
                     ? "warning"
                     : "default"
                 }
-                subtitle={`${formatPercent(mileageStats.unallocatedShare, 0)} of total miles; usually open trips or incomplete odometer coverage`}
+                subtitle={`${formatPercent(mileageStats.unaccountedShare, 0)} of total miles; off-trip miles stay here until reviewed`}
                 onClick={() => setOffTripAuditOpen(true)}
               />
 

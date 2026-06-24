@@ -196,7 +196,9 @@ export default function VehicleComparisonRow({
   );
   const revenuePerMile = Number(vehicle?.revenue_per_mile ?? 0);
   const expensePerMile = Number(vehicle?.operating_expense_per_mile ?? 0);
-  const unallocatedMiles = Number(vehicle?.unallocated_miles ?? 0);
+  const unaccountedMiles = Number(
+    vehicle?.unaccounted_miles ?? vehicle?.unallocated_miles ?? 0
+  );
   const hasFmvEstimate = Number.isFinite(fmvEstimateMid) && fmvEstimateMid > 0;
   const fmvChangeTone =
     fmvChange > 0 ? "positive" : fmvChange < 0 ? "negative" : "warning";
@@ -472,14 +474,14 @@ export default function VehicleComparisonRow({
                 </div>
               </div>
 
-              {vehicle?.has_open_trip_at_range_end || unallocatedMiles > 0 ? (
+              {vehicle?.has_open_trip_at_range_end || unaccountedMiles > 0 ? (
                 <div className="vehicle-compare__detail-stat">
-                  <div className="vehicle-compare__detail-label">Unallocated Miles</div>
+                  <div className="vehicle-compare__detail-label">Unaccounted Miles</div>
                   <div className="vehicle-compare__detail-value">
-                    {formatNumber(unallocatedMiles)}
+                    {formatNumber(unaccountedMiles)}
                   </div>
                   <div className="vehicle-compare__detail-hint">
-                    Total minus trip and off-trip miles
+                    Total minus trip miles and reviewed off-trip miles
                   </div>
                 </div>
               ) : null}

@@ -844,6 +844,54 @@ function applyAuditReview(row, reviewMap, keyBuilder) {
   };
 }
 
+function isAccountedOffTripReview(row) {
+  return Boolean(
+    row?.review_status ||
+      row?.review_reason ||
+      row?.reconciled_off_trip_miles != null
+  );
+}
+
+function calculateAccountedOffTripMiles(trips, endDate, reviewMap, vehicleId) {
+  const audit = calculateTripOffTripAudit(trips, endDate);
+  const segments = audit.segments.map((segment) =>
+    applyAuditReview(
+      {
+        vehicle_id: vehicleId,
+        ...segment,
+      },
+      reviewMap,
+      buildSegmentAuditKey
+    )
+  );
+  const skippedTrips = audit.skippedTrips.map((trip) =>
+    applyAuditReview(
+      {
+        vehicle_id: vehicleId,
+        ...trip,
+      },
+      reviewMap,
+      buildSkippedTripAuditKey
+    )
+  );
+
+  const rows = [...segments, ...skippedTrips];
+  const accountedMiles = rows
+    .filter(isAccountedOffTripReview)
+    .reduce((sum, row) => sum + Number(row?.off_trip_miles ?? 0), 0);
+  const totalReviewedMiles = rows.reduce(
+    (sum, row) => sum + Number(row?.off_trip_miles ?? 0),
+    0
+  );
+
+  return {
+    accountedOffTripMiles: clampNonNegative(accountedMiles),
+    unaccountedOffTripMiles: clampNonNegative(
+      totalReviewedMiles - accountedMiles
+    ),
+  };
+}
+
 function resolveAnchorStart(anchor) {
   if (anchor?.start_before_odometer != null) {
     return {
@@ -1139,6 +1187,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
       : [];
     const capitalMetricsRows = await getCapitalMetricsByVehicle(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
+    const offTripAuditReviews = await fetchOffTripAuditReviews(client);
     const allRangeStart =
       startDate ||
       [
@@ -1273,6 +1322,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
         trip_miles: 0,
         total_miles: totalMiles,
         off_trip_miles: 0,
+        accounted_off_trip_miles: 0,
+        unaccounted_off_trip_miles: 0,
+        unaccounted_miles: 0,
         unallocated_miles: 0,
         has_open_trip_at_range_end: false,
         mileage_confidence: mileageConfidence,
@@ -1315,6 +1367,12 @@ async function getVehicleMetrics(rangeKey = "30d") {
       const tollExposure = tollExposureMap.get(vehicleId) || {};
       const tripsForVehicle = vehicleTrips.get(vehicleId) || [];
       const closedTripMileage = calculateTripOffTripMiles(tripsForVehicle);
+      const auditedOffTripMileage = calculateAccountedOffTripMiles(
+        tripsForVehicle,
+        endDate,
+        offTripAuditReviews,
+        vehicleId
+      );
 
       metrics.toll_charge_count = Number(tollExposure.toll_charge_count || 0);
       metrics.toll_charge_total = roundMoney(tollExposure.toll_charge_total);
@@ -1341,6 +1399,17 @@ async function getVehicleMetrics(rangeKey = "30d") {
       metrics.closed_trip_mileage_confidence = closedTripMileage.confidence;
       metrics.closed_trip_off_trip_miles = roundNumber(
         closedTripMileage.offTripMiles,
+        1
+      );
+      metrics.accounted_off_trip_miles = roundNumber(
+        auditedOffTripMileage.accountedOffTripMiles,
+        1
+      );
+      metrics.unaccounted_off_trip_miles = roundNumber(
+        clampNonNegative(
+          closedTripMileage.offTripMiles -
+            auditedOffTripMileage.accountedOffTripMiles
+        ),
         1
       );
       metrics.first_trip_start_odometer =
@@ -1650,13 +1719,14 @@ async function getVehicleMetrics(rangeKey = "30d") {
           ? "total_miles"
           : "missing";
 
-      const residualMiles = clampNonNegative(
+      const unaccountedMiles = clampNonNegative(
         toNumber(metrics.total_miles) -
           toNumber(metrics.trip_miles) -
-          toNumber(metrics.closed_trip_off_trip_miles)
+          toNumber(metrics.accounted_off_trip_miles)
       );
 
-      metrics.unallocated_miles = roundNumber(residualMiles, 1);
+      metrics.unaccounted_miles = roundNumber(unaccountedMiles, 1);
+      metrics.unallocated_miles = metrics.unaccounted_miles;
       metrics.off_trip_miles = roundNumber(metrics.closed_trip_off_trip_miles, 1);
 
       if (
@@ -1949,12 +2019,31 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
         return String(a.nickname || "").localeCompare(String(b.nickname || ""));
       });
 
+    const accountedRows = reviewedRows.filter(isAccountedOffTripReview);
+    const unaccountedRows = reviewedRows.filter(
+      (row) => !isAccountedOffTripReview(row)
+    );
+
     return {
       range: key,
       generated_at: new Date().toISOString(),
       summary: {
         total_off_trip_miles: roundNumber(
           reviewedRows.reduce((sum, row) => sum + Number(row?.off_trip_miles ?? 0), 0),
+          1
+        ),
+        accounted_off_trip_miles: roundNumber(
+          accountedRows.reduce(
+            (sum, row) => sum + Number(row?.off_trip_miles ?? 0),
+            0
+          ),
+          1
+        ),
+        unaccounted_off_trip_miles: roundNumber(
+          unaccountedRows.reduce(
+            (sum, row) => sum + Number(row?.off_trip_miles ?? 0),
+            0
+          ),
           1
         ),
         segment_count: reviewedRows.length,
