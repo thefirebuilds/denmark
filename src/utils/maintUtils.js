@@ -676,6 +676,13 @@ function getQueueFamilyFromRuleCode(ruleCode) {
 }
 
 function getQueueFamilyFromItem(item) {
+  if (isManualTodoTask(item?.task)) {
+    return {
+      key: `manual-task:${item.task.id || item.id || normalizeQueueText(item.title)}`,
+      title: item?.title || item?.task?.title || "Open maintenance item",
+    };
+  }
+
   const linkedCodes = [
     item?.linkedRuleCode,
     ...(Array.isArray(item?.linkedRuleCodes) ? item.linkedRuleCodes : []),
