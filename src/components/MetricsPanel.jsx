@@ -1451,8 +1451,6 @@ const mileageStats = useMemo(() => {
     revenuePerTripMile: safeDivide(revenue, tripMiles),
     profitPerTripMile: safeDivide(netProfit, tripMiles),
     expensePerMile: safeDivide(expenses, totalMiles),
-    expensePerTripMile: safeDivide(expenses, tripMiles),
-    revenuePerTotalMile: safeDivide(revenue, totalMiles),
     profitPerTotalMile: safeDivide(netProfit, totalMiles),
     tripMileUtilization: safeDivide(tripMiles, totalMiles),
     offTripShare: safeDivide(offTripMiles, totalMiles),
@@ -1806,13 +1804,13 @@ const mileageStats = useMemo(() => {
               />
 
               <MetricCard
-                label="Expense / Mile"
+                label="Expense / Total Mile"
                 value={formatCurrencyCompact(
                   summary.vehicle_run_rate?.operating_expense_per_mile
                 )}
-                subtitle={formatCurrencyTrend(
+                subtitle={`${formatCurrencyTrend(
                   summary.vehicle_run_rate?.operating_expense_per_mile_delta
-                )}
+                )} vs prior; total miles`}
                 tone={
                   Number(
                     summary.vehicle_run_rate?.operating_expense_per_mile_delta ?? 0
@@ -2941,7 +2939,7 @@ const mileageStats = useMemo(() => {
               <MetricCard
                 label="Rev / Trip Mile"
                 value={formatCurrencyCompact(mileageStats.revenuePerTripMile)}
-                subtitle={`${formatCurrencyCompact(mileageStats.revenuePerTotalMile)} / total mile`}
+                subtitle="Revenue divided by on-trip miles"
               />
 
               <MetricCard
@@ -2958,9 +2956,9 @@ const mileageStats = useMemo(() => {
               />
 
               <MetricCard
-                label="Expense / Mile"
+                label="Expense / Total Mile"
                 value={formatCurrencyCompact(mileageStats.expensePerMile)}
-                subtitle={`${formatCurrencyCompact(mileageStats.expensePerTripMile)} / trip mile`}
+                subtitle="Expenses divided by all miles"
               />
             </div>
           </section>
@@ -3078,7 +3076,7 @@ const mileageStats = useMemo(() => {
                   <option value="value_desc">Value ↓</option>
                   <option value="occupancy_desc">Occupancy ↓</option>
                   <option value="rev_day_desc">Rev / Day ↓</option>
-                  <option value="rev_mile_desc">Rev / Mile ↓</option>
+                  <option value="rev_mile_desc">Rev / Trip Mile ↓</option>
                   <option value="trips_desc">Trips ↓</option>
                   <option value="run_rate_desc">Run Rate ↓</option>
                   <option value="recovery_desc">Recovery % ↓</option>
@@ -3121,8 +3119,8 @@ const mileageStats = useMemo(() => {
               <div className="vehicle-compare-header__cell">Rented / Available</div>
               <div className="vehicle-compare-header__cell">Occupancy</div>
               <div className="vehicle-compare-header__cell">Rev / Day</div>
-              <div className="vehicle-compare-header__cell">Rev / Mile</div>
-              <div className="vehicle-compare-header__cell">Exp / Mile</div>
+              <div className="vehicle-compare-header__cell">Rev / Trip Mi</div>
+              <div className="vehicle-compare-header__cell">Exp / Total Mi</div>
               <div className="vehicle-compare-header__cell">Trips</div>
               <div className="vehicle-compare-header__cell">Run Rate</div>
               <div className="vehicle-compare-header__cell"></div>

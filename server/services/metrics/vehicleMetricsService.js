@@ -950,20 +950,7 @@ function calculateFleetOperatingMileageBasis({
       totalMiles = resolvedEnd - resolvedStart.odometer;
     }
 
-    const tripMiles = (vehicleTrips.get(vehicleId) || []).reduce(
-      (tripSum, trip) =>
-        tripSum +
-        getTripProratedValue(
-          getTripMiles(trip),
-          trip.trip_start,
-          trip.trip_end,
-          startDate,
-          endDate
-        ),
-      0
-    );
-
-    return sum + (totalMiles > 0 ? totalMiles : tripMiles > 0 ? tripMiles : 0);
+    return sum + (totalMiles > 0 ? totalMiles : 0);
   }, 0);
 }
 
@@ -1660,19 +1647,13 @@ async function getVehicleMetrics(rangeKey = "30d") {
       );
 
       const operatingExpenseMiles =
-        toNumber(metrics.total_miles) > 0
-          ? toNumber(metrics.total_miles)
-          : toNumber(metrics.trip_miles) > 0
-          ? toNumber(metrics.trip_miles)
-          : 0;
+        toNumber(metrics.total_miles) > 0 ? toNumber(metrics.total_miles) : 0;
       metrics.operating_expense_per_mile = roundMoney(
         safeDivide(metrics.operating_run_rate_expenses, operatingExpenseMiles)
       );
       metrics.operating_expense_per_mile_basis =
         toNumber(metrics.total_miles) > 0
           ? "total_miles"
-          : toNumber(metrics.trip_miles) > 0
-          ? "trip_miles"
           : "missing";
 
       metrics.net_profit = roundMoney(
@@ -1703,11 +1684,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
       );
 
       const revenueMiles =
-        toNumber(metrics.trip_miles) > 0
-          ? toNumber(metrics.trip_miles)
-          : toNumber(metrics.total_miles) > 0
-          ? toNumber(metrics.total_miles)
-          : 0;
+        toNumber(metrics.trip_miles) > 0 ? toNumber(metrics.trip_miles) : 0;
 
       metrics.revenue_per_mile = roundMoney(
         safeDivide(metrics.revenue_total, revenueMiles)
@@ -1715,8 +1692,6 @@ async function getVehicleMetrics(rangeKey = "30d") {
       metrics.revenue_per_mile_basis =
         toNumber(metrics.trip_miles) > 0
           ? "trip_miles"
-          : toNumber(metrics.total_miles) > 0
-          ? "total_miles"
           : "missing";
 
       const unaccountedMiles = clampNonNegative(
@@ -1813,7 +1788,6 @@ async function getVehicleMetrics(rangeKey = "30d") {
     const runRateMiles = responseVehicles.reduce((sum, item) => {
       const basis = String(item?.operating_expense_per_mile_basis || "").toLowerCase();
       if (basis === "total_miles") return sum + toNumber(item.total_miles);
-      if (basis === "trip_miles") return sum + toNumber(item.trip_miles);
       return sum;
     }, 0);
     const runRateDaily = safeDivide(runRateExpenses, periodDays);

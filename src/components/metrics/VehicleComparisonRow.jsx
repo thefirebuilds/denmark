@@ -88,15 +88,15 @@ function formatRentedAvailableDays(rentedDays, availableDays) {
 
 function formatRevenuePerMileBasis(value) {
   const basis = String(value || "").toLowerCase();
-  if (basis === "trip_miles") return "Trip miles";
-  if (basis === "total_miles") return "Total miles";
-  return "No miles";
+  if (basis === "trip_miles") return "Revenue / on-trip mile";
+  if (basis === "total_miles") return "Legacy total-mile basis";
+  return "No trip miles";
 }
 
 function formatExpensePerMileBasis(value) {
   const basis = String(value || "").toLowerCase();
-  if (basis === "trip_miles") return "Operating spend / trip mile";
   if (basis === "total_miles") return "Operating spend / total mile";
+  if (basis === "trip_miles") return "Legacy trip-mile basis";
   return "No miles";
 }
 
@@ -392,7 +392,7 @@ export default function VehicleComparisonRow({
               </div>
 
               <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Rev / Mile</div>
+                <div className="vehicle-compare__detail-label">Rev / Trip Mile</div>
                 <div className="vehicle-compare__detail-value">
                   {formatCurrencyCompact(revenuePerMile)}
                 </div>
@@ -402,7 +402,7 @@ export default function VehicleComparisonRow({
               </div>
 
               <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Expense / Mile</div>
+                <div className="vehicle-compare__detail-label">Expense / Total Mile</div>
                 <div className="vehicle-compare__detail-value">
                   {formatCurrencyCompact(expensePerMile)}
                 </div>
