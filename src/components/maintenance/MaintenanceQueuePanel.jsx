@@ -784,6 +784,62 @@ export default function MaintenanceQueuePanel({
     }
   }
 
+  async function handleDeleteTask(item) {
+    const taskId = getQueueItemTaskId(item);
+    if (!taskId) {
+      window.alert("This queue item is not linked to a maintenance task.");
+      return;
+    }
+
+    const taskTitle = item?.title || item?.task?.title || "this maintenance task";
+    const vehicleLabel =
+      item?.vehicleNickname || selectedFleetVehicle?.nickname || "this vehicle";
+    const confirmed = window.confirm(
+      `Delete "${taskTitle}" from ${vehicleLabel}? This removes the to-do entirely.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setUpdatingTaskId(taskId);
+
+      const res = await fetch(`/api/maintenance-tasks/${encodeURIComponent(taskId)}`, {
+        method: "DELETE",
+      });
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      setExpandedQueueItems((current) => {
+        const next = new Set(current);
+        next.delete(getQueueItemKey(item));
+        return next;
+      });
+
+      if (selectedVehicleId && selectedFleetVehicle?.vin) {
+        await loadSummaryForSelectedVehicle(selectedFleetVehicle.vin);
+      } else {
+        setFleetPlanningItems((prev) =>
+          prev.filter((entry) => entry.task?.id !== taskId)
+        );
+      }
+
+      notifyMaintenanceTasksUpdated({
+        task: body?.task || null,
+        taskId,
+        source: "maintenance_queue_delete",
+      });
+    } catch (err) {
+      console.error("Failed to delete maintenance task:", err);
+      window.alert(err.message || "Could not delete task.");
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  }
+
   async function handleReopenTask(task) {
     const taskId = task?.id;
     if (!taskId) return;
@@ -1045,6 +1101,14 @@ export default function MaintenanceQueuePanel({
                   disabled={!canReassign || isUpdating}
                 >
                   Reassign
+                </button>
+                <button
+                  type="button"
+                  className="maintenance-queue-action maintenance-queue-action--danger"
+                  onClick={() => handleDeleteTask(item)}
+                  disabled={isUpdating}
+                >
+                  Delete
                 </button>
               </>
             ) : null}

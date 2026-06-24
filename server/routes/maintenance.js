@@ -437,6 +437,48 @@ router.patch("/maintenance-tasks/:taskId", async (req, res) => {
 });
 
 // ------------------------------------------------------------
+// DELETE maintenance task
+// ------------------------------------------------------------
+router.delete("/maintenance-tasks/:taskId", async (req, res) => {
+  try {
+    const taskId = Number(req.params.taskId);
+
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: "Invalid taskId" });
+    }
+
+    const result = await pool.query(
+      `
+        DELETE FROM maintenance_tasks
+        WHERE id = $1
+        RETURNING *
+      `,
+      [taskId]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Maintenance task not found" });
+    }
+
+    console.log("[maintenance] to-do deleted", {
+      taskId: result.rows[0].id,
+      vin: result.rows[0].vehicle_vin,
+      title: result.rows[0].title,
+    });
+
+    res.json({
+      ok: true,
+      task: result.rows[0],
+    });
+  } catch (err) {
+    console.error(`DELETE /maintenance-tasks/${req.params.taskId} failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to delete maintenance task",
+    });
+  }
+});
+
+// ------------------------------------------------------------
 // POST maintenance event (inspection/service entry)
 // ------------------------------------------------------------
 router.post("/vehicles/:vin/maintenance-events", async (req, res) => {
