@@ -79,6 +79,35 @@ function getAgeMinutes(value) {
   return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
 }
 
+const TELEMETRY_READING_DEFINITIONS = {
+  battery_voltage: {
+    label: "Battery voltage",
+    valueSql: "s.battery_voltage",
+    rawValueSql: "s.battery_voltage",
+    recordedAtSql:
+      "COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at)",
+    whereSql: "s.battery_voltage IS NOT NULL AND s.battery_voltage BETWEEN 5 AND 16",
+    unit: "v",
+  },
+  coolant_temp: {
+    label: "Engine temp",
+    valueSql:
+      "CASE WHEN s.coolant_temp <= 130 THEN s.coolant_temp * 9 / 5 + 32 ELSE s.coolant_temp END",
+    rawValueSql: "s.coolant_temp",
+    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)",
+    whereSql: "s.coolant_temp IS NOT NULL",
+    unit: "F",
+  },
+  engine_rpm: {
+    label: "Tachometer",
+    valueSql: "s.engine_rpm",
+    rawValueSql: "s.engine_rpm",
+    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)",
+    whereSql: "s.engine_rpm IS NOT NULL AND s.engine_rpm >= 0",
+    unit: "RPM",
+  },
+};
+
 function getAgeDays(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -163,6 +192,7 @@ async function findVehicleBySelector(selector) {
     FROM vehicles
     WHERE lower(trim(vin)) = $1
        OR lower(trim(nickname)) = $1
+       OR trim(CAST(id AS text)) = $1
        OR lower(trim(COALESCE(license_plate, ''))) = $1
        OR EXISTS (
          SELECT 1
@@ -549,6 +579,97 @@ router.get("/:selector/fmv-estimates", async (req, res) => {
     res
       .status(err.statusCode || 500)
       .json({ error: err.message || "Failed to load vehicle FMV history" });
+  }
+});
+
+router.get("/:selector/telemetry-readings", async (req, res) => {
+  try {
+    const signal = normalizeSelector(req.query.signal);
+    const definition = TELEMETRY_READING_DEFINITIONS[signal];
+
+    if (!definition) {
+      return res.status(400).json({
+        error: "Unsupported telemetry signal",
+        supportedSignals: Object.keys(TELEMETRY_READING_DEFINITIONS),
+      });
+    }
+
+    const vehicle = await findVehicleBySelector(req.params.selector);
+    if (!vehicle) {
+      return res.status(404).json({ error: "Vehicle not found" });
+    }
+
+    const limit = Math.max(
+      1,
+      Math.min(100, Number.parseInt(req.query.limit, 10) || 50)
+    );
+    const { rows } = await pool.query(
+      `
+        SELECT
+          s.id AS snapshot_id,
+          s.service_name,
+          ${definition.valueSql} AS value,
+          ${definition.rawValueSql} AS raw_value,
+          ${definition.recordedAtSql} AS recorded_at,
+          s.captured_at,
+          s.vehicle_last_updated,
+          s.vin,
+          s.dimo_token_id,
+          s.external_vehicle_key
+        FROM vehicle_telemetry_snapshots s
+        WHERE ${definition.whereSql}
+          AND (
+            (
+              $1::text IS NOT NULL
+              AND $1::text <> ''
+              AND s.vin IS NOT NULL
+              AND s.vin <> ''
+              AND LOWER(s.vin) = LOWER($1::text)
+            )
+            OR (
+              $2::bigint IS NOT NULL
+              AND s.dimo_token_id = $2::bigint
+            )
+            OR (
+              $3::text IS NOT NULL
+              AND $3::text <> ''
+              AND s.external_vehicle_key = $3::text
+            )
+          )
+        ORDER BY ${definition.recordedAtSql} DESC NULLS LAST, s.id DESC
+        LIMIT $4
+      `,
+      [
+        vehicle.vin || null,
+        vehicle.dimo_token_id || null,
+        vehicle.external_vehicle_key || null,
+        limit,
+      ]
+    );
+
+    return res.json({
+      vehicle: {
+        id: vehicle.id,
+        nickname: vehicle.nickname,
+        vin: vehicle.vin,
+      },
+      signal,
+      label: definition.label,
+      unit: definition.unit,
+      limit,
+      readings: rows.map((row) => ({
+        snapshotId: row.snapshot_id,
+        source: row.service_name || null,
+        value: row.value == null ? null : Number(row.value),
+        rawValue: row.raw_value == null ? null : Number(row.raw_value),
+        recordedAt: row.recorded_at || row.captured_at || null,
+        capturedAt: row.captured_at || null,
+        vehicleLastUpdated: row.vehicle_last_updated || null,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/vehicles/:selector/telemetry-readings failed:", err);
+    return res.status(500).json({ error: "Failed to load telemetry readings" });
   }
 });
 

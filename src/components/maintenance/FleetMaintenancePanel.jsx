@@ -344,6 +344,38 @@ function formatBatteryVoltageDate(value) {
   });
 }
 
+function formatTelemetryReadingTime(value) {
+  if (!value) return "Unknown time";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatTelemetryReadingValue(value, signal) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  if (signal === "battery_voltage") return `${num.toFixed(2)}v`;
+  if (signal === "coolant_temp") return `${Math.round(num)} F`;
+  if (signal === "engine_rpm") {
+    return `${Math.round(num).toLocaleString("en-US")} RPM`;
+  }
+  return String(num);
+}
+
+function formatRawTelemetryReading(reading, signal) {
+  const value = Number(reading?.value);
+  const rawValue = Number(reading?.rawValue);
+  if (!Number.isFinite(value) || !Number.isFinite(rawValue)) return "";
+  if (signal !== "coolant_temp") return "";
+  if (Math.round(value) === Math.round(rawValue)) return "";
+  return `raw ${rawValue.toFixed(1)}`;
+}
+
 function buildEngineTemperatureStatus(fleetVehicle = null) {
   const engine = fleetVehicle?.telemetry?.engine || {};
   const latestTemp = Number(engine.coolant_temp);
@@ -803,6 +835,9 @@ export default function FleetMaintenancePanel({
   const [selectedInspectionItem, setSelectedInspectionItem] = useState(null);
   const [inspectionDrawerOpen, setInspectionDrawerOpen] = useState(false);
   const [inspectionVehicle, setInspectionVehicle] = useState(null);
+  const [telemetryHistory, setTelemetryHistory] = useState(null);
+  const [telemetryHistoryLoading, setTelemetryHistoryLoading] = useState(false);
+  const [telemetryHistoryError, setTelemetryHistoryError] = useState("");
   const [liveDimoDiagnostics, setLiveDimoDiagnostics] = useState(null);
   const [liveDimoDiagnosticsError, setLiveDimoDiagnosticsError] = useState("");
 
@@ -1343,6 +1378,58 @@ export default function FleetMaintenancePanel({
   const title = `${vehicle.nickname} • ${vehicle.year} ${vehicle.make} ${vehicle.model}`;
 
   const maintenanceModeEnabled = selectedFleetVehicle?.in_service === false;
+
+  async function openTelemetryHistory(signal) {
+    const selector =
+      vehicle.vin ||
+      selectedFleetVehicle?.vin ||
+      selectedFleetVehicle?.nickname ||
+      selectedFleetVehicle?.id ||
+      vehicle.nickname ||
+      selectedVehicleId;
+
+    if (!selector) {
+      setTelemetryHistoryError("No vehicle selector available.");
+      setTelemetryHistory({
+        signal,
+        label: "Telemetry history",
+        readings: [],
+      });
+      return;
+    }
+
+    try {
+      setTelemetryHistoryLoading(true);
+      setTelemetryHistoryError("");
+      setTelemetryHistory({
+        signal,
+        label:
+          signal === "battery_voltage"
+            ? "Battery voltage"
+            : signal === "coolant_temp"
+            ? "Engine temp"
+            : "Tachometer",
+        readings: [],
+      });
+
+      const res = await fetch(
+        `/api/vehicles/${encodeURIComponent(
+          selector
+        )}/telemetry-readings?signal=${encodeURIComponent(signal)}&limit=50`
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to load telemetry readings");
+      }
+
+      setTelemetryHistory(data);
+    } catch (err) {
+      setTelemetryHistoryError(err.message || "Failed to load telemetry readings");
+    } finally {
+      setTelemetryHistoryLoading(false);
+    }
+  }
 
   useEffect(() => {
     setBodyNotesText(
@@ -2569,10 +2656,12 @@ export default function FleetMaintenancePanel({
                   ) : null}
                 </div>
 
-                <div
+                <button
+                  type="button"
                   className={`fleet-maintenance-meta-item fleet-maintenance-battery-voltage fleet-maintenance-telematics--${
                     vehicle.battery_voltage_health?.tone || "unknown"
                   }`}
+                  onClick={() => openTelemetryHistory("battery_voltage")}
                 >
                   <span className="fleet-maintenance-meta-label">
                     Battery voltage
@@ -2619,7 +2708,7 @@ export default function FleetMaintenancePanel({
                       </small>
                     </span>
                   </div>
-                </div>
+                </button>
 
                 <div
                   className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
@@ -2647,10 +2736,12 @@ export default function FleetMaintenancePanel({
                   </span>
                 </div>
 
-                <div
+                <button
+                  type="button"
                   className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
                     vehicle.engine_temperature?.tone || "unknown"
                   }`}
+                  onClick={() => openTelemetryHistory("coolant_temp")}
                 >
                   <span className="fleet-maintenance-meta-label">
                     Engine temp
@@ -2662,12 +2753,14 @@ export default function FleetMaintenancePanel({
                     {vehicle.engine_temperature?.detail ||
                       "No DIMO engine temp history"}
                   </span>
-                </div>
+                </button>
 
-                <div
+                <button
+                  type="button"
                   className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
                     vehicle.engine_rpm?.tone || "unknown"
                   }`}
+                  onClick={() => openTelemetryHistory("engine_rpm")}
                 >
                   <span className="fleet-maintenance-meta-label">
                     Tachometer
@@ -2678,7 +2771,7 @@ export default function FleetMaintenancePanel({
                   <span className="fleet-maintenance-registration-subvalue">
                     {vehicle.engine_rpm?.detail || "No DIMO tachometer history"}
                   </span>
-                </div>
+                </button>
               </div>
 
               <div className="fleet-maintenance-inspections">
@@ -3291,6 +3384,91 @@ export default function FleetMaintenancePanel({
         onDeleteHistoryEntry={handleDeleteMaintenanceEntry}
         saving={savingInspection}
       />
+
+      {telemetryHistory ? (
+        <div
+          className="fleet-maintenance-telemetry-history-backdrop"
+          role="presentation"
+          onClick={() => {
+            setTelemetryHistory(null);
+            setTelemetryHistoryError("");
+          }}
+        >
+          <section
+            className="fleet-maintenance-telemetry-history"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${telemetryHistory.label || "Telemetry"} history`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="fleet-maintenance-telemetry-history-head">
+              <div>
+                <span>Last 50 readings</span>
+                <h3>{telemetryHistory.label || "Telemetry history"}</h3>
+              </div>
+              <button
+                type="button"
+                className="fleet-maintenance-telemetry-history-close"
+                onClick={() => {
+                  setTelemetryHistory(null);
+                  setTelemetryHistoryError("");
+                }}
+                aria-label="Close telemetry history"
+              >
+                X
+              </button>
+            </header>
+
+            {telemetryHistoryLoading ? (
+              <div className="fleet-maintenance-telemetry-history-state">
+                Loading readings...
+              </div>
+            ) : telemetryHistoryError ? (
+              <div className="fleet-maintenance-telemetry-history-state fleet-maintenance-telemetry-history-state--error">
+                {telemetryHistoryError}
+              </div>
+            ) : Array.isArray(telemetryHistory.readings) &&
+              telemetryHistory.readings.length ? (
+              <div className="fleet-maintenance-telemetry-history-list">
+                {telemetryHistory.readings.map((reading) => {
+                  const rawText = formatRawTelemetryReading(
+                    reading,
+                    telemetryHistory.signal
+                  );
+                  return (
+                    <div
+                      key={`${reading.snapshotId}-${reading.recordedAt}`}
+                      className="fleet-maintenance-telemetry-history-row"
+                    >
+                      <div>
+                        <strong>
+                          {formatTelemetryReadingValue(
+                            reading.value,
+                            telemetryHistory.signal
+                          )}
+                        </strong>
+                        {rawText ? <small>{rawText}</small> : null}
+                      </div>
+                      <span>
+                        {formatTelemetryReadingTime(reading.recordedAt)}
+                      </span>
+                      <em>
+                        {[reading.source, `#${reading.snapshotId}`]
+                          .filter(Boolean)
+                          .join(" - ")}
+                      </em>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="fleet-maintenance-telemetry-history-state">
+                No readings found for this signal.
+              </div>
+            )}
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

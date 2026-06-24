@@ -424,6 +424,22 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
+button.fleet-maintenance-meta-item {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.fleet-maintenance-meta-item:hover,
+button.fleet-maintenance-meta-item:focus-visible {
+  outline: 1px solid rgba(96, 165, 250, 0.34);
+  outline-offset: 2px;
+  background: rgba(96, 165, 250, 0.08);
+}
+
 .maintenance-queue-card--compact {
   padding: 0;
   overflow: hidden;
@@ -2008,5 +2024,99 @@ select.drawer-input option {
 .fleet-maintenance-card-ticker--overdue {
   background: rgba(239, 68, 68, 0.14);
   border-color: rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+}
+
+.fleet-maintenance-telemetry-history-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.fleet-maintenance-telemetry-history {
+  width: min(560px, 100%);
+  max-height: min(720px, calc(100vh - 36px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46);
+}
+
+.fleet-maintenance-telemetry-history-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.fleet-maintenance-telemetry-history-head span {
+  color: rgba(226, 232, 240, 0.64);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fleet-maintenance-telemetry-history-head h3 {
+  margin: 3px 0 0;
+  font-size: 20px;
+}
+
+.fleet-maintenance-telemetry-history-close {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+}
+
+.fleet-maintenance-telemetry-history-list {
+  overflow: auto;
+  padding: 8px;
+}
+
+.fleet-maintenance-telemetry-history-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.9fr) minmax(132px, 1fr) minmax(86px, 0.8fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.fleet-maintenance-telemetry-history-row strong {
+  display: block;
+  font-size: 15px;
+}
+
+.fleet-maintenance-telemetry-history-row small,
+.fleet-maintenance-telemetry-history-row em,
+.fleet-maintenance-telemetry-history-row span {
+  color: rgba(226, 232, 240, 0.68);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.fleet-maintenance-telemetry-history-state {
+  padding: 28px 18px;
+  color: rgba(226, 232, 240, 0.72);
+  text-align: center;
+}
+
+.fleet-maintenance-telemetry-history-state--error {
   color: #fecaca;
 }
