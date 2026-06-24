@@ -314,6 +314,15 @@ router.post("/vehicles/:vin/maintenance-tasks", async (req, res) => {
   try {
     const vin = String(req.params.vin || "").trim();
     const task = await createManualMaintenanceTask(client, vin, req.body || {});
+    console.log(
+      "[maintenance] manual to-do created",
+      {
+        taskId: task.id,
+        vin: task.vehicle_vin,
+        title: task.title,
+        sourceKey: task.source_key,
+      }
+    );
 
     res.status(201).json({
       ok: true,

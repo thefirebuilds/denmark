@@ -387,6 +387,17 @@ function normalizeRuleCode(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isManualTodoTask(task) {
+  const taskType = normalizeTaskType(task?.task_type);
+  const source = normalizeTaskType(task?.source);
+  const triggerType = normalizeTaskType(task?.trigger_type);
+
+  return (
+    taskType === "manual_todo" ||
+    (source === "manual" && triggerType === "manual" && !task?.rule_id)
+  );
+}
+
 export function getTaskLinkedRuleCodes(task) {
   const rawType = String(task?.task_type || "").toLowerCase();
   const title = String(task?.title || "").toLowerCase();
@@ -398,6 +409,10 @@ export function getTaskLinkedRuleCodes(task) {
 
   if (triggerRuleCode) {
     return [triggerRuleCode];
+  }
+
+  if (isManualTodoTask(task)) {
+    return [];
   }
 
   if (type.includes("oillevel")) {
@@ -552,6 +567,10 @@ function isEventRecentEnoughForTask(event, summary) {
 }
 
 export function isTaskSatisfiedByRule(task, summary) {
+  if (isManualTodoTask(task)) {
+    return false;
+  }
+
   const linkedRules = getLinkedRulesForTask(summary, task);
   if (!linkedRules.length) return false;
 
