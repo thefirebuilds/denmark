@@ -398,6 +398,11 @@ function isManualTodoTask(task) {
   );
 }
 
+function isStandaloneTask(task) {
+  const taskType = normalizeTaskType(task?.task_type);
+  return isManualTodoTask(task) || taskType === "battery_voltage_inspection";
+}
+
 export function getTaskLinkedRuleCodes(task) {
   const rawType = String(task?.task_type || "").toLowerCase();
   const title = String(task?.title || "").toLowerCase();
@@ -411,7 +416,7 @@ export function getTaskLinkedRuleCodes(task) {
     return [triggerRuleCode];
   }
 
-  if (isManualTodoTask(task)) {
+  if (isStandaloneTask(task)) {
     return [];
   }
 
@@ -567,7 +572,7 @@ function isEventRecentEnoughForTask(event, summary) {
 }
 
 export function isTaskSatisfiedByRule(task, summary) {
-  if (isManualTodoTask(task)) {
+  if (isStandaloneTask(task)) {
     return false;
   }
 
@@ -676,9 +681,9 @@ function getQueueFamilyFromRuleCode(ruleCode) {
 }
 
 function getQueueFamilyFromItem(item) {
-  if (isManualTodoTask(item?.task)) {
+  if (isStandaloneTask(item?.task)) {
     return {
-      key: `manual-task:${item.task.id || item.id || normalizeQueueText(item.title)}`,
+      key: `standalone-task:${item.task.id || item.id || normalizeQueueText(item.title)}`,
       title: item?.title || item?.task?.title || "Open maintenance item",
     };
   }
@@ -1251,6 +1256,8 @@ export function mapMaintenanceSummaryToGuestInspectionVehicle(
     export_ready: !summary?.blocksGuestExport,
     telematics: buildTelematicsStatus(fleetVehicle || fallbackVehicle),
     telemetry_location: buildTelemetryLocation(fleetVehicle || fallbackVehicle),
+    battery_voltage_health:
+      summary?.batteryVoltageHealth || sourceVehicle.batteryVoltageHealth || null,
     mil_status: buildMilStatus(fleetVehicle || fallbackVehicle, liveDiagnostics),
     engine_temperature: buildEngineTemperatureStatus(fleetVehicle || fallbackVehicle),
     engine_rpm: buildEngineRpmStatus(fleetVehicle || fallbackVehicle),

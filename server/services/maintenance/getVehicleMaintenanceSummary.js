@@ -27,12 +27,255 @@ function toIntOrNull(value) {
   return Number.isFinite(num) ? Math.round(num) : null;
 }
 
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function roundVoltage(value) {
+  const num = toNumberOrNull(value);
+  return num == null ? null : Number(num.toFixed(2));
+}
+
+function formatVoltage(value) {
+  const num = roundVoltage(value);
+  return num == null ? "unknown" : `${num.toFixed(2)}v`;
+}
+
 function addDays(dateValue, days) {
   if (!dateValue || !Number.isFinite(days)) return null;
   const d = new Date(dateValue);
   if (Number.isNaN(d.getTime())) return null;
   d.setDate(d.getDate() + days);
   return d;
+}
+
+async function getBatteryVoltageHealth(client, vin) {
+  const { rows } = await client.query(
+    `
+      WITH readings AS (
+        SELECT
+          battery_voltage::numeric AS voltage,
+          COALESCE(
+            battery_voltage_last_updated,
+            vehicle_last_updated,
+            captured_at
+          ) AS recorded_at
+        FROM vehicle_telemetry_snapshots
+        WHERE vin IS NOT NULL
+          AND LOWER(vin) = LOWER($1)
+          AND battery_voltage IS NOT NULL
+          AND battery_voltage BETWEEN 5 AND 16
+          AND COALESCE(
+            battery_voltage_last_updated,
+            vehicle_last_updated,
+            captured_at
+          ) >= NOW() - INTERVAL '30 days'
+      ),
+      latest AS (
+        SELECT voltage, recorded_at
+        FROM readings
+        ORDER BY recorded_at DESC NULLS LAST
+        LIMIT 1
+      ),
+      low AS (
+        SELECT voltage, recorded_at
+        FROM readings
+        ORDER BY voltage ASC, recorded_at ASC
+        LIMIT 1
+      ),
+      high AS (
+        SELECT voltage, recorded_at
+        FROM readings
+        ORDER BY voltage DESC, recorded_at ASC
+        LIMIT 1
+      ),
+      stats AS (
+        SELECT
+          COUNT(*)::integer AS sample_count,
+          AVG(voltage)::numeric AS average_voltage,
+          STDDEV_POP(voltage)::numeric AS stddev_voltage
+        FROM readings
+      )
+      SELECT
+        latest.voltage AS current_voltage,
+        latest.recorded_at AS current_recorded_at,
+        low.voltage AS low_voltage,
+        low.recorded_at AS low_recorded_at,
+        high.voltage AS high_voltage,
+        high.recorded_at AS high_recorded_at,
+        stats.sample_count,
+        stats.average_voltage,
+        stats.stddev_voltage
+      FROM stats
+      LEFT JOIN latest ON TRUE
+      LEFT JOIN low ON TRUE
+      LEFT JOIN high ON TRUE
+    `,
+    [vin]
+  );
+
+  const row = rows[0] || {};
+  const currentVoltage = roundVoltage(row.current_voltage);
+  const lowVoltage = roundVoltage(row.low_voltage);
+  const highVoltage = roundVoltage(row.high_voltage);
+  const averageVoltage = roundVoltage(row.average_voltage);
+  const stddevVoltage = roundVoltage(row.stddev_voltage);
+  const sampleCount = Number(row.sample_count || 0);
+  const normMargin =
+    sampleCount >= 5
+      ? Math.max(0.35, Number(row.stddev_voltage || 0) * 2)
+      : null;
+  const lowerNorm =
+    averageVoltage != null && normMargin != null
+      ? roundVoltage(averageVoltage - normMargin)
+      : null;
+  const upperNorm =
+    averageVoltage != null && normMargin != null
+      ? roundVoltage(averageVoltage + normMargin)
+      : null;
+
+  let tone = "unknown";
+  let status = "No voltage history";
+  let needsInspection = false;
+  let inspectionReason = null;
+
+  if (currentVoltage != null) {
+    tone = "pass";
+    status = "Voltage normal";
+
+    if (lowVoltage != null && lowVoltage < 12) {
+      tone = "fail";
+      status = "Voltage dropped below 12.0v";
+      needsInspection = true;
+      inspectionReason = "critical_low_voltage";
+    } else if (lowVoltage != null && lowVoltage < 12.2) {
+      tone = "attention";
+      status = "Voltage dropped below 12.2v";
+      needsInspection = true;
+      inspectionReason = "low_voltage";
+    }
+
+    if (
+      !needsInspection &&
+      lowerNorm != null &&
+      upperNorm != null &&
+      (currentVoltage < lowerNorm || currentVoltage > upperNorm)
+    ) {
+      tone = "attention";
+      status = "Current voltage is outside 30-day norm";
+      needsInspection = true;
+      inspectionReason = "outside_30_day_norm";
+    }
+  }
+
+  return {
+    currentVoltage,
+    currentRecordedAt: row.current_recorded_at || null,
+    lowVoltage,
+    lowRecordedAt: row.low_recorded_at || null,
+    highVoltage,
+    highRecordedAt: row.high_recorded_at || null,
+    averageVoltage,
+    stddevVoltage,
+    sampleCount,
+    lowerNorm,
+    upperNorm,
+    normMargin: normMargin == null ? null : roundVoltage(normMargin),
+    tone,
+    status,
+    needsInspection,
+    inspectionReason,
+  };
+}
+
+async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
+  if (!batteryHealth?.needsInspection) {
+    return null;
+  }
+
+  const existing = await client.query(
+    `
+      SELECT id
+      FROM maintenance_tasks
+      WHERE vehicle_vin = $1
+        AND task_type = 'battery_voltage_inspection'
+        AND status = ANY($2::text[])
+      LIMIT 1
+    `,
+    [vin, ACTIVE_TASK_STATUSES]
+  );
+
+  if (existing.rows[0]) {
+    return existing.rows[0];
+  }
+
+  const priority = batteryHealth.tone === "fail" ? "urgent" : "high";
+  const recordedAt = batteryHealth.currentRecordedAt
+    ? new Date(batteryHealth.currentRecordedAt)
+    : new Date();
+  const dateKey = Number.isNaN(recordedAt.getTime())
+    ? new Date().toISOString().slice(0, 10)
+    : recordedAt.toISOString().slice(0, 10);
+  const sourceKey = `battery_voltage_inspection:${vin}:${dateKey}`;
+  const description = [
+    `${batteryHealth.status}.`,
+    `Current ${formatVoltage(batteryHealth.currentVoltage)}.`,
+    `30-day low ${formatVoltage(batteryHealth.lowVoltage)}.`,
+    `30-day high ${formatVoltage(batteryHealth.highVoltage)}.`,
+  ].join(" ");
+
+  const result = await client.query(
+    `
+      INSERT INTO maintenance_tasks (
+        vehicle_vin,
+        task_type,
+        title,
+        description,
+        priority,
+        status,
+        blocks_rental,
+        blocks_guest_export,
+        needs_review,
+        source,
+        source_key,
+        trigger_type,
+        trigger_context
+      )
+      VALUES (
+        $1,
+        'battery_voltage_inspection',
+        'Battery inspection',
+        $2,
+        $3,
+        'open',
+        $4,
+        false,
+        true,
+        'system',
+        $5,
+        'telemetry_battery_voltage',
+        $6::jsonb
+      )
+      ON CONFLICT (source_key) DO NOTHING
+      RETURNING id
+    `,
+    [
+      vin,
+      description,
+      priority,
+      batteryHealth.tone === "fail",
+      sourceKey,
+      JSON.stringify({
+        createdFrom: "battery_voltage_health",
+        reason: batteryHealth.inspectionReason,
+        batteryHealth,
+      }),
+    ]
+  );
+
+  return result.rows[0] || null;
 }
 
 function subtractDays(dateValue, days) {
@@ -517,6 +760,8 @@ async function getVehicleMaintenanceSummary(
       currentOdometerMiles,
     })
   );
+  const batteryVoltageHealth = await getBatteryVoltageHealth(client, vin);
+  await ensureBatteryVoltageInspectionTask(client, vin, batteryVoltageHealth);
 
   await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
 
@@ -704,6 +949,7 @@ async function getVehicleMaintenanceSummary(
           ? null
           : Number(vehicle.rollup_estimated_trip_miles),
       odometerRollupCalculatedAt: vehicle.rollup_calculated_at || null,
+      batteryVoltageHealth,
       isActive: vehicle.is_active,
     },
     currentOdometerMiles,
@@ -717,6 +963,7 @@ async function getVehicleMaintenanceSummary(
         ? null
         : Number(vehicle.rollup_estimated_trip_miles),
     odometerRollupCalculatedAt: vehicle.rollup_calculated_at || null,
+    batteryVoltageHealth,
     needsReview:
       hasReviewTask ||
       hasRentalBlockerTask ||

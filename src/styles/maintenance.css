@@ -87,6 +87,47 @@
   border-color: rgba(255, 255, 255, 0.12);
 }
 
+.fleet-maintenance-battery-voltage {
+  min-height: 142px;
+  justify-content: space-between;
+}
+
+.fleet-maintenance-battery-voltage-current {
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.fleet-maintenance-battery-voltage-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fleet-maintenance-battery-voltage-range span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: rgba(232, 238, 252, 0.68);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.fleet-maintenance-battery-voltage-range strong {
+  color: rgba(232, 238, 252, 0.9);
+  font-size: 14px;
+  text-transform: none;
+}
+
+.fleet-maintenance-battery-voltage-range small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: none;
+}
+
 .fleet-maintenance-section-title {
   font-size: 12px;
   font-weight: 700;

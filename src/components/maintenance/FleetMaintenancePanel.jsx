@@ -328,6 +328,22 @@ function formatEngineTemp(value) {
   return `${Math.round(num)} F`;
 }
 
+function formatBatteryVoltage(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  return `${num.toFixed(2)}v`;
+}
+
+function formatBatteryVoltageDate(value) {
+  if (!value) return "No date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No date";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 function buildEngineTemperatureStatus(fleetVehicle = null) {
   const engine = fleetVehicle?.telemetry?.engine || {};
   const latestTemp = Number(engine.coolant_temp);
@@ -535,6 +551,8 @@ function mapMaintenanceSummaryToVehicle(
     export_ready: !summary.blocksGuestExport,
     telematics: buildTelematicsStatus(fleetVehicle),
     telemetry_location: buildTelemetryLocation(fleetVehicle),
+    battery_voltage_health:
+      summary.batteryVoltageHealth || sourceVehicle.batteryVoltageHealth || null,
     mil_status: buildMilStatus(fleetVehicle, liveDiagnostics),
     engine_temperature: buildEngineTemperatureStatus(fleetVehicle),
     engine_rpm: buildEngineRpmStatus(fleetVehicle),
@@ -1256,6 +1274,7 @@ export default function FleetMaintenancePanel({
         overall_status: "attention",
         export_ready: false,
         telematics: buildTelematicsStatus(selectedFleetVehicle),
+        battery_voltage_health: null,
         mil_status: buildMilStatus(selectedFleetVehicle, currentLiveDimoDiagnostics),
         engine_temperature: buildEngineTemperatureStatus(selectedFleetVehicle),
         engine_rpm: buildEngineRpmStatus(selectedFleetVehicle),
@@ -1291,6 +1310,7 @@ export default function FleetMaintenancePanel({
       overall_status: "attention",
       export_ready: false,
       telematics: buildTelematicsStatus(null),
+      battery_voltage_health: null,
       mil_status: buildMilStatus(null),
       engine_temperature: buildEngineTemperatureStatus(null),
       engine_rpm: buildEngineRpmStatus(null),
@@ -2547,6 +2567,58 @@ export default function FleetMaintenancePanel({
                       Map {vehicle.telemetry_location.label}
                     </button>
                   ) : null}
+                </div>
+
+                <div
+                  className={`fleet-maintenance-meta-item fleet-maintenance-battery-voltage fleet-maintenance-telematics--${
+                    vehicle.battery_voltage_health?.tone || "unknown"
+                  }`}
+                >
+                  <span className="fleet-maintenance-meta-label">
+                    Battery voltage
+                  </span>
+                  <span className="fleet-maintenance-battery-voltage-current">
+                    {formatBatteryVoltage(
+                      vehicle.battery_voltage_health?.currentVoltage
+                    )}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    {vehicle.battery_voltage_health?.status ||
+                      "No voltage history"}
+                    {vehicle.battery_voltage_health?.currentRecordedAt
+                      ? ` - ${formatTelematicsLastCall(
+                          vehicle.battery_voltage_health.currentRecordedAt
+                        )}`
+                      : ""}
+                  </span>
+                  <div className="fleet-maintenance-battery-voltage-range">
+                    <span>
+                      Low{" "}
+                      <strong>
+                        {formatBatteryVoltage(
+                          vehicle.battery_voltage_health?.lowVoltage
+                        )}
+                      </strong>
+                      <small>
+                        {formatBatteryVoltageDate(
+                          vehicle.battery_voltage_health?.lowRecordedAt
+                        )}
+                      </small>
+                    </span>
+                    <span>
+                      High{" "}
+                      <strong>
+                        {formatBatteryVoltage(
+                          vehicle.battery_voltage_health?.highVoltage
+                        )}
+                      </strong>
+                      <small>
+                        {formatBatteryVoltageDate(
+                          vehicle.battery_voltage_health?.highRecordedAt
+                        )}
+                      </small>
+                    </span>
+                  </div>
                 </div>
 
                 <div
