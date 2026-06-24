@@ -226,8 +226,15 @@ router.get("/cached-status", async (req, res) => {
 });
 
 router.get("/locations", async (req, res) => {
+  const startedAt = Date.now();
   try {
     const locations = await getVehicleLocations();
+    const durationMs = Date.now() - startedAt;
+    if (durationMs > 750) {
+      console.log(
+        `[vehicles] locations feed slow durationMs=${durationMs} vehicles=${locations.length}`
+      );
+    }
     res.json(locations);
   } catch (err) {
     console.error("GET /api/vehicles/locations failed:", err);

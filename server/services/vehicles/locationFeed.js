@@ -179,70 +179,144 @@ async function getStoredVehicleLocations(client = pool) {
     ) canonical_alias ON true
     LEFT JOIN LATERAL (
       SELECT
-        s.service_name,
-        s.latitude,
-        s.longitude,
-        s.heading,
-        s.is_running,
-        s.speed,
-        s.location_last_updated,
-        s.ignition_last_updated,
-        s.vehicle_last_updated,
-        s.captured_at,
-        CASE
-          WHEN s.service_name = 'dimo' THEN s.location_last_updated AT TIME ZONE 'America/Chicago'
-          ELSE s.location_last_updated AT TIME ZONE 'UTC'
-        END AS location_seen_at,
-        CASE
-          WHEN s.service_name = 'dimo' THEN s.vehicle_last_updated AT TIME ZONE 'America/Chicago'
-          ELSE s.vehicle_last_updated AT TIME ZONE 'UTC'
-        END AS vehicle_seen_at,
-        CASE
-          WHEN s.service_name = 'dimo' THEN s.ignition_last_updated AT TIME ZONE 'America/Chicago'
-          ELSE s.ignition_last_updated AT TIME ZONE 'UTC'
-        END AS ignition_seen_at,
-        s.captured_at AT TIME ZONE 'UTC' AS captured_seen_at,
-        COALESCE(raw.raw_payload, s.raw_payload) AS raw_payload,
-        ((COALESCE(raw.raw_payload, s.raw_payload) ->> 'availableSignalsCount')::int) AS available_signals_count,
-        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'fetchedSignals', '[]'::jsonb) AS fetched_signals,
-        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'skippedSignals', '[]'::jsonb) AS skipped_signals,
-        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'blockedSignals', '[]'::jsonb) AS blocked_signals,
-        COALESCE(COALESCE(raw.raw_payload, s.raw_payload) -> 'missingPrivileges', '[]'::jsonb) AS missing_privileges,
-        COALESCE(raw.raw_payload, s.raw_payload) ->> 'degradedReason' AS degraded_reason,
-        s.location_last_updated AS location_signal_at
-      FROM vehicle_telemetry_snapshots s
-      LEFT JOIN vehicle_telemetry_raw_payloads raw
-        ON raw.snapshot_id = s.id
-      WHERE s.latitude IS NOT NULL
-        AND s.longitude IS NOT NULL
-        AND (
-          (
-            s.vin IS NOT NULL
+        candidates.service_name,
+        candidates.latitude,
+        candidates.longitude,
+        candidates.heading,
+        candidates.is_running,
+        candidates.speed,
+        candidates.location_last_updated,
+        candidates.ignition_last_updated,
+        candidates.vehicle_last_updated,
+        candidates.captured_at,
+        candidates.location_seen_at,
+        candidates.vehicle_seen_at,
+        candidates.ignition_seen_at,
+        candidates.captured_seen_at,
+        NULL::int AS available_signals_count,
+        '[]'::jsonb AS fetched_signals,
+        '[]'::jsonb AS skipped_signals,
+        '[]'::jsonb AS blocked_signals,
+        '[]'::jsonb AS missing_privileges,
+        NULL::text AS degraded_reason,
+        candidates.location_last_updated AS location_signal_at
+      FROM (
+        SELECT *
+        FROM (
+          SELECT
+            s.id,
+            s.service_name,
+            s.latitude,
+            s.longitude,
+            s.heading,
+            s.is_running,
+            s.speed,
+            s.location_last_updated,
+            s.ignition_last_updated,
+            s.vehicle_last_updated,
+            s.captured_at,
+            COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS sort_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.location_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.location_last_updated AT TIME ZONE 'UTC'
+            END AS location_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.vehicle_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.vehicle_last_updated AT TIME ZONE 'UTC'
+            END AS vehicle_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.ignition_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.ignition_last_updated AT TIME ZONE 'UTC'
+            END AS ignition_seen_at,
+            s.captured_at AT TIME ZONE 'UTC' AS captured_seen_at
+          FROM vehicle_telemetry_snapshots s
+          WHERE v.vin IS NOT NULL
+            AND v.vin <> ''
+            AND s.vin IS NOT NULL
             AND s.vin <> ''
             AND LOWER(s.vin) = LOWER(v.vin)
-          )
-          OR (
-            s.dimo_token_id IS NOT NULL
-            AND v.dimo_token_id IS NOT NULL
+            AND s.latitude IS NOT NULL
+            AND s.longitude IS NOT NULL
+          ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+          LIMIT 1
+        ) vin_match
+        UNION ALL
+        SELECT *
+        FROM (
+          SELECT
+            s.id,
+            s.service_name,
+            s.latitude,
+            s.longitude,
+            s.heading,
+            s.is_running,
+            s.speed,
+            s.location_last_updated,
+            s.ignition_last_updated,
+            s.vehicle_last_updated,
+            s.captured_at,
+            COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS sort_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.location_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.location_last_updated AT TIME ZONE 'UTC'
+            END AS location_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.vehicle_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.vehicle_last_updated AT TIME ZONE 'UTC'
+            END AS vehicle_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.ignition_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.ignition_last_updated AT TIME ZONE 'UTC'
+            END AS ignition_seen_at,
+            s.captured_at AT TIME ZONE 'UTC' AS captured_seen_at
+          FROM vehicle_telemetry_snapshots s
+          WHERE v.dimo_token_id IS NOT NULL
             AND s.dimo_token_id = v.dimo_token_id
-          )
-          OR (
-            s.external_vehicle_key IS NOT NULL
-            AND v.external_vehicle_key IS NOT NULL
+            AND s.latitude IS NOT NULL
+            AND s.longitude IS NOT NULL
+          ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+          LIMIT 1
+        ) dimo_match
+        UNION ALL
+        SELECT *
+        FROM (
+          SELECT
+            s.id,
+            s.service_name,
+            s.latitude,
+            s.longitude,
+            s.heading,
+            s.is_running,
+            s.speed,
+            s.location_last_updated,
+            s.ignition_last_updated,
+            s.vehicle_last_updated,
+            s.captured_at,
+            COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS sort_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.location_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.location_last_updated AT TIME ZONE 'UTC'
+            END AS location_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.vehicle_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.vehicle_last_updated AT TIME ZONE 'UTC'
+            END AS vehicle_seen_at,
+            CASE
+              WHEN s.service_name = 'dimo' THEN s.ignition_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.ignition_last_updated AT TIME ZONE 'UTC'
+            END AS ignition_seen_at,
+            s.captured_at AT TIME ZONE 'UTC' AS captured_seen_at
+          FROM vehicle_telemetry_snapshots s
+          WHERE v.external_vehicle_key IS NOT NULL
+            AND v.external_vehicle_key <> ''
             AND s.external_vehicle_key = v.external_vehicle_key
-          )
-        )
-      ORDER BY COALESCE(
-        CASE
-          WHEN s.service_name = 'dimo' THEN s.location_last_updated AT TIME ZONE 'America/Chicago'
-          ELSE s.location_last_updated AT TIME ZONE 'UTC'
-        END,
-        CASE
-          WHEN s.service_name = 'dimo' THEN s.vehicle_last_updated AT TIME ZONE 'America/Chicago'
-          ELSE s.vehicle_last_updated AT TIME ZONE 'UTC'
-        END,
-        s.captured_at AT TIME ZONE 'UTC'
-      ) DESC NULLS LAST, s.id DESC
+            AND s.latitude IS NOT NULL
+            AND s.longitude IS NOT NULL
+          ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+          LIMIT 1
+        ) external_key_match
+      ) candidates
+      ORDER BY candidates.sort_seen_at DESC NULLS LAST, candidates.id DESC
       LIMIT 1
     ) latest ON true
     WHERE v.is_active = true
