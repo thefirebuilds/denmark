@@ -391,6 +391,19 @@ function formatTelemetryCaptureDetail(reading) {
   return `captured ${formatTelemetryReadingTime(reading.capturedAt)}`;
 }
 
+function formatEngineOnContext(reading) {
+  const event = reading?.engineOnNearReading;
+  if (!event?.at) return "";
+  const delta = Number(event.deltaMinutes);
+  const deltaText = Number.isFinite(delta)
+    ? delta === 0
+      ? "same minute"
+      : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} min`
+    : "within 5 min";
+
+  return `Engine on ${deltaText} (${formatTelemetryReadingTime(event.at)})`;
+}
+
 function buildEngineTemperatureStatus(fleetVehicle = null) {
   const engine = fleetVehicle?.telemetry?.engine || {};
   const latestTemp = Number(engine.coolant_temp);
@@ -3451,6 +3464,7 @@ export default function FleetMaintenancePanel({
                     telemetryHistory.signal
                   );
                   const captureDetail = formatTelemetryCaptureDetail(reading);
+                  const engineOnContext = formatEngineOnContext(reading);
                   return (
                     <div
                       key={`${reading.snapshotId}-${reading.recordedAt}`}
@@ -3464,6 +3478,7 @@ export default function FleetMaintenancePanel({
                           )}
                         </strong>
                         {rawText ? <small>{rawText}</small> : null}
+                        {engineOnContext ? <small>{engineOnContext}</small> : null}
                       </div>
                       <span>
                         {formatTelemetryReadingTime(reading.recordedAt)}

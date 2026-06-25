@@ -603,6 +603,85 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
       1,
       Math.min(100, Number.parseInt(req.query.limit, 10) || 50)
     );
+    const includeEngineOnContext = signal === "battery_voltage";
+    const engineOnSelectSql = includeEngineOnContext
+      ? `
+          engine_context.snapshot_id AS engine_on_snapshot_id,
+          engine_context.engine_on_at,
+          engine_context.delta_minutes AS engine_on_delta_minutes
+        `
+      : `
+          NULL::bigint AS engine_on_snapshot_id,
+          NULL::timestamptz AS engine_on_at,
+          NULL::numeric AS engine_on_delta_minutes
+        `;
+    const engineOnJoinSql = includeEngineOnContext
+      ? `
+        LEFT JOIN LATERAL (
+          SELECT
+            engine.id AS snapshot_id,
+            COALESCE(
+              engine.ignition_last_updated,
+              engine.vehicle_last_updated,
+              engine.captured_at
+            ) AS engine_on_at,
+            ROUND(
+              (
+                EXTRACT(
+                  EPOCH FROM (
+                    COALESCE(
+                      engine.ignition_last_updated,
+                      engine.vehicle_last_updated,
+                      engine.captured_at
+                    ) - d.recorded_at
+                  )
+                ) / 60.0
+              )::numeric,
+              1
+            ) AS delta_minutes
+          FROM vehicle_telemetry_snapshots engine
+          WHERE d.value < 12
+            AND COALESCE(engine.is_running, false) = true
+            AND COALESCE(
+              engine.ignition_last_updated,
+              engine.vehicle_last_updated,
+              engine.captured_at
+            ) BETWEEN d.recorded_at - INTERVAL '5 minutes'
+              AND d.recorded_at + INTERVAL '5 minutes'
+            AND (
+              (
+                d.vin IS NOT NULL
+                AND d.vin <> ''
+                AND engine.vin IS NOT NULL
+                AND engine.vin <> ''
+                AND LOWER(engine.vin) = LOWER(d.vin)
+              )
+              OR (
+                d.dimo_token_id IS NOT NULL
+                AND engine.dimo_token_id = d.dimo_token_id
+              )
+              OR (
+                d.external_vehicle_key IS NOT NULL
+                AND d.external_vehicle_key <> ''
+                AND engine.external_vehicle_key = d.external_vehicle_key
+              )
+            )
+          ORDER BY ABS(
+            EXTRACT(
+              EPOCH FROM (
+                COALESCE(
+                  engine.ignition_last_updated,
+                  engine.vehicle_last_updated,
+                  engine.captured_at
+                ) - d.recorded_at
+              )
+            )
+          ) ASC,
+          engine.id DESC
+          LIMIT 1
+        ) engine_context ON TRUE
+      `
+      : "";
     const { rows } = await pool.query(
       `
         WITH candidates AS (
@@ -663,8 +742,10 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
           vehicle_last_updated,
           vin,
           dimo_token_id,
-          external_vehicle_key
-        FROM deduped
+          external_vehicle_key,
+          ${engineOnSelectSql}
+        FROM deduped d
+        ${engineOnJoinSql}
         ORDER BY recorded_at DESC NULLS LAST, snapshot_id DESC
         LIMIT $4
       `,
@@ -694,6 +775,17 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
         recordedAt: row.recorded_at || row.captured_at || null,
         capturedAt: row.captured_at || null,
         vehicleLastUpdated: row.vehicle_last_updated || null,
+        engineOnNearReading:
+          row.engine_on_at == null
+            ? null
+            : {
+                snapshotId: row.engine_on_snapshot_id,
+                at: row.engine_on_at,
+                deltaMinutes:
+                  row.engine_on_delta_minutes == null
+                    ? null
+                    : Number(row.engine_on_delta_minutes),
+              },
       })),
     });
   } catch (err) {
