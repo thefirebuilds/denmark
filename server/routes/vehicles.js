@@ -605,38 +605,67 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
     );
     const { rows } = await pool.query(
       `
+        WITH candidates AS (
+          SELECT
+            s.id AS snapshot_id,
+            s.service_name,
+            ${definition.valueSql} AS value,
+            ${definition.rawValueSql} AS raw_value,
+            ${definition.recordedAtSql} AS recorded_at,
+            s.captured_at,
+            s.vehicle_last_updated,
+            s.vin,
+            s.dimo_token_id,
+            s.external_vehicle_key
+          FROM vehicle_telemetry_snapshots s
+          WHERE ${definition.whereSql}
+            AND (
+              (
+                $1::text IS NOT NULL
+                AND $1::text <> ''
+                AND s.vin IS NOT NULL
+                AND s.vin <> ''
+                AND LOWER(s.vin) = LOWER($1::text)
+              )
+              OR (
+                $2::bigint IS NOT NULL
+                AND s.dimo_token_id = $2::bigint
+              )
+              OR (
+                $3::text IS NOT NULL
+                AND $3::text <> ''
+                AND s.external_vehicle_key = $3::text
+              )
+            )
+        ),
+        deduped AS (
+          SELECT
+            MAX(snapshot_id) AS snapshot_id,
+            MAX(service_name) AS service_name,
+            value,
+            raw_value,
+            recorded_at,
+            MAX(captured_at) AS captured_at,
+            MAX(vehicle_last_updated) AS vehicle_last_updated,
+            MAX(vin) AS vin,
+            MAX(dimo_token_id) AS dimo_token_id,
+            MAX(external_vehicle_key) AS external_vehicle_key
+          FROM candidates
+          GROUP BY value, raw_value, recorded_at
+        )
         SELECT
-          s.id AS snapshot_id,
-          s.service_name,
-          ${definition.valueSql} AS value,
-          ${definition.rawValueSql} AS raw_value,
-          ${definition.recordedAtSql} AS recorded_at,
-          s.captured_at,
-          s.vehicle_last_updated,
-          s.vin,
-          s.dimo_token_id,
-          s.external_vehicle_key
-        FROM vehicle_telemetry_snapshots s
-        WHERE ${definition.whereSql}
-          AND (
-            (
-              $1::text IS NOT NULL
-              AND $1::text <> ''
-              AND s.vin IS NOT NULL
-              AND s.vin <> ''
-              AND LOWER(s.vin) = LOWER($1::text)
-            )
-            OR (
-              $2::bigint IS NOT NULL
-              AND s.dimo_token_id = $2::bigint
-            )
-            OR (
-              $3::text IS NOT NULL
-              AND $3::text <> ''
-              AND s.external_vehicle_key = $3::text
-            )
-          )
-        ORDER BY ${definition.recordedAtSql} DESC NULLS LAST, s.id DESC
+          snapshot_id,
+          service_name,
+          value,
+          raw_value,
+          recorded_at,
+          captured_at,
+          vehicle_last_updated,
+          vin,
+          dimo_token_id,
+          external_vehicle_key
+        FROM deduped
+        ORDER BY recorded_at DESC NULLS LAST, snapshot_id DESC
         LIMIT $4
       `,
       [

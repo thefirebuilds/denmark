@@ -54,7 +54,7 @@ function addDays(dateValue, days) {
 async function getBatteryVoltageHealth(client, vin) {
   const { rows } = await client.query(
     `
-      WITH readings AS (
+      WITH raw_readings AS (
         SELECT
           battery_voltage::numeric AS voltage,
           COALESCE(
@@ -72,6 +72,13 @@ async function getBatteryVoltageHealth(client, vin) {
             vehicle_last_updated,
             captured_at
           ) >= NOW() - INTERVAL '30 days'
+      ),
+      readings AS (
+        SELECT
+          voltage,
+          recorded_at
+        FROM raw_readings
+        GROUP BY voltage, recorded_at
       ),
       latest AS (
         SELECT voltage, recorded_at

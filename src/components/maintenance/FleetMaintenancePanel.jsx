@@ -376,6 +376,21 @@ function formatRawTelemetryReading(reading, signal) {
   return `raw ${rawValue.toFixed(1)}`;
 }
 
+function formatTelemetryCaptureDetail(reading) {
+  if (!reading?.capturedAt || !reading?.recordedAt) return "";
+  const captured = new Date(reading.capturedAt);
+  const recorded = new Date(reading.recordedAt);
+  if (Number.isNaN(captured.getTime()) || Number.isNaN(recorded.getTime())) {
+    return "";
+  }
+
+  if (Math.abs(captured.getTime() - recorded.getTime()) < 60000) {
+    return "";
+  }
+
+  return `captured ${formatTelemetryReadingTime(reading.capturedAt)}`;
+}
+
 function buildEngineTemperatureStatus(fleetVehicle = null) {
   const engine = fleetVehicle?.telemetry?.engine || {};
   const latestTemp = Number(engine.coolant_temp);
@@ -3435,6 +3450,7 @@ export default function FleetMaintenancePanel({
                     reading,
                     telemetryHistory.signal
                   );
+                  const captureDetail = formatTelemetryCaptureDetail(reading);
                   return (
                     <div
                       key={`${reading.snapshotId}-${reading.recordedAt}`}
@@ -3453,7 +3469,11 @@ export default function FleetMaintenancePanel({
                         {formatTelemetryReadingTime(reading.recordedAt)}
                       </span>
                       <em>
-                        {[reading.source, `#${reading.snapshotId}`]
+                        {[
+                          reading.source,
+                          reading.snapshotId ? `snapshot #${reading.snapshotId}` : "",
+                          captureDetail,
+                        ]
                           .filter(Boolean)
                           .join(" - ")}
                       </em>
