@@ -344,6 +344,11 @@ function formatBatteryVoltageDate(value) {
   });
 }
 
+function toDateInputValue(value) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
 function formatBatteryAge(value) {
   if (!value) return "unknown";
   const installed = new Date(value);
@@ -884,6 +889,10 @@ export default function FleetMaintenancePanel({
   const [savingLockboxPin, setSavingLockboxPin] = useState(false);
   const [lockboxPinError, setLockboxPinError] = useState("");
   const [lockboxPinForm, setLockboxPinForm] = useState("");
+  const [editingBatteryAge, setEditingBatteryAge] = useState(false);
+  const [savingBatteryAge, setSavingBatteryAge] = useState(false);
+  const [batteryAgeError, setBatteryAgeError] = useState("");
+  const [batteryInstalledAtForm, setBatteryInstalledAtForm] = useState("");
 
   const [addingCustomRule, setAddingCustomRule] = useState(false);
   const [savingCustomRule, setSavingCustomRule] = useState(false);
@@ -1554,6 +1563,12 @@ export default function FleetMaintenancePanel({
     vehicle?.lockbox_pin,
   ]);
 
+  useEffect(() => {
+    setBatteryInstalledAtForm(toDateInputValue(vehicle.battery_installed_at));
+    setEditingBatteryAge(false);
+    setBatteryAgeError("");
+  }, [vehicle.battery_installed_at, selectedFleetVehicle?.vin]);
+
   const groupedInspectionItems = useMemo(() => {
     const items = Array.isArray(vehicle.inspection_items)
       ? vehicle.inspection_items
@@ -1846,6 +1861,69 @@ export default function FleetMaintenancePanel({
       setLockboxPinError(err.message || "Could not save lockbox PIN.");
     } finally {
       setSavingLockboxPin(false);
+    }
+  }
+
+  async function handleSaveBatteryAge() {
+    try {
+      if (!selectedFleetVehicle?.vin) {
+        throw new Error("No selected vehicle VIN available.");
+      }
+
+      setSavingBatteryAge(true);
+      setBatteryAgeError("");
+
+      const res = await fetch(
+        `/api/vehicles/${encodeURIComponent(selectedFleetVehicle.vin)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            battery_installed_at: batteryInstalledAtForm || null,
+          }),
+        }
+      );
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      setFleetVehicles((prev) =>
+        prev.map((item) =>
+          String(item.vin || "") === String(selectedFleetVehicle.vin || "")
+            ? {
+                ...item,
+                battery_installed_at: body.battery_installed_at || null,
+                batteryInstalledAt: body.battery_installed_at || null,
+              }
+            : item
+        )
+      );
+
+      setMaintenanceSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              vehicle: {
+                ...(prev.vehicle || {}),
+                battery_installed_at: body.battery_installed_at || null,
+                batteryInstalledAt: body.battery_installed_at || null,
+              },
+            }
+          : prev
+      );
+
+      await loadSelectedVehicleMaintenance();
+      setEditingBatteryAge(false);
+    } catch (err) {
+      console.error("Failed to save battery install date:", err);
+      setBatteryAgeError(err.message || "Could not save battery install date.");
+    } finally {
+      setSavingBatteryAge(false);
     }
   }
 
@@ -2737,16 +2815,37 @@ export default function FleetMaintenancePanel({
                   ) : null}
                 </div>
 
-                <button
-                  type="button"
+                <div
                   className={`fleet-maintenance-meta-item fleet-maintenance-battery-voltage fleet-maintenance-telematics--${
                     vehicle.battery_voltage_health?.tone || "unknown"
                   }`}
-                  onClick={() => openTelemetryHistory("battery_voltage")}
                 >
-                  <span className="fleet-maintenance-meta-label">
-                    Battery voltage
-                  </span>
+                  <div className="fleet-maintenance-battery-voltage-header">
+                    <span className="fleet-maintenance-meta-label">
+                      Battery voltage
+                    </span>
+                    <div className="fleet-maintenance-battery-voltage-tabs">
+                      <button
+                        type="button"
+                        onClick={() => openTelemetryHistory("battery_voltage")}
+                      >
+                        Readings
+                      </button>
+                      <button
+                        type="button"
+                        className={editingBatteryAge ? "is-active" : ""}
+                        onClick={() => {
+                          setBatteryInstalledAtForm(
+                            toDateInputValue(vehicle.battery_installed_at)
+                          );
+                          setBatteryAgeError("");
+                          setEditingBatteryAge((current) => !current);
+                        }}
+                      >
+                        Battery age
+                      </button>
+                    </div>
+                  </div>
                   <span className="fleet-maintenance-battery-voltage-current">
                     {formatBatteryVoltage(
                       vehicle.battery_voltage_health?.currentVoltage
@@ -2769,6 +2868,50 @@ export default function FleetMaintenancePanel({
                         )}`
                       : ""}
                   </span>
+                  {editingBatteryAge ? (
+                    <div className="fleet-maintenance-battery-age-editor">
+                      <label>
+                        <span>Installed date</span>
+                        <input
+                          type="date"
+                          value={batteryInstalledAtForm}
+                          onChange={(event) =>
+                            setBatteryInstalledAtForm(event.target.value)
+                          }
+                          disabled={savingBatteryAge}
+                        />
+                      </label>
+                      {batteryAgeError ? (
+                        <div className="fleet-maintenance-note fleet-maintenance-note--error">
+                          {batteryAgeError}
+                        </div>
+                      ) : null}
+                      <div className="fleet-maintenance-registration-actions">
+                        <button
+                          type="button"
+                          className="fleet-maintenance-action-button"
+                          onClick={() => {
+                            setBatteryInstalledAtForm(
+                              toDateInputValue(vehicle.battery_installed_at)
+                            );
+                            setEditingBatteryAge(false);
+                            setBatteryAgeError("");
+                          }}
+                          disabled={savingBatteryAge}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="fleet-maintenance-action-button fleet-maintenance-action-button--primary"
+                          onClick={handleSaveBatteryAge}
+                          disabled={savingBatteryAge}
+                        >
+                          {savingBatteryAge ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="fleet-maintenance-battery-voltage-range">
                     <span>
                       Low{" "}
@@ -2797,7 +2940,7 @@ export default function FleetMaintenancePanel({
                       </small>
                     </span>
                   </div>
-                </button>
+                </div>
 
                 <div
                   className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${

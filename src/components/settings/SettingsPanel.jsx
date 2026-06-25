@@ -2007,15 +2007,6 @@ function VehicleConfigFields({ form, update, mode = "edit" }) {
       </label>
 
       <label className="settings-field">
-        <span>Battery installed</span>
-        <input
-          type="date"
-          value={form.battery_installed_at || ""}
-          onChange={(e) => update("battery_installed_at", e.target.value)}
-        />
-      </label>
-
-      <label className="settings-field">
         <span>Capex / acquisition cost</span>
         <input
           type="number"

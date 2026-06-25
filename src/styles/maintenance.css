@@ -90,6 +90,46 @@
 .fleet-maintenance-battery-voltage {
   min-height: 142px;
   justify-content: space-between;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fleet-maintenance-battery-voltage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fleet-maintenance-battery-voltage-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.fleet-maintenance-battery-voltage-tabs button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(232, 238, 252, 0.72);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  padding: 5px 8px;
+}
+
+.fleet-maintenance-battery-voltage-tabs button:hover,
+.fleet-maintenance-battery-voltage-tabs button:focus-visible,
+.fleet-maintenance-battery-voltage-tabs button.is-active {
+  background: rgba(96, 165, 250, 0.18);
+  color: #dbeafe;
+  outline: none;
 }
 
 .fleet-maintenance-battery-voltage-current {
@@ -97,6 +137,38 @@
   line-height: 1;
   font-weight: 900;
   letter-spacing: 0;
+}
+
+.fleet-maintenance-battery-age-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.26);
+}
+
+.fleet-maintenance-battery-age-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.fleet-maintenance-battery-age-editor label span {
+  color: rgba(232, 238, 252, 0.68);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.fleet-maintenance-battery-age-editor input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #f9fafb;
+  font: inherit;
+  padding: 8px 9px;
 }
 
 .fleet-maintenance-battery-voltage-range {
