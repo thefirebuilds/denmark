@@ -740,20 +740,20 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
           GROUP BY value, raw_value, recorded_at
         )
         SELECT
-          snapshot_id,
-          service_name,
-          value,
-          raw_value,
-          recorded_at,
-          captured_at,
-          vehicle_last_updated,
-          vin,
-          dimo_token_id,
-          external_vehicle_key,
+          d.snapshot_id,
+          d.service_name,
+          d.value,
+          d.raw_value,
+          d.recorded_at,
+          d.captured_at,
+          d.vehicle_last_updated,
+          d.vin,
+          d.dimo_token_id,
+          d.external_vehicle_key,
           ${engineOnSelectSql}
         FROM deduped d
         ${engineOnJoinSql}
-        ORDER BY recorded_at DESC NULLS LAST, snapshot_id DESC
+        ORDER BY d.recorded_at DESC NULLS LAST, d.snapshot_id DESC
         LIMIT $4
       `,
       [
