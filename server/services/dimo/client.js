@@ -6,6 +6,7 @@ const pool = require("../../db");
 
 const TELEMETRY_URL = "https://telemetry-api.dimo.zone/query";
 const IDENTITY_URL = "https://identity-api.dimo.zone/query";
+const DEFAULT_AVAILABLE_SIGNALS_CACHE_MS = 60 * 60 * 1000;
 
 const GRAPHQL_NAME_RE = /^[_A-Za-z][_0-9A-Za-z]*$/;
 const COORDINATE_SIGNAL_FIELDS = new Set([
@@ -50,6 +51,24 @@ const SIGNALS_BLOCKED_BY_PRIVILEGE = {
 };
 
 let signalCollectionFieldCache = null;
+const availableSignalsCache = new Map();
+
+function getPositiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+}
+
+function getAvailableSignalsCacheMs() {
+  return getPositiveIntegerEnv(
+    "DIMO_AVAILABLE_SIGNALS_CACHE_MS",
+    DEFAULT_AVAILABLE_SIGNALS_CACHE_MS
+  );
+}
+
+function getCachedValue(cacheEntry) {
+  if (!cacheEntry || cacheEntry.expiresAt <= Date.now()) return null;
+  return cacheEntry.value;
+}
 
 function cleanString(value) {
   if (value == null) return null;
@@ -386,6 +405,10 @@ async function fetchSignalCollectionFields(authHeader) {
 
 async function fetchDimoAvailableSignals(tokenId, authHeader = null) {
   const numericTokenId = normalizeTokenId(tokenId);
+  const cacheKey = String(numericTokenId);
+  const cached = getCachedValue(availableSignalsCache.get(cacheKey));
+  if (cached) return cached;
+
   const vehicleAuthHeader = authHeader || (await getDimoVehicleAuthHeader(numericTokenId));
 
   const query = `
@@ -401,7 +424,13 @@ async function fetchDimoAvailableSignals(tokenId, authHeader = null) {
     authHeader: vehicleAuthHeader,
   });
 
-  return result?.data?.availableSignals ?? [];
+  const availableSignals = result?.data?.availableSignals ?? [];
+  availableSignalsCache.set(cacheKey, {
+    value: availableSignals,
+    expiresAt: Date.now() + getAvailableSignalsCacheMs(),
+  });
+
+  return availableSignals;
 }
 
 function buildLatestSignalSelection(signalName) {
