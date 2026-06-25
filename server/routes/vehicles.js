@@ -82,28 +82,29 @@ function getAgeMinutes(value) {
 const TELEMETRY_READING_DEFINITIONS = {
   battery_voltage: {
     label: "Battery voltage",
-    valueSql: "s.battery_voltage",
-    rawValueSql: "s.battery_voltage",
+    valueSql: "s.battery_voltage::numeric",
+    rawValueSql: "s.battery_voltage::numeric",
     recordedAtSql:
-      "COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at)",
-    whereSql: "s.battery_voltage IS NOT NULL AND s.battery_voltage BETWEEN 5 AND 16",
+      "COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at)::timestamptz",
+    whereSql:
+      "s.battery_voltage IS NOT NULL AND s.battery_voltage::numeric BETWEEN 5 AND 16",
     unit: "v",
   },
   coolant_temp: {
     label: "Engine temp",
     valueSql:
-      "CASE WHEN s.coolant_temp <= 130 THEN s.coolant_temp * 9 / 5 + 32 ELSE s.coolant_temp END",
-    rawValueSql: "s.coolant_temp",
-    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)",
+      "CASE WHEN s.coolant_temp::numeric <= 130 THEN s.coolant_temp::numeric * 9 / 5 + 32 ELSE s.coolant_temp::numeric END",
+    rawValueSql: "s.coolant_temp::numeric",
+    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)::timestamptz",
     whereSql: "s.coolant_temp IS NOT NULL",
     unit: "F",
   },
   engine_rpm: {
     label: "Tachometer",
-    valueSql: "s.engine_rpm",
-    rawValueSql: "s.engine_rpm",
-    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)",
-    whereSql: "s.engine_rpm IS NOT NULL AND s.engine_rpm >= 0",
+    valueSql: "s.engine_rpm::numeric",
+    rawValueSql: "s.engine_rpm::numeric",
+    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)::timestamptz",
+    whereSql: "s.engine_rpm IS NOT NULL AND s.engine_rpm::numeric >= 0",
     unit: "RPM",
   },
 };
@@ -640,7 +641,8 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
               1
             ) AS delta_minutes
           FROM vehicle_telemetry_snapshots engine
-          WHERE d.value < 12
+          WHERE d.recorded_at IS NOT NULL
+            AND d.value < 12
             AND COALESCE(engine.is_running, false) = true
             AND COALESCE(
               engine.ignition_last_updated,
@@ -790,7 +792,13 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
     });
   } catch (err) {
     console.error("GET /api/vehicles/:selector/telemetry-readings failed:", err);
-    return res.status(500).json({ error: "Failed to load telemetry readings" });
+    return res.status(500).json({
+      error: "Failed to load telemetry readings",
+      detail:
+        process.env.NODE_ENV === "production"
+          ? undefined
+          : err.message || String(err),
+    });
   }
 });
 
