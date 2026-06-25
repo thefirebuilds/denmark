@@ -145,6 +145,9 @@ function withStatusCompatibilityFields(vehicle) {
           ? Number(vehicle.oil_capacity_liters)
           : null,
     },
+    battery: {
+      installed_at: vehicle.battery_installed_at || null,
+    },
     telemetry: {
       ...telemetry,
       last_comm_age_minutes: getAgeMinutes(telemetry.last_comm),
@@ -376,6 +379,7 @@ router.get("/", async (req, res) => {
         v.oil_type,
         v.oil_capacity_quarts,
         v.oil_capacity_liters,
+        v.battery_installed_at,
         v.onboarding_date,
         first_trip.first_trip_start::date AS first_trip_start,
         COALESCE(v.onboarding_date, first_trip.first_trip_start::date) AS effective_onboarding_date,
@@ -501,6 +505,7 @@ router.post("/", async (req, res) => {
       oil_type: toNullableText(req.body.oil_type),
       oil_capacity_quarts: toNullableNumber(req.body.oil_capacity_quarts),
       oil_capacity_liters: toNullableNumber(req.body.oil_capacity_liters),
+      battery_installed_at: toNullableDate(req.body.battery_installed_at),
       rockauto_url: toNullableText(req.body.rockauto_url),
       onboarding_date: toNullableDate(req.body.onboarding_date),
       acquisition_cost: toNullableNumber(req.body.acquisition_cost),
@@ -919,6 +924,11 @@ router.patch("/:selector", async (req, res) => {
         ? toNullableText(req.body.rockauto_url)
         : existing.rockauto_url;
 
+    const battery_installed_at =
+      req.body.battery_installed_at !== undefined
+        ? toNullableDate(req.body.battery_installed_at)
+        : existing.battery_installed_at;
+
     const lockbox_pin =
       req.body.lockbox_pin !== undefined
         ? toNullableText(req.body.lockbox_pin)
@@ -1026,20 +1036,21 @@ router.patch("/:selector", async (req, res) => {
         oil_capacity_quarts = $12,
         oil_capacity_liters = $13,
         rockauto_url = $14,
-        lockbox_pin = $15,
-        bouncie_vehicle_id = $16,
-        dimo_token_id = $17,
-        provider_vehicle_id = $18,
-        external_vehicle_key = COALESCE($19, CASE WHEN $17::bigint IS NOT NULL THEN 'dimo:' || $17::text ELSE NULL END),
-        turo_vehicle_id = $20,
-        turo_vehicle_name = $21,
-        onboarding_date = $22,
-        acquisition_cost = $23,
-        retired_at = $24,
-        in_service = $25,
-        is_active = $26,
+        battery_installed_at = $15,
+        lockbox_pin = $16,
+        bouncie_vehicle_id = $17,
+        dimo_token_id = $18,
+        provider_vehicle_id = $19,
+        external_vehicle_key = COALESCE($20, CASE WHEN $18::bigint IS NOT NULL THEN 'dimo:' || $18::text ELSE NULL END),
+        turo_vehicle_id = $21,
+        turo_vehicle_name = $22,
+        onboarding_date = $23,
+        acquisition_cost = $24,
+        retired_at = $25,
+        in_service = $26,
+        is_active = $27,
         updated_at = NOW()
-      WHERE id = $27
+      WHERE id = $28
       RETURNING *
     `;
 
@@ -1058,6 +1069,7 @@ router.patch("/:selector", async (req, res) => {
       oil_capacity_quarts,
       oil_capacity_liters,
       rockauto_url,
+      battery_installed_at,
       lockbox_pin,
       bouncie_vehicle_id,
       dimo_token_id,

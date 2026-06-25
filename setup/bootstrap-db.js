@@ -45,6 +45,9 @@ const {
   ensureVehicleAliasesTable,
 } = require("../server/services/vehicles/vehicleAliases");
 const {
+  ensureVehicleRuntimeSchema,
+} = require("../server/services/vehicles/vehicleRuntimeSchema");
+const {
   ensureVehicleIdentityConstraints,
 } = require("../server/services/vehicles/vehicleIdentityConstraints");
 const {
@@ -357,6 +360,7 @@ async function runRuntimeEnsures() {
   await ensureMetricsIndexes();
   await ensureVehicleOdometerRollupTable();
   await ensureVehicleAliasesTable();
+  await ensureVehicleRuntimeSchema();
   await ensureSystemActivityLogTable();
   await ensureIncomeTables();
   await ensureFleetAlertTables();

@@ -164,6 +164,7 @@ const EMPTY_VEHICLE = {
   lockbox_pin: "",
   registration_month: "",
   registration_year: "",
+  battery_installed_at: "",
   onboarding_date: "",
   first_trip_start: "",
   effective_onboarding_date: "",
@@ -1866,6 +1867,7 @@ function toVehicleForm(vehicle = EMPTY_VEHICLE) {
         : String(vehicle.oil_capacity_liters),
     acquisition_cost:
       vehicle.acquisition_cost == null ? "" : String(vehicle.acquisition_cost),
+    battery_installed_at: toDateInputValue(vehicle.battery_installed_at),
     onboarding_date: toDateInputValue(vehicle.onboarding_date),
     first_trip_start: toDateInputValue(vehicle.first_trip_start),
     effective_onboarding_date: toDateInputValue(
@@ -2001,6 +2003,15 @@ function VehicleConfigFields({ form, update, mode = "edit" }) {
           type="date"
           value={form.retired_at || ""}
           onChange={(e) => update("retired_at", e.target.value)}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>Battery installed</span>
+        <input
+          type="date"
+          value={form.battery_installed_at || ""}
+          onChange={(e) => update("battery_installed_at", e.target.value)}
         />
       </label>
 

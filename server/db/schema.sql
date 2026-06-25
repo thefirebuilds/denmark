@@ -1670,6 +1670,7 @@ CREATE TABLE public.vehicles (
     oil_type text,
     oil_capacity_quarts numeric(4,2),
     oil_capacity_liters numeric(4,2),
+    battery_installed_at date,
     onboarding_date date,
     acquisition_cost numeric(10,2),
     retired_at date,

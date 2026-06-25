@@ -344,6 +344,27 @@ function formatBatteryVoltageDate(value) {
   });
 }
 
+function formatBatteryAge(value) {
+  if (!value) return "unknown";
+  const installed = new Date(value);
+  if (Number.isNaN(installed.getTime())) return "unknown";
+
+  const now = new Date();
+  const months =
+    (now.getFullYear() - installed.getFullYear()) * 12 +
+    (now.getMonth() - installed.getMonth()) -
+    (now.getDate() < installed.getDate() ? 1 : 0);
+
+  if (months < 0) return "Install date in future";
+  if (months < 2) return `${Math.max(0, months)} mo old`;
+
+  const years = Math.floor(months / 12);
+  const remainingMonths = months % 12;
+  if (years <= 0) return `${months} mo old`;
+  if (remainingMonths === 0) return `${years} yr old`;
+  return `${years} yr ${remainingMonths} mo old`;
+}
+
 function formatTelemetryReadingTime(value) {
   if (!value) return "Unknown time";
   const date = new Date(value);
@@ -604,6 +625,12 @@ function mapMaintenanceSummaryToVehicle(
         fleetVehicle?.lockbox_pin,
         fleetVehicle?.lockboxPin
       ) || "",
+    battery_installed_at:
+      sourceVehicle.battery_installed_at ||
+      sourceVehicle.batteryInstalledAt ||
+      fleetVehicle?.battery_installed_at ||
+      fleetVehicle?.batteryInstalledAt ||
+      null,
     rentable: !summary.blocksRental,
     in_service: fleetVehicle?.in_service !== false,
     map_vehicle_id: fleetVehicle?.id ?? sourceVehicle.id ?? fallbackId,
@@ -2705,6 +2732,14 @@ export default function FleetMaintenancePanel({
                     {vehicle.battery_voltage_health?.currentRecordedAt
                       ? ` - ${formatTelematicsLastCall(
                           vehicle.battery_voltage_health.currentRecordedAt
+                        )}`
+                      : ""}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    Battery age {formatBatteryAge(vehicle.battery_installed_at)}
+                    {vehicle.battery_installed_at
+                      ? ` - installed ${formatBatteryVoltageDate(
+                          vehicle.battery_installed_at
                         )}`
                       : ""}
                   </span>
