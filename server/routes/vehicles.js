@@ -614,77 +614,81 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
       ? `
           engine_context.snapshot_id AS engine_on_snapshot_id,
           engine_context.engine_on_at,
-          engine_context.delta_minutes AS engine_on_delta_minutes
+          engine_context.delta_minutes AS engine_on_delta_minutes,
+          engine_context.match_basis AS engine_on_match_basis
         `
       : `
           NULL::bigint AS engine_on_snapshot_id,
           NULL::timestamptz AS engine_on_at,
-          NULL::numeric AS engine_on_delta_minutes
+          NULL::numeric AS engine_on_delta_minutes,
+          NULL::text AS engine_on_match_basis
         `;
     const engineOnJoinSql = includeEngineOnContext
       ? `
         LEFT JOIN LATERAL (
           SELECT
-            engine.id AS snapshot_id,
-            COALESCE(
-              engine.ignition_last_updated,
-              engine.vehicle_last_updated,
-              engine.captured_at
-            ) AS engine_on_at,
+            candidate.snapshot_id,
+            candidate.engine_on_at,
             ROUND(
               (
                 EXTRACT(
-                  EPOCH FROM (
-                    COALESCE(
-                      engine.ignition_last_updated,
-                      engine.vehicle_last_updated,
-                      engine.captured_at
-                    ) - d.recorded_at
-                  )
+                  EPOCH FROM (candidate.engine_on_at - candidate.match_at)
                 ) / 60.0
               )::numeric,
               1
-            ) AS delta_minutes
-          FROM vehicle_telemetry_snapshots engine
-          WHERE d.recorded_at IS NOT NULL
-            AND d.value < 12
-            AND COALESCE(engine.is_running, false) = true
-            AND COALESCE(
-              engine.ignition_last_updated,
-              engine.vehicle_last_updated,
-              engine.captured_at
-            ) BETWEEN d.recorded_at - INTERVAL '5 minutes'
-              AND d.recorded_at + INTERVAL '5 minutes'
-            AND (
-              (
-                d.vin IS NOT NULL
-                AND d.vin <> ''
-                AND engine.vin IS NOT NULL
-                AND engine.vin <> ''
-                AND LOWER(engine.vin) = LOWER(d.vin)
+            ) AS delta_minutes,
+            candidate.match_basis
+          FROM (
+            SELECT
+              engine.id AS snapshot_id,
+              ref.match_at,
+              ref.match_basis,
+              COALESCE(
+                engine.ignition_last_updated,
+                engine.vehicle_last_updated,
+                engine.captured_at
+              ) AS engine_on_at
+            FROM (
+              VALUES
+                (d.recorded_at, 'signal'::text),
+                (d.captured_at, 'capture'::text)
+            ) AS ref(match_at, match_basis)
+            JOIN vehicle_telemetry_snapshots engine
+              ON COALESCE(engine.is_running, false) = true
+             AND COALESCE(
+                engine.ignition_last_updated,
+                engine.vehicle_last_updated,
+                engine.captured_at
+              ) BETWEEN ref.match_at - INTERVAL '5 minutes'
+                AND ref.match_at + INTERVAL '5 minutes'
+            WHERE ref.match_at IS NOT NULL
+              AND d.value < 12
+              AND (
+                (
+                  d.vin IS NOT NULL
+                  AND d.vin <> ''
+                  AND engine.vin IS NOT NULL
+                  AND engine.vin <> ''
+                  AND LOWER(engine.vin) = LOWER(d.vin)
+                )
+                OR (
+                  d.dimo_token_id IS NOT NULL
+                  AND engine.dimo_token_id = d.dimo_token_id
+                )
+                OR (
+                  d.external_vehicle_key IS NOT NULL
+                  AND d.external_vehicle_key <> ''
+                  AND engine.external_vehicle_key = d.external_vehicle_key
+                )
               )
-              OR (
-                d.dimo_token_id IS NOT NULL
-                AND engine.dimo_token_id = d.dimo_token_id
-              )
-              OR (
-                d.external_vehicle_key IS NOT NULL
-                AND d.external_vehicle_key <> ''
-                AND engine.external_vehicle_key = d.external_vehicle_key
-              )
-            )
-          ORDER BY ABS(
+          ) candidate
+          ORDER BY CASE candidate.match_basis WHEN 'signal' THEN 0 ELSE 1 END ASC,
+          ABS(
             EXTRACT(
-              EPOCH FROM (
-                COALESCE(
-                  engine.ignition_last_updated,
-                  engine.vehicle_last_updated,
-                  engine.captured_at
-                ) - d.recorded_at
-              )
+              EPOCH FROM (candidate.engine_on_at - candidate.match_at)
             )
           ) ASC,
-          engine.id DESC
+          candidate.snapshot_id DESC
           LIMIT 1
         ) engine_context ON TRUE
       `
@@ -792,6 +796,7 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
                   row.engine_on_delta_minutes == null
                     ? null
                     : Number(row.engine_on_delta_minutes),
+                matchBasis: row.engine_on_match_basis || null,
               },
       })),
     });

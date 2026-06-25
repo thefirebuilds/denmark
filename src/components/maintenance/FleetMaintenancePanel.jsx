@@ -388,6 +388,20 @@ function formatTelemetryReadingValue(value, signal) {
   return String(num);
 }
 
+function formatTelemetryLag(ms) {
+  const minutes = Math.round(Math.abs(ms) / 60000);
+  if (!Number.isFinite(minutes) || minutes < 1) return "";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours < 24) {
+    return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  const dayHours = hours % 24;
+  return dayHours ? `${days}d ${dayHours}h` : `${days}d`;
+}
+
 function formatRawTelemetryReading(reading, signal) {
   const value = Number(reading?.value);
   const rawValue = Number(reading?.rawValue);
@@ -409,7 +423,13 @@ function formatTelemetryCaptureDetail(reading) {
     return "";
   }
 
-  return `captured ${formatTelemetryReadingTime(reading.capturedAt)}`;
+  const lag = formatTelemetryLag(captured.getTime() - recorded.getTime());
+  return [
+    `captured ${formatTelemetryReadingTime(reading.capturedAt)}`,
+    lag ? `DIMO value ${lag} stale` : "",
+  ]
+    .filter(Boolean)
+    .join(" / ");
 }
 
 function formatEngineOnContext(reading) {
@@ -421,8 +441,14 @@ function formatEngineOnContext(reading) {
       ? "same minute"
       : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} min`
     : "within 5 min";
+  const basisText =
+    event.matchBasis === "capture"
+      ? "near Denmark capture"
+      : "near DIMO signal";
 
-  return `Engine on ${deltaText} (${formatTelemetryReadingTime(event.at)})`;
+  return `Engine on ${deltaText} ${basisText} (${formatTelemetryReadingTime(
+    event.at
+  )})`;
 }
 
 function buildEngineTemperatureStatus(fleetVehicle = null) {
