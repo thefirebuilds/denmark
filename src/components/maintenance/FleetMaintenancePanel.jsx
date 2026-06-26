@@ -328,6 +328,12 @@ function formatEngineTemp(value) {
   return `${Math.round(num)} F`;
 }
 
+function formatSpeedMph(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return `${Math.round(num)} mph`;
+}
+
 function formatBatteryVoltage(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
@@ -387,10 +393,22 @@ function formatTelemetryReadingValue(value, signal) {
   if (!Number.isFinite(num)) return "--";
   if (signal === "battery_voltage") return `${num.toFixed(2)}v`;
   if (signal === "coolant_temp") return `${Math.round(num)} F`;
+  if (signal === "speed_mph") return `${Math.round(num)} mph`;
   if (signal === "engine_rpm") {
     return `${Math.round(num).toLocaleString("en-US")} RPM`;
   }
   return String(num);
+}
+
+function formatTelemetryReadingDate(value) {
+  if (!value) return "Unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function formatTelemetryLag(ms) {
@@ -526,6 +544,28 @@ function buildEngineRpmStatus(fleetVehicle = null) {
     maxText,
     detail,
     tone: Number.isFinite(latestRpm) || sampleCount > 0 ? "pass" : "unknown",
+  };
+}
+
+function buildSpeedStatus(fleetVehicle = null) {
+  const telemetry = fleetVehicle?.telemetry || {};
+  const currentSpeed = Number(telemetry.speed);
+  const speedLastUpdated =
+    telemetry.timestamps?.speed_last_updated ||
+    telemetry.timestamps?.vehicle_last_updated ||
+    telemetry.timestamps?.captured_at ||
+    null;
+  const latestText = Number.isFinite(currentSpeed)
+    ? formatSpeedMph(currentSpeed)
+    : "No reading";
+  const detail = speedLastUpdated
+    ? `Last speed sample ${formatTelematicsLastCall(speedLastUpdated)}`
+    : "No speed history";
+
+  return {
+    latestText,
+    detail,
+    tone: Number.isFinite(currentSpeed) ? "pass" : "unknown",
   };
 }
 
@@ -674,6 +714,7 @@ function mapMaintenanceSummaryToVehicle(
     mil_status: buildMilStatus(fleetVehicle, liveDiagnostics),
     engine_temperature: buildEngineTemperatureStatus(fleetVehicle),
     engine_rpm: buildEngineRpmStatus(fleetVehicle),
+    speed_status: buildSpeedStatus(fleetVehicle),
     body_condition: notes.length ? "documented" : "good",
     body_notes: notes.length
       ? notes
@@ -1403,6 +1444,7 @@ export default function FleetMaintenancePanel({
         mil_status: buildMilStatus(selectedFleetVehicle, currentLiveDimoDiagnostics),
         engine_temperature: buildEngineTemperatureStatus(selectedFleetVehicle),
         engine_rpm: buildEngineRpmStatus(selectedFleetVehicle),
+        speed_status: buildSpeedStatus(selectedFleetVehicle),
         body_condition: "unknown",
         body_notes: ["Loading live maintenance summary…"],
         inspection_items: [],
@@ -1439,6 +1481,7 @@ export default function FleetMaintenancePanel({
       mil_status: buildMilStatus(null),
       engine_temperature: buildEngineTemperatureStatus(null),
       engine_rpm: buildEngineRpmStatus(null),
+      speed_status: buildSpeedStatus(null),
       body_condition: "unknown",
       body_notes: fleetLoadError
         ? [fleetLoadError]
@@ -1498,14 +1541,17 @@ export default function FleetMaintenancePanel({
             ? "Battery voltage"
             : signal === "coolant_temp"
             ? "Engine temp"
+            : signal === "speed_mph"
+            ? "Recorded speeds"
             : "Tachometer",
         readings: [],
       });
 
+      const limit = signal === "speed_mph" ? 200 : 50;
       const res = await fetch(
         `/api/vehicles/${encodeURIComponent(
           selector
-        )}/telemetry-readings?signal=${encodeURIComponent(signal)}&limit=50`
+        )}/telemetry-readings?signal=${encodeURIComponent(signal)}&limit=${limit}`
       );
       const data = await res.json().catch(() => ({}));
 
@@ -3004,6 +3050,24 @@ export default function FleetMaintenancePanel({
                     {vehicle.engine_rpm?.detail || "No DIMO tachometer history"}
                   </span>
                 </button>
+
+                <button
+                  type="button"
+                  className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
+                    vehicle.speed_status?.tone || "unknown"
+                  }`}
+                  onClick={() => openTelemetryHistory("speed_mph")}
+                >
+                  <span className="fleet-maintenance-meta-label">
+                    Recorded speeds
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    {vehicle.speed_status?.latestText || "No reading"}
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    {vehicle.speed_status?.detail || "No speed history"}
+                  </span>
+                </button>
               </div>
 
               <div className="fleet-maintenance-inspections">
@@ -3662,43 +3726,98 @@ export default function FleetMaintenancePanel({
             ) : Array.isArray(telemetryHistory.readings) &&
               telemetryHistory.readings.length ? (
               <div className="fleet-maintenance-telemetry-history-list">
-                {telemetryHistory.readings.map((reading) => {
-                  const rawText = formatRawTelemetryReading(
-                    reading,
-                    telemetryHistory.signal
-                  );
-                  const captureDetail = formatTelemetryCaptureDetail(reading);
-                  const engineOnContext = formatEngineOnContext(reading);
-                  return (
-                    <div
-                      key={`${reading.snapshotId}-${reading.recordedAt}`}
-                      className="fleet-maintenance-telemetry-history-row"
-                    >
-                      <div>
-                        <strong>
-                          {formatTelemetryReadingValue(
-                            reading.value,
-                            telemetryHistory.signal
-                          )}
-                        </strong>
-                        {rawText ? <small>{rawText}</small> : null}
-                        {engineOnContext ? <small>{engineOnContext}</small> : null}
+                {telemetryHistory.signal === "speed_mph"
+                  ? Object.entries(
+                      telemetryHistory.readings.reduce((groups, reading) => {
+                        const key = formatTelemetryReadingDate(
+                          reading.recordedAt || reading.capturedAt
+                        );
+                        groups[key] = groups[key] || [];
+                        groups[key].push(reading);
+                        return groups;
+                      }, {})
+                    ).map(([dateLabel, readings]) => (
+                      <div
+                        key={dateLabel}
+                        className="fleet-maintenance-telemetry-history-day"
+                      >
+                        <h4>{dateLabel}</h4>
+                        {readings.map((reading) => {
+                          const captureDetail =
+                            formatTelemetryCaptureDetail(reading);
+                          return (
+                            <div
+                              key={`${reading.snapshotId}-${reading.recordedAt}`}
+                              className="fleet-maintenance-telemetry-history-row"
+                            >
+                              <div>
+                                <strong>
+                                  {formatTelemetryReadingValue(
+                                    reading.value,
+                                    telemetryHistory.signal
+                                  )}
+                                </strong>
+                              </div>
+                              <span>
+                                {formatTelemetryReadingTime(reading.recordedAt)}
+                              </span>
+                              <em>
+                                {[
+                                  reading.source,
+                                  reading.snapshotId
+                                    ? `snapshot #${reading.snapshotId}`
+                                    : "",
+                                  captureDetail,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" - ")}
+                              </em>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <span>
-                        {formatTelemetryReadingTime(reading.recordedAt)}
-                      </span>
-                      <em>
-                        {[
-                          reading.source,
-                          reading.snapshotId ? `snapshot #${reading.snapshotId}` : "",
-                          captureDetail,
-                        ]
-                          .filter(Boolean)
-                          .join(" - ")}
-                      </em>
-                    </div>
-                  );
-                })}
+                    ))
+                  : telemetryHistory.readings.map((reading) => {
+                      const rawText = formatRawTelemetryReading(
+                        reading,
+                        telemetryHistory.signal
+                      );
+                      const captureDetail = formatTelemetryCaptureDetail(reading);
+                      const engineOnContext = formatEngineOnContext(reading);
+                      return (
+                        <div
+                          key={`${reading.snapshotId}-${reading.recordedAt}`}
+                          className="fleet-maintenance-telemetry-history-row"
+                        >
+                          <div>
+                            <strong>
+                              {formatTelemetryReadingValue(
+                                reading.value,
+                                telemetryHistory.signal
+                              )}
+                            </strong>
+                            {rawText ? <small>{rawText}</small> : null}
+                            {engineOnContext ? (
+                              <small>{engineOnContext}</small>
+                            ) : null}
+                          </div>
+                          <span>
+                            {formatTelemetryReadingTime(reading.recordedAt)}
+                          </span>
+                          <em>
+                            {[
+                              reading.source,
+                              reading.snapshotId
+                                ? `snapshot #${reading.snapshotId}`
+                                : "",
+                              captureDetail,
+                            ]
+                              .filter(Boolean)
+                              .join(" - ")}
+                          </em>
+                        </div>
+                      );
+                    })}
               </div>
             ) : (
               <div className="fleet-maintenance-telemetry-history-state">

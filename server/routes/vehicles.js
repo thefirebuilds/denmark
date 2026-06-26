@@ -107,6 +107,14 @@ const TELEMETRY_READING_DEFINITIONS = {
     whereSql: "s.engine_rpm IS NOT NULL AND s.engine_rpm::numeric >= 0",
     unit: "RPM",
   },
+  speed_mph: {
+    label: "Recorded speeds",
+    valueSql: "s.speed::numeric",
+    rawValueSql: "s.speed::numeric",
+    recordedAtSql: "COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at)::timestamptz",
+    whereSql: "s.speed IS NOT NULL AND s.speed::numeric >= 0",
+    unit: "mph",
+  },
 };
 
 function getAgeDays(value) {

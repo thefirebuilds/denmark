@@ -171,6 +171,21 @@
   padding: 8px 9px;
 }
 
+.fleet-maintenance-telemetry-history-day {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fleet-maintenance-telemetry-history-day h4 {
+  margin: 4px 0 0;
+  color: rgba(232, 238, 252, 0.74);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .fleet-maintenance-battery-voltage-range {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
