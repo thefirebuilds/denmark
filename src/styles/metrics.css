@@ -327,6 +327,137 @@
 }
 
 /* --------------------------------------------------------------
+   Monthly profit / loss bars
+-------------------------------------------------------------- */
+
+.metrics-pnl-chart {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(45, 67, 108, 0.78);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(10, 18, 34, 0.98), rgba(7, 12, 23, 0.96));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 28px rgba(0, 0, 0, 0.14);
+}
+
+.metrics-pnl-chart__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metrics-pnl-chart__summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.metrics-pnl-chart__summary span {
+  display: grid;
+  gap: 2px;
+  min-width: 86px;
+  padding: 7px 9px;
+  border: 1px solid rgba(143, 166, 202, 0.16);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #8296b8;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.metrics-pnl-chart__summary strong {
+  color: #dce9ff;
+  font-size: 0.86rem;
+}
+
+.metrics-pnl-chart__summary .positive strong {
+  color: #86efac;
+}
+
+.metrics-pnl-chart__summary .negative strong {
+  color: #fca5a5;
+}
+
+.metrics-pnl-chart__plot {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(48px, 1fr));
+  gap: 9px;
+  align-items: end;
+  min-height: 176px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.metrics-pnl-chart__month {
+  display: grid;
+  grid-template-rows: 116px auto auto;
+  gap: 5px;
+  min-width: 48px;
+  color: #8296b8;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.metrics-pnl-chart__bar-track {
+  position: relative;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  height: 116px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.68);
+  overflow: hidden;
+}
+
+.metrics-pnl-chart__bar-track::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 50% 0;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.metrics-pnl-chart__bar {
+  position: relative;
+  z-index: 1;
+  width: 72%;
+  min-height: 3px;
+  border-radius: 8px 8px 2px 2px;
+  background: linear-gradient(180deg, #7dd3fc, #22c55e);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.22);
+}
+
+.metrics-pnl-chart__month.is-loss .metrics-pnl-chart__bar {
+  background: linear-gradient(180deg, #fb7185, #ef4444);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.2);
+}
+
+.metrics-pnl-chart__month strong {
+  color: #dce9ff;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.metrics-pnl-chart__month.is-profit strong {
+  color: #86efac;
+}
+
+.metrics-pnl-chart__month.is-loss strong {
+  color: #fca5a5;
+}
+
+/* --------------------------------------------------------------
    Summary + ops rows
 -------------------------------------------------------------- */
 

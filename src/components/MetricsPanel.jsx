@@ -113,6 +113,16 @@ function formatShortDate(value) {
   });
 }
 
+function formatMonthLabel(value) {
+  if (!value) return "--";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    year: "2-digit",
+  });
+}
+
 function parseCustomRange(range) {
   const match = String(range || "").match(
     /^custom:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/
@@ -233,6 +243,78 @@ function RevenueExpenseSparkline({ trends, summary }) {
           </span>
           <span>{lastLabel}</span>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function MonthlyProfitLossChart({ trends }) {
+  const points = Array.isArray(trends?.monthly_profit_loss?.points)
+    ? trends.monthly_profit_loss.points
+    : [];
+
+  if (!points.length) return null;
+
+  const summary = trends?.monthly_profit_loss?.summary || {};
+  const maxAbsProfit = Math.max(
+    ...points.map((point) => Math.abs(Number(point?.profit ?? 0))),
+    1
+  );
+
+  return (
+    <section className="metrics-pnl-chart">
+      <div className="metrics-pnl-chart__header">
+        <div>
+          <div className="metrics-section-title">12 Month P&amp;L</div>
+          <div className="metrics-section-subtitle">
+            Month-by-month profit and loss, revenue less expenses
+          </div>
+        </div>
+        <div className="metrics-pnl-chart__summary">
+          <span>
+            <strong>{formatCurrencyCompact(summary.revenue)}</strong>
+            Revenue
+          </span>
+          <span>
+            <strong>{formatCurrencyCompact(summary.expenses)}</strong>
+            Expenses
+          </span>
+          <span className={Number(summary.profit ?? 0) >= 0 ? "positive" : "negative"}>
+            <strong>{formatSignedCurrency(summary.profit)}</strong>
+            Net
+          </span>
+        </div>
+      </div>
+
+      <div className="metrics-pnl-chart__plot" aria-label="Monthly profit and loss bar graph">
+        {points.map((point) => {
+          const profit = Number(point?.profit ?? 0);
+          const magnitude = Math.max(2, (Math.abs(profit) / maxAbsProfit) * 100);
+
+          return (
+            <div
+              key={point.label}
+              className={`metrics-pnl-chart__month ${
+                profit >= 0 ? "is-profit" : "is-loss"
+              }`}
+              title={`${formatMonthLabel(point.label)}: ${formatSignedCurrency(
+                profit
+              )} net (${formatCurrencyCompact(point.revenue)} revenue / ${formatCurrencyCompact(
+                point.expenses
+              )} expenses)`}
+            >
+              <div className="metrics-pnl-chart__bar-track">
+                <span
+                  className="metrics-pnl-chart__bar"
+                  style={{ height: `${magnitude}%` }}
+                  aria-hidden="true"
+                />
+              </div>
+              <strong>{formatSignedCurrency(profit)}</strong>
+              <span>{formatMonthLabel(point.label)}</span>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -1750,6 +1832,7 @@ const mileageStats = useMemo(() => {
           </div>
 
           <RevenueExpenseSparkline trends={trends} summary={summary} />
+          <MonthlyProfitLossChart trends={trends} />
 
           <section className="metrics-section">
             <div className="metrics-section-header">

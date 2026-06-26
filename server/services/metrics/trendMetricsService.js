@@ -54,6 +54,20 @@ function addMonths(dateInput, months) {
   return d;
 }
 
+function startOfMonth(dateInput) {
+  const d = new Date(dateInput);
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function endOfMonth(dateInput) {
+  const d = startOfMonth(dateInput);
+  d.setMonth(d.getMonth() + 1);
+  d.setMilliseconds(-1);
+  return d;
+}
+
 function iterateBucketLabels(startDate, endDate, granularity) {
   if (!startDate || !endDate) return [];
 
@@ -102,6 +116,44 @@ function addTripRevenueToBuckets(bucketMap, trip, rangeStart, rangeEnd, granular
     const label = bucketKey(cursor, "day");
     const bucket = bucketMap.get(label);
     if (bucket) bucket.revenue += dailyRevenue;
+  }
+}
+
+function addTripMonthlyRevenueToBuckets(bucketMap, trip) {
+  if (!trip?.trip_start || !trip?.trip_end) return;
+
+  const tripStart = startOfDay(trip.trip_start);
+  const tripEnd = endOfDay(trip.trip_end);
+  if (Number.isNaN(tripStart.getTime()) || Number.isNaN(tripEnd.getTime())) return;
+
+  const totalDays = getTripTotalDays(trip.trip_start, trip.trip_end);
+  const totalRevenue = toNumber(trip.amount);
+  if (!totalDays || !totalRevenue) return;
+
+  const dailyRevenue = totalRevenue / totalDays;
+
+  for (
+    let cursor = startOfMonth(tripStart);
+    cursor <= tripEnd;
+    cursor = addMonths(cursor, 1)
+  ) {
+    const label = bucketKey(cursor, "month");
+    const bucket = bucketMap.get(label);
+    if (!bucket) continue;
+
+    const monthStart = startOfMonth(cursor);
+    const monthEnd = endOfMonth(cursor);
+    const effectiveStart = new Date(Math.max(tripStart.getTime(), monthStart.getTime()));
+    const effectiveEnd = new Date(Math.min(tripEnd.getTime(), monthEnd.getTime()));
+    const overlapDays = Math.max(
+      0,
+      Math.floor(
+        (startOfDay(effectiveEnd).getTime() - startOfDay(effectiveStart).getTime()) /
+          86400000
+      ) + 1
+    );
+
+    bucket.revenue += dailyRevenue * overlapDays;
   }
 }
 
@@ -162,15 +214,22 @@ async function fetchExpensesInRange(client, startDate, endDate) {
 async function getTrendMetrics(rangeKey = "90d") {
   const { key, startDate, endDate } = getDateRange(rangeKey);
   const granularity = getTrendGranularity(key);
+  const monthlyEndDate = endOfDay(new Date());
+  const monthlyStartDate = startOfMonth(addMonths(monthlyEndDate, -11));
   const client = await pool.connect();
 
   try {
-    const [trips, expenses] = await Promise.all([
-      fetchTripsInRange(client, startDate, endDate),
-      fetchExpensesInRange(client, startDate, endDate),
-    ]);
+    const trips = await fetchTripsInRange(client, startDate, endDate);
+    const expenses = await fetchExpensesInRange(client, startDate, endDate);
+    const monthlyTrips = await fetchTripsInRange(client, monthlyStartDate, monthlyEndDate);
+    const monthlyExpenses = await fetchExpensesInRange(
+      client,
+      monthlyStartDate,
+      monthlyEndDate
+    );
 
     const bucketMap = new Map();
+    const monthlyBucketMap = new Map();
     const effectiveStartDate =
       startDate ||
       [...trips.map((trip) => trip.trip_start), ...expenses.map((expense) => expense.date)]
@@ -194,8 +253,21 @@ async function getTrendMetrics(rangeKey = "90d") {
       ensureBucket(label);
     }
 
+    for (const label of iterateBucketLabels(monthlyStartDate, monthlyEndDate, "month")) {
+      monthlyBucketMap.set(label, {
+        label,
+        revenue: 0,
+        expenses: 0,
+        profit: 0,
+      });
+    }
+
     for (const trip of trips) {
       addTripRevenueToBuckets(bucketMap, trip, startDate, endDate, granularity);
+    }
+
+    for (const trip of monthlyTrips) {
+      addTripMonthlyRevenueToBuckets(monthlyBucketMap, trip);
     }
 
     for (const expense of expenses) {
@@ -205,7 +277,22 @@ async function getTrendMetrics(rangeKey = "90d") {
       bucket.expenses += toNumber(expense.price) + toNumber(expense.tax);
     }
 
+    for (const expense of monthlyExpenses) {
+      const label = bucketKey(expense.date, "month");
+      if (!label) continue;
+      const bucket = monthlyBucketMap.get(label);
+      if (bucket) bucket.expenses += toNumber(expense.price) + toNumber(expense.tax);
+    }
+
     const points = Array.from(bucketMap.values())
+      .sort((a, b) => String(a.label).localeCompare(String(b.label)))
+      .map((bucket) => ({
+        label: bucket.label,
+        revenue: roundMoney(bucket.revenue),
+        expenses: roundMoney(bucket.expenses),
+        profit: roundMoney(bucket.revenue - bucket.expenses),
+      }));
+    const monthlyProfitLoss = Array.from(monthlyBucketMap.values())
       .sort((a, b) => String(a.label).localeCompare(String(b.label)))
       .map((bucket) => ({
         label: bucket.label,
@@ -218,6 +305,22 @@ async function getTrendMetrics(rangeKey = "90d") {
       range: key,
       granularity,
       points,
+      monthly_profit_loss: {
+        months: 12,
+        granularity: "month",
+        points: monthlyProfitLoss,
+        summary: {
+          revenue: roundMoney(
+            monthlyProfitLoss.reduce((sum, point) => sum + toNumber(point.revenue), 0)
+          ),
+          expenses: roundMoney(
+            monthlyProfitLoss.reduce((sum, point) => sum + toNumber(point.expenses), 0)
+          ),
+          profit: roundMoney(
+            monthlyProfitLoss.reduce((sum, point) => sum + toNumber(point.profit), 0)
+          ),
+        },
+      },
     };
   } finally {
     client.release();
