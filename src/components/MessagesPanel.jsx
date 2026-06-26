@@ -56,7 +56,10 @@ function readLiveMessageQueueCache() {
       return null;
     }
 
-    return items;
+    return {
+      createdAt,
+      items,
+    };
   } catch {
     return null;
   }
@@ -860,6 +863,11 @@ function formatTimeAgo(timestamp) {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+function formatLastChecked(value) {
+  const age = formatTimeAgo(value);
+  return age ? `Last checked: ${age}` : "Last checked recently";
+}
+
 function buildMessageTitle(message) {
   const type = message?.type || message?.message_type;
   if (type === "return_location_check") {
@@ -1472,6 +1480,9 @@ export default function MessagesPanel({
     Array.isArray(initialMessages) ? initialMessages : []
   );
   const [loading, setLoading] = useState(!initialLoadComplete);
+  const [lastMessagesCheckedAt, setLastMessagesCheckedAt] = useState(() =>
+    initialLoadComplete ? new Date().toISOString() : null
+  );
   const [error, setError] = useState("");
   const [newMessageIds, setNewMessageIds] = useState([]);
   const [unreadCount, setUnreadCount] = useState(Number(initialUnreadCount || 0));
@@ -2356,6 +2367,7 @@ async function handleExportGuestInspectionSheet(message) {
       if (!showingTripMessages) {
         writeLiveMessageQueueCache(unsuppressedMessages);
       }
+      setLastMessagesCheckedAt(new Date().toISOString());
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load messages");
@@ -2411,12 +2423,13 @@ async function handleExportGuestInspectionSheet(message) {
       Array.isArray(initialMessages) &&
       !consumedInitialLiveMessagesRef.current;
 
-    const cachedLiveMessages =
+    const cachedLiveQueue =
       !canUseInitialMessages &&
       messageMode === "live" &&
       !selectedTrip?.id
         ? readLiveMessageQueueCache()
         : null;
+    const cachedLiveMessages = cachedLiveQueue?.items || null;
     const seededMessages = canUseInitialMessages
       ? initialMessages
       : cachedLiveMessages || [];
@@ -2427,6 +2440,11 @@ async function handleExportGuestInspectionSheet(message) {
     );
 
     setMessages(visibleSeededMessages);
+    if (cachedLiveQueue?.createdAt) {
+      setLastMessagesCheckedAt(new Date(cachedLiveQueue.createdAt).toISOString());
+    } else if (canUseInitialMessages) {
+      setLastMessagesCheckedAt(new Date().toISOString());
+    }
     setNewMessageIds([]);
     seenIdsRef.current.clear();
     visibleSeededMessages.forEach((message) => seenIdsRef.current.add(message.id));
@@ -2741,7 +2759,9 @@ async function handleExportGuestInspectionSheet(message) {
         {!loading && error && <div className="message-empty">{error}</div>}
 
         {!loading && !error && messages.length === 0 && (
-          <div className="message-empty">No messages found.</div>
+          <div className="message-empty">
+            {formatLastChecked(lastMessagesCheckedAt || countdownNow)}
+          </div>
         )}
 
         {!loading &&
