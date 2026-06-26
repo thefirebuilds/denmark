@@ -9,13 +9,30 @@ import { useEffect, useRef, useState } from "react";
  * Poll fleet telemetry on an interval and expose a highlight state
  * when a vehicle newly starts or begins moving.
  */
-export function useVehicleStatus(pollMs = 60000) {
-  const [vehicles, setVehicles] = useState([]);
+export function useVehicleStatus(pollMs = 60000, initialVehicles = []) {
+  const [vehicles, setVehicles] = useState(() =>
+    Array.isArray(initialVehicles) ? initialVehicles : []
+  );
   const [vehiclesLoading, setVehiclesLoading] = useState(false);
   const [vehiclesError, setVehiclesError] = useState("");
   const [highlightedVehicles, setHighlightedVehicles] = useState({});
 
-  const previousVehiclesRef = useRef(new Map());
+  const previousVehiclesRef = useRef(
+    new Map(
+      (Array.isArray(initialVehicles) ? initialVehicles : [])
+        .map((vehicle) => {
+          const key =
+            vehicle?.turo_vehicle_id ||
+            vehicle?.bouncie_vehicle_id ||
+            vehicle?.dimo_token_id ||
+            vehicle?.vin ||
+            vehicle?.imei ||
+            vehicle?.nickname;
+          return key ? [key, vehicle] : null;
+        })
+        .filter(Boolean)
+    )
+  );
 
   function getVehicleKey(vehicle) {
     return (

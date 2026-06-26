@@ -1923,9 +1923,10 @@ router.get("/", async (req, res) => {
     const limit = Number(req.query.limit) || 100;
     const candidateLimit = Math.max(limit * 20, 100);
     const fast = String(req.query.fast || "").trim() === "1";
+    const light = fast || String(req.query.light || "").trim() === "1";
     const includeDebug = String(req.query.debug || "").trim() === "1";
     const cacheBust = String(req.query.cacheBust || "").trim() !== "";
-    const cacheKey = `limit:${limit}:fast:${fast ? "1" : "0"}`;
+    const cacheKey = `limit:${limit}:fast:${fast ? "1" : "0"}:light:${light ? "1" : "0"}`;
     const cached = cacheBust
       ? null
       : getCachedPayload(messageQueueCache, cacheKey, MESSAGE_QUEUE_CACHE_MS);
@@ -3419,12 +3420,12 @@ router.get("/", async (req, res) => {
     const diagnosticResult = await timeQueueQuery(
       queueTimings,
       "diagnostics",
-      db.query(diagnosticSql)
+      light ? Promise.resolve(EMPTY_QUERY_RESULT) : db.query(diagnosticSql)
     );
     const lowVoltageResult = await timeQueueQuery(
       queueTimings,
       "lowVoltage",
-      db.query(lowVoltageSql)
+      light ? Promise.resolve(EMPTY_QUERY_RESULT) : db.query(lowVoltageSql)
     );
     const maintenanceResult = fast
       ? EMPTY_QUERY_RESULT

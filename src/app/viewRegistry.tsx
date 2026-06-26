@@ -133,6 +133,7 @@ export function renderActiveView(ctx: ViewContext) {
         onTripUpdated={ctx.onTripUpdated}
         onTripCompleted={ctx.onTripCompleted}
         trips={ctx.trips}
+        initialVehicles={ctx.startupVehicles}
         onOpenVehicleMap={ctx.onOpenVehicleMap}
       />
     </>

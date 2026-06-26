@@ -113,6 +113,20 @@ function getContainingGeoLocation(vehicle, geoLocations) {
   );
 }
 
+async function runWithConcurrency(items, limit, worker) {
+  const queue = [...items];
+  const workerCount = Math.max(1, Math.min(Number(limit) || 1, queue.length));
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        await worker(item);
+      }
+    })
+  );
+}
+
 function getLocalDayStartMs(value = new Date()) {
   const date = new Date(value);
   date.setHours(0, 0, 0, 0);
@@ -298,8 +312,10 @@ export default function FleetSnapshotPanel({
     async function loadServiceDue() {
       const nextServiceDueMap = {};
 
-      await Promise.all(
-        pendingVins.map(async (vin) => {
+      await runWithConcurrency(
+        pendingVins,
+        2,
+        async (vin) => {
           try {
             const resp = await fetch(
               `${API_BASE}/api/vehicles/${encodeURIComponent(vin)}/maintenance-summary`
@@ -312,7 +328,7 @@ export default function FleetSnapshotPanel({
           } catch (err) {
             // ignore individual failures
           }
-        })
+        }
       );
 
       if (cancelled) return;
@@ -322,10 +338,11 @@ export default function FleetSnapshotPanel({
       }));
     }
 
-    loadServiceDue();
+    const timerId = window.setTimeout(loadServiceDue, 1500);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timerId);
     };
   }, [vehicleVins.join(","), serviceDueByVin]);
 

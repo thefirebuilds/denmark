@@ -52,10 +52,11 @@ export default function DetailPanel({
   onTripUpdated,
   onTripCompleted,
   trips,
+  initialVehicles = [],
   onOpenVehicleMap,
 }) {
   const { vehicles, vehiclesLoading, vehiclesError, highlightedVehicles } =
-    useVehicleStatus(60000);
+    useVehicleStatus(60000, initialVehicles);
 
   const [editingTripId, setEditingTripId] = useState(null);
   const [stageSaving, setStageSaving] = useState(false);
