@@ -123,6 +123,11 @@ function kmToMiles(km) {
   return num == null ? null : num * 0.621371;
 }
 
+function kmhToMph(kmh) {
+  const num = toNumber(kmh);
+  return num == null ? null : num * 0.621371;
+}
+
 function celsiusToFahrenheit(celsius) {
   const num = toNumber(celsius);
   return num == null ? null : (num * 9) / 5 + 32;
@@ -438,7 +443,7 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
     odometer: kmToMiles(odometerKm),
     fuel_level: toNumber(signalValue(s.powertrainFuelSystemRelativeLevel)),
     is_running: toBool(signalValue(s.isIgnitionOn)),
-    speed: toNumber(signalValue(s.speed)),
+    speed: kmhToMph(signalValue(s.speed)),
 
     latitude: toNumber(coordinates.latitude),
     longitude: toNumber(coordinates.longitude),
