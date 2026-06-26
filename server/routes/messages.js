@@ -857,6 +857,80 @@ function compactGuestMessageThreads(items) {
   return passthrough;
 }
 
+function toFiniteNumber(value) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getTripChangedCompactionKey(item) {
+  if (item?.type !== "trip_changed" && item?.message_type !== "trip_changed") {
+    return null;
+  }
+
+  const newTotal = toFiniteNumber(item.new_total_earnings ?? item.amount);
+  const newEnd = item.new_trip_end || item.trip_end || null;
+
+  if (newTotal == null || !newEnd) return null;
+  const newEndMs = new Date(newEnd).getTime();
+  if (!Number.isFinite(newEndMs)) return null;
+
+  const tripKey =
+    item.trip_id != null
+      ? `trip:${item.trip_id}`
+      : item.reservation_id != null
+      ? `reservation:${item.reservation_id}`
+      : [
+          "guest",
+          String(item.guest_name || item.parsed?.guest || "").trim().toLowerCase(),
+          String(
+            item.vehicle_nickname ||
+              item.vehicle_name ||
+              item.parsed?.vehicle ||
+              ""
+          )
+            .trim()
+            .toLowerCase(),
+        ].join(":");
+
+  return [
+    tripKey,
+    new Date(newEndMs).toISOString(),
+    Math.round(newTotal * 100),
+  ].join("|");
+}
+
+function scoreTripChangedNotice(item) {
+  let score = 0;
+  if (toFiniteNumber(item.earnings_delta ?? item.additional_earnings) != null) {
+    score += 8;
+  }
+  if (toFiniteNumber(item.prior_trip_amount) != null) score += 4;
+  if (toFiniteNumber(item.new_total_earnings) != null) score += 2;
+  if (item.normalized_text_body) score += 1;
+  return score;
+}
+
+function compactTripChangedNotices(items) {
+  const byKey = new Map();
+  const passthrough = [];
+
+  for (const item of items || []) {
+    const key = getTripChangedCompactionKey(item);
+    if (!key) {
+      passthrough.push(item);
+      continue;
+    }
+
+    const existing = byKey.get(key);
+    if (!existing || scoreTripChangedNotice(item) > scoreTripChangedNotice(existing)) {
+      byKey.set(key, item);
+    }
+  }
+
+  return [...passthrough, ...byKey.values()];
+}
+
 function messageQueueRank(item) {
   if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
   if (item.type === "google_calendar_reconnect_required") return -2;
@@ -3451,18 +3525,20 @@ router.get("/", async (req, res) => {
       );
     }
 
-    const queueItems = compactGuestMessageThreads([
-      ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
-      ...attachedHandoffNotices,
-      ...attachedInspectionExportNotices,
-      ...closeoutResult.rows.map(mapCloseoutNoticeRow),
-      ...lateTollResult.rows.map(mapLateTollNoticeRow),
-      ...overlapResult.rows.map(mapTripOverlapNoticeRow),
-      ...visibleMessageRows.map(mapMessageRow),
-      ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
-      ...visibleDiagnosticNotices,
-      ...visibleMaintenanceNotices,
-    ])
+    const queueItems = compactTripChangedNotices(
+      compactGuestMessageThreads([
+        ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
+        ...attachedHandoffNotices,
+        ...attachedInspectionExportNotices,
+        ...closeoutResult.rows.map(mapCloseoutNoticeRow),
+        ...lateTollResult.rows.map(mapLateTollNoticeRow),
+        ...overlapResult.rows.map(mapTripOverlapNoticeRow),
+        ...visibleMessageRows.map(mapMessageRow),
+        ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
+        ...visibleDiagnosticNotices,
+        ...visibleMaintenanceNotices,
+      ])
+    )
       .sort(compareQueueItems)
       .slice(0, limit);
 
