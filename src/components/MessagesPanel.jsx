@@ -15,6 +15,8 @@ import { openPrintDialogForElement } from "../utils/printUtils";
 import {
   buildExportFileName,
   buildPreflightDueItems,
+  getActiveTrip,
+  getNextUpcomingTrip,
   getVinLast6,
   mapMaintenanceSummaryToGuestInspectionVehicle,
 } from "../utils/maintUtils";
@@ -477,6 +479,54 @@ function buildGuestInspectionVehicle(message, vehicle = null, summary = null) {
     fallbackVehicle,
     fleetVehicle: vehicle,
   });
+}
+
+function getVehicleTripSelector(message, vehicle = null) {
+  return (
+    vehicle?.nickname ||
+    vehicle?.vin ||
+    vehicle?.id ||
+    vehicle?.turo_vehicle_id ||
+    message?.vehicle_nickname ||
+    message?.vehicle_vin ||
+    message?.vehicle_name ||
+    message?.turo_vehicle_id ||
+    null
+  );
+}
+
+async function resolveGuestInspectionGuestName(message, vehicle = null) {
+  const selector = getVehicleTripSelector(message, vehicle);
+  if (!selector) return message?.guest_name || "";
+
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/trips/vehicle/${encodeURIComponent(
+        selector
+      )}?mode=relevant`
+    );
+
+    if (!res.ok) return message?.guest_name || "";
+
+    const trips = await res.json();
+    const relevantTrips = Array.isArray(trips) ? trips : [];
+    const activeTrip = getActiveTrip(relevantTrips);
+    const matchingTrip = relevantTrips.find(
+      (trip) => String(trip?.id || "") === String(message?.trip_id || "")
+    );
+    const nextTrip = getNextUpcomingTrip(relevantTrips);
+
+    return (
+      activeTrip?.guest_name ||
+      matchingTrip?.guest_name ||
+      message?.guest_name ||
+      nextTrip?.guest_name ||
+      ""
+    );
+  } catch (err) {
+    console.warn("Failed to resolve guest inspection trip guest:", err);
+    return message?.guest_name || "";
+  }
 }
 
 function getMaintenanceTripState(message) {
@@ -2046,10 +2096,12 @@ async function handleExportGuestInspectionSheet(message) {
       }
     }
 
+    const guestName = await resolveGuestInspectionGuestName(message, vehicle);
+
     setInspectionExport({
       messageId: message.id,
       vehicle: buildGuestInspectionVehicle(message, vehicle, summary),
-      guestName: message.guest_name || "",
+      guestName,
     });
   } catch (err) {
     console.error("Failed preparing guest inspection sheet:", err);
