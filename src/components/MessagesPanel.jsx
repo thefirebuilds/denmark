@@ -39,6 +39,27 @@ function notifyMessageStatsUpdated() {
   window.dispatchEvent(new CustomEvent("messages:stats-updated"));
 }
 
+async function waitForExportAssetPaint(root) {
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+
+  if (document.fonts?.ready) {
+    await document.fonts.ready.catch(() => undefined);
+  }
+
+  const images = Array.from(root?.querySelectorAll?.("img") || []);
+  await Promise.all(
+    images.map((img) => {
+      if (img.complete) return Promise.resolve();
+      return new Promise((resolve) => {
+        img.addEventListener("load", resolve, { once: true });
+        img.addEventListener("error", resolve, { once: true });
+      });
+    })
+  );
+}
+
 function loadCompletedSyntheticTaskIds() {
   try {
     const raw = window.localStorage.getItem(COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY);
@@ -1997,10 +2018,10 @@ async function handleExportGuestInspectionSheet(message) {
     setError("");
 
     const vehicleSelector =
-      message.turo_vehicle_id ||
       message.vehicle_vin ||
       message.vehicle_nickname ||
-      message.vehicle_name;
+      message.vehicle_name ||
+      message.turo_vehicle_id;
     let vehicle = null;
     let summary = null;
 
@@ -2368,16 +2389,20 @@ async function handleExportGuestInspectionSheet(message) {
 
     async function exportInspectionSheet() {
       try {
-        await new Promise((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(resolve));
-        });
-
+        if (cancelled || !inspectionExportRef.current) return;
+        await waitForExportAssetPaint(inspectionExportRef.current);
         if (cancelled || !inspectionExportRef.current) return;
 
-        const dataUrl = await toPng(inspectionExportRef.current, {
+        const exportNode =
+          inspectionExportRef.current.querySelector?.(".guest-snapshot-card") ||
+          inspectionExportRef.current;
+
+        const dataUrl = await toPng(exportNode, {
           cacheBust: true,
           pixelRatio: 2,
           backgroundColor: "#ffffff",
+          width: exportNode.scrollWidth || exportNode.offsetWidth || 760,
+          height: exportNode.scrollHeight || exportNode.offsetHeight || undefined,
         });
 
         const link = document.createElement("a");

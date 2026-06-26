@@ -205,6 +205,7 @@ async function findVehicleBySelector(selector) {
     WHERE lower(trim(vin)) = $1
        OR lower(trim(nickname)) = $1
        OR trim(CAST(id AS text)) = $1
+       OR trim(CAST(COALESCE(turo_vehicle_id, '') AS text)) = $1
        OR lower(trim(COALESCE(license_plate, ''))) = $1
        OR EXISTS (
          SELECT 1
