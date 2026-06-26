@@ -54,6 +54,8 @@ SESSION_SECRET=replace-with-long-random-session-secret
 TOKEN_ENCRYPTION_KEY=replace-with-long-random-secret
 DENMARK_BRIDGE_SECRET=replace-with-android-bridge-secret
 
+DENMARK_SWAP_SIZE=4G
+
 AUTH_ENFORCED=true
 AUTH_COOKIE_SECURE=true
 AUTH_OWNER_EMAILS=owner@example.com
@@ -120,16 +122,26 @@ bash setup/install.sh
 
 The installer:
 
-1. Starts PostgreSQL.
-2. Waits for Postgres readiness.
-3. Pulls the current app image.
-4. Runs database bootstrap.
-5. Runs database verification.
-6. Starts Denmark only if bootstrap and verification succeed.
+1. Ensures host swap is enabled on Linux droplets when no swap exists.
+2. Starts PostgreSQL.
+3. Waits for Postgres readiness.
+4. Pulls the current app image.
+5. Runs database bootstrap.
+6. Runs database verification.
+7. Starts Denmark only if bootstrap and verification succeed.
+
+Swap is configured by the host installer, not the Dockerfile. Dockerfiles build
+container images and cannot safely enable swap on the Droplet host. The default
+is `DENMARK_SWAP_SIZE=4G`; set `DENMARK_SWAP_SIZE=0` to skip swap setup.
 
 Manual equivalent:
 
 ```bash
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 docker compose up -d db
 docker compose pull app
 docker compose run --rm app npm run db:bootstrap

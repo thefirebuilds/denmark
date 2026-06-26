@@ -27,6 +27,73 @@ env_value() {
 
 PGUSER_VALUE="$(env_value PGUSER postgres)"
 PGDATABASE_VALUE="$(env_value PGDATABASE denmark)"
+DENMARK_SWAP_SIZE_VALUE="$(env_value DENMARK_SWAP_SIZE 4G)"
+
+run_privileged() {
+  if [[ "$(id -u)" == "0" ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+ensure_swap() {
+  local swap_size="$1"
+  local swap_file="/swapfile"
+
+  if [[ "$swap_size" == "0" || "$swap_size" == "false" || "$swap_size" == "off" ]]; then
+    echo "[install] swap setup disabled by DENMARK_SWAP_SIZE=${swap_size}"
+    return
+  fi
+
+  if ! command -v swapon >/dev/null 2>&1; then
+    echo "[install] swapon is not available; skipping swap setup"
+    return
+  fi
+
+  if swapon --show --noheadings | grep -q .; then
+    echo "[install] swap already enabled"
+    swapon --show || true
+    return
+  fi
+
+  echo "[install] no active swap detected; creating ${swap_size} swap at ${swap_file}"
+
+  if [[ -e "$swap_file" && ! -f "$swap_file" ]]; then
+    echo "[install] ${swap_file} exists but is not a regular file; cannot configure swap" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$swap_file" ]]; then
+    if ! run_privileged fallocate -l "$swap_size" "$swap_file"; then
+      echo "[install] fallocate failed; retrying swapfile creation with dd"
+      run_privileged dd if=/dev/zero of="$swap_file" bs=1M count="$(
+        case "$swap_size" in
+          *G|*g) echo $(( ${swap_size%[Gg]} * 1024 )) ;;
+          *M|*m) echo "${swap_size%[Mm]}" ;;
+          *) echo "4096" ;;
+        esac
+      )" status=progress
+    fi
+  fi
+
+  run_privileged chmod 600 "$swap_file"
+
+  if ! run_privileged mkswap "$swap_file" >/dev/null; then
+    echo "[install] failed to initialize ${swap_file} as swap" >&2
+    exit 1
+  fi
+
+  run_privileged swapon "$swap_file"
+
+  if ! grep -Eq "^[[:space:]]*${swap_file}[[:space:]]+none[[:space:]]+swap[[:space:]]" /etc/fstab; then
+    echo "[install] persisting ${swap_file} in /etc/fstab"
+    echo "${swap_file} none swap sw 0 0" | run_privileged tee -a /etc/fstab >/dev/null
+  fi
+
+  echo "[install] swap enabled"
+  swapon --show || true
+}
 
 print_failure_logs() {
   local phase="$1"
@@ -47,6 +114,8 @@ run_install_step() {
     exit 1
   fi
 }
+
+ensure_swap "$DENMARK_SWAP_SIZE_VALUE"
 
 echo "[install] starting postgres"
 docker compose up -d db
