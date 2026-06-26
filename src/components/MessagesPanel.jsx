@@ -23,6 +23,8 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
+const LIVE_MESSAGE_CACHE_STORAGE_KEY = "denmark.liveMessageQueue";
+const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
 const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 90 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
   "maintenance_required",
@@ -39,6 +41,48 @@ const RAW_FEED_PAGE_SIZE = 10;
 
 function notifyMessageStatsUpdated() {
   window.dispatchEvent(new CustomEvent("messages:stats-updated"));
+}
+
+function readLiveMessageQueueCache() {
+  try {
+    const raw = window.sessionStorage?.getItem(LIVE_MESSAGE_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const createdAt = Number(parsed?.createdAt || 0);
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    if (!createdAt || Date.now() - createdAt > LIVE_MESSAGE_CACHE_TTL_MS) {
+      window.sessionStorage?.removeItem(LIVE_MESSAGE_CACHE_STORAGE_KEY);
+      return null;
+    }
+
+    return items;
+  } catch {
+    return null;
+  }
+}
+
+function writeLiveMessageQueueCache(items) {
+  try {
+    if (!Array.isArray(items)) return;
+    window.sessionStorage?.setItem(
+      LIVE_MESSAGE_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        createdAt: Date.now(),
+        items: items.slice(0, 8),
+      })
+    );
+  } catch {
+    // Ignore storage failures in private or restricted browser contexts.
+  }
+}
+
+function clearLiveMessageQueueCache() {
+  try {
+    window.sessionStorage?.removeItem(LIVE_MESSAGE_CACHE_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures in private or restricted browser contexts.
+  }
 }
 
 async function waitForExportAssetPaint(root) {
@@ -1490,6 +1534,11 @@ export default function MessagesPanel({
     messagesRef.current = messages;
   }, [messages]);
 
+  function invalidateLiveQueueCache() {
+    clearLiveMessageQueueCache();
+    forceMessageQueueRefreshRef.current = true;
+  }
+
   async function loadMessageStats() {
     try {
       const res = await fetch("/api/messages/stats");
@@ -1607,6 +1656,7 @@ async function handleMarkAsRead(messageId) {
   const previousUnreadCount = unreadCount;
 
   try {
+    invalidateLiveQueueCache();
     rememberResolvedMessages([
       queueItemId,
       message?.messageId,
@@ -1679,7 +1729,6 @@ async function handleMarkAsRead(messageId) {
       Math.max(0, prev - Number(data?.resolved_count || ids.length))
     );
     notifyMessageStatsUpdated();
-    forceMessageQueueRefreshRef.current = true;
   } catch (err) {
     setMessages(previousMessages);
     setNewMessageIds(previousNewMessageIds);
@@ -1721,6 +1770,7 @@ async function handleAckNotification(message) {
     seenIdsRef.current.delete(message.id);
     knownQueueItemIdsRef.current.delete(String(message.id));
 
+    invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
   } catch (err) {
     setError(err.message || "Failed to acknowledge notification");
@@ -1767,6 +1817,7 @@ async function handleResolveMaintenance(message) {
     setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
     seenIdsRef.current.delete(message.id);
     knownQueueItemIdsRef.current.delete(String(message.id));
+    invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
   } catch (err) {
     setError(err.message || "Failed to resolve maintenance");
@@ -1817,6 +1868,7 @@ async function handleSuppressDiagnostic(message, action = "acknowledge") {
     setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
     seenIdsRef.current.delete(message.id);
     knownQueueItemIdsRef.current.delete(String(message.id));
+    invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
   } catch (err) {
     setError(err.message || "Failed to update diagnostic alert");
@@ -1905,6 +1957,7 @@ function completeSyntheticTask(message) {
   setMessages((prev) => prev.filter((item) => item.id !== message.id));
   setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
   seenIdsRef.current.delete(message.id);
+  invalidateLiveQueueCache();
 }
 
 async function handleConfirmBooking(message) {
@@ -1937,6 +1990,7 @@ async function handleConfirmBooking(message) {
       }).catch(() => null);
     }
 
+    invalidateLiveQueueCache();
     await loadMessages(false);
     await loadMessageStats();
     notifyMessageStatsUpdated();
@@ -1973,6 +2027,7 @@ async function handleAdvanceToReadyForHandoff(message) {
       );
     }
 
+    invalidateLiveQueueCache();
     await loadMessages(false);
     notifyMessageStatsUpdated();
   } catch (err) {
@@ -2298,6 +2353,9 @@ async function handleExportGuestInspectionSheet(message) {
 
       messagesRef.current = unsuppressedMessages;
       setMessages(unsuppressedMessages);
+      if (!showingTripMessages) {
+        writeLiveMessageQueueCache(unsuppressedMessages);
+      }
       setError("");
     } catch (err) {
       setError(err.message || "Failed to load messages");
@@ -2353,7 +2411,15 @@ async function handleExportGuestInspectionSheet(message) {
       Array.isArray(initialMessages) &&
       !consumedInitialLiveMessagesRef.current;
 
-    const seededMessages = canUseInitialMessages ? initialMessages : [];
+    const cachedLiveMessages =
+      !canUseInitialMessages &&
+      messageMode === "live" &&
+      !selectedTrip?.id
+        ? readLiveMessageQueueCache()
+        : null;
+    const seededMessages = canUseInitialMessages
+      ? initialMessages
+      : cachedLiveMessages || [];
     const visibleSeededMessages = seededMessages.filter(
       (message) =>
         !isCompletableSyntheticTask(message) ||
@@ -2372,8 +2438,14 @@ async function handleExportGuestInspectionSheet(message) {
     consumedInitialLiveMessagesRef.current =
       consumedInitialLiveMessagesRef.current || canUseInitialMessages;
 
-    if (canUseInitialMessages) {
+    if (canUseInitialMessages || cachedLiveMessages) {
       setLoading(false);
+    }
+
+    if (canUseInitialMessages) {
+      // Startup already fetched a light live queue; the interval will refresh it.
+    } else if (cachedLiveMessages && messageMode === "live" && !selectedTrip?.id) {
+      loadMessages(false);
     } else {
       loadMessages(true);
     }

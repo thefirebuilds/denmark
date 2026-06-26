@@ -226,24 +226,39 @@ const OPEN_MAINTENANCE_TASK_STATUSES = [
   "deferred",
 ];
 const MESSAGE_QUEUE_CACHE_MS = Number(process.env.MESSAGE_QUEUE_CACHE_MS || 10000);
+const MESSAGE_QUEUE_LIGHT_CACHE_MS = Number(
+  process.env.MESSAGE_QUEUE_LIGHT_CACHE_MS || 60000
+);
+const MESSAGE_QUEUE_CACHE_MAX_KEYS = Number(
+  process.env.MESSAGE_QUEUE_CACHE_MAX_KEYS || 12
+);
 const MESSAGE_STATS_CACHE_MS = Number(process.env.MESSAGE_STATS_CACHE_MS || 10000);
 const EMPTY_QUERY_RESULT = Object.freeze({ rows: [] });
 
-let messageQueueCache = null;
+const messageQueueCache = new Map();
 let messageStatsCache = null;
 
 function getCachedPayload(cache, key, ttlMs) {
-  if (!cache || cache.key !== key) return null;
-  if (Date.now() - cache.createdAt > ttlMs) return null;
-  return cache.payload;
+  const entry = cache?.get?.(key);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > ttlMs) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.payload;
 }
 
 function setMessageQueueCache(key, payload) {
-  messageQueueCache = {
-    key,
+  messageQueueCache.set(key, {
     payload,
     createdAt: Date.now(),
-  };
+  });
+
+  while (messageQueueCache.size > MESSAGE_QUEUE_CACHE_MAX_KEYS) {
+    const oldestKey = messageQueueCache.keys().next().value;
+    if (oldestKey == null) break;
+    messageQueueCache.delete(oldestKey);
+  }
 }
 
 function setMessageStatsCache(payload) {
@@ -255,7 +270,7 @@ function setMessageStatsCache(payload) {
 }
 
 function invalidateMessageCaches() {
-  messageQueueCache = null;
+  messageQueueCache.clear();
   messageStatsCache = null;
 }
 
@@ -1927,9 +1942,10 @@ router.get("/", async (req, res) => {
     const includeDebug = String(req.query.debug || "").trim() === "1";
     const cacheBust = String(req.query.cacheBust || "").trim() !== "";
     const cacheKey = `limit:${limit}:fast:${fast ? "1" : "0"}:light:${light ? "1" : "0"}`;
+    const cacheTtlMs = light ? MESSAGE_QUEUE_LIGHT_CACHE_MS : MESSAGE_QUEUE_CACHE_MS;
     const cached = cacheBust
       ? null
-      : getCachedPayload(messageQueueCache, cacheKey, MESSAGE_QUEUE_CACHE_MS);
+      : getCachedPayload(messageQueueCache, cacheKey, cacheTtlMs);
 
     if (cached) {
       setQueueTimingHeader(res, queueStartedAt, { cache: 0 });
