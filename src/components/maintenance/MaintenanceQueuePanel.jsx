@@ -14,6 +14,8 @@ import {
   getNextIntervalDueText,
   sortQueue,
   getPriorityScore,
+  getActiveTrip,
+  getNextUpcomingTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
 } from "../../utils/maintUtils";
@@ -74,6 +76,10 @@ function sortFleetPlanningQueue(items) {
     const bDate = new Date(b.nextAvailableDate || 0).getTime();
     if (aDate !== bDate) return aDate - bDate;
 
+    const aPlanningDate = getPlanningSortValue(a.nextPlanningDate);
+    const bPlanningDate = getPlanningSortValue(b.nextPlanningDate);
+    if (aPlanningDate !== bPlanningDate) return aPlanningDate - bPlanningDate;
+
     const planningDiff = getPlanningScore(b) - getPlanningScore(a);
     if (planningDiff !== 0) return planningDiff;
 
@@ -93,6 +99,25 @@ function getAvailabilitySortValue(value) {
   const date = getAvailabilityDate(value);
   if (date.getFullYear() >= 9000) return Number.NEGATIVE_INFINITY;
   return date.getTime();
+}
+
+function getPlanningSortValue(value) {
+  if (!value) return Number.POSITIVE_INFINITY;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return Number.POSITIVE_INFINITY;
+  if (date.getFullYear() >= 9000) return Number.NEGATIVE_INFINITY;
+  return date.getTime();
+}
+
+function getVehiclePlanningDate(trips, nextAvailableDate) {
+  const activeTrip = getActiveTrip(trips);
+  if (activeTrip?.trip_end) return activeTrip.trip_end;
+
+  const nextUpcomingTrip = getNextUpcomingTrip(trips);
+  if (nextUpcomingTrip?.trip_start) return nextUpcomingTrip.trip_start;
+
+  return nextAvailableDate || null;
 }
 
 function getAvailabilityDateKey(value) {
@@ -230,11 +255,19 @@ function groupFleetItemsByAvailabilityDate(items) {
         label: item.vehicleNickname || "Unknown vehicle",
         availability: item.nextOffTrip || "Available now",
         nextAvailableDate: item.nextAvailableDate,
+        nextPlanningDate: item.nextPlanningDate,
         items: [],
       });
     }
 
-    dateGroup.vehicles.get(vehicleKey).items.push(item);
+    const vehicleGroup = dateGroup.vehicles.get(vehicleKey);
+    if (
+      getPlanningSortValue(item.nextPlanningDate) <
+      getPlanningSortValue(vehicleGroup.nextPlanningDate)
+    ) {
+      vehicleGroup.nextPlanningDate = item.nextPlanningDate;
+    }
+    vehicleGroup.items.push(item);
   }
 
   return Array.from(dateGroups.values())
@@ -253,6 +286,12 @@ function groupFleetItemsByAvailabilityDate(items) {
             getAvailabilitySortValue(a.nextAvailableDate) -
             getAvailabilitySortValue(b.nextAvailableDate);
           if (dateDiff !== 0) return dateDiff;
+
+          const planningDateDiff =
+            getPlanningSortValue(a.nextPlanningDate) -
+            getPlanningSortValue(b.nextPlanningDate);
+          if (planningDateDiff !== 0) return planningDateDiff;
+
           return String(a.label).localeCompare(String(b.label));
         })
         .map((vehicleGroup) => ({
@@ -281,6 +320,7 @@ function buildFleetQueueItems(vehicleCard, summary, historyMap = {}) {
     currentOdometerSource:
       summary?.currentOdometerSource ?? vehicleCard.currentOdometerSource ?? null,
     nextAvailableDate: vehicleCard.nextAvailableDate,
+    nextPlanningDate: vehicleCard.nextPlanningDate,
     nextOffTrip: vehicleCard.nextOffTrip,
   }));
 }
@@ -469,21 +509,24 @@ export default function MaintenanceQueuePanel({
               tripMatchesVehicle(vehicle, trip)
             );
 
+            const nextAvailableDate = getEarliestAvailableDate(trips);
+
             return {
-            id: normalizeVehicleKey(vehicle.nickname || vehicle.vin || vehicle.id),
-            vin: vehicle.vin || null,
-            nickname: vehicle.nickname || "Unknown",
-            year: vehicle.year || "—",
-            make: vehicle.make || "",
-            model: vehicle.model || "",
-            currentOdometerMiles:
-              vehicle.current_odometer_miles ?? vehicle.currentOdometerMiles ?? null,
-            currentOdometerSource:
-              vehicle.current_odometer_miles != null || vehicle.currentOdometerMiles != null
-                ? "vehicle"
-                : null,
-            nextOffTrip: getEarliestAvailableLabel(trips),
-            nextAvailableDate: getEarliestAvailableDate(trips),
+              id: normalizeVehicleKey(vehicle.nickname || vehicle.vin || vehicle.id),
+              vin: vehicle.vin || null,
+              nickname: vehicle.nickname || "Unknown",
+              year: vehicle.year || "—",
+              make: vehicle.make || "",
+              model: vehicle.model || "",
+              currentOdometerMiles:
+                vehicle.current_odometer_miles ?? vehicle.currentOdometerMiles ?? null,
+              currentOdometerSource:
+                vehicle.current_odometer_miles != null || vehicle.currentOdometerMiles != null
+                  ? "vehicle"
+                  : null,
+              nextOffTrip: getEarliestAvailableLabel(trips),
+              nextAvailableDate,
+              nextPlanningDate: getVehiclePlanningDate(trips, nextAvailableDate),
             };
           })
           .filter((v) => v.vin);
