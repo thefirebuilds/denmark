@@ -263,6 +263,100 @@ async function insertSnapshot(client, snapshot) {
   return result;
 }
 
+async function hasTripSpeedColumns(client) {
+  const result = await client.query(
+    `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'trips'
+        AND column_name = ANY($1::text[])
+    `,
+    [["max_speed_mph", "speed_over_80_count"]]
+  );
+
+  return result.rows.length === 2;
+}
+
+async function updateActiveTripSpeedStats(client, snapshot) {
+  if (!(await hasTripSpeedColumns(client))) {
+    return { rowCount: 0 };
+  }
+
+  const speed = toNumberOrNull(snapshot.speed);
+  if (!snapshot.vin || speed == null || speed < 0) {
+    return { rowCount: 0 };
+  }
+
+  const eventTimestamp = snapshot.vehicle_last_updated || new Date().toISOString();
+
+  return client.query(
+    `
+      WITH active_trip AS (
+        SELECT
+          t.id,
+          t.trip_start,
+          t.trip_end
+        FROM trips t
+        JOIN vehicles v
+          ON LOWER(v.vin) = LOWER($1)
+        WHERE t.trip_start <= $2::timestamptz
+          AND t.trip_end >= $2::timestamptz
+          AND COALESCE(t.workflow_stage, '') <> 'canceled'
+          AND COALESCE(t.status, '') <> 'canceled'
+          AND (
+            (
+              t.turo_vehicle_id IS NOT NULL
+              AND v.turo_vehicle_id IS NOT NULL
+              AND CAST(t.turo_vehicle_id AS text) = CAST(v.turo_vehicle_id AS text)
+            )
+            OR (
+              COALESCE(t.vehicle_name, '') <> ''
+              AND LOWER(t.vehicle_name) = LOWER(v.nickname)
+            )
+          )
+        ORDER BY t.trip_start DESC NULLS LAST, t.id DESC
+        LIMIT 1
+      ),
+      speed_points AS (
+        SELECT
+          s.id,
+          s.speed::numeric AS speed_mph,
+          COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at,
+          LAG(s.speed::numeric) OVER (
+            ORDER BY COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at), s.id
+          ) AS previous_speed_mph
+        FROM active_trip t
+        JOIN vehicle_telemetry_snapshots s
+          ON LOWER(s.vin) = LOWER($1)
+        WHERE s.speed IS NOT NULL
+          AND s.speed::numeric >= 0
+          AND COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) >= t.trip_start
+          AND COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) <= t.trip_end
+      ),
+      speed_stats AS (
+        SELECT
+          MAX(speed_mph) AS max_speed_mph,
+          COUNT(*) FILTER (
+            WHERE speed_mph > 80
+              AND COALESCE(previous_speed_mph, 0) <= 80
+          )::integer AS speed_over_80_count
+        FROM speed_points
+        WHERE speed_mph IS NOT NULL
+      )
+      UPDATE trips t
+      SET
+        max_speed_mph = COALESCE(speed_stats.max_speed_mph, t.max_speed_mph),
+        speed_over_80_count = COALESCE(speed_stats.speed_over_80_count, t.speed_over_80_count, 0),
+        updated_at = NOW()
+      FROM active_trip, speed_stats
+      WHERE t.id = active_trip.id
+        AND speed_stats.max_speed_mph IS NOT NULL
+    `,
+    [snapshot.vin, eventTimestamp]
+  );
+}
+
 function looksLikeRealTripStart(snapshot) {
   const speed = Number(snapshot?.speed || 0);
   return snapshot?.is_running === true || speed > 5;
@@ -416,6 +510,7 @@ async function main() {
         snapshot
       );
       const snapshotResult = await insertSnapshot(dbClient, snapshot);
+      await updateActiveTripSpeedStats(dbClient, snapshot);
       const snapshotId = snapshotResult.rows[0]?.id;
       if (snapshotId) insertedSnapshotIds.push(snapshotId);
       await insertOdometerHistory(dbClient, snapshot);

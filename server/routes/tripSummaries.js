@@ -204,6 +204,8 @@ const TRIP_SUMMARY_SELECT = `
     t.toll_review_status,
     t.fuel_reimbursement_total,
     t.max_engine_rpm,
+    t.max_speed_mph,
+    t.speed_over_80_count,
     t.notes,
     t.closed_out,
     t.closed_out_at,

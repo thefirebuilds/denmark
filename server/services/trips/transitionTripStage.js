@@ -398,6 +398,68 @@ async function updateTripMaxEngineRpm(client, trip) {
   );
 }
 
+async function updateTripSpeedStats(client, trip) {
+  const columns = await getTripsColumnSet(client);
+  if (
+    !columns.has("max_speed_mph") ||
+    !columns.has("speed_over_80_count") ||
+    !trip?.id
+  ) {
+    return { rowCount: 0 };
+  }
+
+  return client.query(
+    `
+      UPDATE trips t
+      SET
+        max_speed_mph = COALESCE(speed_stats.max_speed_mph, t.max_speed_mph),
+        speed_over_80_count = COALESCE(speed_stats.speed_over_80_count, t.speed_over_80_count, 0),
+        updated_at = NOW()
+      FROM (
+        WITH speed_points AS (
+          SELECT
+            s.id,
+            s.speed::numeric AS speed_mph,
+            COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at,
+            LAG(s.speed::numeric) OVER (
+              ORDER BY COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at), s.id
+            ) AS previous_speed_mph
+          FROM trips t2
+          JOIN vehicles v
+            ON (
+              (
+                t2.turo_vehicle_id IS NOT NULL
+                AND v.turo_vehicle_id IS NOT NULL
+                AND CAST(t2.turo_vehicle_id AS text) = CAST(v.turo_vehicle_id AS text)
+              )
+              OR (
+                COALESCE(t2.vehicle_name, '') <> ''
+                AND LOWER(t2.vehicle_name) = LOWER(v.nickname)
+              )
+            )
+          JOIN vehicle_telemetry_snapshots s
+            ON s.vin = v.vin
+          WHERE t2.id = $1
+            AND s.speed IS NOT NULL
+            AND s.speed::numeric >= 0
+            AND COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) >= t2.trip_start
+            AND COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) <= t2.trip_end
+        )
+        SELECT
+          MAX(speed_mph) AS max_speed_mph,
+          COUNT(*) FILTER (
+            WHERE speed_mph > 80
+              AND COALESCE(previous_speed_mph, 0) <= 80
+          )::integer AS speed_over_80_count
+        FROM speed_points
+      ) speed_stats
+      WHERE t.id = $1
+        AND speed_stats.max_speed_mph IS NOT NULL
+    `,
+    [trip.id]
+  );
+}
+
 async function transitionTripStage(tripId, nextStage, options = {}) {
   const normalizedTripId = Number(tripId);
   const normalizedNextStage = String(nextStage || "").trim();
@@ -438,7 +500,9 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
           completed_at,
           canceled_at,
           starting_odometer,
-          ending_odometer
+          ending_odometer,
+          max_speed_mph,
+          speed_over_80_count
         FROM trips
         WHERE id = $1
         FOR UPDATE
@@ -494,7 +558,9 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
               closed_out_at,
               canceled_at,
               starting_odometer,
-              ending_odometer
+              ending_odometer,
+              max_speed_mph,
+              speed_over_80_count
           `,
           [normalizedTripId, transitionTimestamp]
         );
@@ -649,7 +715,9 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       closed_out_at,
       canceled_at,
       starting_odometer,
-      ending_odometer
+      ending_odometer,
+      max_speed_mph,
+      speed_over_80_count
   `,
   [
     normalizedTripId,
@@ -664,6 +732,16 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
 
     if (captureEnd || normalizedNextStage === "complete") {
       await updateTripMaxEngineRpm(client, updatedTrip);
+      await updateTripSpeedStats(client, updatedTrip);
+      const refreshedStats = await client.query(
+        `
+          SELECT max_engine_rpm, max_speed_mph, speed_over_80_count
+          FROM trips
+          WHERE id = $1
+        `,
+        [updatedTrip.id]
+      );
+      Object.assign(updatedTrip, refreshedStats.rows[0] || {});
     }
 
     await client.query(

@@ -750,6 +750,96 @@ async function updateActiveTripMaxEngineRpm(snapshot, client = pool) {
   );
 }
 
+async function updateActiveTripSpeedStats(snapshot, client = pool) {
+  const columns = await getTripColumns(client);
+  if (!columns.has("max_speed_mph") || !columns.has("speed_over_80_count")) {
+    return { rowCount: 0 };
+  }
+
+  const speed = toNumber(snapshot.speed);
+  const vin = cleanString(snapshot.vin);
+  if (!vin || speed == null || speed < 0) {
+    return { rowCount: 0 };
+  }
+
+  const eventTimestamp =
+    cleanString(snapshot.speed_last_updated) ||
+    cleanString(snapshot.vehicle_last_updated) ||
+    cleanString(snapshot.location_last_updated) ||
+    cleanString(snapshot.ignition_last_updated) ||
+    new Date().toISOString();
+
+  return client.query(
+    `
+      WITH active_trip AS (
+        SELECT
+          t.id,
+          t.trip_start,
+          t.trip_end,
+          t.turo_vehicle_id,
+          t.vehicle_name
+        FROM trips t
+        JOIN vehicles v
+          ON v.vin = $1
+        WHERE t.trip_start <= $2::timestamptz
+          AND t.trip_end >= $2::timestamptz
+          AND COALESCE(t.workflow_stage, '') <> 'canceled'
+          AND COALESCE(t.status, '') <> 'canceled'
+          AND (
+            (
+              t.turo_vehicle_id IS NOT NULL
+              AND v.turo_vehicle_id IS NOT NULL
+              AND CAST(t.turo_vehicle_id AS text) = CAST(v.turo_vehicle_id AS text)
+            )
+            OR (
+              COALESCE(t.vehicle_name, '') <> ''
+              AND LOWER(t.vehicle_name) = LOWER(v.nickname)
+            )
+          )
+        ORDER BY t.trip_start DESC NULLS LAST, t.id DESC
+        LIMIT 1
+      ),
+      speed_points AS (
+        SELECT
+          s.id,
+          s.speed::numeric AS speed_mph,
+          COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at,
+          LAG(s.speed::numeric) OVER (
+            ORDER BY COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at), s.id
+          ) AS previous_speed_mph
+        FROM active_trip t
+        JOIN vehicles v
+          ON v.vin = $1
+        JOIN vehicle_telemetry_snapshots s
+          ON s.vin = v.vin
+        WHERE s.speed IS NOT NULL
+          AND s.speed::numeric >= 0
+          AND COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) >= t.trip_start
+          AND COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at) <= t.trip_end
+      ),
+      speed_stats AS (
+        SELECT
+          MAX(speed_mph) AS max_speed_mph,
+          COUNT(*) FILTER (
+            WHERE speed_mph > 80
+              AND COALESCE(previous_speed_mph, 0) <= 80
+          )::integer AS speed_over_80_count
+        FROM speed_points
+        WHERE speed_mph IS NOT NULL
+      )
+      UPDATE trips t
+      SET
+        max_speed_mph = COALESCE(speed_stats.max_speed_mph, t.max_speed_mph),
+        speed_over_80_count = COALESCE(speed_stats.speed_over_80_count, t.speed_over_80_count, 0),
+        updated_at = NOW()
+      FROM active_trip, speed_stats
+      WHERE t.id = active_trip.id
+        AND speed_stats.max_speed_mph IS NOT NULL
+    `,
+    [vin, eventTimestamp]
+  );
+}
+
 function buildRawSignalRows({ snapshotId, capturedAt, tokenId, vin, raw }) {
   const latest = raw?.data?.signalsLatest || {};
 
@@ -888,6 +978,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
     );
     const snapshotResult = await insertVehicleTelemetrySnapshot(normalized, client);
     const tripRpmResult = await updateActiveTripMaxEngineRpm(normalized, client);
+    const tripSpeedResult = await updateActiveTripSpeedStats(normalized, client);
     const maintenanceRules = normalized.vin
       ? await ensureDefaultMaintenanceRulesForVehicle(client, normalized.vin)
       : [];
@@ -917,6 +1008,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
       autoStartedTrip: autoStartResult?.id || null,
       autoAdvancedTurnaroundTrip: autoTurnaroundResult?.id || null,
       tripRpmRows: tripRpmResult.rowCount,
+      tripSpeedRows: tripSpeedResult.rowCount,
       maintenanceRuleRows: maintenanceRules.length,
       odometerRows: odometerResult.rowCount,
       rawSignalRows: rawResult.rowCount,

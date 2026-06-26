@@ -71,6 +71,18 @@ function formatRpm(value) {
   return `${Math.round(num).toLocaleString("en-US")} RPM`;
 }
 
+function formatSpeed(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "N/A";
+  return `${Math.round(num).toLocaleString("en-US")} mph`;
+}
+
+function formatCount(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "0";
+  return Math.max(0, Math.round(num)).toLocaleString("en-US");
+}
+
 const EXPENSE_STATUS_OPTIONS = [
   { value: "none", label: "No Turo expense claim" },
   { value: "pending", label: "Needs Turo review" },
@@ -1034,6 +1046,16 @@ function renderLocationLink(vehicle) {
             <div className="detail-row">
               <span>Max observed RPM</span>
               <strong>{formatRpm(selectedTrip.max_engine_rpm)}</strong>
+            </div>
+
+            <div className="detail-row">
+              <span>Max observed speed</span>
+              <strong>{formatSpeed(selectedTrip.max_speed_mph)}</strong>
+            </div>
+
+            <div className="detail-row">
+              <span>80+ mph events</span>
+              <strong>{formatCount(selectedTrip.speed_over_80_count)}</strong>
             </div>
 
             <div className="detail-row">

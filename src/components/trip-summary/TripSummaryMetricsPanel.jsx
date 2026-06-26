@@ -26,6 +26,18 @@ function formatRpm(value) {
   return `${Math.round(num).toLocaleString("en-US")} RPM`;
 }
 
+function formatSpeed(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "N/A";
+  return `${Math.round(num).toLocaleString("en-US")} mph`;
+}
+
+function formatCount(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "0";
+  return Math.max(0, Math.round(num)).toLocaleString("en-US");
+}
+
 function isTripInProgress(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
   const status = String(trip?.status || "").toLowerCase();
@@ -227,6 +239,20 @@ export default function TripSummaryMetricsPanel({
                   <div className="trip-summary-stat-label">Max RPM</div>
                   <div className="trip-summary-stat-value">
                     {formatRpm(selectedTrip.max_engine_rpm)}
+                  </div>
+                </div>
+
+                <div className="trip-summary-stat">
+                  <div className="trip-summary-stat-label">Max Speed</div>
+                  <div className="trip-summary-stat-value">
+                    {formatSpeed(selectedTrip.max_speed_mph)}
+                  </div>
+                </div>
+
+                <div className="trip-summary-stat">
+                  <div className="trip-summary-stat-label">80+ Events</div>
+                  <div className="trip-summary-stat-value">
+                    {formatCount(selectedTrip.speed_over_80_count)}
                   </div>
                 </div>
               </div>

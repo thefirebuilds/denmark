@@ -435,6 +435,8 @@ const TRIP_SELECT = `
     t.fuel_reimbursement_total,
     tf.ticket_reimbursed,
     t.max_engine_rpm,
+    t.max_speed_mph,
+    t.speed_over_80_count,
     ti.updated_at,
     ti.message_count,
     ti.unread_messages,
