@@ -1455,8 +1455,11 @@ export default function MessagesPanel({
   const [exportingPrepMessageId, setExportingPrepMessageId] = useState(null);
   const [exportingInspectionMessageId, setExportingInspectionMessageId] =
     useState(null);
+  const [previewingInspectionMessageId, setPreviewingInspectionMessageId] =
+    useState(null);
   const [prepExport, setPrepExport] = useState(null);
   const [inspectionExport, setInspectionExport] = useState(null);
+  const [inspectionPreview, setInspectionPreview] = useState(null);
   const [printingPrepMessageId, setPrintingPrepMessageId] = useState(null);
   const [prepPrint, setPrepPrint] = useState(null);
   const [focusedCloseoutTask, setFocusedCloseoutTask] = useState(null);
@@ -2058,15 +2061,7 @@ async function handleExportPrepSheet(message, mode = "export") {
   }
 }
 
-async function handleExportGuestInspectionSheet(message) {
-  if (!isInspectionExportTask(message) || exportingInspectionMessageId) {
-    return;
-  }
-
-  try {
-    setExportingInspectionMessageId(message.id);
-    setError("");
-
+async function buildGuestInspectionSheetPayload(message) {
     const vehicleSelector =
       message.vehicle_vin ||
       message.vehicle_nickname ||
@@ -2098,10 +2093,53 @@ async function handleExportGuestInspectionSheet(message) {
 
     const guestName = await resolveGuestInspectionGuestName(message, vehicle);
 
-    setInspectionExport({
+    return {
       messageId: message.id,
       vehicle: buildGuestInspectionVehicle(message, vehicle, summary),
       guestName,
+    };
+  }
+
+async function handlePreviewGuestInspectionSheet(message) {
+  if (!isInspectionExportTask(message) || previewingInspectionMessageId) {
+    return;
+  }
+
+  if (inspectionPreview?.messageId === message.id) {
+    setInspectionPreview(null);
+    return;
+  }
+
+  try {
+    setPreviewingInspectionMessageId(message.id);
+    setError("");
+    const payload = await buildGuestInspectionSheetPayload(message);
+    setInspectionPreview(payload);
+  } catch (err) {
+    console.error("Failed preparing guest inspection preview:", err);
+    setError(err.message || "Could not preview guest inspection sheet");
+  } finally {
+    setPreviewingInspectionMessageId(null);
+  }
+}
+
+async function handleExportGuestInspectionSheet(message) {
+  if (!isInspectionExportTask(message) || exportingInspectionMessageId) {
+    return;
+  }
+
+  try {
+    setExportingInspectionMessageId(message.id);
+    setError("");
+
+    const payload =
+      inspectionPreview?.messageId === message.id
+        ? inspectionPreview
+        : await buildGuestInspectionSheetPayload(message);
+
+    setInspectionExport({
+      ...payload,
+      messageId: message.id,
     });
   } catch (err) {
     console.error("Failed preparing guest inspection sheet:", err);
@@ -3183,6 +3221,14 @@ async function handleExportGuestInspectionSheet(message) {
                       <span>Pickup</span>
                       <strong>{formatTripTime(message.trip_start)}</strong>
                     </div>
+                    {inspectionPreview?.messageId === message.id ? (
+                      <div className="message-inspection-preview">
+                        <GuestSafetySnapshotCard
+                          vehicle={inspectionPreview.vehicle}
+                          guestName={inspectionPreview.guestName}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 )}
 
@@ -3319,6 +3365,24 @@ async function handleExportGuestInspectionSheet(message) {
                         {resolvingMaintenanceId === message.id
                           ? "Updating..."
                           : "Mark handled"}
+                      </button>
+                    )}
+
+                    {canExportInspection && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={previewingInspectionMessageId === message.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handlePreviewGuestInspectionSheet(message);
+                        }}
+                      >
+                        {previewingInspectionMessageId === message.id
+                          ? "Loading..."
+                          : inspectionPreview?.messageId === message.id
+                          ? "Hide preview"
+                          : "Preview"}
                       </button>
                     )}
 
