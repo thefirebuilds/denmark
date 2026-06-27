@@ -84,6 +84,20 @@ const STARTUP_TASKS = [
 ];
 const STARTUP_RUN_SETTING_KEY = "scheduler.lastStartupRun";
 const STARTUP_RUN_COOLDOWN_MS = 15 * 60 * 1000;
+const STARTUP_TASK_SPACING_MS = getSchedulerNumber(
+  "SCHEDULER_STARTUP_TASK_SPACING_MS",
+  1500
+);
+
+function getSchedulerNumber(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function delay(ms) {
+  if (!ms) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 let startupStatus = {
   startedAt: null,
@@ -189,6 +203,13 @@ async function runStartupTask(name, taskFn) {
         error: err?.message || String(err),
       },
     }).catch(() => null);
+  }
+}
+
+async function runStartupTaskSequence(tasks) {
+  for (const [name, taskFn] of tasks) {
+    await runStartupTask(name, taskFn);
+    await delay(STARTUP_TASK_SPACING_MS);
   }
 }
 
@@ -680,51 +701,24 @@ function startScheduler() {
 
       await markStartupRunAt();
 
-      // Teller sync immediately
-      void runStartupTask("teller", () => runTellerSync("startup"));
-
-      // Toll sync immediately
-      void runStartupTask("tolls", () => runTollSync("startup"));
-
-      // IMAP immediately
-      void runStartupTask("imap", () => runPoll("startup"));
-
-      // Bouncie immediately
-      void runStartupTask("bouncie", () => runBouncie("startup"));
-
-      // DIMO immediately
-      void runStartupTask("dimo", () => runDimo("startup"));
-
-      // FMV check immediately (only refreshes if stale or missing)
-      void runStartupTask("fmv", () => runFleetFmvRefresh("startup"));
-
-      // Business metrics snapshot immediately
-      void runStartupTask("businessMetrics", () =>
-        runBusinessMetricsSnapshot("startup")
+      console.log(
+        `[scheduler] startup tasks running sequentially | spacingMs=${STARTUP_TASK_SPACING_MS}`
       );
 
-      // Derived odometer cache immediately after startup.
-      void runStartupTask("odometerRollups", () =>
-        runVehicleOdometerRollups("startup")
-      );
-
-      // Telemetry raw payload retention is guarded internally, so startup is safe.
-      void runStartupTask("telemetryRetention", () =>
-        runTelemetryRetention("startup")
-      );
-
-      // Text alerts immediately, with dedupe guarded in the alert service.
-      void runStartupTask("fleetAlerts", () => runFleetAlerts("startup"));
-
-      // Public availability push immediately
-      void runStartupTask("publicAvailability", () =>
-        runPublicAvailabilityPush("server startup")
-      );
-
-      // Google Calendar reconcile immediately
-      void runStartupTask("googleCalendar", () =>
-        runGoogleCalendarReconcile("startup")
-      );
+      await runStartupTaskSequence([
+        ["teller", () => runTellerSync("startup")],
+        ["tolls", () => runTollSync("startup")],
+        ["imap", () => runPoll("startup")],
+        ["bouncie", () => runBouncie("startup")],
+        ["dimo", () => runDimo("startup")],
+        ["fmv", () => runFleetFmvRefresh("startup")],
+        ["businessMetrics", () => runBusinessMetricsSnapshot("startup")],
+        ["odometerRollups", () => runVehicleOdometerRollups("startup")],
+        ["telemetryRetention", () => runTelemetryRetention("startup")],
+        ["fleetAlerts", () => runFleetAlerts("startup")],
+        ["publicAvailability", () => runPublicAvailabilityPush("server startup")],
+        ["googleCalendar", () => runGoogleCalendarReconcile("startup")],
+      ]);
     } catch (err) {
       const message = `Startup task guard failed: ${err.message || err}`;
       console.error(`[scheduler] startup guard failed | error=${err.message || err}`);
