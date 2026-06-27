@@ -88,6 +88,10 @@ const STARTUP_TASK_SPACING_MS = getSchedulerNumber(
   "SCHEDULER_STARTUP_TASK_SPACING_MS",
   1500
 );
+const SCHEDULER_INTERVAL_OFFSET_STEP_MS = getSchedulerNumber(
+  "SCHEDULER_INTERVAL_OFFSET_STEP_MS",
+  45000
+);
 
 function getSchedulerNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -97,6 +101,38 @@ function getSchedulerNumber(name, fallback) {
 function delay(ms) {
   if (!ms) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function scheduleIntervalTask(name, intervalMs, offsetMs, taskFn) {
+  let intervalHandle = null;
+  const safeOffsetMs = Math.max(0, Number(offsetMs) || 0);
+  const runTask = () => {
+    void taskFn();
+  };
+
+  console.log(
+    `[scheduler] ${name} interval scheduled | everyMs=${intervalMs} offsetMs=${safeOffsetMs}`
+  );
+
+  const timeoutHandle = setTimeout(() => {
+    runTask();
+    intervalHandle = setInterval(runTask, intervalMs);
+    intervalHandle.unref?.();
+  }, safeOffsetMs);
+  timeoutHandle.unref?.();
+
+  return () => {
+    clearTimeout(timeoutHandle);
+    if (intervalHandle) {
+      clearInterval(intervalHandle);
+    }
+  };
+}
+
+function stopScheduledInterval(handle) {
+  if (typeof handle === "function") {
+    handle();
+  }
 }
 
 let startupStatus = {
@@ -726,115 +762,137 @@ function startScheduler() {
     }
   })();
 
-  // Teller sync every 2 hours
-  tellerSyncIntervalHandle = setInterval(() => {
-    void runTellerSync("interval");
-  }, everyTwoHoursMs);
+  tellerSyncIntervalHandle = scheduleIntervalTask(
+    "teller",
+    everyTwoHoursMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 8,
+    () => runTellerSync("interval")
+  );
 
-  // Toll sync every 2 hours
-  tollSyncIntervalHandle = setInterval(() => {
-    void runTollSync("interval");
-  }, everyTwoHoursMs);
+  tollSyncIntervalHandle = scheduleIntervalTask(
+    "tolls",
+    everyTwoHoursMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 9,
+    () => runTollSync("interval")
+  );
 
-  // IMAP every 5 minutes
-  intervalHandle = setInterval(() => {
-    void runPoll("interval");
-  }, everyFiveMinutesMs);
+  intervalHandle = scheduleIntervalTask(
+    "imap",
+    everyFiveMinutesMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 0,
+    () => runPoll("interval")
+  );
 
-  // Bouncie every 5 minutes
-  bouncieIntervalHandle = setInterval(() => {
-    void runBouncie("interval");
-  }, everyFiveMinutesMs);
+  bouncieIntervalHandle = scheduleIntervalTask(
+    "bouncie",
+    everyFiveMinutesMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 1,
+    () => runBouncie("interval")
+  );
 
-  // DIMO every 5 minutes
-  dimoIntervalHandle = setInterval(() => {
-    void runDimo("interval");
-  }, everyFiveMinutesMs);
+  dimoIntervalHandle = scheduleIntervalTask(
+    "dimo",
+    everyFiveMinutesMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 2,
+    () => runDimo("interval")
+  );
 
-  // Operational text alerts every 5 minutes
-  fleetAlertsIntervalHandle = setInterval(() => {
-    void runFleetAlerts("interval");
-  }, everyFiveMinutesMs);
+  fleetAlertsIntervalHandle = scheduleIntervalTask(
+    "fleetAlerts",
+    everyFiveMinutesMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 3,
+    () => runFleetAlerts("interval")
+  );
 
-  // FMV freshness check daily; actual estimates run only if older than a week
-  fmvIntervalHandle = setInterval(() => {
-    void runFleetFmvRefresh("interval");
-  }, everyTwentyFourHoursMs);
+  fmvIntervalHandle = scheduleIntervalTask(
+    "fmv",
+    everyTwentyFourHoursMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 10,
+    () => runFleetFmvRefresh("interval")
+  );
 
-  // Business metrics snapshot daily
-  businessMetricsIntervalHandle = setInterval(() => {
-    void runBusinessMetricsSnapshot("interval");
-  }, everyTwentyFourHoursMs);
+  businessMetricsIntervalHandle = scheduleIntervalTask(
+    "businessMetrics",
+    everyTwentyFourHoursMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 11,
+    () => runBusinessMetricsSnapshot("interval")
+  );
 
-  // Derived odometer cache hourly
-  odometerRollupIntervalHandle = setInterval(() => {
-    void runVehicleOdometerRollups("interval");
-  }, everyHourMs);
+  odometerRollupIntervalHandle = scheduleIntervalTask(
+    "odometerRollups",
+    everyHourMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 6,
+    () => runVehicleOdometerRollups("interval")
+  );
 
-  // Telemetry raw payload retention weekly
-  telemetryRetentionIntervalHandle = setInterval(() => {
-    void runTelemetryRetention("interval");
-  }, everySevenDaysMs);
+  telemetryRetentionIntervalHandle = scheduleIntervalTask(
+    "telemetryRetention",
+    everySevenDaysMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 12,
+    () => runTelemetryRetention("interval")
+  );
 
-  // Google Calendar reconcile every 15 minutes
-  googleCalendarIntervalHandle = setInterval(() => {
-    void runGoogleCalendarReconcile("interval");
-  }, everyFifteenMinutesMs);
+  googleCalendarIntervalHandle = scheduleIntervalTask(
+    "googleCalendar",
+    everyFifteenMinutesMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 5,
+    () => runGoogleCalendarReconcile("interval")
+  );
 }
 
 function stopScheduler() {
   if (tellerSyncIntervalHandle) {
-    clearInterval(tellerSyncIntervalHandle);
+    stopScheduledInterval(tellerSyncIntervalHandle);
     tellerSyncIntervalHandle = null;
   }
 
   if (tollSyncIntervalHandle) {
-    clearInterval(tollSyncIntervalHandle);
+    stopScheduledInterval(tollSyncIntervalHandle);
     tollSyncIntervalHandle = null;
   }
 
   if (intervalHandle) {
-    clearInterval(intervalHandle);
+    stopScheduledInterval(intervalHandle);
     intervalHandle = null;
   }
 
   if (bouncieIntervalHandle) {
-    clearInterval(bouncieIntervalHandle);
+    stopScheduledInterval(bouncieIntervalHandle);
     bouncieIntervalHandle = null;
   }
 
   if (dimoIntervalHandle) {
-    clearInterval(dimoIntervalHandle);
+    stopScheduledInterval(dimoIntervalHandle);
     dimoIntervalHandle = null;
   }
 
   if (googleCalendarIntervalHandle) {
-    clearInterval(googleCalendarIntervalHandle);
+    stopScheduledInterval(googleCalendarIntervalHandle);
     googleCalendarIntervalHandle = null;
   }
 
   if (fmvIntervalHandle) {
-    clearInterval(fmvIntervalHandle);
+    stopScheduledInterval(fmvIntervalHandle);
     fmvIntervalHandle = null;
   }
 
   if (businessMetricsIntervalHandle) {
-    clearInterval(businessMetricsIntervalHandle);
+    stopScheduledInterval(businessMetricsIntervalHandle);
     businessMetricsIntervalHandle = null;
   }
 
   if (odometerRollupIntervalHandle) {
-    clearInterval(odometerRollupIntervalHandle);
+    stopScheduledInterval(odometerRollupIntervalHandle);
     odometerRollupIntervalHandle = null;
   }
 
   if (telemetryRetentionIntervalHandle) {
-    clearInterval(telemetryRetentionIntervalHandle);
+    stopScheduledInterval(telemetryRetentionIntervalHandle);
     telemetryRetentionIntervalHandle = null;
   }
 
   if (fleetAlertsIntervalHandle) {
-    clearInterval(fleetAlertsIntervalHandle);
+    stopScheduledInterval(fleetAlertsIntervalHandle);
     fleetAlertsIntervalHandle = null;
   }
 

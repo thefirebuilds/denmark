@@ -36,4 +36,14 @@ pool.on("error", (err) => {
   console.error("[db] unexpected pool error:", err);
 });
 
+function getPoolStats() {
+  return {
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount,
+    max: pool.options?.max || null,
+  };
+}
+
 module.exports = pool;
+module.exports.getPoolStats = getPoolStats;

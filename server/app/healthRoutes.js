@@ -6,6 +6,7 @@ const startScheduler = require("../services/scheduler");
 const { requirePermission } = require("../auth/middleware");
 const { defaultCors } = require("./cors");
 const { getDatabaseHealth } = require("../dbHealth");
+const { getPoolStats } = require("../db");
 const {
   getStartupState,
   initializeStartupTablesWithRetry,
@@ -27,6 +28,7 @@ function createPublicHealthRouter({ port }) {
       ok: true,
       service: "denmark-backend",
       database: getDatabaseHealth(),
+      db_pool: getPoolStats(),
       startup: getStartupState(),
     });
   });
@@ -42,6 +44,7 @@ function createPublicHealthRouter({ port }) {
     res.json({
       ok: true,
       database: getDatabaseHealth(),
+      db_pool: getPoolStats(),
       startup: getStartupState(),
     });
   });
