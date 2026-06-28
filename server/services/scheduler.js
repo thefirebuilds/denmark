@@ -92,6 +92,10 @@ const SCHEDULER_INTERVAL_OFFSET_STEP_MS = getSchedulerNumber(
   "SCHEDULER_INTERVAL_OFFSET_STEP_MS",
   45000
 );
+const SCHEDULER_DB_POOL_IDLE_RESERVE = getSchedulerNumber(
+  "SCHEDULER_DB_POOL_IDLE_RESERVE",
+  2
+);
 
 function getSchedulerNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -133,6 +137,33 @@ function stopScheduledInterval(handle) {
   if (typeof handle === "function") {
     handle();
   }
+}
+
+function shouldDeferForDbPressure(taskName, reason) {
+  if (String(reason || "").toLowerCase() === "startup") {
+    return false;
+  }
+
+  const stats = typeof pool.getPoolStats === "function" ? pool.getPoolStats() : null;
+  if (!stats || !stats.max) return false;
+
+  const waiting = Number(stats.waiting || 0);
+  const idle = Number(stats.idle || 0);
+  const checkedOut = Number(stats.checked_out || 0);
+  const max = Number(stats.max || 0);
+  const reserve = Math.min(
+    Math.max(0, SCHEDULER_DB_POOL_IDLE_RESERVE),
+    Math.max(0, max - 1)
+  );
+  const underPressure =
+    waiting > 0 || (max > 0 && checkedOut >= Math.max(1, max - reserve));
+
+  if (!underPressure) return false;
+
+  console.log(
+    `[scheduler] ${taskName} skipped | reason=${reason} dbPoolPressure=true checkedOut=${checkedOut} idle=${idle} waiting=${waiting} max=${max}`
+  );
+  return true;
 }
 
 let startupStatus = {
@@ -349,6 +380,8 @@ function getStartupStatus() {
 }
 
 async function runTellerSync(reason = "interval") {
+  if (shouldDeferForDbPressure("teller", reason)) return;
+
   if (!(await isIntegrationEnabled("teller"))) {
     console.log(`[scheduler] teller skipped | reason=${reason} enabled=false`);
     return;
@@ -399,6 +432,8 @@ async function runTellerSync(reason = "interval") {
 }
 
 async function runTollSync(reason = "interval") {
+  if (shouldDeferForDbPressure("tolls", reason)) return;
+
   if (!(await isIntegrationEnabled("tolls"))) {
     console.log(`[scheduler] tolls skipped | reason=${reason} enabled=false`);
     return;
@@ -427,6 +462,8 @@ async function runTollSync(reason = "interval") {
 }
 
 async function runPoll(reason = "interval") {
+  if (shouldDeferForDbPressure("imap", reason)) return;
+
   if (!(await isIntegrationEnabled("imap"))) {
     console.log(`[scheduler] imap skipped | reason=${reason} enabled=false`);
     return;
@@ -454,6 +491,8 @@ async function runPoll(reason = "interval") {
 }
 
 async function runBouncie(reason = "interval") {
+  if (shouldDeferForDbPressure("bouncie", reason)) return;
+
   if (!(await isIntegrationEnabled("bouncie"))) {
     console.log(`[scheduler] bouncie skipped | reason=${reason} enabled=false`);
     return;
@@ -481,6 +520,8 @@ async function runBouncie(reason = "interval") {
 }
 
 async function runDimo(reason = "interval") {
+  if (shouldDeferForDbPressure("dimo", reason)) return;
+
   if (!(await isIntegrationEnabled("dimo"))) {
     console.log(`[scheduler] dimo skipped | reason=${reason} enabled=false`);
     return;
@@ -511,6 +552,8 @@ async function runDimo(reason = "interval") {
 }
 
 async function runGoogleCalendarReconcile(reason = "interval") {
+  if (shouldDeferForDbPressure("googleCalendar", reason)) return;
+
   if (!(await isIntegrationEnabled("googleCalendar"))) {
     console.log(`[scheduler] googleCalendar skipped | reason=${reason} enabled=false`);
     return;
@@ -568,6 +611,8 @@ async function runGoogleCalendarReconcile(reason = "interval") {
 }
 
 async function runFleetFmvRefresh(reason = "interval") {
+  if (shouldDeferForDbPressure("fmv", reason)) return;
+
   if (!(await isIntegrationEnabled("fmv"))) {
     console.log(`[scheduler] fmv skipped | reason=${reason} enabled=false`);
     return;
@@ -606,6 +651,8 @@ async function runFleetFmvRefresh(reason = "interval") {
 }
 
 async function runBusinessMetricsSnapshot(reason = "interval") {
+  if (shouldDeferForDbPressure("businessMetrics", reason)) return;
+
   if (!(await isIntegrationEnabled("businessMetrics"))) {
     console.log(`[scheduler] businessMetrics skipped | reason=${reason} enabled=false`);
     return;
@@ -635,6 +682,8 @@ async function runBusinessMetricsSnapshot(reason = "interval") {
 }
 
 async function runVehicleOdometerRollups(reason = "interval") {
+  if (shouldDeferForDbPressure("odometerRollups", reason)) return;
+
   if (odometerRollupInProgress) {
     console.log(`[scheduler] odometerRollups skipped | reason=${reason} alreadyRunning=true`);
     return;
@@ -660,6 +709,8 @@ async function runVehicleOdometerRollups(reason = "interval") {
 }
 
 async function runTelemetryRetention(reason = "interval") {
+  if (shouldDeferForDbPressure("telemetryRetention", reason)) return;
+
   if (telemetryRetentionInProgress) {
     console.log(
       `[scheduler] telemetryRetention skipped | reason=${reason} alreadyRunning=true`
@@ -687,6 +738,8 @@ async function runTelemetryRetention(reason = "interval") {
 }
 
 async function runPublicAvailabilityPush(reason = "interval") {
+  if (shouldDeferForDbPressure("publicAvailability", reason)) return;
+
   if (!(await isIntegrationEnabled("publicAvailability"))) {
     console.log(`[scheduler] publicAvailability skipped | reason=${reason} enabled=false`);
     return;

@@ -19,6 +19,8 @@ const pool = new Pool({
   max: getRuntimeNumber("PGPOOL_MAX", 6),
   idleTimeoutMillis: getRuntimeNumber("PGIDLE_TIMEOUT_MS", 30000),
   connectionTimeoutMillis: getRuntimeNumber("PGCONNECT_TIMEOUT_MS", 5000),
+  query_timeout: getRuntimeNumber("PGQUERY_TIMEOUT_MS", 45000),
+  statement_timeout: getRuntimeNumber("PGSTATEMENT_TIMEOUT_MS", 45000),
   keepAlive: true,
   keepAliveInitialDelayMillis: getRuntimeNumber(
     "PGKEEPALIVE_INITIAL_DELAY_MS",
