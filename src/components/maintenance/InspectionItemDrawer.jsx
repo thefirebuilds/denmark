@@ -304,6 +304,23 @@ export default function InspectionItemDrawer({
       code === "leak_check";
     const isTirePressure =
       code === "tire_pressure_inspection" || code === "tire_pressure_check";
+    const initialResult = isBrakeInspection
+      ? "pass"
+      : isTireAgeReview ||
+        isTreadDepth ||
+        isCleaning ||
+        isBearingTieRodCheck ||
+        isAcPerformanceCheck ||
+        isFluidCheck ||
+        isTirePressure
+      ? "measured"
+      : item.status === "pass"
+      ? "pass"
+      : item.status === "fail"
+      ? "fail"
+      : item.status === "attention"
+      ? "attention"
+      : "";
 
     setForm({
       performedAt: new Date().toISOString().slice(0, 10),
@@ -313,22 +330,7 @@ export default function InspectionItemDrawer({
           : item.lastEvent?.odometerMiles != null
           ? String(item.lastEvent.odometerMiles)
           : "",
-      result:
-        isTireAgeReview ||
-        isTreadDepth ||
-        isCleaning ||
-        isBearingTieRodCheck ||
-        isAcPerformanceCheck ||
-        isFluidCheck ||
-        isTirePressure
-          ? "measured"
-          : item.status === "pass"
-          ? "pass"
-          : item.status === "fail"
-          ? "fail"
-          : item.status === "attention"
-          ? "attention"
-          : "",
+      result: initialResult,
       notes: "",
       dotCode: lastData.dot_code != null ? String(lastData.dot_code) : "",
       lowestTread32nds:
