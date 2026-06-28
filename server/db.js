@@ -181,16 +181,6 @@ pool.connect = function trackedConnect(...args) {
   const callbackIndex = args.findIndex((arg) => typeof arg === "function");
 
   if (callbackIndex >= 0) {
-    const originalCallback = args[callbackIndex];
-    args[callbackIndex] = (err, client, release) => {
-      if (err || !client) {
-        return originalCallback(err, client, release);
-      }
-
-      trackCheckedOutClient(client);
-      return originalCallback(err, client, client.release.bind(client));
-    };
-
     return originalPoolConnect(...args);
   }
 
