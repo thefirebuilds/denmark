@@ -13,6 +13,22 @@ const {
   initializeStartupTablesWithRetry,
 } = require("./startup/startupState");
 
+process.on("uncaughtException", (err) => {
+  console.error("[server] uncaught exception:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandled rejection:", reason);
+});
+
+process.on("SIGTERM", () => {
+  console.warn("[server] received SIGTERM");
+});
+
+process.on("SIGINT", () => {
+  console.warn("[server] received SIGINT");
+});
+
 const PORT = process.env.PORT || 5000;
 const app = createApp({ port: PORT });
 

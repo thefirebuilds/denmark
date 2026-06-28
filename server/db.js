@@ -27,9 +27,7 @@ const pool = new Pool({
 });
 
 const activePoolQueries = new Map();
-const checkedOutClients = new Map();
 let querySequence = 0;
-let clientSequence = 0;
 
 function summarizeSql(input) {
   const text =
@@ -41,12 +39,11 @@ function summarizeSql(input) {
   return text.replace(/\s+/g, " ").trim().slice(0, 260) || "(unknown query)";
 }
 
-function startQueryTracking({ sql, source, clientId = null }) {
+function startQueryTracking({ sql, source }) {
   const id = ++querySequence;
   const startedAt = Date.now();
   const entry = {
     id,
-    clientId,
     source,
     sql: summarizeSql(sql),
     startedAt,
@@ -54,32 +51,17 @@ function startQueryTracking({ sql, source, clientId = null }) {
 
   activePoolQueries.set(id, entry);
 
-  if (clientId && checkedOutClients.has(clientId)) {
-    const clientEntry = checkedOutClients.get(clientId);
-    clientEntry.currentQueryId = id;
-    clientEntry.lastQuery = entry.sql;
-    clientEntry.lastQueryStartedAt = startedAt;
-  }
-
   return () => {
     activePoolQueries.delete(id);
-    if (clientId && checkedOutClients.has(clientId)) {
-      const clientEntry = checkedOutClients.get(clientId);
-      if (clientEntry.currentQueryId === id) {
-        clientEntry.currentQueryId = null;
-        clientEntry.lastQueryFinishedAt = Date.now();
-      }
-    }
   };
 }
 
-function wrapQueryFunction(originalQuery, source, getClientId = () => null) {
+function wrapQueryFunction(originalQuery, source) {
   return function trackedQuery(...args) {
     const callbackIndex = args.findIndex((arg) => typeof arg === "function");
     const finish = startQueryTracking({
       sql: args[0],
       source,
-      clientId: getClientId(),
     });
 
     if (callbackIndex >= 0) {
@@ -114,78 +96,13 @@ function describeQueryEntry(entry, now = Date.now()) {
   return {
     id: entry.id,
     source: entry.source,
-    client_id: entry.clientId,
     age_ms: now - entry.startedAt,
     sql: entry.sql,
   };
 }
 
-function describeClientEntry(entry, now = Date.now()) {
-  return {
-    id: entry.id,
-    age_ms: now - entry.checkedOutAt,
-    current_query_id: entry.currentQueryId,
-    current_query_age_ms:
-      entry.currentQueryId && activePoolQueries.has(entry.currentQueryId)
-        ? now - activePoolQueries.get(entry.currentQueryId).startedAt
-        : null,
-    last_query_age_ms: entry.lastQueryStartedAt ? now - entry.lastQueryStartedAt : null,
-    last_query: entry.lastQuery || null,
-  };
-}
-
 const originalPoolQuery = pool.query.bind(pool);
 pool.query = wrapQueryFunction(originalPoolQuery, "pool.query");
-
-function trackCheckedOutClient(client) {
-  if (!client) return client;
-
-  const clientId = ++clientSequence;
-  checkedOutClients.set(clientId, {
-    id: clientId,
-    checkedOutAt: Date.now(),
-    currentQueryId: null,
-    lastQuery: null,
-    lastQueryStartedAt: null,
-    lastQueryFinishedAt: null,
-  });
-
-  if (!client.__denmarkOriginalQuery) {
-    client.__denmarkOriginalQuery = client.query.bind(client);
-    client.query = wrapQueryFunction(
-      client.__denmarkOriginalQuery,
-      "client.query",
-      () => client.__denmarkClientId || null
-    );
-  }
-
-  if (!client.__denmarkOriginalRelease) {
-    client.__denmarkOriginalRelease = client.release.bind(client);
-  }
-
-  client.__denmarkClientId = clientId;
-
-  client.release = (...releaseArgs) => {
-    checkedOutClients.delete(clientId);
-    if (client.__denmarkClientId === clientId) {
-      client.__denmarkClientId = null;
-    }
-    return client.__denmarkOriginalRelease(...releaseArgs);
-  };
-
-  return client;
-}
-
-const originalPoolConnect = pool.connect.bind(pool);
-pool.connect = function trackedConnect(...args) {
-  const callbackIndex = args.findIndex((arg) => typeof arg === "function");
-
-  if (callbackIndex >= 0) {
-    return originalPoolConnect(...args);
-  }
-
-  return originalPoolConnect(...args).then((client) => trackCheckedOutClient(client));
-};
 
 pool.on("error", (err) => {
   if (isDatabaseConnectionError(err)) {
@@ -203,7 +120,7 @@ function getPoolStats() {
     idle: pool.idleCount,
     waiting: pool.waitingCount,
     max: pool.options?.max || null,
-    checked_out: checkedOutClients.size,
+    checked_out: Math.max(0, pool.totalCount - pool.idleCount),
     active_queries: activePoolQueries.size,
   };
 }
@@ -214,14 +131,9 @@ function getPoolActivitySnapshot({ limit = 8 } = {}) {
     .sort((a, b) => a.startedAt - b.startedAt)
     .slice(0, limit)
     .map((entry) => describeQueryEntry(entry, now));
-  const checkedOut = [...checkedOutClients.values()]
-    .sort((a, b) => a.checkedOutAt - b.checkedOutAt)
-    .slice(0, limit)
-    .map((entry) => describeClientEntry(entry, now));
 
   return {
     active_queries: activeQueries,
-    checked_out_clients: checkedOut,
   };
 }
 
