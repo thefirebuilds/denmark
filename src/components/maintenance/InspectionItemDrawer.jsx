@@ -241,6 +241,7 @@ export default function InspectionItemDrawer({
     odometerMiles: "",
     result: "",
     notes: "",
+    laborHours: "",
     dotCode: "",
     lowestTread32nds: "",
     interiorCleaned: false,
@@ -332,6 +333,7 @@ export default function InspectionItemDrawer({
           : "",
       result: initialResult,
       notes: "",
+      laborHours: "",
       dotCode: lastData.dot_code != null ? String(lastData.dot_code) : "",
       lowestTread32nds:
         lastData.lowest_tread_32nds != null
@@ -431,6 +433,14 @@ export default function InspectionItemDrawer({
     }
 
     if (
+      form.laborHours !== "" &&
+      (!Number.isFinite(Number(form.laborHours)) || Number(form.laborHours) < 0)
+    ) {
+      window.alert("Enter labor hours as a positive number, or leave it blank.");
+      return;
+    }
+
+    if (
       isBrakeInspection &&
       form.frontPadMm === "" &&
       form.rearPadMm === "" &&
@@ -480,6 +490,7 @@ export default function InspectionItemDrawer({
       odometerMiles,
       result: form.result || null,
       notes: form.notes || "",
+      actualLaborHours: form.laborHours === "" ? null : Number(form.laborHours),
       data: {
         ...(isTireAgeReview
           ? {
@@ -914,6 +925,20 @@ export default function InspectionItemDrawer({
               </div>
             </div>
           ) : null}
+
+          <div className="drawer-field">
+            <label className="drawer-label">Labor hours</label>
+            <input
+              className="drawer-input"
+              type="number"
+              min="0"
+              step="0.083"
+              value={form.laborHours}
+              onChange={(e) => updateField("laborHours", e.target.value)}
+              placeholder="0.75"
+              disabled={saving}
+            />
+          </div>
 
           <div className="drawer-field">
             <label className="drawer-label">Notes</label>

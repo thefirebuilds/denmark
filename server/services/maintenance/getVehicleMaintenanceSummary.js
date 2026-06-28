@@ -793,6 +793,8 @@ async function getVehicleMaintenanceSummary(
           trigger_type,
           trigger_context,
           source_key,
+          estimated_labor_hours,
+          actual_labor_hours,
           created_at,
           updated_at
         FROM maintenance_tasks
@@ -829,6 +831,8 @@ async function getVehicleMaintenanceSummary(
           trigger_type,
           trigger_context,
           source_key,
+          estimated_labor_hours,
+          actual_labor_hours,
           created_at,
           updated_at
         FROM maintenance_tasks
@@ -872,6 +876,8 @@ async function getVehicleMaintenanceSummary(
           me.result,
           me.notes,
           me.data,
+          me.estimated_labor_hours,
+          me.actual_labor_hours,
           me.performed_by,
           me.source,
           me.created_at
@@ -911,6 +917,10 @@ async function getVehicleMaintenanceSummary(
       result: row.result,
       notes: row.notes || null,
       data: row.data || {},
+      estimatedLaborHours:
+        row.estimated_labor_hours == null ? null : Number(row.estimated_labor_hours),
+      actualLaborHours:
+        row.actual_labor_hours == null ? null : Number(row.actual_labor_hours),
       performedBy: row.performed_by || null,
       source: row.source || null,
       createdAt: row.created_at || null,

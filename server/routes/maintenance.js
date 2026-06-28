@@ -26,6 +26,10 @@ const {
 } = require("../services/maintenance/ruleTemplates");
 
 const pool = require("../db");
+const {
+  estimateLaborHours,
+  normalizeLaborHours,
+} = require("../services/maintenance/laborEstimates");
 
 const router = express.Router();
 
@@ -85,6 +89,13 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
     input.sourceKey == null || String(input.sourceKey).trim() === ""
       ? `manual:${vehicleVin}:${crypto.randomUUID()}`
       : String(input.sourceKey).trim();
+  const estimatedLaborHours =
+    normalizeLaborHours(input.estimatedLaborHours ?? input.estimated_labor_hours) ??
+    estimateLaborHours({
+      taskType: "manual_todo",
+      title,
+      description,
+    });
 
   const result = await client.query(
     `
@@ -101,7 +112,8 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
         source,
         source_key,
         trigger_type,
-        trigger_context
+        trigger_context,
+        estimated_labor_hours
       )
       VALUES (
         $1,
@@ -116,7 +128,8 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
         $7,
         $8,
         'manual',
-        $9::jsonb
+        $9::jsonb,
+        $10
       )
       RETURNING *
     `,
@@ -134,6 +147,7 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
         noteSource: input.noteSource || source,
         createdFrom: "maintenance_todo_form",
       }),
+      estimatedLaborHours,
     ]
   );
 
@@ -359,12 +373,31 @@ router.patch("/maintenance-tasks/:taskId", async (req, res) => {
     const vehicleVin = vehicleVinProvided
       ? String(req.body?.vehicle_vin || "").trim()
       : null;
+    const actualLaborProvided = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "actual_labor_hours"
+    ) || Object.prototype.hasOwnProperty.call(req.body || {}, "actualLaborHours");
+    const estimatedLaborProvided = Object.prototype.hasOwnProperty.call(
+      req.body || {},
+      "estimated_labor_hours"
+    ) || Object.prototype.hasOwnProperty.call(req.body || {}, "estimatedLaborHours");
+    const actualLaborHours = actualLaborProvided
+      ? normalizeLaborHours(req.body?.actual_labor_hours ?? req.body?.actualLaborHours)
+      : null;
+    const estimatedLaborHours = estimatedLaborProvided
+      ? normalizeLaborHours(req.body?.estimated_labor_hours ?? req.body?.estimatedLaborHours)
+      : null;
 
     if (!Number.isInteger(taskId) || taskId <= 0) {
       return res.status(400).json({ error: "Invalid taskId" });
     }
 
-    if (!statusProvided && !vehicleVinProvided) {
+    if (
+      !statusProvided &&
+      !vehicleVinProvided &&
+      !actualLaborProvided &&
+      !estimatedLaborProvided
+    ) {
       return res.status(400).json({ error: "No task updates provided" });
     }
 
@@ -406,6 +439,16 @@ router.patch("/maintenance-tasks/:taskId", async (req, res) => {
     if (vehicleVinProvided) {
       values.push(vehicleVin);
       updates.push(`vehicle_vin = $${values.length}`);
+    }
+
+    if (estimatedLaborProvided) {
+      values.push(estimatedLaborHours);
+      updates.push(`estimated_labor_hours = $${values.length}`);
+    }
+
+    if (actualLaborProvided) {
+      values.push(actualLaborHours);
+      updates.push(`actual_labor_hours = $${values.length}`);
     }
 
     const result = await pool.query(
@@ -494,6 +537,10 @@ router.post("/vehicles/:vin/maintenance-events", async (req, res) => {
       data,
       performedBy,
       source,
+      estimatedLaborHours,
+      actualLaborHours,
+      estimated_labor_hours,
+      actual_labor_hours,
     } = req.body || {};
 
     const event = await createMaintenanceEvent({
@@ -507,6 +554,8 @@ router.post("/vehicles/:vin/maintenance-events", async (req, res) => {
       data,
       performedBy,
       source,
+      estimatedLaborHours: estimatedLaborHours ?? estimated_labor_hours,
+      actualLaborHours: actualLaborHours ?? actual_labor_hours,
     });
 
     res.json({

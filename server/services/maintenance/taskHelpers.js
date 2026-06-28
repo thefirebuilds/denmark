@@ -1,6 +1,7 @@
 // Helper functions for maintenance task management
 
 const pool = require("../../db");
+const { estimateLaborHours, normalizeLaborHours } = require("./laborEstimates");
 
 async function findOpenTaskBySignature(
   client,
@@ -78,6 +79,8 @@ async function createTaskIfMissing(
     triggerType = null,
     triggerContext = {},
     sourceKey = null,
+    estimatedLaborHours = null,
+    actualLaborHours = null,
   } = args;
 
   if (!vehicleVin) {
@@ -91,6 +94,16 @@ async function createTaskIfMissing(
   if (!title) {
     throw new Error("createTaskIfMissing requires title");
   }
+
+  const estimatedLabor =
+    normalizeLaborHours(estimatedLaborHours) ??
+    estimateLaborHours({
+      taskType,
+      title,
+      description,
+      ruleCode: triggerContext?.ruleCode,
+    });
+  const actualLabor = normalizeLaborHours(actualLaborHours);
 
   if (sourceKey) {
     const result = await client.query(
@@ -110,11 +123,14 @@ async function createTaskIfMissing(
           source,
           trigger_type,
           trigger_context,
-          source_key
+          source_key,
+          estimated_labor_hours,
+          actual_labor_hours
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10, $11, $12, $13, $14::jsonb, $15
+          $9, $10, $11, $12, $13, $14::jsonb, $15,
+          $16, $17
         )
         ON CONFLICT (source_key) DO NOTHING
         RETURNING *
@@ -135,6 +151,8 @@ async function createTaskIfMissing(
         triggerType,
         JSON.stringify(triggerContext || {}),
         sourceKey,
+        estimatedLabor,
+        actualLabor,
       ]
     );
 
@@ -194,11 +212,14 @@ async function createTaskIfMissing(
         source,
         trigger_type,
         trigger_context,
-        source_key
+        source_key,
+        estimated_labor_hours,
+        actual_labor_hours
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13, $14::jsonb, $15
+        $9, $10, $11, $12, $13, $14::jsonb, $15,
+        $16, $17
       )
       RETURNING *
     `,
@@ -218,6 +239,8 @@ async function createTaskIfMissing(
       triggerType,
       JSON.stringify(triggerContext || {}),
       sourceKey,
+      estimatedLabor,
+      actualLabor,
     ]
   );
 

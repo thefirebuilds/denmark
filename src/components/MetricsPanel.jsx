@@ -2129,7 +2129,16 @@ const mileageStats = useMemo(() => {
                 subtitle={`${formatNumber(
                   businessMetrics.fleet_summary.estimated_owner_hours,
                   1
-                )} owner hrs`}
+                )} owner hrs${
+                  Number(
+                    businessMetrics.fleet_summary.maintenance_labor_missing_count ?? 0
+                  ) > 0
+                    ? ` - ${formatNumber(
+                        businessMetrics.fleet_summary
+                          .maintenance_labor_missing_count
+                      )} labor missing`
+                    : ""
+                }`}
                 tone={
                   Number(
                     businessMetrics.fleet_summary.net_profit_after_owner_labor ?? 0

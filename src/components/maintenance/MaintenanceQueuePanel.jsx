@@ -110,6 +110,20 @@ function getPlanningSortValue(value) {
   return date.getTime();
 }
 
+function getQueueItemLaborHours(item) {
+  const value =
+    item?.task?.actual_labor_hours ??
+    item?.task?.actualLaborHours ??
+    item?.task?.estimated_labor_hours ??
+    item?.task?.estimatedLaborHours ??
+    item?.actual_labor_hours ??
+    item?.actualLaborHours ??
+    item?.estimated_labor_hours ??
+    item?.estimatedLaborHours;
+  const num = Number(value);
+  return Number.isFinite(num) && num >= 0 ? num : null;
+}
+
 function getVehiclePlanningDate(trips, nextAvailableDate) {
   const activeTrip = getActiveTrip(trips);
   if (activeTrip?.trip_end) return activeTrip.trip_end;
@@ -192,6 +206,13 @@ function getQueueItemTaskId(item) {
 
 function getQueueItemTaskStatus(item) {
   return humanizeQueueValue(item?.task?.status || item?.status || item?.ruleStatus || "open");
+}
+
+function formatLaborHours(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return "Not set";
+  if (num === 1) return "1 hr";
+  return `${num.toFixed(num < 1 ? 2 : 1).replace(/\.0$/, "")} hrs`;
 }
 
 function getQueueItemNotes(item) {
@@ -787,6 +808,25 @@ export default function MaintenanceQueuePanel({
 
     if (!confirmed) return;
 
+    const defaultHours = getQueueItemLaborHours(item);
+    const enteredHours = window.prompt(
+      `Actual labor hours for "${taskTitle}"?`,
+      defaultHours == null ? "" : String(defaultHours)
+    );
+
+    if (enteredHours === null) return;
+
+    const trimmedHours = String(enteredHours || "").trim();
+    const actualLaborHours = trimmedHours === "" ? null : Number(trimmedHours);
+
+    if (
+      actualLaborHours != null &&
+      (!Number.isFinite(actualLaborHours) || actualLaborHours < 0)
+    ) {
+      window.alert("Enter labor hours as a positive number, or leave it blank.");
+      return;
+    }
+
     try {
       setUpdatingTaskId(taskId);
 
@@ -797,6 +837,7 @@ export default function MaintenanceQueuePanel({
         },
         body: JSON.stringify({
           status: "resolved",
+          actualLaborHours,
         }),
       });
 
@@ -999,6 +1040,15 @@ export default function MaintenanceQueuePanel({
     const relatedItems = getQueueItemRelatedItems(item);
     const createdAt = formatQueueTaskDate(task.created_at || task.createdAt);
     const updatedAt = formatQueueTaskDate(task.updated_at || task.updatedAt);
+    const estimatedLabor = getQueueItemLaborHours({
+      ...item,
+      task: {
+        ...task,
+        actual_labor_hours: null,
+      },
+    });
+    const actualLabor =
+      task.actual_labor_hours ?? task.actualLaborHours ?? item?.actual_labor_hours;
     const triggerContext = task.trigger_context || {};
     const canReassign = Boolean(taskId && vehicleOptions.length);
     const isReassigning = taskId && reassigningTaskId === taskId;
@@ -1039,6 +1089,14 @@ export default function MaintenanceQueuePanel({
           <div>
             <span>Blockers</span>
             <strong>{blockers.length ? blockers.join(", ") : "None"}</strong>
+          </div>
+          <div>
+            <span>Labor</span>
+            <strong>
+              {actualLabor == null
+                ? `Est. ${formatLaborHours(estimatedLabor)}`
+                : `${formatLaborHours(actualLabor)} actual`}
+            </strong>
           </div>
         </div>
 

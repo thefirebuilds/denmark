@@ -702,6 +702,8 @@ CREATE TABLE public.maintenance_events (
     data jsonb DEFAULT '{}'::jsonb NOT NULL,
     performed_by text,
     source text DEFAULT 'manual'::text NOT NULL,
+    estimated_labor_hours numeric(8,3),
+    actual_labor_hours numeric(8,3),
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT maintenance_events_odometer_miles_check CHECK (((odometer_miles IS NULL) OR (odometer_miles >= 0))),
@@ -851,6 +853,8 @@ CREATE TABLE public.maintenance_tasks (
     trigger_context jsonb DEFAULT '{}'::jsonb NOT NULL,
     related_trip_id bigint,
     source_key text,
+    estimated_labor_hours numeric(8,3),
+    actual_labor_hours numeric(8,3),
     CONSTRAINT maintenance_tasks_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'urgent'::text]))),
     CONSTRAINT maintenance_tasks_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'rule_engine'::text, 'guest_report'::text, 'inspection'::text, 'system'::text]))),
     CONSTRAINT maintenance_tasks_status_check CHECK ((status = ANY (ARRAY['open'::text, 'scheduled'::text, 'in_progress'::text, 'deferred'::text, 'resolved'::text, 'canceled'::text])))

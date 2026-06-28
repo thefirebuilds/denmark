@@ -957,6 +957,7 @@ export default function FleetMaintenancePanel({
     title: "",
     description: "",
     priority: "medium",
+    estimatedLaborHours: "",
     blocksRental: false,
     blocksGuestExport: false,
   });
@@ -1994,6 +1995,7 @@ export default function FleetMaintenancePanel({
       title: "",
       description: "",
       priority: "medium",
+      estimatedLaborHours: "",
       blocksRental: false,
       blocksGuestExport: false,
     });
@@ -2105,6 +2107,10 @@ export default function FleetMaintenancePanel({
             priority: todoForm.priority,
             blocksRental: todoForm.blocksRental,
             blocksGuestExport: todoForm.blocksGuestExport,
+            estimatedLaborHours:
+              todoForm.estimatedLaborHours === ""
+                ? null
+                : Number(todoForm.estimatedLaborHours),
             source: "manual",
             reportedBy: "owner",
           }),
@@ -3146,6 +3152,24 @@ export default function FleetMaintenancePanel({
                           <option value="high">High</option>
                           <option value="urgent">Urgent</option>
                         </select>
+                      </label>
+
+                      <label>
+                        <span>Labor estimate</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.083"
+                          value={todoForm.estimatedLaborHours}
+                          onChange={(e) =>
+                            setTodoForm((prev) => ({
+                              ...prev,
+                              estimatedLaborHours: e.target.value,
+                            }))
+                          }
+                          placeholder="0.75"
+                          disabled={savingTodo}
+                        />
                       </label>
                     </div>
 

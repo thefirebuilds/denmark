@@ -12,6 +12,9 @@ const {
   getCalendarDaysInRange,
 } = require("./metricHelpers");
 const { getVehicleMetrics } = require("./vehicleMetricsService");
+const {
+  ensureMaintenanceRuntimeSchema,
+} = require("../maintenance/maintenanceRuntimeSchema");
 
 let ensureBusinessMetricsTablesPromise = null;
 
@@ -917,6 +920,80 @@ async function fetchExpensesForBusinessMetrics(client, startDate, endDate) {
   return rows;
 }
 
+async function fetchMaintenanceLaborForBusinessMetrics(client, startDate, endDate) {
+  const { rows } = await client.query(
+    `
+      WITH task_labor AS (
+        SELECT
+          v.id AS vehicle_id,
+          SUM(COALESCE(mt.actual_labor_hours, mt.estimated_labor_hours, 0)) AS labor_hours,
+          COUNT(*) FILTER (
+            WHERE mt.actual_labor_hours IS NULL
+              AND mt.estimated_labor_hours IS NULL
+          ) AS missing_hours_count
+        FROM maintenance_tasks mt
+        JOIN vehicles v
+          ON v.vin = mt.vehicle_vin
+        WHERE mt.task_type = 'manual_todo'
+          AND mt.status = 'resolved'
+          AND mt.updated_at <= $2::timestamptz
+          AND ($1::timestamptz IS NULL OR mt.updated_at >= $1::timestamptz)
+        GROUP BY v.id
+      ),
+      event_labor AS (
+        SELECT
+          v.id AS vehicle_id,
+          SUM(COALESCE(me.actual_labor_hours, me.estimated_labor_hours, 0)) AS labor_hours,
+          COUNT(*) FILTER (
+            WHERE me.actual_labor_hours IS NULL
+              AND me.estimated_labor_hours IS NULL
+          ) AS missing_hours_count
+        FROM maintenance_events me
+        JOIN vehicles v
+          ON v.vin = me.vehicle_vin
+        WHERE me.performed_at <= $2::timestamptz
+          AND ($1::timestamptz IS NULL OR me.performed_at >= $1::timestamptz)
+        GROUP BY v.id
+      ),
+      open_missing AS (
+        SELECT
+          v.id AS vehicle_id,
+          COUNT(*) AS missing_hours_count
+        FROM maintenance_tasks mt
+        JOIN vehicles v
+          ON v.vin = mt.vehicle_vin
+        WHERE mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+          AND mt.estimated_labor_hours IS NULL
+          AND mt.actual_labor_hours IS NULL
+        GROUP BY v.id
+      )
+      SELECT
+        vehicle_id,
+        SUM(labor_hours) AS labor_hours,
+        SUM(missing_hours_count)::int AS missing_hours_count
+      FROM (
+        SELECT vehicle_id, labor_hours, missing_hours_count FROM task_labor
+        UNION ALL
+        SELECT vehicle_id, labor_hours, missing_hours_count FROM event_labor
+        UNION ALL
+        SELECT vehicle_id, 0::numeric AS labor_hours, missing_hours_count FROM open_missing
+      ) labor
+      GROUP BY vehicle_id
+    `,
+    [startDate || null, endDate]
+  );
+
+  return new Map(
+    rows.map((row) => [
+      String(row.vehicle_id),
+      {
+        laborHours: toNumber(row.labor_hours),
+        missingHoursCount: Number(row.missing_hours_count || 0),
+      },
+    ])
+  );
+}
+
 async function fetchStartupBasisByVehicle(client, endDate) {
   const { rows } = await client.query(
     `
@@ -1137,14 +1214,24 @@ function hasTripEndedForBusinessMetrics(trip, now = Date.now()) {
 
 async function computeBusinessMetricsForWindow({ key, startDate, endDate }, client = pool) {
   await ensureBusinessMetricsTables(client);
+  await ensureMaintenanceRuntimeSchema(client);
   await syncTripFinancialFacts(client);
-  const [settings, vehicles, vehicleOpsPayload, trips, expenses, startupBasisByVehicle] = await Promise.all([
+  const [
+    settings,
+    vehicles,
+    vehicleOpsPayload,
+    trips,
+    expenses,
+    startupBasisByVehicle,
+    maintenanceLaborByVehicle,
+  ] = await Promise.all([
     getBusinessFinancialSettings(client),
     fetchVehiclesWithProfiles(client, startDate, endDate),
     getVehicleMetrics(key),
     fetchTripsForBusinessMetrics(client, startDate, endDate),
     fetchExpensesForBusinessMetrics(client, startDate, endDate),
     fetchStartupBasisByVehicle(client, endDate),
+    fetchMaintenanceLaborForBusinessMetrics(client, startDate, endDate),
   ]);
 
   const vehicleOps = Array.isArray(vehicleOpsPayload?.vehicles)
@@ -1243,6 +1330,9 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       reimbursements_collected: 0,
       unreimbursed_costs: 0,
       estimated_owner_hours: 0,
+      estimated_cleaning_hours: 0,
+      estimated_maintenance_labor_hours: 0,
+      maintenance_labor_missing_count: 0,
       current_equity: 0,
       net_profit: 0,
       net_profit_after_debt_service: 0,
@@ -1378,8 +1468,22 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       startDate,
       endDate
     );
+    const tripEndMs = trip.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+    const rangeStartMs = startDate ? new Date(startDate).getTime() : Number.NEGATIVE_INFINITY;
+    const rangeEndMs = endDate ? new Date(endDate).getTime() : Number.POSITIVE_INFINITY;
+    const tripEndedInRange =
+      Number.isFinite(tripEndMs) &&
+      tripEndMs >= rangeStartMs &&
+      tripEndMs <= rangeEndMs &&
+      !isTripCanceledForBusinessMetrics(trip);
+    const cleaningMinutes =
+      trip.owner_cleaning_minutes == null
+        ? tripEndedInRange
+          ? 60
+          : 0
+        : toNumber(trip.owner_cleaning_minutes);
     const ownerMinutes =
-      toNumber(trip.owner_cleaning_minutes) +
+      cleaningMinutes +
       toNumber(trip.owner_delivery_minutes) +
       toNumber(trip.owner_admin_minutes);
     const overlapDays = getOverlapDays(
@@ -1398,6 +1502,7 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       ticketReimbursed +
       smokingReimbursed;
     metric.estimated_owner_hours += ownerMinutes / 60;
+    metric.estimated_cleaning_hours += cleaningMinutes / 60;
     metric.days_booked += overlapDays;
     metric.source_metrics.trip_count += 1;
 
@@ -1632,6 +1737,27 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
 
   const fleetMetrics = [];
   for (const metric of vehicleMetricsById.values()) {
+    const maintenanceLabor = maintenanceLaborByVehicle.get(String(metric.vehicle_id));
+    if (maintenanceLabor) {
+      metric.estimated_maintenance_labor_hours += maintenanceLabor.laborHours;
+      metric.maintenance_labor_missing_count += maintenanceLabor.missingHoursCount;
+      metric.estimated_owner_hours += maintenanceLabor.laborHours;
+    }
+
+    if (metric.maintenance_labor_missing_count > 0) {
+      flags.push(
+        buildQualityFlag(
+          periodKey,
+          "vehicle",
+          metric.vehicle_id,
+          "missing_maintenance_labor_hours",
+          "medium",
+          0.04,
+          `${metric.vehicle_name} has ${metric.maintenance_labor_missing_count} maintenance labor item(s) without hours`
+        )
+      );
+    }
+
     const firstTripStart = firstTripStartByVehicle.get(String(metric.vehicle_id));
     if (!metric.placed_in_service_date && firstTripStart) {
       metric.placed_in_service_date = toDateOnly(firstTripStart);
@@ -1792,6 +1918,12 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       net_profit_after_debt_service: roundMoney(metric.net_profit_after_debt_service),
       net_profit_after_labor: roundMoney(metric.net_profit_after_labor),
       estimated_owner_hours: roundNumber(metric.estimated_owner_hours, 2),
+      estimated_cleaning_hours: roundNumber(metric.estimated_cleaning_hours, 2),
+      estimated_maintenance_labor_hours: roundNumber(
+        metric.estimated_maintenance_labor_hours,
+        2
+      ),
+      maintenance_labor_missing_count: metric.maintenance_labor_missing_count,
       utilization_rate: roundNumber(metric.utilization_rate, 4),
       revenue_per_available_day: roundMoney(metric.revenue_per_available_day),
       revenue_per_booked_day: roundMoney(metric.revenue_per_booked_day),
@@ -1857,6 +1989,21 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     estimated_owner_hours: roundNumber(
       fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_owner_hours), 0),
       2
+    ),
+    estimated_cleaning_hours: roundNumber(
+      fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_cleaning_hours), 0),
+      2
+    ),
+    estimated_maintenance_labor_hours: roundNumber(
+      fleetMetrics.reduce(
+        (sum, item) => sum + toNumber(item.estimated_maintenance_labor_hours),
+        0
+      ),
+      2
+    ),
+    maintenance_labor_missing_count: fleetMetrics.reduce(
+      (sum, item) => sum + Number(item.maintenance_labor_missing_count || 0),
+      0
     ),
     cash_on_cash_return:
       settings.owner_cash_invested && settings.owner_cash_invested > 0

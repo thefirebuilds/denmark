@@ -61,6 +61,9 @@ const { ensureFleetAlertTables } = require("../server/services/alerts/fleetAlert
 const {
   ensureAuthPublicUrlSettings,
 } = require("../server/services/authPublicUrlSettings");
+const {
+  ensureMaintenanceRuntimeSchema,
+} = require("../server/services/maintenance/maintenanceRuntimeSchema");
 
 const SCHEMA_PATH = path.join(ROOT_DIR, "server/db/schema.sql");
 const FORCE_RESET = process.argv.includes("--force-reset");
@@ -361,6 +364,7 @@ async function runRuntimeEnsures() {
   await ensureVehicleOdometerRollupTable();
   await ensureVehicleAliasesTable();
   await ensureVehicleRuntimeSchema();
+  await ensureMaintenanceRuntimeSchema();
   await ensureSystemActivityLogTable();
   await ensureIncomeTables();
   await ensureFleetAlertTables();

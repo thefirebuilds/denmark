@@ -7,6 +7,7 @@ const pool = require("../../db");
 const {
   closeSatisfiedMaintenanceTasks,
 } = require("./syncMaintenanceTasks");
+const { estimateLaborHours, normalizeLaborHours } = require("./laborEstimates");
 
 function getResolvableTaskTypesForRuleCode(ruleCode) {
   const normalized = String(ruleCode || "").trim().toLowerCase();
@@ -196,6 +197,8 @@ async function createMaintenanceEvent({
   data,
   performedBy,
   source,
+  estimatedLaborHours,
+  actualLaborHours,
 }) {
   if (!vin) {
     const err = new Error("VIN required");
@@ -214,6 +217,14 @@ async function createMaintenanceEvent({
     const odo = normalizeOdometerMiles(odometerMiles);
     const normalizedResult = normalizeResult(result);
     const normalizedData = normalizeData(data);
+    const estimatedLabor =
+      normalizeLaborHours(estimatedLaborHours) ??
+      estimateLaborHours({
+        ruleCode: rule.rule_code,
+        title: rule.title,
+        taskType: rule.rule_code,
+      });
+    const actualLabor = normalizeLaborHours(actualLaborHours);
 
     const finalSource =
       source == null || String(source).trim() === "" ? "manual" : String(source).trim();
@@ -237,6 +248,8 @@ async function createMaintenanceEvent({
         data,
         performed_by,
         source,
+        estimated_labor_hours,
+        actual_labor_hours,
         created_at,
         updated_at
       )
@@ -252,6 +265,8 @@ async function createMaintenanceEvent({
         $9,
         $10,
         $11,
+        $12,
+        $13,
         NOW(),
         NOW()
       )
@@ -268,6 +283,8 @@ async function createMaintenanceEvent({
         data,
         performed_by,
         source,
+        estimated_labor_hours,
+        actual_labor_hours,
         created_at,
         updated_at
       `,
@@ -283,6 +300,8 @@ async function createMaintenanceEvent({
         normalizedData,
         finalPerformedBy,
         finalSource,
+        estimatedLabor,
+        actualLabor,
       ]
     );
 

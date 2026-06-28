@@ -56,6 +56,22 @@ const DEFAULT_MAINTENANCE_RULE_TEMPLATES = [
     ruleConfig: {},
   },
   {
+    ruleCode: "lights_check",
+    title: "Lights Check",
+    description: "Validate headlights, brake lights, turn signals, and taillights.",
+    category: "safety",
+    intervalMiles: null,
+    intervalDays: 14,
+    dueSoonMiles: 0,
+    dueSoonDays: 3,
+    blocksRentalWhenOverdue: false,
+    blocksGuestExportWhenOverdue: false,
+    requiresPassResult: true,
+    ruleConfig: {
+      checks_exterior_lights: true,
+    },
+  },
+  {
     ruleCode: "brake_inspection",
     title: "Brake Inspection",
     description: null,
