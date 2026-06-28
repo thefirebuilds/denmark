@@ -160,12 +160,8 @@ router.get("/maintenance-labor-missing/:vehicleId", async (req, res) => {
         WHERE v.id = $1
           AND mt.estimated_labor_hours IS NULL
           AND mt.actual_labor_hours IS NULL
-          AND COALESCE(mt.status, '') <> 'canceled'
+          AND mt.status IN ('resolved', 'complete', 'completed')
         ORDER BY
-          CASE
-            WHEN mt.status IN ('open', 'scheduled', 'in_progress', 'deferred') THEN 0
-            ELSE 1
-          END,
           mt.updated_at DESC NULLS LAST,
           mt.id DESC
       `,

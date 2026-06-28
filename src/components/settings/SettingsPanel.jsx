@@ -87,15 +87,23 @@ const DEFAULT_TOLL_SETTINGS = {
   password: "",
   passwordConfigured: false,
   lookbackDays: 30,
-  timeoutMs: 45000,
-  userAgent:
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-  fingerprintFields:
-    "trxnAt,licensePlate,amount,agencyName,facilityName,plazaName,laneName,direction,transType",
-  fingerprintSalt: "",
-  fingerprintSaltConfigured: false,
   configured: false,
   source: "database",
+  providerOptions: [
+    {
+      value: "hctra_eztag",
+      label: "HCTRA EZ TAG",
+      activityUrl: "https://www.hctra.org/AccountActivity",
+    },
+  ],
+  technicalConfig: {
+    sourceKey: "hctra_eztag",
+    activityApiPattern: "/api/sessions/AccountActivity/SearchAccountActivity",
+    fingerprintFields:
+      "trxnAt,licensePlate,amount,agencyName,facilityName,plazaName,laneName,direction,transType",
+    fingerprintSaltConfigured: false,
+    timeoutMs: 45000,
+  },
 };
 const DEFAULT_MARKETPLACE_FILTERS = {
   minPrice: "",
@@ -413,15 +421,15 @@ function mergeTollSettings(settings) {
     password: "",
     passwordConfigured: Boolean(settings?.passwordConfigured),
     lookbackDays: Number(settings?.lookbackDays || DEFAULT_TOLL_SETTINGS.lookbackDays),
-    timeoutMs: Number(settings?.timeoutMs || DEFAULT_TOLL_SETTINGS.timeoutMs),
-    userAgent: String(settings?.userAgent || DEFAULT_TOLL_SETTINGS.userAgent),
-    fingerprintFields: String(
-      settings?.fingerprintFields || DEFAULT_TOLL_SETTINGS.fingerprintFields
-    ),
-    fingerprintSalt: "",
-    fingerprintSaltConfigured: Boolean(settings?.fingerprintSaltConfigured),
     configured: Boolean(settings?.configured),
     source: String(settings?.source || "database"),
+    providerOptions: Array.isArray(settings?.providerOptions)
+      ? settings.providerOptions
+      : DEFAULT_TOLL_SETTINGS.providerOptions,
+    technicalConfig: {
+      ...DEFAULT_TOLL_SETTINGS.technicalConfig,
+      ...(settings?.technicalConfig || {}),
+    },
   };
 }
 
@@ -3810,13 +3818,22 @@ function TollSettingsCard({
   onTest,
 }) {
   const form = mergeTollSettings(settings);
+  const providerOptions = Array.isArray(form.providerOptions)
+    ? form.providerOptions
+    : DEFAULT_TOLL_SETTINGS.providerOptions;
+  const selectedProvider =
+    providerOptions.find((option) => option.value === form.provider) ||
+    providerOptions[0] ||
+    null;
+  const technicalConfig = form.technicalConfig || {};
 
   return (
     <div className="settings-group">
       <div className="settings-group-title">Toll provider</div>
       <div className="settings-empty-state">
-        Configure the toll authority browser import. HCTRA EZ TAG is the default,
-        but the URL and fingerprint settings can be adjusted for other providers.
+        Choose the toll authority for this tenant and save the account login.
+        Provider-specific browser and fingerprint settings are managed by app
+        administrators.
       </div>
 
       <label className="settings-check-row">
@@ -3831,31 +3848,18 @@ function TollSettingsCard({
 
       <div className="settings-form-grid">
         <label className="settings-field">
-          <span>Provider key</span>
-          <input
+          <span>Provider</span>
+          <select
             value={form.provider}
             disabled={loading || saving}
             onChange={(e) => onChange("provider", e.target.value)}
-            placeholder="hctra_eztag"
-          />
-        </label>
-        <label className="settings-field">
-          <span>Display name</span>
-          <input
-            value={form.providerLabel}
-            disabled={loading || saving}
-            onChange={(e) => onChange("providerLabel", e.target.value)}
-            placeholder="HCTRA EZ TAG"
-          />
-        </label>
-        <label className="settings-field">
-          <span>Source key</span>
-          <input
-            value={form.sourceKey}
-            disabled={loading || saving}
-            onChange={(e) => onChange("sourceKey", e.target.value)}
-            placeholder="hctra_eztag"
-          />
+          >
+            {providerOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="settings-field">
           <span>Lookback days</span>
@@ -3869,30 +3873,11 @@ function TollSettingsCard({
           />
         </label>
         <label className="settings-field settings-field-wide">
-          <span>Login URL</span>
+          <span>Provider website</span>
           <input
-            value={form.loginUrl}
-            disabled={loading || saving}
-            onChange={(e) => onChange("loginUrl", e.target.value)}
-            placeholder="https://www.hctra.org/Login"
-          />
-        </label>
-        <label className="settings-field settings-field-wide">
-          <span>Activity URL</span>
-          <input
-            value={form.activityUrl}
-            disabled={loading || saving}
-            onChange={(e) => onChange("activityUrl", e.target.value)}
-            placeholder="https://www.hctra.org/AccountActivity"
-          />
-        </label>
-        <label className="settings-field settings-field-wide">
-          <span>Activity API match</span>
-          <input
-            value={form.activityApiPattern}
-            disabled={loading || saving}
-            onChange={(e) => onChange("activityApiPattern", e.target.value)}
-            placeholder="/api/sessions/AccountActivity/SearchAccountActivity"
+            value={selectedProvider?.activityUrl || form.activityUrl || ""}
+            readOnly
+            disabled
           />
         </label>
         <label className="settings-field">
@@ -3916,52 +3901,10 @@ function TollSettingsCard({
             }
           />
         </label>
-        <label className="settings-field">
-          <span>Timeout ms</span>
-          <input
-            type="number"
-            min="5000"
-            step="1000"
-            value={form.timeoutMs}
-            disabled={loading || saving}
-            onChange={(e) => onChange("timeoutMs", e.target.value)}
-          />
-        </label>
         <div className="settings-field">
           <span>Source</span>
           <strong>{loading ? "Loading..." : form.source || "database"}</strong>
         </div>
-        <label className="settings-field settings-field-wide">
-          <span>Fingerprint fields</span>
-          <input
-            value={form.fingerprintFields}
-            disabled={loading || saving}
-            onChange={(e) => onChange("fingerprintFields", e.target.value)}
-            placeholder={DEFAULT_TOLL_SETTINGS.fingerprintFields}
-          />
-        </label>
-        <label className="settings-field settings-field-wide">
-          <span>Fingerprint salt</span>
-          <input
-            type="password"
-            value={form.fingerprintSalt || ""}
-            disabled={loading || saving}
-            onChange={(e) => onChange("fingerprintSalt", e.target.value)}
-            placeholder={
-              form.fingerprintSaltConfigured
-                ? "Saved; leave blank to keep"
-                : "Optional provider-specific salt"
-            }
-          />
-        </label>
-        <label className="settings-field settings-field-wide">
-          <span>User agent</span>
-          <input
-            value={form.userAgent}
-            disabled={loading || saving}
-            onChange={(e) => onChange("userAgent", e.target.value)}
-          />
-        </label>
       </div>
 
       <div className="settings-vehicle-list">
@@ -3976,6 +3919,39 @@ function TollSettingsCard({
           </span>
         </div>
       </div>
+
+      <details className="settings-vehicle-config-card">
+        <summary className="settings-vehicle-config-head">
+          <div>
+            <strong>Provider details</strong>
+            <span>Read-only import settings</span>
+          </div>
+        </summary>
+        <div className="settings-vehicle-list">
+          <div className="settings-vehicle-row">
+            <strong>Source key</strong>
+            <span>{technicalConfig.sourceKey || form.sourceKey}</span>
+          </div>
+          <div className="settings-vehicle-row">
+            <strong>Activity API match</strong>
+            <span>{technicalConfig.activityApiPattern || form.activityApiPattern}</span>
+          </div>
+          <div className="settings-vehicle-row">
+            <strong>Fingerprint</strong>
+            <span>{technicalConfig.fingerprintFields || "Default provider fields"}</span>
+          </div>
+          <div className="settings-vehicle-row">
+            <strong>Fingerprint salt</strong>
+            <span>
+              {technicalConfig.fingerprintSaltConfigured ? "Configured" : "Not used"}
+            </span>
+          </div>
+          <div className="settings-vehicle-row">
+            <strong>Timeout</strong>
+            <span>{technicalConfig.timeoutMs || 45000} ms</span>
+          </div>
+        </div>
+      </details>
 
       <div className="settings-form-actions">
         <button
@@ -4380,18 +4356,9 @@ function IntegrationsSettingsPanel() {
     return {
       enabled: form.enabled !== false,
       provider: form.provider,
-      providerLabel: form.providerLabel,
-      sourceKey: form.sourceKey,
-      loginUrl: form.loginUrl,
-      activityUrl: form.activityUrl,
-      activityApiPattern: form.activityApiPattern,
       username: form.username,
       password: form.password || "__KEEP__",
       lookbackDays: Number(form.lookbackDays || 30),
-      timeoutMs: Number(form.timeoutMs || 45000),
-      userAgent: form.userAgent,
-      fingerprintFields: form.fingerprintFields,
-      fingerprintSalt: form.fingerprintSalt || "__KEEP__",
     };
   }
 

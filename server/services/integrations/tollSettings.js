@@ -4,23 +4,30 @@ const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
 const SETTINGS_KEY = "integrations.tolls";
 const SECRET_PLACEHOLDER = "__KEEP__";
 
+const TOLL_PROVIDER_CONFIGS = Object.freeze({
+  hctra_eztag: Object.freeze({
+    provider: "hctra_eztag",
+    providerLabel: "HCTRA EZ TAG",
+    sourceKey: "hctra_eztag",
+    loginUrl: "https://www.hctra.org/Login",
+    activityUrl: "https://www.hctra.org/AccountActivity",
+    activityApiPattern: "/api/sessions/AccountActivity/SearchAccountActivity",
+    timeoutMs: 45000,
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    fingerprintFields:
+      "trxnAt,licensePlate,amount,agencyName,facilityName,plazaName,laneName,direction,transType",
+    fingerprintSalt: "",
+  }),
+});
+
+const DEFAULT_TOLL_PROVIDER = "hctra_eztag";
 const DEFAULT_TOLL_SETTINGS = Object.freeze({
   enabled: true,
-  provider: "hctra_eztag",
-  providerLabel: "HCTRA EZ TAG",
-  sourceKey: "hctra_eztag",
-  loginUrl: "https://www.hctra.org/Login",
-  activityUrl: "https://www.hctra.org/AccountActivity",
-  activityApiPattern: "/api/sessions/AccountActivity/SearchAccountActivity",
+  ...TOLL_PROVIDER_CONFIGS[DEFAULT_TOLL_PROVIDER],
   username: "",
   password: "",
   lookbackDays: 30,
-  timeoutMs: 45000,
-  userAgent:
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-  fingerprintFields:
-    "trxnAt,licensePlate,amount,agencyName,facilityName,plazaName,laneName,direction,transType",
-  fingerprintSalt: "",
 });
 
 function cleanString(value) {
@@ -34,21 +41,14 @@ function cleanNumber(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER }
 }
 
 function envTollSettings() {
+  const provider = cleanString(process.env.TOLL_PROVIDER) || DEFAULT_TOLL_PROVIDER;
+  const providerConfig =
+    TOLL_PROVIDER_CONFIGS[provider] || TOLL_PROVIDER_CONFIGS[DEFAULT_TOLL_PROVIDER];
+
   return {
     ...DEFAULT_TOLL_SETTINGS,
+    ...providerConfig,
     enabled: true,
-    provider: cleanString(process.env.TOLL_PROVIDER) || DEFAULT_TOLL_SETTINGS.provider,
-    providerLabel:
-      cleanString(process.env.TOLL_PROVIDER_LABEL) ||
-      DEFAULT_TOLL_SETTINGS.providerLabel,
-    sourceKey: cleanString(process.env.TOLL_SOURCE_KEY) || DEFAULT_TOLL_SETTINGS.sourceKey,
-    loginUrl: cleanString(process.env.EZTAG_LOGIN_URL) || DEFAULT_TOLL_SETTINGS.loginUrl,
-    activityUrl:
-      cleanString(process.env.EZTAG_ACCOUNT_ACTIVITY_URL) ||
-      DEFAULT_TOLL_SETTINGS.activityUrl,
-    activityApiPattern:
-      cleanString(process.env.EZTAG_ACTIVITY_API_PATTERN) ||
-      DEFAULT_TOLL_SETTINGS.activityApiPattern,
     username: cleanString(process.env.EZTAG_USERNAME),
     password: cleanString(process.env.EZTAG_PASSWORD),
     lookbackDays: cleanNumber(
@@ -56,17 +56,6 @@ function envTollSettings() {
       DEFAULT_TOLL_SETTINGS.lookbackDays,
       { min: 1, max: 365 }
     ),
-    timeoutMs: cleanNumber(
-      process.env.EZTAG_TIMEOUT_MS,
-      DEFAULT_TOLL_SETTINGS.timeoutMs,
-      { min: 5000, max: 180000 }
-    ),
-    userAgent:
-      cleanString(process.env.EZTAG_USER_AGENT) || DEFAULT_TOLL_SETTINGS.userAgent,
-    fingerprintFields:
-      cleanString(process.env.TOLL_FINGERPRINT_FIELDS) ||
-      DEFAULT_TOLL_SETTINGS.fingerprintFields,
-    fingerprintSalt: cleanString(process.env.TOLL_FINGERPRINT_SALT),
   };
 }
 
@@ -94,24 +83,21 @@ function normalizeTollSettings(value = {}, fallback = DEFAULT_TOLL_SETTINGS) {
     fingerprintSalt = decrypt(fingerprintSaltEncrypted);
   }
 
+  const provider =
+    cleanString(input.provider ?? base.provider) || DEFAULT_TOLL_PROVIDER;
+  const providerConfig =
+    TOLL_PROVIDER_CONFIGS[provider] ||
+    TOLL_PROVIDER_CONFIGS[base.provider] ||
+    TOLL_PROVIDER_CONFIGS[DEFAULT_TOLL_PROVIDER];
+
   return {
     enabled: input.enabled !== undefined ? input.enabled !== false : base.enabled !== false,
-    provider: cleanString(input.provider ?? base.provider) || DEFAULT_TOLL_SETTINGS.provider,
-    providerLabel:
-      cleanString(input.providerLabel ?? input.provider_label ?? base.providerLabel) ||
-      DEFAULT_TOLL_SETTINGS.providerLabel,
-    sourceKey:
-      cleanString(input.sourceKey ?? input.source_key ?? base.sourceKey) ||
-      DEFAULT_TOLL_SETTINGS.sourceKey,
-    loginUrl: cleanString(input.loginUrl ?? input.login_url ?? base.loginUrl),
-    activityUrl: cleanString(
-      input.activityUrl ?? input.activity_url ?? base.activityUrl
-    ),
-    activityApiPattern: cleanString(
-      input.activityApiPattern ??
-        input.activity_api_pattern ??
-        base.activityApiPattern
-    ),
+    provider: providerConfig.provider,
+    providerLabel: providerConfig.providerLabel,
+    sourceKey: providerConfig.sourceKey,
+    loginUrl: providerConfig.loginUrl,
+    activityUrl: providerConfig.activityUrl,
+    activityApiPattern: providerConfig.activityApiPattern,
     username: cleanString(input.username ?? input.user ?? base.username),
     password,
     passwordEncrypted,
@@ -120,21 +106,10 @@ function normalizeTollSettings(value = {}, fallback = DEFAULT_TOLL_SETTINGS) {
       DEFAULT_TOLL_SETTINGS.lookbackDays,
       { min: 1, max: 365 }
     ),
-    timeoutMs: cleanNumber(
-      input.timeoutMs ?? input.timeout_ms ?? base.timeoutMs,
-      DEFAULT_TOLL_SETTINGS.timeoutMs,
-      { min: 5000, max: 180000 }
-    ),
-    userAgent:
-      cleanString(input.userAgent ?? input.user_agent ?? base.userAgent) ||
-      DEFAULT_TOLL_SETTINGS.userAgent,
-    fingerprintFields:
-      cleanString(
-        input.fingerprintFields ??
-          input.fingerprint_fields ??
-          base.fingerprintFields
-      ) || DEFAULT_TOLL_SETTINGS.fingerprintFields,
-    fingerprintSalt,
+    timeoutMs: providerConfig.timeoutMs,
+    userAgent: providerConfig.userAgent,
+    fingerprintFields: providerConfig.fingerprintFields,
+    fingerprintSalt: providerConfig.fingerprintSalt || fingerprintSalt,
     fingerprintSaltEncrypted,
   };
 }
@@ -164,13 +139,16 @@ function sanitizeTollSettings(settings, { source = "database" } = {}) {
     passwordEncrypted: undefined,
     passwordConfigured: Boolean(normalized.password),
     lookbackDays: normalized.lookbackDays,
-    timeoutMs: normalized.timeoutMs,
-    userAgent: normalized.userAgent,
-    fingerprintFields: normalized.fingerprintFields,
-    fingerprintSalt: normalized.fingerprintSalt ? "__CONFIGURED__" : "",
-    fingerprintSaltConfigured: Boolean(normalized.fingerprintSalt),
     configured: hasCompleteTollCredentials(normalized),
     source,
+    providerOptions: listTollProviderOptions(),
+    technicalConfig: {
+      sourceKey: normalized.sourceKey,
+      activityApiPattern: normalized.activityApiPattern,
+      fingerprintFields: normalized.fingerprintFields,
+      fingerprintSaltConfigured: Boolean(normalized.fingerprintSalt),
+      timeoutMs: normalized.timeoutMs,
+    },
   };
 }
 
@@ -179,16 +157,8 @@ function buildStoredTollSettings(settings) {
   const stored = {
     enabled: normalized.enabled,
     provider: normalized.provider,
-    providerLabel: normalized.providerLabel,
-    sourceKey: normalized.sourceKey,
-    loginUrl: normalized.loginUrl,
-    activityUrl: normalized.activityUrl,
-    activityApiPattern: normalized.activityApiPattern,
     username: normalized.username,
     lookbackDays: normalized.lookbackDays,
-    timeoutMs: normalized.timeoutMs,
-    userAgent: normalized.userAgent,
-    fingerprintFields: normalized.fingerprintFields,
   };
 
   if (normalized.password) {
@@ -237,6 +207,13 @@ function decryptStoredSalt(rawValue) {
   return decrypt(encrypted);
 }
 
+function hasStoredFingerprintSalt(rawValue) {
+  return Boolean(
+    cleanString(rawValue?.fingerprintSaltEncrypted) ||
+      cleanString(rawValue?.fingerprintSalt)
+  );
+}
+
 async function getStoredTollSettings(client = pool) {
   const { rows } = await client.query(
     "SELECT value FROM app_settings WHERE key = $1 LIMIT 1",
@@ -245,8 +222,10 @@ async function getStoredTollSettings(client = pool) {
   if (!rows[0]?.value) return null;
 
   const migratedValue = await migrateStoredTollSecretsIfNeeded(rows[0].value, client);
-  const normalized = normalizeTollSettings(migratedValue, envTollSettings());
-  normalized.fingerprintSalt = decryptStoredSalt(migratedValue);
+  const normalized = normalizeTollSettings(migratedValue, DEFAULT_TOLL_SETTINGS);
+  if (hasStoredFingerprintSalt(migratedValue)) {
+    normalized.fingerprintSalt = decryptStoredSalt(migratedValue);
+  }
   return normalized;
 }
 
@@ -285,7 +264,18 @@ async function saveTollSettings(input = {}, client = pool) {
   const next = buildStoredTollSettings(
     {
       ...current,
-      ...input,
+      ...(Object.prototype.hasOwnProperty.call(input, "enabled")
+        ? { enabled: input.enabled }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, "provider")
+        ? { provider: input.provider }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, "username")
+        ? { username: input.username }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, "lookbackDays")
+        ? { lookbackDays: input.lookbackDays }
+        : {}),
       password: preservePassword ? current.password : input.password,
       fingerprintSalt: preserveFingerprintSalt
         ? current.fingerprintSalt
@@ -308,13 +298,23 @@ async function saveTollSettings(input = {}, client = pool) {
   return normalizeTollSettings(rows[0]?.value || next);
 }
 
+function listTollProviderOptions() {
+  return Object.values(TOLL_PROVIDER_CONFIGS).map((provider) => ({
+    value: provider.provider,
+    label: provider.providerLabel,
+    activityUrl: provider.activityUrl,
+  }));
+}
+
 module.exports = {
   SETTINGS_KEY,
   DEFAULT_TOLL_SETTINGS,
+  TOLL_PROVIDER_CONFIGS,
   SECRET_PLACEHOLDER,
   normalizeTollSettings,
   sanitizeTollSettings,
   getEffectiveTollSettings,
   saveTollSettings,
   hasCompleteTollCredentials,
+  listTollProviderOptions,
 };

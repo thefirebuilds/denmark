@@ -954,18 +954,6 @@ async function fetchMaintenanceLaborForBusinessMetrics(client, startDate, endDat
         WHERE me.performed_at <= $2::timestamptz
           AND ($1::timestamptz IS NULL OR me.performed_at >= $1::timestamptz)
         GROUP BY v.id
-      ),
-      open_missing AS (
-        SELECT
-          v.id AS vehicle_id,
-          COUNT(*) AS missing_hours_count
-        FROM maintenance_tasks mt
-        JOIN vehicles v
-          ON v.vin = mt.vehicle_vin
-        WHERE mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
-          AND mt.estimated_labor_hours IS NULL
-          AND mt.actual_labor_hours IS NULL
-        GROUP BY v.id
       )
       SELECT
         vehicle_id,
@@ -975,8 +963,6 @@ async function fetchMaintenanceLaborForBusinessMetrics(client, startDate, endDat
         SELECT vehicle_id, labor_hours, missing_hours_count FROM task_labor
         UNION ALL
         SELECT vehicle_id, labor_hours, missing_hours_count FROM event_labor
-        UNION ALL
-        SELECT vehicle_id, 0::numeric AS labor_hours, missing_hours_count FROM open_missing
       ) labor
       GROUP BY vehicle_id
     `,
