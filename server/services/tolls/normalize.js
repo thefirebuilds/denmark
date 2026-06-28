@@ -22,7 +22,7 @@ function toPositiveAmount(value) {
   return Math.abs(num);
 }
 
-function normalizeTollRecord(raw) {
+function normalizeTollRecord(raw, options = {}) {
   const trxnAt = toIsoOrNull(raw?.trxnDate);
   const postedAt = toIsoOrNull(raw?.postedDate);
   const amount = toPositiveAmount(raw?.amount);
@@ -32,7 +32,7 @@ function normalizeTollRecord(raw) {
   }
 
   const normalized = {
-    source: "hctra_eztag",
+    source: options.sourceKey || options.source || "hctra_eztag",
     trxnAt,
     postedAt,
     licensePlate: raw?.licensePlate || null,
@@ -49,7 +49,10 @@ function normalizeTollRecord(raw) {
     rawPayload: raw,
   };
 
-  normalized.externalFingerprint = buildTollFingerprint(normalized);
+  normalized.externalFingerprint = buildTollFingerprint(normalized, {
+    fields: options.fingerprintFields,
+    salt: options.fingerprintSalt,
+  });
 
   return normalized;
 }

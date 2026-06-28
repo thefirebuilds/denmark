@@ -130,7 +130,11 @@ function registerApiRoutes(app) {
   app.use(
     "/api/settings",
     defaultCors,
-    requireMethodPermissions({ GET: "settings.read", PUT: "settings.write" }),
+    requireMethodPermissions({
+      GET: "settings.read",
+      PUT: "settings.write",
+      POST: "settings.write",
+    }),
     settingsRouter
   );
   app.use("/api/database", defaultCors, requirePermission("database.admin"), databaseRouter);

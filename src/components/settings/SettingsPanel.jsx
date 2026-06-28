@@ -75,6 +75,28 @@ const DEFAULT_IMAP_SETTINGS = {
   configured: false,
   source: "database",
 };
+const DEFAULT_TOLL_SETTINGS = {
+  enabled: true,
+  provider: "hctra_eztag",
+  providerLabel: "HCTRA EZ TAG",
+  sourceKey: "hctra_eztag",
+  loginUrl: "https://www.hctra.org/Login",
+  activityUrl: "https://www.hctra.org/AccountActivity",
+  activityApiPattern: "/api/sessions/AccountActivity/SearchAccountActivity",
+  username: "",
+  password: "",
+  passwordConfigured: false,
+  lookbackDays: 30,
+  timeoutMs: 45000,
+  userAgent:
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+  fingerprintFields:
+    "trxnAt,licensePlate,amount,agencyName,facilityName,plazaName,laneName,direction,transType",
+  fingerprintSalt: "",
+  fingerprintSaltConfigured: false,
+  configured: false,
+  source: "database",
+};
 const DEFAULT_MARKETPLACE_FILTERS = {
   minPrice: "",
   maxPrice: "",
@@ -369,6 +391,37 @@ function mergeAuthPublicUrlSettings(settings) {
     googleCalendarRedirectUri: normalizedPublicBaseUrl
       ? `${normalizedPublicBaseUrl}${GOOGLE_CALENDAR_CALLBACK_PATH}`
       : "",
+  };
+}
+
+function mergeTollSettings(settings) {
+  return {
+    ...DEFAULT_TOLL_SETTINGS,
+    ...(settings || {}),
+    enabled: settings?.enabled !== false,
+    provider: String(settings?.provider || DEFAULT_TOLL_SETTINGS.provider),
+    providerLabel: String(
+      settings?.providerLabel || DEFAULT_TOLL_SETTINGS.providerLabel
+    ),
+    sourceKey: String(settings?.sourceKey || DEFAULT_TOLL_SETTINGS.sourceKey),
+    loginUrl: String(settings?.loginUrl || DEFAULT_TOLL_SETTINGS.loginUrl),
+    activityUrl: String(settings?.activityUrl || DEFAULT_TOLL_SETTINGS.activityUrl),
+    activityApiPattern: String(
+      settings?.activityApiPattern || DEFAULT_TOLL_SETTINGS.activityApiPattern
+    ),
+    username: String(settings?.username || ""),
+    password: "",
+    passwordConfigured: Boolean(settings?.passwordConfigured),
+    lookbackDays: Number(settings?.lookbackDays || DEFAULT_TOLL_SETTINGS.lookbackDays),
+    timeoutMs: Number(settings?.timeoutMs || DEFAULT_TOLL_SETTINGS.timeoutMs),
+    userAgent: String(settings?.userAgent || DEFAULT_TOLL_SETTINGS.userAgent),
+    fingerprintFields: String(
+      settings?.fingerprintFields || DEFAULT_TOLL_SETTINGS.fingerprintFields
+    ),
+    fingerprintSalt: "",
+    fingerprintSaltConfigured: Boolean(settings?.fingerprintSaltConfigured),
+    configured: Boolean(settings?.configured),
+    source: String(settings?.source || "database"),
   };
 }
 
@@ -3747,6 +3800,205 @@ function IntegrationSwitchesCard({ switches, onChange, saving }) {
   );
 }
 
+function TollSettingsCard({
+  settings,
+  loading,
+  saving,
+  testing,
+  onChange,
+  onSave,
+  onTest,
+}) {
+  const form = mergeTollSettings(settings);
+
+  return (
+    <div className="settings-group">
+      <div className="settings-group-title">Toll provider</div>
+      <div className="settings-empty-state">
+        Configure the toll authority browser import. HCTRA EZ TAG is the default,
+        but the URL and fingerprint settings can be adjusted for other providers.
+      </div>
+
+      <label className="settings-check-row">
+        <input
+          type="checkbox"
+          checked={form.enabled !== false}
+          disabled={loading || saving}
+          onChange={(e) => onChange("enabled", e.target.checked)}
+        />
+        <span>Enable toll provider import</span>
+      </label>
+
+      <div className="settings-form-grid">
+        <label className="settings-field">
+          <span>Provider key</span>
+          <input
+            value={form.provider}
+            disabled={loading || saving}
+            onChange={(e) => onChange("provider", e.target.value)}
+            placeholder="hctra_eztag"
+          />
+        </label>
+        <label className="settings-field">
+          <span>Display name</span>
+          <input
+            value={form.providerLabel}
+            disabled={loading || saving}
+            onChange={(e) => onChange("providerLabel", e.target.value)}
+            placeholder="HCTRA EZ TAG"
+          />
+        </label>
+        <label className="settings-field">
+          <span>Source key</span>
+          <input
+            value={form.sourceKey}
+            disabled={loading || saving}
+            onChange={(e) => onChange("sourceKey", e.target.value)}
+            placeholder="hctra_eztag"
+          />
+        </label>
+        <label className="settings-field">
+          <span>Lookback days</span>
+          <input
+            type="number"
+            min="1"
+            max="365"
+            value={form.lookbackDays}
+            disabled={loading || saving}
+            onChange={(e) => onChange("lookbackDays", e.target.value)}
+          />
+        </label>
+        <label className="settings-field settings-field-wide">
+          <span>Login URL</span>
+          <input
+            value={form.loginUrl}
+            disabled={loading || saving}
+            onChange={(e) => onChange("loginUrl", e.target.value)}
+            placeholder="https://www.hctra.org/Login"
+          />
+        </label>
+        <label className="settings-field settings-field-wide">
+          <span>Activity URL</span>
+          <input
+            value={form.activityUrl}
+            disabled={loading || saving}
+            onChange={(e) => onChange("activityUrl", e.target.value)}
+            placeholder="https://www.hctra.org/AccountActivity"
+          />
+        </label>
+        <label className="settings-field settings-field-wide">
+          <span>Activity API match</span>
+          <input
+            value={form.activityApiPattern}
+            disabled={loading || saving}
+            onChange={(e) => onChange("activityApiPattern", e.target.value)}
+            placeholder="/api/sessions/AccountActivity/SearchAccountActivity"
+          />
+        </label>
+        <label className="settings-field">
+          <span>Username</span>
+          <input
+            value={form.username}
+            disabled={loading || saving}
+            onChange={(e) => onChange("username", e.target.value)}
+            placeholder="Toll account username"
+          />
+        </label>
+        <label className="settings-field">
+          <span>Password</span>
+          <input
+            type="password"
+            value={form.password || ""}
+            disabled={loading || saving}
+            onChange={(e) => onChange("password", e.target.value)}
+            placeholder={
+              form.passwordConfigured ? "Saved; leave blank to keep" : "Password"
+            }
+          />
+        </label>
+        <label className="settings-field">
+          <span>Timeout ms</span>
+          <input
+            type="number"
+            min="5000"
+            step="1000"
+            value={form.timeoutMs}
+            disabled={loading || saving}
+            onChange={(e) => onChange("timeoutMs", e.target.value)}
+          />
+        </label>
+        <div className="settings-field">
+          <span>Source</span>
+          <strong>{loading ? "Loading..." : form.source || "database"}</strong>
+        </div>
+        <label className="settings-field settings-field-wide">
+          <span>Fingerprint fields</span>
+          <input
+            value={form.fingerprintFields}
+            disabled={loading || saving}
+            onChange={(e) => onChange("fingerprintFields", e.target.value)}
+            placeholder={DEFAULT_TOLL_SETTINGS.fingerprintFields}
+          />
+        </label>
+        <label className="settings-field settings-field-wide">
+          <span>Fingerprint salt</span>
+          <input
+            type="password"
+            value={form.fingerprintSalt || ""}
+            disabled={loading || saving}
+            onChange={(e) => onChange("fingerprintSalt", e.target.value)}
+            placeholder={
+              form.fingerprintSaltConfigured
+                ? "Saved; leave blank to keep"
+                : "Optional provider-specific salt"
+            }
+          />
+        </label>
+        <label className="settings-field settings-field-wide">
+          <span>User agent</span>
+          <input
+            value={form.userAgent}
+            disabled={loading || saving}
+            onChange={(e) => onChange("userAgent", e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="settings-vehicle-list">
+        <div className="settings-vehicle-row">
+          <strong>Provider config</strong>
+          <span>
+            {loading
+              ? "Loading..."
+              : form.configured
+                ? "Ready"
+                : "Needs URL, API match, username, and password"}
+          </span>
+        </div>
+      </div>
+
+      <div className="settings-form-actions">
+        <button
+          type="button"
+          className="settings-action-btn"
+          disabled={loading || saving}
+          onClick={onSave}
+        >
+          {saving ? "Saving..." : "Save Toll Provider"}
+        </button>
+        <button
+          type="button"
+          className="settings-action-btn secondary"
+          disabled={loading || testing}
+          onClick={onTest}
+        >
+          {testing ? "Testing..." : "Test Provider"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
   const [connections, setConnections] = useState(null);
@@ -3754,6 +4006,7 @@ function IntegrationsSettingsPanel() {
   const [dimoConfig, setDimoConfig] = useState(null);
   const [dimoStatus, setDimoStatus] = useState([]);
   const [googleCalendarStatus, setGoogleCalendarStatus] = useState(null);
+  const [tollSettings, setTollSettings] = useState(DEFAULT_TOLL_SETTINGS);
   const [integrationSwitches, setIntegrationSwitches] = useState(
     DEFAULT_INTEGRATION_ENABLEMENT
   );
@@ -3775,6 +4028,8 @@ function IntegrationsSettingsPanel() {
   const [savingGoogleCalendarSyncEnabled, setSavingGoogleCalendarSyncEnabled] =
     useState(false);
   const [savingIntegrationSwitches, setSavingIntegrationSwitches] = useState(false);
+  const [savingTollSettings, setSavingTollSettings] = useState(false);
+  const [testingTollSettings, setTestingTollSettings] = useState(false);
   const [message, setMessage] = useState("");
 
   async function loadTellerState() {
@@ -3789,6 +4044,7 @@ function IntegrationsSettingsPanel() {
         dimoConfigRes,
         dimoStatusRes,
         googleCalendarStatusRes,
+        tollSettingsRes,
         integrationSwitchesRes,
       ] = await Promise.all([
         fetch(`${API_BASE}/api/teller/connect/config`),
@@ -3797,6 +4053,7 @@ function IntegrationsSettingsPanel() {
         fetch(`${API_BASE}/api/dimo/config`),
         fetch(`${API_BASE}/api/dimo/status`),
         fetch(`${API_BASE}/api/integrations/google-calendar/status`),
+        fetch(`${API_BASE}/api/settings/integrations.tolls`),
         fetch(`${API_BASE}/api/settings/integrations.enabled`),
       ]);
 
@@ -3808,6 +4065,7 @@ function IntegrationsSettingsPanel() {
       const googleCalendarStatusJson = await googleCalendarStatusRes
         .json()
         .catch(() => ({}));
+      const tollSettingsJson = await tollSettingsRes.json().catch(() => ({}));
       const integrationSwitchesJson = await integrationSwitchesRes
         .json()
         .catch(() => ({}));
@@ -3845,6 +4103,10 @@ function IntegrationsSettingsPanel() {
         );
       }
 
+      if (!tollSettingsRes.ok) {
+        throw new Error(tollSettingsJson?.error || "Failed to load toll settings");
+      }
+
       if (!integrationSwitchesRes.ok) {
         throw new Error(
           integrationSwitchesJson?.error || "Failed to load integration switches"
@@ -3857,6 +4119,7 @@ function IntegrationsSettingsPanel() {
       setDimoConfig(dimoConfigJson);
       setDimoStatus(Array.isArray(dimoStatusJson) ? dimoStatusJson : []);
       setGoogleCalendarStatus(googleCalendarStatusJson);
+      setTollSettings(mergeTollSettings(tollSettingsJson.value || {}));
       setIntegrationSwitches({
         ...DEFAULT_INTEGRATION_ENABLEMENT,
         ...(integrationSwitchesJson.value || {}),
@@ -4105,6 +4368,89 @@ function IntegrationsSettingsPanel() {
     }
   }
 
+  function updateTollSetting(field, value) {
+    setTollSettings((current) => ({
+      ...mergeTollSettings(current),
+      [field]: value,
+    }));
+  }
+
+  function tollPayload() {
+    const form = mergeTollSettings(tollSettings);
+    return {
+      enabled: form.enabled !== false,
+      provider: form.provider,
+      providerLabel: form.providerLabel,
+      sourceKey: form.sourceKey,
+      loginUrl: form.loginUrl,
+      activityUrl: form.activityUrl,
+      activityApiPattern: form.activityApiPattern,
+      username: form.username,
+      password: form.password || "__KEEP__",
+      lookbackDays: Number(form.lookbackDays || 30),
+      timeoutMs: Number(form.timeoutMs || 45000),
+      userAgent: form.userAgent,
+      fingerprintFields: form.fingerprintFields,
+      fingerprintSalt: form.fingerprintSalt || "__KEEP__",
+    };
+  }
+
+  async function saveTollProviderSettings() {
+    try {
+      setSavingTollSettings(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/integrations.tolls`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tollPayload()),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save toll provider settings");
+      }
+
+      setTollSettings(mergeTollSettings(json.value || {}));
+      setMessage("Toll provider settings saved.");
+    } catch (err) {
+      setMessage(err.message || "Failed to save toll provider settings");
+    } finally {
+      setSavingTollSettings(false);
+    }
+  }
+
+  async function testTollProviderSettings() {
+    try {
+      setTestingTollSettings(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/integrations.tolls/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tollPayload()),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || json.ok === false) {
+        throw new Error(json?.error || "Toll provider test failed");
+      }
+
+      setMessage(
+        `${json.providerLabel || "Toll provider"} responded with ${
+          json.recordsSeen || 0
+        } toll record${Number(json.recordsSeen || 0) === 1 ? "" : "s"}${
+          json.recordsUnfiltered != null &&
+          Number(json.recordsUnfiltered) !== Number(json.recordsSeen || 0)
+            ? ` (${json.recordsUnfiltered} before lookback filter)`
+            : ""
+        }.`
+      );
+    } catch (err) {
+      setMessage(err.message || "Toll provider test failed");
+    } finally {
+      setTestingTollSettings(false);
+    }
+  }
+
   async function previewGoogleCalendarCleanup() {
     try {
       setPreviewingGoogleCalendarCleanup(true);
@@ -4238,6 +4584,16 @@ function IntegrationsSettingsPanel() {
           switches={integrationSwitches}
           saving={savingIntegrationSwitches}
           onChange={setIntegrationEnabled}
+        />
+
+        <TollSettingsCard
+          settings={tollSettings}
+          loading={loading}
+          saving={savingTollSettings}
+          testing={testingTollSettings}
+          onChange={updateTollSetting}
+          onSave={saveTollProviderSettings}
+          onTest={testTollProviderSettings}
         />
 
         <DimoShareCard

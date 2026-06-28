@@ -1,7 +1,6 @@
 const { chromium } = require("playwright");
 
-const LOGIN_URL = "https://www.hctra.org/Login";
-const HOME_URL = "https://www.hctra.org/";
+const EZTAG_TIMEOUT_MS = Number(process.env.EZTAG_TIMEOUT_MS || 45000);
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -11,16 +10,21 @@ function requireEnv(name) {
   return value;
 }
 
-async function loginAndCreatePage() {
-  const username = requireEnv("EZTAG_USERNAME");
-  const password = requireEnv("EZTAG_PASSWORD");
+async function loginAndCreatePage(settings = {}) {
+  const username = settings.username || requireEnv("EZTAG_USERNAME");
+  const password = settings.password || requireEnv("EZTAG_PASSWORD");
+  const loginUrl = settings.loginUrl || "https://www.hctra.org/Login";
+  const homeUrl = settings.homeUrl || "https://www.hctra.org/";
+  const timeoutMs = Number(settings.timeoutMs || EZTAG_TIMEOUT_MS);
 
+  console.log("[tolls:hctra] launching browser");
   const browser = await chromium.launch({
     headless: true,
   });
 
   const context = await browser.newContext({
-    userAgent:
+      userAgent:
+      settings.userAgent ||
       process.env.EZTAG_USER_AGENT ||
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
   });
@@ -28,7 +32,11 @@ async function loginAndCreatePage() {
   const page = await context.newPage();
 
   try {
-    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+    console.log("[tolls:hctra] opening login page");
+    await page.goto(loginUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: timeoutMs,
+    });
 
     await page
       .locator(
@@ -42,17 +50,23 @@ async function loginAndCreatePage() {
       .first()
       .fill(password);
 
-    await Promise.all([
-      page.waitForLoadState("networkidle"),
-      page
-        .locator(
-          'button[type="submit"], input[type="submit"], button:has-text("Log In"), button:has-text("Login"), button:has-text("Sign In")'
-        )
-        .first()
-        .click(),
-    ]);
+    console.log("[tolls:hctra] submitting login");
+    await page
+      .locator(
+        'button[type="submit"], input[type="submit"], button:has-text("Log In"), button:has-text("Login"), button:has-text("Sign In")'
+      )
+      .first()
+      .click({ timeout: timeoutMs });
 
-    await page.goto(HOME_URL, { waitUntil: "networkidle" });
+    await page.waitForLoadState("domcontentloaded", {
+      timeout: timeoutMs,
+    }).catch(() => null);
+
+    console.log("[tolls:hctra] opening account home");
+    await page.goto(homeUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: timeoutMs,
+    });
 
     return { browser, context, page };
   } catch (error) {

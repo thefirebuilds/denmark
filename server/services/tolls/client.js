@@ -1,24 +1,42 @@
 const { loginAndCreatePage } = require("./session");
 
-const ACCOUNT_ACTIVITY_URL = "https://www.hctra.org/AccountActivity";
+const EZTAG_TIMEOUT_MS = Number(process.env.EZTAG_TIMEOUT_MS || 45000);
 
-async function fetchTollTransactions() {
-  const { browser, page } = await loginAndCreatePage();
+function filterRecordsByLookback(records, lookbackDays) {
+  const days = Number(lookbackDays);
+  if (!Number.isFinite(days) || days <= 0) return records;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return records.filter((record) => {
+    const value = new Date(record?.trxnDate || record?.transactionDate || 0).getTime();
+    return !Number.isFinite(value) || value >= cutoff;
+  });
+}
+
+async function fetchTollTransactions(settings = {}) {
+  const { browser, page } = await loginAndCreatePage(settings);
+  const activityUrl = settings.activityUrl || "https://www.hctra.org/AccountActivity";
+  const activityApiPattern =
+    settings.activityApiPattern ||
+    "/api/sessions/AccountActivity/SearchAccountActivity";
+  const timeoutMs = Number(settings.timeoutMs || EZTAG_TIMEOUT_MS);
 
   try {
     page.on("response", async (resp) => {
-      if (resp.url().includes("/api/sessions/AccountActivity/SearchAccountActivity")) {
+      if (resp.url().includes(activityApiPattern)) {
         console.log("EZTAG browser response:", resp.status(), resp.url());
       }
     });
 
     const responsePromise = page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/sessions/AccountActivity/SearchAccountActivity"),
-      { timeout: 30000 }
+      (response) => response.url().includes(activityApiPattern),
+      { timeout: timeoutMs }
     );
 
-    await page.goto(ACCOUNT_ACTIVITY_URL, { waitUntil: "networkidle" });
+    console.log("[tolls:hctra] opening account activity");
+    await page.goto(activityUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: timeoutMs,
+    });
 
     const response = await responsePromise;
     const status = response.status();
@@ -47,7 +65,8 @@ async function fetchTollTransactions() {
 
     return {
       payload: json,
-      records: json.records,
+      records: filterRecordsByLookback(json.records, settings.lookbackDays),
+      recordsUnfiltered: json.records.length,
       requestPayload: null,
     };
   } finally {
@@ -57,4 +76,5 @@ async function fetchTollTransactions() {
 
 module.exports = {
   fetchTollTransactions,
+  filterRecordsByLookback,
 };

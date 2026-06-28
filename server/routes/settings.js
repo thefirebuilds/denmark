@@ -64,6 +64,16 @@ const {
   saveImapSettings,
   testImapConnection,
 } = require("../services/integrations/imapSettings");
+const {
+  SETTINGS_KEY: TOLL_SETTINGS_KEY,
+  DEFAULT_TOLL_SETTINGS,
+  normalizeTollSettings,
+  sanitizeTollSettings,
+  getEffectiveTollSettings,
+  saveTollSettings,
+  hasCompleteTollCredentials,
+} = require("../services/integrations/tollSettings");
+const { fetchTollTransactions } = require("../services/tolls/client");
 
 const router = express.Router();
 
@@ -115,6 +125,7 @@ const DEFAULT_SETTINGS = {
   [SMS_ALERT_SETTINGS_KEY]: DEFAULT_SMS_ALERT_SETTINGS,
   [INTEGRATION_ENABLEMENT_KEY]: DEFAULT_INTEGRATION_ENABLEMENT,
   [IMAP_SETTINGS_KEY]: DEFAULT_IMAP_SETTINGS,
+  [TOLL_SETTINGS_KEY]: DEFAULT_TOLL_SETTINGS,
   [GOOGLE_CALENDAR_SETTINGS_KEY]: DEFAULT_GOOGLE_CALENDAR_SYNC_SETTINGS,
   [LOCATION_SETTINGS_KEY]: getDefaultLocationSettings(),
   [PUBLIC_BASE_URL_KEY]: {
@@ -196,6 +207,10 @@ function mergeSettings(key, value) {
     return normalizeImapSettings(value);
   }
 
+  if (key === TOLL_SETTINGS_KEY) {
+    return normalizeTollSettings(value);
+  }
+
   if (key === GOOGLE_CALENDAR_SETTINGS_KEY) {
     return normalizeGoogleCalendarSyncSettings(value);
   }
@@ -244,6 +259,15 @@ function checklistStatus(ok, { optional = false, skipped = false } = {}) {
   return optional ? "optional" : "needs_attention";
 }
 
+function summarizeProviderError(err, fallback = "Provider test failed") {
+  const raw = String(err?.message || err || fallback)
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/\r/g, "")
+    .trim();
+  const firstLine = raw.split("\n").find((line) => line.trim());
+  return firstLine || fallback;
+}
+
 router.get("/", async (req, res) => {
   try {
     const { rows } = await pool.query(`
@@ -267,6 +291,12 @@ router.get("/", async (req, res) => {
 
     if (settings[IMAP_SETTINGS_KEY]) {
       settings[IMAP_SETTINGS_KEY] = sanitizeImapSettings(settings[IMAP_SETTINGS_KEY], {
+        source: "database",
+      });
+    }
+
+    if (settings[TOLL_SETTINGS_KEY]) {
+      settings[TOLL_SETTINGS_KEY] = sanitizeTollSettings(settings[TOLL_SETTINGS_KEY], {
         source: "database",
       });
     }
@@ -520,6 +550,117 @@ router.post(`/${IMAP_SETTINGS_KEY}/test`, async (req, res) => {
     res.status(err.status || 500).json({
       ok: false,
       error: err.message || "Failed to test IMAP settings",
+    });
+  }
+});
+
+router.get(`/${TOLL_SETTINGS_KEY}`, async (req, res) => {
+  try {
+    const settings = await getEffectiveTollSettings();
+    res.json({
+      key: TOLL_SETTINGS_KEY,
+      value: sanitizeTollSettings(settings, { source: settings.source }),
+      updated_at: null,
+    });
+  } catch (err) {
+    console.error("GET /api/settings/integrations.tolls failed:", err);
+    res.status(500).json({ error: "Failed to load toll settings" });
+  }
+});
+
+router.put(`/${TOLL_SETTINGS_KEY}`, async (req, res) => {
+  try {
+    const settings = await saveTollSettings(req.body?.value ?? req.body);
+    res.json({
+      key: TOLL_SETTINGS_KEY,
+      value: sanitizeTollSettings(settings, { source: "database" }),
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("PUT /api/settings/integrations.tolls failed:", err);
+    res.status(500).json({ error: "Failed to save toll settings" });
+  }
+});
+
+router.post(`/${TOLL_SETTINGS_KEY}/test`, async (req, res) => {
+  let browserResult = null;
+  try {
+    const current = await getEffectiveTollSettings();
+    const rawInput =
+      req.body?.value && typeof req.body.value === "object"
+        ? req.body.value
+        : req.body || {};
+    const requestedPassword = rawInput.password;
+    const requestedSalt = rawInput.fingerprintSalt;
+    const preservePassword =
+      requestedPassword === undefined ||
+      requestedPassword === null ||
+      String(requestedPassword).trim() === "" ||
+      requestedPassword === "__KEEP__";
+    const preserveSalt =
+      requestedSalt === undefined ||
+      requestedSalt === null ||
+      String(requestedSalt).trim() === "" ||
+      requestedSalt === "__KEEP__" ||
+      requestedSalt === "__CONFIGURED__";
+    const input = normalizeTollSettings(
+      {
+        ...rawInput,
+        password: preservePassword ? current.password : requestedPassword,
+        fingerprintSalt: preserveSalt ? current.fingerprintSalt : requestedSalt,
+      },
+      current
+    );
+    const testSettings = {
+      ...current,
+      ...input,
+    };
+
+    if (testSettings.enabled === false) {
+      return res.status(409).json({
+        ok: false,
+        error: "Toll integration is disabled for this tenant",
+      });
+    }
+
+    if (!hasCompleteTollCredentials(testSettings)) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Toll provider login URL, activity URL, API pattern, username, and password are required",
+      });
+    }
+
+    browserResult = await fetchTollTransactions(testSettings);
+    const records = Array.isArray(browserResult.records) ? browserResult.records : [];
+    const first = records[0] || null;
+
+    res.json({
+      ok: true,
+      provider: testSettings.provider,
+      providerLabel: testSettings.providerLabel,
+      activityUrl: testSettings.activityUrl,
+      activityApiPattern: testSettings.activityApiPattern,
+      recordsSeen: records.length,
+      recordsUnfiltered: browserResult.recordsUnfiltered ?? records.length,
+      lookbackDays: testSettings.lookbackDays,
+      sample: first
+        ? {
+            trxnDate: first.trxnDate || null,
+            postedDate: first.postedDate || null,
+            licensePlate: first.licensePlate || null,
+            amount: first.amount ?? null,
+            agencyName: first.agencyName || null,
+            transType: first.transType || null,
+          }
+        : null,
+    });
+  } catch (err) {
+    console.error("POST /api/settings/integrations.tolls/test failed:", err);
+    res.status(err.status || 502).json({
+      ok: false,
+      error: summarizeProviderError(err, "Failed to test toll provider settings"),
+      recordsSeen: browserResult?.records?.length || 0,
     });
   }
 });

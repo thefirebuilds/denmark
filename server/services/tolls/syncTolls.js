@@ -25,6 +25,10 @@
 const pool = require("../../db");
 const { fetchTollTransactions } = require("./client");
 const { isTollTransaction, normalizeTollRecord } = require("./normalize");
+const {
+  getEffectiveTollSettings,
+  hasCompleteTollCredentials,
+} = require("../integrations/tollSettings");
 
 async function createSyncRun(client) {
   const result = await client.query(
@@ -367,6 +371,7 @@ async function refreshTripTollCaches(client) {
 async function syncTolls() {
   const client = await pool.connect();
   let runId = null;
+  const settings = await getEffectiveTollSettings();
 
   const stats = {
     recordsSeen: 0,
@@ -377,11 +382,24 @@ async function syncTolls() {
   };
 
   try {
+    if (settings.enabled === false) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "toll integration disabled",
+        ...stats,
+      };
+    }
+
+    if (!hasCompleteTollCredentials(settings)) {
+      throw new Error("Toll provider login URL, activity URL, API pattern, username, and password are required");
+    }
+
     await client.query("BEGIN");
 
     runId = await createSyncRun(client);
 
-    const { records } = await fetchTollTransactions();
+    const { records } = await fetchTollTransactions(settings);
     stats.recordsSeen = records.length;
 
     for (const raw of records) {
@@ -390,7 +408,7 @@ async function syncTolls() {
         continue;
       }
 
-      const normalized = normalizeTollRecord(raw);
+      const normalized = normalizeTollRecord(raw, settings);
       if (!normalized) {
         stats.recordsSkipped += 1;
         continue;
