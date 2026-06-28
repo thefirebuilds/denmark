@@ -1753,7 +1753,14 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
           "missing_maintenance_labor_hours",
           "medium",
           0.04,
-          `${metric.vehicle_name} has ${metric.maintenance_labor_missing_count} maintenance labor item(s) without hours`
+          `${metric.vehicle_name} has ${metric.maintenance_labor_missing_count} maintenance labor item(s) without hours`,
+          {
+            vehicle_id: metric.vehicle_id,
+            vehicle_name: metric.vehicle_name,
+            missing_count: metric.maintenance_labor_missing_count,
+            remediation_type: "maintenance_labor_hours",
+            suggested_action: "open the labor hours drawer and fill in estimated or actual hours",
+          }
         )
       );
     }

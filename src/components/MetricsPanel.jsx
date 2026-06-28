@@ -113,6 +113,18 @@ function formatShortDate(value) {
   });
 }
 
+function formatMetricDateTime(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function formatMonthLabel(value) {
   if (!value) return "--";
   const date = new Date(`${value}T00:00:00`);
@@ -752,6 +764,12 @@ export default function MetricsPanel() {
   const [businessInputsSectionOpen, setBusinessInputsSectionOpen] = useState(false);
   const [businessSettingsOpen, setBusinessSettingsOpen] = useState(false);
   const [expandedBusinessProfiles, setExpandedBusinessProfiles] = useState({});
+  const [laborRemediationOpen, setLaborRemediationOpen] = useState(false);
+  const [laborRemediation, setLaborRemediation] = useState(null);
+  const [laborRemediationLoading, setLaborRemediationLoading] = useState(false);
+  const [laborRemediationError, setLaborRemediationError] = useState("");
+  const [laborRemediationDrafts, setLaborRemediationDrafts] = useState({});
+  const [savingLaborItemKey, setSavingLaborItemKey] = useState(null);
 
   function selectPresetRange(range) {
     setCustomRangeError("");
@@ -1564,6 +1582,10 @@ const mileageStats = useMemo(() => {
     return flags.slice(0, 4);
   }, [businessMetrics]);
 
+  function isMissingLaborFlag(flag) {
+    return flag?.flag_code === "missing_maintenance_labor_hours";
+  }
+
   const parkingRecommendationGroups = useMemo(() => {
     const rows = Array.isArray(parkingMetrics?.vehicles) ? parkingMetrics.vehicles : [];
     const visibleRows = rows.filter(
@@ -1643,6 +1665,114 @@ const mileageStats = useMemo(() => {
       resetExpanded: false,
       showPageLoading: false,
     });
+  }
+
+  async function handleOpenMissingLaborFlag(flag) {
+    const vehicleId = Number(flag?.vehicle_id || flag?.entity_id);
+    if (!Number.isInteger(vehicleId) || vehicleId <= 0) return;
+
+    setLaborRemediationOpen(true);
+    setLaborRemediation(null);
+    setLaborRemediationError("");
+    setLaborRemediationDrafts({});
+    setLaborRemediationLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/metrics/business/maintenance-labor-missing/${vehicleId}`,
+        { headers: { Accept: "application/json" } }
+      );
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to load missing labor items");
+      }
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const drafts = {};
+      for (const item of items) {
+        const key = `${item.kind}:${item.id}`;
+        drafts[key] =
+          item.suggestedHours == null || item.suggestedHours === ""
+            ? ""
+            : String(item.suggestedHours);
+      }
+
+      setLaborRemediation(data);
+      setLaborRemediationDrafts(drafts);
+    } catch (err) {
+      setLaborRemediationError(err.message || "Failed to load missing labor items");
+    } finally {
+      setLaborRemediationLoading(false);
+    }
+  }
+
+  function updateLaborDraft(item, value) {
+    const key = `${item.kind}:${item.id}`;
+    setLaborRemediationDrafts((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
+  async function handleSaveMissingLabor(item) {
+    const key = `${item.kind}:${item.id}`;
+    const value = laborRemediationDrafts[key];
+    const hours = Number(value);
+
+    if (!Number.isFinite(hours) || hours < 0) {
+      setLaborRemediationError("Enter labor hours as a positive number.");
+      return;
+    }
+
+    setSavingLaborItemKey(key);
+    setLaborRemediationError("");
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/metrics/business/maintenance-labor/${item.kind}/${item.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ hours }),
+        }
+      );
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to save labor hours");
+      }
+
+      setLaborRemediation((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          items: (current.items || []).filter(
+            (existing) => `${existing.kind}:${existing.id}` !== key
+          ),
+        };
+      });
+
+      setLaborRemediationDrafts((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+
+      await loadMetrics(selectedRange, {
+        resetExpanded: false,
+        showPageLoading: false,
+      });
+    } catch (err) {
+      setLaborRemediationError(err.message || "Failed to save labor hours");
+    } finally {
+      setSavingLaborItemKey(null);
+    }
   }
 
   function updateBusinessSetting(key, value) {
@@ -2445,7 +2575,17 @@ const mileageStats = useMemo(() => {
                         <span>Likely vehicle: {flag.suggested_vehicle_name}</span>
                       </div>
                     ) : null}
-                    {flag.entity_type === "trip" && flag.reservation_id ? (
+                    {isMissingLaborFlag(flag) ? (
+                      <div className="metrics-financial-line-actions">
+                        <button
+                          type="button"
+                          className="metrics-inline-button"
+                          onClick={() => handleOpenMissingLaborFlag(flag)}
+                        >
+                          Fix hours
+                        </button>
+                      </div>
+                    ) : flag.entity_type === "trip" && flag.reservation_id ? (
                       <div className="metrics-financial-line-actions">
                         <button
                           type="button"
@@ -3704,6 +3844,112 @@ const mileageStats = useMemo(() => {
             focus={financialDetailFocus}
             onClose={closeFinancialDetail}
           />
+
+          {laborRemediationOpen ? (
+            <div className="metrics-remediation-backdrop" role="presentation">
+              <aside
+                className="metrics-remediation-drawer"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Fix maintenance labor hours"
+              >
+                <div className="metrics-remediation-header">
+                  <div>
+                    <div className="metrics-remediation-title">
+                      Maintenance Labor Hours
+                    </div>
+                    <div className="metrics-remediation-subtitle">
+                      {laborRemediation?.vehicle?.name || "Vehicle"} items missing
+                      labor estimates
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="metrics-remediation-close"
+                    onClick={() => setLaborRemediationOpen(false)}
+                    aria-label="Close labor hours drawer"
+                  >
+                    x
+                  </button>
+                </div>
+
+                {laborRemediationLoading ? (
+                  <div className="metrics-financial-empty">
+                    Loading missing labor items...
+                  </div>
+                ) : laborRemediationError ? (
+                  <div className="metrics-remediation-error">
+                    {laborRemediationError}
+                  </div>
+                ) : null}
+
+                {!laborRemediationLoading &&
+                !laborRemediationError &&
+                !(laborRemediation?.items || []).length ? (
+                  <div className="metrics-financial-empty">
+                    All labor hours are filled in for this vehicle.
+                  </div>
+                ) : null}
+
+                <div className="metrics-remediation-list">
+                  {(laborRemediation?.items || []).map((item) => {
+                    const key = `${item.kind}:${item.id}`;
+                    const isSaving = savingLaborItemKey === key;
+                    return (
+                      <article className="metrics-remediation-item" key={key}>
+                        <div className="metrics-remediation-item-top">
+                          <div>
+                            <div className="metrics-remediation-item-title">
+                              {item.title}
+                            </div>
+                            <div className="metrics-remediation-item-meta">
+                              {item.kind === "event" ? "History" : "Task"} -{" "}
+                              {item.status || item.taskType || "maintenance"} -{" "}
+                              {formatMetricDateTime(item.occurredAt)}
+                            </div>
+                          </div>
+                          {item.suggestedHours != null ? (
+                            <span className="metrics-remediation-chip">
+                              suggested {formatNumber(item.suggestedHours, 2)}h
+                            </span>
+                          ) : null}
+                        </div>
+
+                        {item.description || item.notes ? (
+                          <div className="metrics-remediation-note">
+                            {item.description || item.notes}
+                          </div>
+                        ) : null}
+
+                        <div className="metrics-remediation-controls">
+                          <label>
+                            Hours
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.05"
+                              value={laborRemediationDrafts[key] ?? ""}
+                              onChange={(event) =>
+                                updateLaborDraft(item, event.target.value)
+                              }
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="metrics-inline-button"
+                            onClick={() => handleSaveMissingLabor(item)}
+                            disabled={isSaving}
+                          >
+                            {isSaving ? "Saving..." : "Save"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </aside>
+            </div>
+          ) : null}
 
           <ExpenseModal
             open={expenseModalOpen}
