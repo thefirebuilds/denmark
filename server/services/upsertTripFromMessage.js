@@ -111,11 +111,15 @@ async function upsertTripFromMessage(savedMessage) {
           turo_vehicle_id = COALESCE(turo_vehicle_id, $2),
           vehicle_name = COALESCE(vehicle_name, $3),
           guest_name = COALESCE(guest_name, $4),
-          last_message_id = COALESCE($5, last_message_id),
+          pickup_location = COALESCE(pickup_location, $5),
+          return_location = COALESCE(return_location, $6),
+          last_message_id = COALESCE($7, last_message_id),
           updated_at = CASE
             WHEN turo_vehicle_id IS NULL AND $2 IS NOT NULL THEN NOW()
             WHEN vehicle_name IS NULL AND $3 IS NOT NULL THEN NOW()
             WHEN guest_name IS NULL AND $4 IS NOT NULL THEN NOW()
+            WHEN pickup_location IS NULL AND $5 IS NOT NULL THEN NOW()
+            WHEN return_location IS NULL AND $6 IS NOT NULL THEN NOW()
             ELSE updated_at
           END
         WHERE reservation_id = $1
@@ -132,6 +136,8 @@ async function upsertTripFromMessage(savedMessage) {
         turoVehicleId,
         savedMessage.vehicle_name || null,
         savedMessage.guest_name || null,
+        savedMessage.pickup_location || null,
+        savedMessage.return_location || null,
         savedMessage.message_id || null,
       ]
     );
@@ -154,6 +160,8 @@ async function upsertTripFromMessage(savedMessage) {
       guest_name,
       trip_start,
       trip_end,
+      pickup_location,
+      return_location,
       status,
       amount,
       mileage_included,
@@ -175,16 +183,17 @@ async function upsertTripFromMessage(savedMessage) {
     )
     VALUES (
       $1, $2, $3,
-      CASE WHEN $16 THEN NOW() ELSE $4 END,
-      CASE WHEN $16 THEN NOW() ELSE $5 END,
-      $6, $7, $8,
-      CASE WHEN $16 THEN 0 ELSE NULL END,
-      CASE WHEN $16 THEN 0 ELSE NULL END,
-      $9, $10,
-      $11, $12, $13, $14, $15, NOW(), NOW(), NOW(),
-      CASE WHEN $16 THEN NOW() ELSE NULL END,
-      CASE WHEN $16 THEN TRUE ELSE FALSE END,
-      CASE WHEN $16 THEN NOW() ELSE NULL END
+      CASE WHEN $18 THEN NOW() ELSE $4 END,
+      CASE WHEN $18 THEN NOW() ELSE $5 END,
+      $6, $7,
+      $8, $9, $10,
+      CASE WHEN $18 THEN 0 ELSE NULL END,
+      CASE WHEN $18 THEN 0 ELSE NULL END,
+      $11, $12,
+      $13, $14, $15, $16, $17, NOW(), NOW(), NOW(),
+      CASE WHEN $18 THEN NOW() ELSE NULL END,
+      CASE WHEN $18 THEN TRUE ELSE FALSE END,
+      CASE WHEN $18 THEN NOW() ELSE NULL END
     )
     ON CONFLICT (reservation_id)
     DO UPDATE SET
@@ -200,6 +209,8 @@ async function upsertTripFromMessage(savedMessage) {
         WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.trip_end
         ELSE COALESCE(EXCLUDED.trip_end, trips.trip_end)
       END,
+      pickup_location = COALESCE(EXCLUDED.pickup_location, trips.pickup_location),
+      return_location = COALESCE(EXCLUDED.return_location, trips.return_location),
       amount = COALESCE(EXCLUDED.amount, trips.amount),
       mileage_included = CASE
         WHEN EXCLUDED.status = 'canceled' THEN 0
@@ -276,6 +287,8 @@ async function upsertTripFromMessage(savedMessage) {
       guest_name,
       trip_start,
       trip_end,
+      pickup_location,
+      return_location,
       status,
       amount, 
       mileage_included,
@@ -294,6 +307,8 @@ async function upsertTripFromMessage(savedMessage) {
     savedMessage.guest_name || null,
     savedMessage.trip_start || null,
     savedMessage.trip_end || null,
+    savedMessage.pickup_location || null,
+    savedMessage.return_location || null,
     tripStatus,
     savedMessage.amount ?? null,
     savedMessage.mileage_included ??

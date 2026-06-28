@@ -334,9 +334,112 @@ function extractVehicleImageUrlFromHtml(html) {
   return match ? match[3] : null;
 }
 
+const LOCATION_LABELS = new Set([
+  "delivery",
+  "pickup",
+  "pickup location",
+  "return",
+  "return location",
+  "dropoff",
+  "drop-off",
+  "drop off",
+]);
+
+const LOCATION_STOP_LABELS = new Set([
+  "reply",
+  "trip",
+  "booked trip",
+  "trip start",
+  "trip end",
+  "reservation id",
+  "total paid",
+  "you earn",
+  "total distance included",
+  "mileage included",
+  "view trip details",
+  "view receipt",
+  "about your host",
+  "about your guest",
+  "download the turo app",
+  "have a question?",
+]);
+
+function cleanLocationLine(value) {
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  if (/^https?:\/\//i.test(text)) return null;
+  if (/^view\b/i.test(text)) return null;
+  return text;
+}
+
+function extractLocationBlock(lines, startIndex) {
+  const parts = [];
+
+  for (let i = startIndex + 1; i < lines.length && parts.length < 3; i += 1) {
+    const line = cleanLocationLine(lines[i]);
+    if (!line) continue;
+
+    const normalized = line.replace(/:$/, "").toLowerCase();
+    if (LOCATION_STOP_LABELS.has(normalized) || LOCATION_LABELS.has(normalized)) {
+      break;
+    }
+    if (/^(trip start|trip end|reservation id|total paid|you earn)\b/i.test(line)) {
+      break;
+    }
+
+    parts.push(line);
+  }
+
+  return parts.length ? parts.join(", ") : null;
+}
+
+function extractTripLocations(lines) {
+  let pickupLocation = null;
+  let returnLocation = null;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const normalized = line.replace(/:$/, "").toLowerCase();
+    const inline = line.match(
+      /^(Delivery|Pickup(?: location)?|Return(?: location)?|Drop[- ]?off)\s*:\s*(.+)$/i
+    );
+
+    if (inline) {
+      const label = inline[1].toLowerCase();
+      const value = cleanLocationLine(inline[2]);
+      if (!value) continue;
+      if (label === "delivery" || label.startsWith("pickup")) {
+        pickupLocation = pickupLocation || value;
+      } else {
+        returnLocation = returnLocation || value;
+      }
+      continue;
+    }
+
+    if (!LOCATION_LABELS.has(normalized)) continue;
+
+    const value = extractLocationBlock(lines, i);
+    if (!value) continue;
+
+    if (normalized === "delivery" || normalized.startsWith("pickup")) {
+      pickupLocation = pickupLocation || value;
+    } else {
+      returnLocation = returnLocation || value;
+    }
+  }
+
+  return {
+    pickupLocation,
+    returnLocation: returnLocation || pickupLocation,
+  };
+}
+
 function baseExtractFields(normalizedTextBody, subject = "", htmlBody = "") {
   const text = normalizedTextBody || "";
   const lines = text.split("\n").map((s) => s.trim()).filter(Boolean);
+  const locations = extractTripLocations(lines);
 
   const reservationId =
     extractMatch(text, /Reservation ID\s*#\s*(\d+)/i) ||
@@ -427,6 +530,8 @@ function baseExtractFields(normalizedTextBody, subject = "", htmlBody = "") {
     reservationId: reservationId ? Number(reservationId) : null,
     tripStart: parseTuroDateTime(tripStartRaw),
     tripEnd: parseTuroDateTime(tripEndRaw),
+    pickupLocation: locations.pickupLocation,
+    returnLocation: locations.returnLocation,
     mileageIncluded: parseInteger(mileageIncluded),
     guestMessage: null,
     replyUrl: replyUrl || null,
@@ -821,6 +926,8 @@ async function saveMessage(message) {
       reservation_id,
       trip_start,
       trip_end,
+      pickup_location,
+      return_location,
       mileage_included,
       guest_message,
       reply_url,
@@ -833,7 +940,7 @@ async function saveMessage(message) {
       $16, $17, $18, $19, $20,
       $21, $22, $23, $24, $25,
       $26, $27, $28, $29, $30,
-      $31, $32, $33
+      $31, $32, $33, $34, $35
     )
     ON CONFLICT (message_id) DO NOTHING
     RETURNING
@@ -851,6 +958,8 @@ async function saveMessage(message) {
       reservation_id,
       trip_start,
       trip_end,
+      pickup_location,
+      return_location,
       mileage_included,
       trip_details_url;
   `;
@@ -885,6 +994,8 @@ async function saveMessage(message) {
     extracted.reservationId,
     extracted.tripStart,
     extracted.tripEnd,
+    extracted.pickupLocation,
+    extracted.returnLocation,
     extracted.mileageIncluded,
     extracted.guestMessage,
     extracted.replyUrl,

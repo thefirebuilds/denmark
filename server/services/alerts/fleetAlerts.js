@@ -720,6 +720,22 @@ async function collectOverdueReturnAlerts() {
         'in_progress'
       )
       AND COALESCE(t.status, '') <> 'canceled'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM notification_events ne
+        WHERE ne.classification = 'trip_returned'
+          AND COALESCE(t.guest_name, '') <> ''
+          AND COALESCE(ne.posted_at, ne.received_at) BETWEEN
+            t.trip_end - INTERVAL '12 hours'
+            AND NOW() + INTERVAL '1 hour'
+          AND LOWER(COALESCE(ne.title, '')) LIKE
+            '%' || LOWER(COALESCE(t.guest_name, '')) || '%'
+          AND (
+            COALESCE(t.vehicle_name, '') = ''
+            OR LOWER(COALESCE(ne.title, '')) LIKE '%' || LOWER(COALESCE(t.vehicle_name, '')) || '%'
+            OR LOWER(COALESCE(ne.title, '')) LIKE '%' || LOWER(split_part(COALESCE(t.vehicle_name, ''), ' ', 1)) || '%'
+          )
+      )
     ORDER BY t.trip_end ASC
     LIMIT 10
   `);

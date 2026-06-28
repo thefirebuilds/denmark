@@ -8,6 +8,8 @@ async function ensureTripRuntimeSchema(client = pool) {
       await client.query(`
         ALTER TABLE IF EXISTS public.trips
           ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+          ADD COLUMN IF NOT EXISTS pickup_location text,
+          ADD COLUMN IF NOT EXISTS return_location text,
           ADD COLUMN IF NOT EXISTS max_speed_mph numeric,
           ADD COLUMN IF NOT EXISTS speed_over_80_count integer DEFAULT 0 NOT NULL;
 

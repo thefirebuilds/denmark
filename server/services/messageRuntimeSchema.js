@@ -18,6 +18,8 @@ async function ensureMessageRuntimeSchema(client = pool) {
           ADD COLUMN IF NOT EXISTS vehicle_name text,
           ADD COLUMN IF NOT EXISTS trip_start timestamptz,
           ADD COLUMN IF NOT EXISTS trip_end timestamptz,
+          ADD COLUMN IF NOT EXISTS pickup_location text,
+          ADD COLUMN IF NOT EXISTS return_location text,
           ADD COLUMN IF NOT EXISTS message_timestamp timestamptz,
           ADD COLUMN IF NOT EXISTS text_body text,
           ADD COLUMN IF NOT EXISTS normalized_text_body text,
