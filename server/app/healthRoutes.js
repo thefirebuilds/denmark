@@ -6,7 +6,10 @@ const startScheduler = require("../services/scheduler");
 const { requirePermission } = require("../auth/middleware");
 const { defaultCors } = require("./cors");
 const { getDatabaseHealth } = require("../dbHealth");
-const { getPoolStats } = require("../db");
+const {
+  getPoolActivitySnapshot,
+  getPoolStats,
+} = require("../db");
 const {
   getStartupState,
   initializeStartupTablesWithRetry,
@@ -24,13 +27,22 @@ function createPublicHealthRouter({ port }) {
       void initializeStartupTablesWithRetry();
     }
 
-    res.json({
+    const includeActivity =
+      String(req.query.activity || "").trim() === "1" ||
+      String(process.env.DB_HEALTH_INCLUDE_ACTIVITY || "").trim() === "true";
+    const payload = {
       ok: true,
       service: "denmark-backend",
       database: getDatabaseHealth(),
       db_pool: getPoolStats(),
       startup: getStartupState(),
-    });
+    };
+
+    if (includeActivity) {
+      payload.db_activity = getPoolActivitySnapshot();
+    }
+
+    res.json(payload);
   });
 
   router.get("/api/database/health", defaultCors, (req, res) => {
@@ -41,12 +53,21 @@ function createPublicHealthRouter({ port }) {
       void initializeStartupTablesWithRetry();
     }
 
-    res.json({
+    const includeActivity =
+      String(req.query.activity || "").trim() === "1" ||
+      String(process.env.DB_HEALTH_INCLUDE_ACTIVITY || "").trim() === "true";
+    const payload = {
       ok: true,
       database: getDatabaseHealth(),
       db_pool: getPoolStats(),
       startup: getStartupState(),
-    });
+    };
+
+    if (includeActivity) {
+      payload.db_activity = getPoolActivitySnapshot();
+    }
+
+    res.json(payload);
   });
 
   router.get("/__whoami", (req, res) => {
