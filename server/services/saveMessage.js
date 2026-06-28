@@ -7,6 +7,7 @@
 const pool = require("../db");
 const { DateTime } = require("luxon");
 const upsertTripFromMessage = require("./upsertTripFromMessage");
+const { ensureMessageRuntimeSchema } = require("./messageRuntimeSchema");
 
 
 function clean(value) {
@@ -870,6 +871,8 @@ function shouldCreateTripStub({
 }
 
 async function saveMessage(message) {
+  await ensureMessageRuntimeSchema();
+
   const cleanedTextBody = cleanTextBody(message.textBody);
   const cleanedHtmlBody = cleanHtmlBody(message.htmlBody);
   const cleanedRawHeaders = cleanHeaders(message.rawHeaders);

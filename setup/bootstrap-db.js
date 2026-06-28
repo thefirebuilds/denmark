@@ -64,6 +64,9 @@ const {
 const {
   ensureMaintenanceRuntimeSchema,
 } = require("../server/services/maintenance/maintenanceRuntimeSchema");
+const {
+  ensureMessageRuntimeSchema,
+} = require("../server/services/messageRuntimeSchema");
 
 const SCHEMA_PATH = path.join(ROOT_DIR, "server/db/schema.sql");
 const FORCE_RESET = process.argv.includes("--force-reset");
@@ -363,6 +366,7 @@ async function runRuntimeEnsures() {
   await ensureMetricsIndexes();
   await ensureVehicleOdometerRollupTable();
   await ensureVehicleAliasesTable();
+  await ensureMessageRuntimeSchema();
   await ensureVehicleRuntimeSchema();
   await ensureMaintenanceRuntimeSchema();
   await ensureSystemActivityLogTable();

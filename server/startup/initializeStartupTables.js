@@ -43,6 +43,9 @@ const { ensureFleetAlertTables } = require("../services/alerts/fleetAlerts");
 const {
   ensureAuthPublicUrlSettings,
 } = require("../services/authPublicUrlSettings");
+const {
+  ensureMessageRuntimeSchema,
+} = require("../services/messageRuntimeSchema");
 
 const STARTUP_ENSURE_TIMEOUT_MS = Number(
   process.env.STARTUP_ENSURE_TIMEOUT_MS || 30000
@@ -85,6 +88,7 @@ async function initializeStartupTables() {
     ["metrics indexes", ensureMetricsIndexes],
     ["vehicle odometer rollups", ensureVehicleOdometerRollupTable],
     ["vehicle aliases", ensureVehicleAliasesTable],
+    ["message runtime schema", ensureMessageRuntimeSchema],
     ["vehicle runtime schema", ensureVehicleRuntimeSchema],
     ["trip runtime schema", ensureTripRuntimeSchema],
     ["maintenance runtime schema", ensureMaintenanceRuntimeSchema],
