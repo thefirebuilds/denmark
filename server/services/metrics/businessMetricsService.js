@@ -1331,6 +1331,8 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       unreimbursed_costs: 0,
       estimated_owner_hours: 0,
       estimated_cleaning_hours: 0,
+      estimated_admin_hours: 0,
+      estimated_delivery_hours: 0,
       estimated_maintenance_labor_hours: 0,
       maintenance_labor_missing_count: 0,
       current_equity: 0,
@@ -1482,10 +1484,12 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
           ? 60
           : 0
         : toNumber(trip.owner_cleaning_minutes);
+    const deliveryMinutes = toNumber(trip.owner_delivery_minutes);
+    const adminMinutes = toNumber(trip.owner_admin_minutes);
     const ownerMinutes =
       cleaningMinutes +
-      toNumber(trip.owner_delivery_minutes) +
-      toNumber(trip.owner_admin_minutes);
+      deliveryMinutes +
+      adminMinutes;
     const overlapDays = getOverlapDays(
       trip.trip_start,
       trip.trip_end,
@@ -1503,6 +1507,8 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       smokingReimbursed;
     metric.estimated_owner_hours += ownerMinutes / 60;
     metric.estimated_cleaning_hours += cleaningMinutes / 60;
+    metric.estimated_delivery_hours += deliveryMinutes / 60;
+    metric.estimated_admin_hours += adminMinutes / 60;
     metric.days_booked += overlapDays;
     metric.source_metrics.trip_count += 1;
 
@@ -1753,7 +1759,14 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
           "missing_maintenance_labor_hours",
           "medium",
           0.04,
-          `${metric.vehicle_name} has ${metric.maintenance_labor_missing_count} maintenance labor item(s) without hours`
+          `${metric.vehicle_name} has ${metric.maintenance_labor_missing_count} maintenance labor item(s) without hours`,
+          {
+            vehicle_id: metric.vehicle_id,
+            vehicle_name: metric.vehicle_name,
+            missing_count: metric.maintenance_labor_missing_count,
+            remediation_type: "maintenance_labor_hours",
+            suggested_action: "open the labor hours drawer and fill in estimated or actual hours",
+          }
         )
       );
     }
@@ -1919,6 +1932,8 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       net_profit_after_labor: roundMoney(metric.net_profit_after_labor),
       estimated_owner_hours: roundNumber(metric.estimated_owner_hours, 2),
       estimated_cleaning_hours: roundNumber(metric.estimated_cleaning_hours, 2),
+      estimated_admin_hours: roundNumber(metric.estimated_admin_hours, 2),
+      estimated_delivery_hours: roundNumber(metric.estimated_delivery_hours, 2),
       estimated_maintenance_labor_hours: roundNumber(
         metric.estimated_maintenance_labor_hours,
         2
@@ -1994,6 +2009,14 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_cleaning_hours), 0),
       2
     ),
+    estimated_admin_hours: roundNumber(
+      fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_admin_hours), 0),
+      2
+    ),
+    estimated_delivery_hours: roundNumber(
+      fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_delivery_hours), 0),
+      2
+    ),
     estimated_maintenance_labor_hours: roundNumber(
       fleetMetrics.reduce(
         (sum, item) => sum + toNumber(item.estimated_maintenance_labor_hours),
@@ -2001,6 +2024,27 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       ),
       2
     ),
+    labor_hours_breakdown: {
+      cleaning: roundNumber(
+        fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_cleaning_hours), 0),
+        2
+      ),
+      maintenance: roundNumber(
+        fleetMetrics.reduce(
+          (sum, item) => sum + toNumber(item.estimated_maintenance_labor_hours),
+          0
+        ),
+        2
+      ),
+      admin: roundNumber(
+        fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_admin_hours), 0),
+        2
+      ),
+      delivery: roundNumber(
+        fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_delivery_hours), 0),
+        2
+      ),
+    },
     maintenance_labor_missing_count: fleetMetrics.reduce(
       (sum, item) => sum + Number(item.maintenance_labor_missing_count || 0),
       0
