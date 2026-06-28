@@ -137,9 +137,9 @@ function describeClientEntry(entry, now = Date.now()) {
 const originalPoolQuery = pool.query.bind(pool);
 pool.query = wrapQueryFunction(originalPoolQuery, "pool.query");
 
-const originalPoolConnect = pool.connect.bind(pool);
-pool.connect = async function trackedConnect(...args) {
-  const client = await originalPoolConnect(...args);
+function trackCheckedOutClient(client) {
+  if (!client) return client;
+
   const clientId = ++clientSequence;
   checkedOutClients.set(clientId, {
     id: clientId,
@@ -174,6 +174,27 @@ pool.connect = async function trackedConnect(...args) {
   };
 
   return client;
+}
+
+const originalPoolConnect = pool.connect.bind(pool);
+pool.connect = function trackedConnect(...args) {
+  const callbackIndex = args.findIndex((arg) => typeof arg === "function");
+
+  if (callbackIndex >= 0) {
+    const originalCallback = args[callbackIndex];
+    args[callbackIndex] = (err, client, release) => {
+      if (err || !client) {
+        return originalCallback(err, client, release);
+      }
+
+      trackCheckedOutClient(client);
+      return originalCallback(err, client, client.release.bind(client));
+    };
+
+    return originalPoolConnect(...args);
+  }
+
+  return originalPoolConnect(...args).then((client) => trackCheckedOutClient(client));
 };
 
 pool.on("error", (err) => {
