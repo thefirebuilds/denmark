@@ -244,9 +244,10 @@ router.patch("/maintenance-labor/:kind/:id", async (req, res) => {
     await client.query("BEGIN");
 
     const table = kind === "task" ? "maintenance_tasks" : "maintenance_events";
+    const existingColumns = kind === "task" ? "id, status" : "id";
     const existingResult = await client.query(
       `
-        SELECT id, status
+        SELECT ${existingColumns}
         FROM ${table}
         WHERE id = $1
         FOR UPDATE
