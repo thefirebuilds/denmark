@@ -43,6 +43,9 @@ COPY setup ./setup
 COPY shared ./shared
 COPY --from=web-build /app/dist ./dist
 
+RUN cd /app/server \
+  && npx playwright install --with-deps chromium
+
 RUN mkdir -p ./imports
 
 RUN test -f ./server/db/schema.sql \
@@ -57,7 +60,7 @@ RUN test -f ./server/db/schema.sql \
   && node --check ./setup/restore-json-backup.js \
   && pg_dump --version \
   && pg_restore --version \
-  && node -e "const pkg = require('./server/package.json'); if (pkg.scripts['db:bootstrap'] !== 'node ../setup/bootstrap-db.js' || pkg.scripts['db:verify'] !== 'node ../setup/verify-db-bootstrap.js' || pkg.scripts['db:restore-json'] !== 'node ../setup/restore-json-backup.js') throw new Error('stale setup script paths in server/package.json'); require('./server/node_modules/pg'); require('./server/node_modules/dotenv'); require('./server/node_modules/stream-json'); console.log('setup runtime deps ok')"
+  && node -e "const fs = require('fs'); const pkg = require('./server/package.json'); if (pkg.scripts['db:bootstrap'] !== 'node ../setup/bootstrap-db.js' || pkg.scripts['db:verify'] !== 'node ../setup/verify-db-bootstrap.js' || pkg.scripts['db:restore-json'] !== 'node ../setup/restore-json-backup.js') throw new Error('stale setup script paths in server/package.json'); require('./server/node_modules/pg'); require('./server/node_modules/dotenv'); require('./server/node_modules/stream-json'); const { chromium } = require('./server/node_modules/playwright'); const executable = chromium.executablePath(); if (!fs.existsSync(executable)) throw new Error(`missing Playwright chromium executable: ${executable}`); console.log('setup runtime deps ok')"
 
 EXPOSE 5000
 WORKDIR /app/server
