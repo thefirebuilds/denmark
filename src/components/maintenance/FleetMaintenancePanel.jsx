@@ -483,6 +483,8 @@ function buildEngineTemperatureStatus(fleetVehicle = null) {
   const sampleCount = Number(range.sample_count || 0);
   const latestText = Number.isFinite(latestTemp)
     ? formatEngineTemp(latestTemp)
+    : Number.isFinite(maxTemp)
+    ? `${formatEngineTemp(maxTemp)} peak`
     : "No reading";
   const rangeText =
     Number.isFinite(minTemp) && Number.isFinite(maxTemp)
@@ -530,6 +532,8 @@ function buildEngineRpmStatus(fleetVehicle = null) {
   const sampleCount = Number(range.sample_count || 0);
   const latestText = Number.isFinite(latestRpm)
     ? formatEngineRpm(latestRpm)
+    : Number.isFinite(maxRpm)
+    ? `${formatEngineRpm(maxRpm)} peak`
     : "No reading";
   const maxText = Number.isFinite(maxRpm)
     ? formatEngineRpm(maxRpm)
@@ -549,23 +553,35 @@ function buildEngineRpmStatus(fleetVehicle = null) {
 
 function buildSpeedStatus(fleetVehicle = null) {
   const telemetry = fleetVehicle?.telemetry || {};
+  const activeTrip = fleetVehicle?.active_trip || telemetry.active_trip || {};
+  const tripMaxSpeed = Number(activeTrip.max_speed_mph);
   const currentSpeed = Number(telemetry.speed);
   const speedLastUpdated =
     telemetry.timestamps?.speed_last_updated ||
     telemetry.timestamps?.vehicle_last_updated ||
     telemetry.timestamps?.captured_at ||
     null;
-  const latestText = Number.isFinite(currentSpeed)
+  const latestText = Number.isFinite(tripMaxSpeed)
+    ? formatSpeedMph(tripMaxSpeed)
+    : Number.isFinite(currentSpeed)
     ? formatSpeedMph(currentSpeed)
     : "No reading";
-  const detail = speedLastUpdated
+  const detail = Number.isFinite(tripMaxSpeed)
+    ? `High speed during current trip${
+        Number(activeTrip.speed_over_80_count) > 0
+          ? `, ${Number(activeTrip.speed_over_80_count)} over 80 mph`
+          : ""
+      }`
+    : speedLastUpdated
     ? `Last speed sample ${formatTelematicsLastCall(speedLastUpdated)}`
     : "No speed history";
 
   return {
     latestText,
     detail,
-    tone: Number.isFinite(currentSpeed) ? "pass" : "unknown",
+    tone: Number.isFinite(tripMaxSpeed) || Number.isFinite(currentSpeed)
+      ? "pass"
+      : "unknown",
   };
 }
 

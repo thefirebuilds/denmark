@@ -45,7 +45,7 @@ const DEFAULT_VOLTAGE_ALERT_SETTINGS = {
   enabled: true,
   boardEnabled: true,
   smsEnabled: true,
-  lowVoltageThreshold: 12.2,
+  lowVoltageThreshold: 11.9,
 };
 const DEFAULT_INTEGRATION_ENABLEMENT = {
   imap: true,
@@ -1619,7 +1619,7 @@ function AlertSettingsPanel() {
                 }
               />
               <small className="settings-field-note">
-                Default is 12.2v. Readings below this create an urgent signal.
+                Default is 11.90v. Readings below this create an urgent signal.
               </small>
             </label>
             <label className="settings-checkbox-row settings-checkbox-row--field">
@@ -3813,6 +3813,7 @@ function TollSettingsCard({
   loading,
   saving,
   testing,
+  statusMessage,
   onChange,
   onSave,
   onTest,
@@ -3970,6 +3971,9 @@ function TollSettingsCard({
         >
           {testing ? "Testing..." : "Test Provider"}
         </button>
+        {statusMessage ? (
+          <span className="settings-message">{statusMessage}</span>
+        ) : null}
       </div>
     </div>
   );
@@ -4006,6 +4010,7 @@ function IntegrationsSettingsPanel() {
   const [savingIntegrationSwitches, setSavingIntegrationSwitches] = useState(false);
   const [savingTollSettings, setSavingTollSettings] = useState(false);
   const [testingTollSettings, setTestingTollSettings] = useState(false);
+  const [tollMessage, setTollMessage] = useState("");
   const [message, setMessage] = useState("");
 
   async function loadTellerState() {
@@ -4345,6 +4350,7 @@ function IntegrationsSettingsPanel() {
   }
 
   function updateTollSetting(field, value) {
+    setTollMessage("");
     setTollSettings((current) => ({
       ...mergeTollSettings(current),
       [field]: value,
@@ -4365,6 +4371,7 @@ function IntegrationsSettingsPanel() {
   async function saveTollProviderSettings() {
     try {
       setSavingTollSettings(true);
+      setTollMessage("");
       setMessage("");
       const res = await fetch(`${API_BASE}/api/settings/integrations.tolls`, {
         method: "PUT",
@@ -4378,9 +4385,9 @@ function IntegrationsSettingsPanel() {
       }
 
       setTollSettings(mergeTollSettings(json.value || {}));
-      setMessage("Toll provider settings saved.");
+      setTollMessage("Toll provider settings saved.");
     } catch (err) {
-      setMessage(err.message || "Failed to save toll provider settings");
+      setTollMessage(err.message || "Failed to save toll provider settings");
     } finally {
       setSavingTollSettings(false);
     }
@@ -4389,6 +4396,7 @@ function IntegrationsSettingsPanel() {
   async function testTollProviderSettings() {
     try {
       setTestingTollSettings(true);
+      setTollMessage("");
       setMessage("");
       const res = await fetch(`${API_BASE}/api/settings/integrations.tolls/test`, {
         method: "POST",
@@ -4401,7 +4409,7 @@ function IntegrationsSettingsPanel() {
         throw new Error(json?.error || "Toll provider test failed");
       }
 
-      setMessage(
+      setTollMessage(
         `${json.providerLabel || "Toll provider"} responded with ${
           json.recordsSeen || 0
         } toll record${Number(json.recordsSeen || 0) === 1 ? "" : "s"}${
@@ -4412,7 +4420,7 @@ function IntegrationsSettingsPanel() {
         }.`
       );
     } catch (err) {
-      setMessage(err.message || "Toll provider test failed");
+      setTollMessage(err.message || "Toll provider test failed");
     } finally {
       setTestingTollSettings(false);
     }
@@ -4558,6 +4566,7 @@ function IntegrationsSettingsPanel() {
           loading={loading}
           saving={savingTollSettings}
           testing={testingTollSettings}
+          statusMessage={tollMessage}
           onChange={updateTollSetting}
           onSave={saveTollProviderSettings}
           onTest={testTollProviderSettings}

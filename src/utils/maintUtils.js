@@ -1044,6 +1044,8 @@ export function buildEngineTemperatureStatus(fleetVehicle = null) {
   const sampleCount = Number(range.sample_count || 0);
   const latestText = Number.isFinite(latestTemp)
     ? formatEngineTemp(latestTemp)
+    : Number.isFinite(maxTemp)
+    ? `${formatEngineTemp(maxTemp)} peak`
     : "No reading";
   const rangeText =
     Number.isFinite(minTemp) && Number.isFinite(maxTemp)
@@ -1095,6 +1097,8 @@ export function buildEngineRpmStatus(fleetVehicle = null) {
   const sampleCount = Number(range.sample_count || 0);
   const latestText = Number.isFinite(latestRpm)
     ? formatEngineRpm(latestRpm)
+    : Number.isFinite(maxRpm)
+    ? `${formatEngineRpm(maxRpm)} peak`
     : "No reading";
   const maxText = Number.isFinite(maxRpm)
     ? formatEngineRpm(maxRpm)

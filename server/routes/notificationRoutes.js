@@ -7,6 +7,10 @@ const {
 const { isAndroidBridgeEnabled } = require("../services/alerts/bridgeAlertSettings");
 const { getRuntimeSecret } = require("../config/runtimeSecrets");
 const { triggerImapPoll } = require("../services/imapOnDemand");
+const tripAutomationRules = require("../config/tripAutomationRules.json");
+const {
+  transitionTripStage,
+} = require("../services/trips/transitionTripStage");
 
 const router = express.Router();
 
@@ -27,6 +31,161 @@ function cleanString(value, { maxLength = 4000, allowEmpty = true } = {}) {
   if (!normalized && !allowEmpty) return null;
   if (normalized.length <= maxLength) return normalized;
   return normalized.slice(0, maxLength);
+}
+
+function toNumber(value) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getReturnLocationConfig() {
+  const rules = Array.isArray(tripAutomationRules?.tripStageAutomations)
+    ? tripAutomationRules.tripStageAutomations
+    : [];
+  const returnRule = rules.find(
+    (rule) =>
+      rule?.enabled !== false &&
+      String(rule?.fromStage || "") === "in_progress" &&
+      String(rule?.toStage || "") === "turnaround" &&
+      Array.isArray(rule?.conditions) &&
+      rule.conditions.some((condition) => condition?.type === "location")
+  );
+  const location = returnRule?.conditions?.find(
+    (condition) => condition?.type === "location"
+  );
+  const lat = toNumber(location?.lat);
+  const lon = toNumber(location?.lon);
+
+  if (lat == null || lon == null) return null;
+
+  return {
+    lat,
+    lon,
+    radiusMiles: toNumber(location?.radiusMiles) ?? 0.15,
+    label: location?.label || "configured return location",
+  };
+}
+
+async function autoVerifyReturnedNotificationByGps(event, notificationId) {
+  const location = getReturnLocationConfig();
+  if (!location || !notificationId) return null;
+
+  const trip = await findTripForReturnedNotification(event);
+  if (!trip?.id) return null;
+
+  const eventAt = event.postedAt || new Date().toISOString();
+  const result = await pool.query(
+    `
+      WITH matched_trip AS (
+        SELECT
+          t.id AS trip_id,
+          t.workflow_stage,
+          COALESCE(v.vin, '') AS vehicle_vin,
+          COALESCE(v.nickname, t.vehicle_name, '') AS vehicle_name
+        FROM trips t
+        LEFT JOIN vehicles v
+          ON (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+        WHERE t.id = $1
+        LIMIT 1
+      ),
+      latest_location AS (
+        SELECT
+          mt.trip_id,
+          mt.workflow_stage,
+          latest.latitude,
+          latest.longitude,
+          COALESCE(
+            latest.location_last_updated,
+            latest.vehicle_last_updated,
+            latest.captured_at
+          ) AS location_at,
+          (
+            3958.8 * 2 * asin(
+              sqrt(
+                power(sin(radians((latest.latitude::double precision - $3::double precision) / 2)), 2) +
+                cos(radians($3::double precision)) *
+                cos(radians(latest.latitude::double precision)) *
+                power(sin(radians((latest.longitude::double precision - $4::double precision) / 2)), 2)
+              )
+            )
+          ) AS miles_from_return_location
+        FROM matched_trip mt
+        JOIN LATERAL (
+          SELECT
+            s.latitude,
+            s.longitude,
+            s.location_last_updated,
+            s.vehicle_last_updated,
+            s.captured_at
+          FROM vehicle_telemetry_snapshots s
+          WHERE s.latitude IS NOT NULL
+            AND s.longitude IS NOT NULL
+            AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at)
+              >= $2::timestamptz - INTERVAL '2 hours'
+            AND (
+              (
+                mt.vehicle_vin <> ''
+                AND s.vin IS NOT NULL
+                AND LOWER(s.vin) = LOWER(mt.vehicle_vin)
+              )
+              OR (
+                mt.vehicle_name <> ''
+                AND s.nickname IS NOT NULL
+                AND LOWER(s.nickname) = LOWER(mt.vehicle_name)
+              )
+            )
+          ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
+            s.id DESC
+          LIMIT 1
+        ) latest ON true
+      )
+      SELECT *
+      FROM latest_location
+      WHERE miles_from_return_location <= $5::double precision
+      LIMIT 1
+    `,
+    [trip.id, eventAt, location.lat, location.lon, location.radiusMiles]
+  );
+
+  const match = result.rows[0];
+  if (!match) return null;
+
+  await pool.query(
+    `
+      UPDATE notification_events
+      SET
+        acknowledged_at = NOW(),
+        acknowledged_by = 'return-location-auto-check',
+        acknowledged_reason = CONCAT(
+          'Vehicle GPS verified within ',
+          ROUND($2::numeric, 2),
+          ' mi of ',
+          $3::text
+        )
+      WHERE id = $1
+    `,
+    [notificationId, match.miles_from_return_location, location.label]
+  );
+
+  if (match.workflow_stage === "in_progress") {
+    await transitionTripStage(trip.id, "turnaround", {
+      changedBy: "system:return-location-notification",
+      reason: `Turo return notification GPS verified within ${Number(
+        match.miles_from_return_location
+      ).toFixed(2)} mi of ${location.label}`,
+      changedAt: eventAt,
+    });
+  }
+
+  return match;
 }
 
 function parsePostedAtMs(value) {
@@ -641,6 +800,12 @@ router.post("/turo", async (req, res) => {
 
     if (result.inserted && result.id && result.classification === "trip_returned") {
       syncReturnedTripCalendarNotice(event, result.id);
+      void autoVerifyReturnedNotificationByGps(event, result.id).catch((err) => {
+        console.warn(
+          "[notifications/turo] returned trip GPS auto-check failed:",
+          err.message || err
+        );
+      });
     }
 
     console.log(

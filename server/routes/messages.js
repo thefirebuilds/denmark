@@ -7,6 +7,9 @@ const {
 } = require("../services/alerts/bridgeAlertSettings");
 const tripAutomationRules = require("../config/tripAutomationRules.json");
 const {
+  transitionTripStage,
+} = require("../services/trips/transitionTripStage");
+const {
   ensureVehicleAliasesTable,
 } = require("../services/vehicles/vehicleAliases");
 
@@ -543,6 +546,23 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
   );
 
   if (result.rowCount > 0) {
+    for (const row of result.rows) {
+      if (!row.trip_id) continue;
+      try {
+        await transitionTripStage(row.trip_id, "turnaround", {
+          changedBy: "system:return-location-auto-check",
+          reason: `return GPS verified within ${Number(
+            row.miles_from_return_location
+          ).toFixed(2)} mi of ${location.label}`,
+        });
+      } catch (err) {
+        console.warn(
+          `[messages] return GPS auto-stage skipped for trip ${row.trip_id}:`,
+          err.message || err
+        );
+      }
+    }
+
     invalidateMessageCaches();
     console.log(
       `[messages] auto-acknowledged ${result.rowCount} returned vehicle notification(s) by GPS`
@@ -947,17 +967,19 @@ function compactTripChangedNotices(items) {
 }
 
 function messageQueueRank(item) {
+  if (
+    item.type === "maintenance_required" &&
+    Number(item.maintenance_queue_rank) === 0
+  ) {
+    return -4;
+  }
   if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
   if (item.type === "google_calendar_reconnect_required") return -2;
   if (item.type === "return_location_check") return -2;
   if (item.type === "notification_unmatched") return -2;
   if (item.type === "vehicle_diagnostic_alert") return -2;
   if (isUncorrelatedUnreadMessage(item)) return -2;
-  if (item.type === "handoff_ready_required") return -1;
-  if (
-    item.type === "maintenance_required" &&
-    Number(item.maintenance_queue_rank) === 0
-  ) {
+  if (item.type === "handoff_ready_required") {
     return -1;
   }
   if (item.status === "unread") return 0;
@@ -1525,7 +1547,7 @@ function mapVehicleDiagnosticNoticeRow(row) {
 
 function mapLowVoltageNoticeRow(row) {
   const voltage = Number(row.battery_voltage);
-  const threshold = Number(row.low_voltage_threshold || 12.2);
+  const threshold = Number(row.low_voltage_threshold || 11.9);
   const vehicleName = row.vehicle_nickname || row.nickname || row.vin || "vehicle";
   const lastSeen = normalizeDiagnosticDisplayTimestamp(row,
     row.recorded_at || row.vehicle_last_updated || row.captured_at,
@@ -2687,7 +2709,7 @@ router.get("/", async (req, res) => {
         SELECT
           COALESCE(
             NULLIF(app_settings.value->>'lowVoltageThreshold', '')::numeric,
-            12.2
+            11.9
           ) AS low_voltage_threshold,
           COALESCE((app_settings.value->>'enabled')::boolean, true) AS enabled,
           COALESCE((app_settings.value->>'boardEnabled')::boolean, true) AS board_enabled
@@ -3443,13 +3465,11 @@ router.get("/", async (req, res) => {
       "lowVoltage",
       light ? Promise.resolve(EMPTY_QUERY_RESULT) : db.query(lowVoltageSql)
     );
-    const maintenanceResult = fast
-      ? EMPTY_QUERY_RESULT
-      : await timeQueueQuery(
-          queueTimings,
-          "maintenance",
-          db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
-        );
+    const maintenanceResult = await timeQueueQuery(
+      queueTimings,
+      "maintenance",
+      db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
+    );
     const googleCalendarReconnectResult = await timeQueueQuery(
       queueTimings,
       "googleCalendarReconnect",

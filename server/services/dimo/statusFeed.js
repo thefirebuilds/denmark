@@ -284,16 +284,42 @@ async function getDimoStatusFeed() {
         )
         AND hist.captured_at >= NOW() - INTERVAL '14 days'
       GROUP BY hist.dimo_token_id
+    ),
+    active_trips AS (
+      SELECT DISTINCT ON (v.dimo_token_id)
+        v.dimo_token_id,
+        jsonb_build_object(
+          'id', t.id,
+          'guest_name', t.guest_name,
+          'trip_start', t.trip_start,
+          'trip_end', t.trip_end,
+          'workflow_stage', t.workflow_stage,
+          'max_speed_mph', t.max_speed_mph,
+          'speed_over_80_count', t.speed_over_80_count
+        ) AS active_trip
+      FROM vehicles v
+      JOIN trips t
+        ON v.turo_vehicle_id IS NOT NULL
+        AND t.turo_vehicle_id IS NOT NULL
+        AND CAST(t.turo_vehicle_id AS text) = CAST(v.turo_vehicle_id AS text)
+      WHERE v.dimo_token_id = ANY($1::bigint[])
+        AND COALESCE(t.workflow_stage, '') = 'in_progress'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND COALESCE(t.closed_out, false) = false
+      ORDER BY v.dimo_token_id, t.trip_end DESC NULLS LAST, t.id DESC
     )
     SELECT
       latest.*,
       engine_temp.engine_temp_range,
-      engine_rpm.engine_rpm_range
+      engine_rpm.engine_rpm_range,
+      active_trips.active_trip
     FROM latest
     LEFT JOIN engine_temp
       ON engine_temp.dimo_token_id = latest.dimo_token_id
     LEFT JOIN engine_rpm
       ON engine_rpm.dimo_token_id = latest.dimo_token_id
+    LEFT JOIN active_trips
+      ON active_trips.dimo_token_id = latest.dimo_token_id
     ORDER BY latest.dimo_token_id
   `;
 
@@ -352,7 +378,9 @@ async function getDimoStatusFeed() {
       model: row.model,
       year: row.year,
       dimo_token_id: row.dimo_token_id,
+      active_trip: row.active_trip || null,
       telemetry: {
+        active_trip: row.active_trip || null,
         local_time_zone: row.local_time_zone,
         last_comm: normalizeDisplayTimestamp(
           row.vehicle_last_updated || row.captured_at,

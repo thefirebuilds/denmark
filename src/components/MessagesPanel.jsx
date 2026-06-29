@@ -868,6 +868,18 @@ function formatLastChecked(value) {
   return age ? `Last checked: ${age}` : "Last checked recently";
 }
 
+function formatQueueTimingSummary(debugTiming) {
+  if (!debugTiming || typeof debugTiming !== "object") return "";
+  const entries = Object.entries(debugTiming)
+    .filter(([, value]) => Number(value) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 3);
+  if (!entries.length) return "";
+  return entries
+    .map(([key, value]) => `${key} ${Math.round(Number(value))}ms`)
+    .join(", ");
+}
+
 function buildMessageTitle(message) {
   const type = message?.type || message?.message_type;
   if (type === "return_location_check") {
@@ -1480,6 +1492,7 @@ export default function MessagesPanel({
     Array.isArray(initialMessages) ? initialMessages : []
   );
   const [loading, setLoading] = useState(!initialLoadComplete);
+  const [queueStatus, setQueueStatus] = useState("");
   const [lastMessagesCheckedAt, setLastMessagesCheckedAt] = useState(() =>
     initialLoadComplete ? new Date().toISOString() : null
   );
@@ -2226,6 +2239,7 @@ async function handleExportGuestInspectionSheet(message) {
   }
 
   async function loadMessages(isInitialLoad = false) {
+    let statusLabel = "";
     try {
       if (isInitialLoad) {
         setLoading(true);
@@ -2242,10 +2256,16 @@ async function handleExportGuestInspectionSheet(message) {
       }
       const endpoint = showingTripMessages
         ? `/api/trips/${selectedTrip.id}/messages`
-        : `/api/messages?limit=10${useFastQueue ? "&fast=1" : ""}&debug=1${
+        : `/api/messages?limit=25${useFastQueue ? "&fast=1" : ""}&debug=1${
             forceMessageQueueRefreshRef.current ? `&cacheBust=${Date.now()}` : ""
           }`;
       forceMessageQueueRefreshRef.current = false;
+      statusLabel = showingTripMessages
+        ? "Loading trip messages..."
+        : useFastQueue
+          ? "Refreshing live queue..."
+          : "Refreshing full queue with maintenance...";
+      setQueueStatus(statusLabel);
 
       const requestStartedAt = performance.now();
       const res = await fetch(endpoint);
@@ -2282,7 +2302,7 @@ async function handleExportGuestInspectionSheet(message) {
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
           ? messageItems
-          : messageItems.slice(0, 5)
+          : messageItems.slice(0, 10)
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
@@ -2369,8 +2389,18 @@ async function handleExportGuestInspectionSheet(message) {
       }
       setLastMessagesCheckedAt(new Date().toISOString());
       setError("");
+      setQueueStatus(
+        showingTripMessages
+          ? "Trip messages updated"
+          : `${useFastQueue ? "Live queue" : "Full queue"} updated in ${totalMs}ms${
+              debugTiming ? ` (${formatQueueTimingSummary(debugTiming)})` : ""
+            }`
+      );
     } catch (err) {
       setError(err.message || "Failed to load messages");
+      setQueueStatus(
+        statusLabel ? `${statusLabel.replace(/\.\.\.$/, "")} failed` : ""
+      );
     } finally {
       if (isInitialLoad) {
         setLoading(false);
@@ -2669,6 +2699,9 @@ async function handleExportGuestInspectionSheet(message) {
 
       {!showingTripMessages && (
         <div className="raw-feed-bar">
+          <span className="raw-feed-label">
+            {queueStatus || formatLastChecked(lastMessagesCheckedAt)}
+          </span>
           <span className="raw-feed-label">Raw feeds</span>
           {RAW_FEED_TYPES.map((type) => (
             <button

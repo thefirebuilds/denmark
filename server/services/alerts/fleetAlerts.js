@@ -560,7 +560,7 @@ async function collectLowVoltageAlerts() {
   const settings = await getVoltageAlertSettings();
   if (settings.enabled === false || settings.smsEnabled === false) return [];
 
-  const threshold = Number(settings.lowVoltageThreshold || 12.2);
+  const threshold = Number(settings.lowVoltageThreshold || 11.9);
   const { rows } = await pool.query(
     `
       SELECT

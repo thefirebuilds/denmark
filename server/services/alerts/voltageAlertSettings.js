@@ -5,7 +5,7 @@ const DEFAULT_VOLTAGE_ALERT_SETTINGS = {
   enabled: true,
   boardEnabled: true,
   smsEnabled: true,
-  lowVoltageThreshold: 12.2,
+  lowVoltageThreshold: 11.9,
 };
 
 function coerceNumber(value, fallback, min, max) {

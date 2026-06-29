@@ -175,7 +175,7 @@ export function useStartup({
             ),
             timedStartupFetch(
               "dispatch tasks",
-              `${API_BASE}/api/messages?limit=10&fast=1&light=1&debug=1`,
+              `${API_BASE}/api/messages?limit=25&fast=1&light=1&debug=1`,
               {
                 headers: { Accept: "application/json" },
               }
@@ -216,7 +216,7 @@ export function useStartup({
           setStartupVehicles(Array.isArray(vehiclesData) ? vehiclesData : []);
           setStartupMessages(
             Array.isArray(startupMessageItems)
-              ? startupMessageItems.slice(0, 5)
+              ? startupMessageItems.slice(0, 10)
               : []
           );
           setStartup({

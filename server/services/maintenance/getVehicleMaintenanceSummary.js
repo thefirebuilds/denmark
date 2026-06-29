@@ -152,16 +152,13 @@ async function getBatteryVoltageHealth(client, vin) {
     tone = "pass";
     status = "Voltage normal";
 
-    if (lowVoltage != null && lowVoltage < 12) {
+    if (lowVoltage != null && lowVoltage < 11.9) {
       tone = "fail";
-      status = "Voltage dropped below 12.0v";
+      status = `Voltage dropped to ${lowVoltage.toFixed(
+        2
+      )}v below 11.90v`;
       needsInspection = true;
       inspectionReason = "critical_low_voltage";
-    } else if (lowVoltage != null && lowVoltage < 12.2) {
-      tone = "attention";
-      status = "Voltage dropped below 12.2v";
-      needsInspection = true;
-      inspectionReason = "low_voltage";
     }
 
     if (
@@ -199,8 +196,29 @@ async function getBatteryVoltageHealth(client, vin) {
 
 async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
   if (!batteryHealth?.needsInspection) {
+    await client.query(
+      `
+        UPDATE maintenance_tasks
+        SET
+          status = 'resolved',
+          updated_at = NOW()
+        WHERE vehicle_vin = $1
+          AND task_type = 'battery_voltage_inspection'
+          AND source = 'system'
+          AND status = ANY($2::text[])
+      `,
+      [vin, ACTIVE_TASK_STATUSES]
+    );
     return null;
   }
+
+  const priority = batteryHealth.tone === "fail" ? "urgent" : "high";
+  const description = [
+    `${batteryHealth.status}.`,
+    `Current ${formatVoltage(batteryHealth.currentVoltage)}.`,
+    `30-day low ${formatVoltage(batteryHealth.lowVoltage)}.`,
+    `30-day high ${formatVoltage(batteryHealth.highVoltage)}.`,
+  ].join(" ");
 
   const existing = await client.query(
     `
@@ -215,10 +233,33 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
   );
 
   if (existing.rows[0]) {
+    await client.query(
+      `
+        UPDATE maintenance_tasks
+        SET
+          description = $2,
+          priority = $3,
+          blocks_rental = $4,
+          needs_review = true,
+          trigger_context = $5::jsonb,
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [
+        existing.rows[0].id,
+        description,
+        priority,
+        batteryHealth.tone === "fail",
+        JSON.stringify({
+          createdFrom: "battery_voltage_health",
+          reason: batteryHealth.inspectionReason,
+          batteryHealth,
+        }),
+      ]
+    );
     return existing.rows[0];
   }
 
-  const priority = batteryHealth.tone === "fail" ? "urgent" : "high";
   const recordedAt = batteryHealth.currentRecordedAt
     ? new Date(batteryHealth.currentRecordedAt)
     : new Date();
@@ -226,12 +267,6 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
     ? new Date().toISOString().slice(0, 10)
     : recordedAt.toISOString().slice(0, 10);
   const sourceKey = `battery_voltage_inspection:${vin}:${dateKey}`;
-  const description = [
-    `${batteryHealth.status}.`,
-    `Current ${formatVoltage(batteryHealth.currentVoltage)}.`,
-    `30-day low ${formatVoltage(batteryHealth.lowVoltage)}.`,
-    `30-day high ${formatVoltage(batteryHealth.highVoltage)}.`,
-  ].join(" ");
 
   const result = await client.query(
     `
