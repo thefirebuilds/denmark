@@ -8,6 +8,7 @@ const express = require("express");
 const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
 const { evaluateCloseoutCompleteness } = require("../services/trips/closeoutState");
+const { ensureTripRuntimeSchema } = require("../services/trips/tripRuntimeSchema");
 
 const router = express.Router();
 
@@ -291,6 +292,8 @@ const TRIP_SUMMARY_SELECT = `
 
 router.get("/", async (req, res) => {
   try {
+    await ensureTripRuntimeSchema();
+
     const vehicle = String(
       req.query.vehicle ??
         req.query.vehicle_id ??
@@ -548,6 +551,8 @@ router.post("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
+    await ensureTripRuntimeSchema();
+
     const tripId = Number(req.params.id);
 
     if (!Number.isInteger(tripId) || tripId <= 0) {

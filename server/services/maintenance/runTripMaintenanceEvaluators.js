@@ -3,7 +3,23 @@ const { evaluateUpcomingTripMaintenance } = require("./evaluateUpcomingTripMaint
 const { evaluatePostTripMaintenance } = require("./evaluatePostTripMaintenance");
 const { findVehicleForTrip } = require("./findVehicleForTrip");
 
-function isUpcomingTripStatus(status) {
+function isUpcomingTripStatus(trip) {
+  const stage = String(trip?.workflow_stage || "").toLowerCase();
+  const status = String(trip?.status || "").toLowerCase();
+
+  if (
+    [
+      "in_progress",
+      "turnaround",
+      "awaiting_expenses",
+      "complete",
+      "closed",
+      "canceled",
+    ].includes(stage)
+  ) {
+    return false;
+  }
+
   return ["booked_unconfirmed", "updated_unconfirmed", "booked", "confirmed"].includes(status);
 }
 
@@ -27,7 +43,7 @@ async function runTripMaintenanceEvaluators(trip) {
     postTrip: null,
   };
 
-  if (isUpcomingTripStatus(trip.status)) {
+  if (isUpcomingTripStatus(trip)) {
     results.upcoming = await evaluateUpcomingTripMaintenance({
       vehicle,
       trip,

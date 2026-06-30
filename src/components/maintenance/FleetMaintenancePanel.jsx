@@ -705,6 +705,17 @@ function mapMaintenanceSummaryToVehicle(
     registration_expires:
       sourceVehicle.registration?.code ||
       formatRegistration(registrationMonth, registrationYear),
+    onboarding_date:
+      sourceVehicle.onboarding_date ||
+      sourceVehicle.onboardingDate ||
+      fleetVehicle?.onboarding_date ||
+      fleetVehicle?.onboardingDate ||
+      fleetVehicle?.effective_onboarding_date ||
+      null,
+    onboarding_date_source:
+      sourceVehicle.onboarding_date_source ||
+      fleetVehicle?.onboarding_date_source ||
+      "",
     lockbox_pin:
       pickFirstFilled(
         sourceVehicle.lockbox_pin,
@@ -823,6 +834,18 @@ function getPlanningDateLabel(value) {
   return date.toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
+  });
+}
+
+function formatOnboardingDate(value) {
+  if (!value) return "Not set";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not set";
+
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
 }
 
@@ -2734,6 +2757,27 @@ export default function FleetMaintenancePanel({
                       </div>
                     </div>
                   )}
+                </div>
+
+                <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
+                  <div className="fleet-maintenance-meta-row">
+                    <span className="fleet-maintenance-meta-label">
+                      Onboarded
+                    </span>
+                  </div>
+
+                  <div className="fleet-maintenance-registration-readonly">
+                    <span className="fleet-maintenance-meta-value">
+                      {formatOnboardingDate(vehicle.onboarding_date)}
+                    </span>
+                    <span className="fleet-maintenance-registration-subvalue">
+                      {vehicle.onboarding_date_source === "first_trip"
+                        ? "from first trip"
+                        : vehicle.onboarding_date
+                        ? "vehicle profile"
+                        : "set in vehicle settings"}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">

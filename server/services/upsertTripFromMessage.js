@@ -254,6 +254,20 @@ async function upsertTripFromMessage(savedMessage) {
         WHEN trips.canceled_at IS NOT NULL THEN 'canceled'
         WHEN EXCLUDED.status = 'canceled' THEN 'canceled'
         WHEN trips.status = 'acknowledged' THEN 'acknowledged'
+        WHEN EXCLUDED.status IN ('booked_unconfirmed', 'updated_unconfirmed')
+          AND COALESCE(trips.workflow_stage, '') IN (
+            'confirmed',
+            'ready_for_handoff',
+            'in_progress',
+            'turnaround',
+            'awaiting_expenses',
+            'complete',
+            'closed'
+          )
+        THEN CASE
+          WHEN trips.status IN ('booked_unconfirmed', 'updated_unconfirmed') THEN 'booked'
+          ELSE trips.status
+        END
         ELSE EXCLUDED.status
       END,
 
@@ -261,6 +275,17 @@ async function upsertTripFromMessage(savedMessage) {
         WHEN trips.status = 'canceled' THEN FALSE
         WHEN trips.canceled_at IS NOT NULL THEN FALSE
         WHEN EXCLUDED.status = 'canceled' THEN FALSE
+        WHEN EXCLUDED.status IN ('booked_unconfirmed', 'updated_unconfirmed')
+          AND COALESCE(trips.workflow_stage, '') IN (
+            'confirmed',
+            'ready_for_handoff',
+            'in_progress',
+            'turnaround',
+            'awaiting_expenses',
+            'complete',
+            'closed'
+          )
+        THEN FALSE
         ELSE TRUE
       END,
 

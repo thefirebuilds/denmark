@@ -197,6 +197,40 @@ function selectFleetStatus(candidates) {
   };
 }
 
+function buildMonthlyProjection(finance) {
+  const monthToDateRevenue = roundMoney(finance.month_to_date_revenue);
+  const bookedRemainingRevenue = roundMoney(finance.booked_remaining_month_revenue);
+  const daysElapsed = Math.max(1, Number(finance.month_days_elapsed || 1));
+  const daysInMonth = Math.max(daysElapsed, Number(finance.month_days_total || daysElapsed));
+  const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
+  const runRateDailyRevenue = roundMoney(monthToDateRevenue / daysElapsed);
+  const runRateProjectedRevenue = roundMoney(runRateDailyRevenue * daysInMonth);
+  const bookedProjectedRevenue = roundMoney(
+    monthToDateRevenue + bookedRemainingRevenue
+  );
+  const blendedProjectedRevenue = roundMoney(
+    Math.max(bookedProjectedRevenue, runRateProjectedRevenue)
+  );
+
+  return {
+    monthStart: finance.month_start || null,
+    monthEnd: finance.month_end || null,
+    daysElapsed,
+    daysRemaining,
+    daysInMonth,
+    monthToDateRevenue,
+    bookedRemainingRevenue,
+    runRateDailyRevenue,
+    runRateProjectedRevenue,
+    bookedProjectedRevenue,
+    blendedProjectedRevenue,
+    projectionMethod:
+      bookedProjectedRevenue >= runRateProjectedRevenue
+        ? "booked_remaining"
+        : "run_rate",
+  };
+}
+
 async function collectDailyBriefContext(options = {}) {
   const date = normalizeBriefDate(options.date);
   const timeZone = cleanText(options.timeZone, 80) || DEFAULT_TIME_ZONE;
@@ -492,9 +526,14 @@ async function collectDailyBriefContext(options = {}) {
       SELECT
         $1::date AS day_start,
         ($1::date + INTERVAL '1 day') AS day_end,
-        date_trunc('month', $1::date)::date AS month_start
+        date_trunc('month', $1::date)::date AS month_start,
+        (date_trunc('month', $1::date) + INTERVAL '1 month')::date AS month_end
     )
     SELECT
+      b.month_start,
+      b.month_end,
+      EXTRACT(DAY FROM b.day_start)::int AS month_days_elapsed,
+      EXTRACT(DAY FROM (b.month_end - INTERVAL '1 day'))::int AS month_days_total,
       COALESCE(SUM(CASE
         WHEN t.trip_start >= b.day_start AND t.trip_start < b.day_end
         THEN COALESCE(tf.host_payout, t.amount, 0)
@@ -511,6 +550,11 @@ async function collectDailyBriefContext(options = {}) {
         ELSE 0
       END), 0) AS month_to_date_revenue,
       COALESCE(SUM(CASE
+        WHEN t.trip_start >= b.day_end AND t.trip_start < b.month_end
+        THEN COALESCE(tf.host_payout, t.amount, 0)
+        ELSE 0
+      END), 0) AS booked_remaining_month_revenue,
+      COALESCE(SUM(CASE
         WHEN t.trip_end < b.day_end AND COALESCE(t.closed_out, false) = false
         THEN COALESCE(t.toll_total, 0)
         ELSE 0
@@ -524,6 +568,7 @@ async function collectDailyBriefContext(options = {}) {
     WHERE t.deleted_at IS NULL
       AND COALESCE(t.workflow_stage, '') <> 'canceled'
       AND COALESCE(t.status, '') <> 'canceled'
+    GROUP BY b.month_start, b.month_end, b.day_start
   `;
 
   const tripsResult = await client.query(tripsSql, params);
@@ -562,6 +607,7 @@ async function collectDailyBriefContext(options = {}) {
 
   const tasks = tasksResult.rows.map(mapTask);
   const finance = financeResult.rows[0] || {};
+  const monthlyProjection = buildMonthlyProjection(finance);
   const messages = messageResult.rows[0] || {};
   const tripChanges = tripChangesResult.rows.map(mapTripChange);
   const fleetStatus = selectFleetStatus(
@@ -605,6 +651,7 @@ async function collectDailyBriefContext(options = {}) {
       openingTripRevenue: roundMoney(finance.opening_trip_revenue),
       closingTripRevenue: roundMoney(finance.closing_trip_revenue),
       monthToDateRevenue: roundMoney(finance.month_to_date_revenue),
+      monthlyProjection,
       openCloseoutTolls: roundMoney(finance.open_closeout_tolls),
       openCloseoutCount: Number(finance.open_closeout_count || 0),
     },
@@ -624,6 +671,7 @@ function buildBriefPrompt(context) {
         "Include a Chad Status section using context.fleetStatus.chad: the best recent performer over the lookback window.",
         "Include a Princess Status section using context.fleetStatus.princess: the vehicle creating the most cost, downtime, or maintenance drag over the lookback window.",
         "For Chad and Princess, cite the useful metrics supplied: netRevenue, revenue, costs, bookingCount, avgDailyRate, blockerTasks, blockerDays, issueTrips, and lookbackDays.",
+        "Include a Monthly Projection section using context.finance.monthlyProjection. Explain month-to-date revenue, booked remaining revenue, run-rate projection, and blendedProjectedRevenue.",
         "Prioritize New Trips Starting, Trips Ending Today, Trip Changes, closeout blockers, maintenance blockers, guest-message workload, and financial watchouts.",
         "For guest messages, lead with messages.actionableGuestThreadCount as the queue workload; mention messages.unreadGuestMessageCount only as raw message volume if useful.",
         "Do not say there are no urgent guest messages unless the supplied context explicitly contains urgent guest-message classifications.",

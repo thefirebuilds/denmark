@@ -1717,6 +1717,7 @@ export default function MessagesPanel({
   const [replySuggestionErrors, setReplySuggestionErrors] = useState({});
   const [copiedReplySuggestionId, setCopiedReplySuggestionId] = useState(null);
   const [copiedDailyBriefId, setCopiedDailyBriefId] = useState(null);
+  const [refreshingDailyBriefId, setRefreshingDailyBriefId] = useState(null);
   const [dailyBriefDisplay, setDailyBriefDisplay] = useState(() =>
     loadDailyBriefDisplayState()
   );
@@ -2511,6 +2512,41 @@ async function handleExportGuestInspectionSheet(message) {
     });
   }
 
+  async function handleRefreshDailyBrief(message) {
+    const key = getDailyBriefDisplayKey(message);
+    if (refreshingDailyBriefId) return;
+
+    try {
+      setRefreshingDailyBriefId(key);
+      setError("");
+
+      const res = await fetch(`${API_BASE}/api/metrics/daily-brief`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Failed to refresh daily brief (${res.status})`);
+      }
+
+      clearLiveMessageQueueCache();
+      forceMessageQueueRefreshRef.current = true;
+      lastFullQueueRefreshAtRef.current = 0;
+      setDailyBriefDisplayMode(message, "open");
+      await loadMessages(false);
+    } catch (err) {
+      setError(err.message || "Failed to refresh daily brief");
+    } finally {
+      setRefreshingDailyBriefId(null);
+    }
+  }
+
   async function loadMessages(isInitialLoad = false) {
     let statusLabel = "";
     try {
@@ -3229,10 +3265,25 @@ async function handleExportGuestInspectionSheet(message) {
                   >
                     <div className="message-booking-title">
                       Morning brief
-                      <span>
-                        {formatTripTime(message.daily_brief_generated_at) ||
-                          message.daily_brief_date ||
-                          "Latest"}
+                      <span className="message-daily-brief-meta">
+                        <span>
+                          {formatTripTime(message.daily_brief_generated_at) ||
+                            message.daily_brief_date ||
+                            "Latest"}
+                        </span>
+                        <button
+                          type="button"
+                          className="message-refresh-pill"
+                          disabled={refreshingDailyBriefId === dailyBriefDisplayKey}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleRefreshDailyBrief(message);
+                          }}
+                        >
+                          {refreshingDailyBriefId === dailyBriefDisplayKey
+                            ? "Refreshing..."
+                            : "Refresh"}
+                        </button>
                       </span>
                     </div>
                     {!isDailyBriefMinimized ? (

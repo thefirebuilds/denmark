@@ -18,6 +18,7 @@ async function ensureTripRuntimeSchema(client = pool) {
       `);
 
       await ensureDimoSpeedStoredAsMph(client);
+      await normalizeLegacyUnconfirmedTripStatuses(client);
     })().catch((err) => {
       ensureTripRuntimeSchemaPromise = null;
       throw err;
@@ -121,6 +122,60 @@ async function ensureDimoSpeedStoredAsMph(client) {
       ON CONFLICT (id) DO NOTHING
     `,
     [converted.rowCount || 0, recalculated.rowCount || 0]
+  );
+}
+
+async function normalizeLegacyUnconfirmedTripStatuses(client) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS public.denmark_schema_migrations (
+      id text PRIMARY KEY,
+      applied_at timestamptz NOT NULL DEFAULT now(),
+      details jsonb NOT NULL DEFAULT '{}'::jsonb
+    )
+  `);
+
+  const marker = await client.query(
+    `
+      SELECT 1
+      FROM public.denmark_schema_migrations
+      WHERE id = 'normalize-active-trip-legacy-unconfirmed-status-v1'
+      LIMIT 1
+    `
+  );
+
+  if (marker.rowCount > 0) return;
+
+  const normalized = await client.query(`
+    UPDATE public.trips
+    SET
+      status = 'booked',
+      needs_review = FALSE,
+      updated_at = NOW()
+    WHERE status IN ('booked_unconfirmed', 'updated_unconfirmed')
+      AND COALESCE(workflow_stage, '') IN (
+        'confirmed',
+        'ready_for_handoff',
+        'in_progress',
+        'turnaround',
+        'awaiting_expenses',
+        'complete',
+        'closed'
+      )
+  `);
+
+  await client.query(
+    `
+      INSERT INTO public.denmark_schema_migrations (id, details)
+      VALUES (
+        'normalize-active-trip-legacy-unconfirmed-status-v1',
+        jsonb_build_object(
+          'normalizedTrips', $1::integer,
+          'source', 'runtime trip schema'
+        )
+      )
+      ON CONFLICT (id) DO NOTHING
+    `,
+    [normalized.rowCount || 0]
   );
 }
 

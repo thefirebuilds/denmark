@@ -634,7 +634,15 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
 
       status = CASE
         WHEN $2 = 'canceled' THEN 'canceled'
-        WHEN $2 = 'confirmed'
+        WHEN $2 IN (
+          'confirmed',
+          'ready_for_handoff',
+          'in_progress',
+          'turnaround',
+          'awaiting_expenses',
+          'complete',
+          'closed'
+        )
           AND status IN ('booked_unconfirmed', 'updated_unconfirmed')
           THEN 'booked'
         ELSE status
@@ -642,7 +650,15 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
 
       needs_review = CASE
         WHEN $2 = 'canceled' THEN FALSE
-        WHEN $2 = 'confirmed' THEN FALSE
+        WHEN $2 IN (
+          'confirmed',
+          'ready_for_handoff',
+          'in_progress',
+          'turnaround',
+          'awaiting_expenses',
+          'complete',
+          'closed'
+        ) THEN FALSE
         ELSE needs_review
       END,
 

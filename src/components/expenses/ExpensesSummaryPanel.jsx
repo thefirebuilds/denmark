@@ -215,7 +215,31 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
   }, []);
 
   const statRows = useMemo(() => {
+    const allocated = Number(summary?.allocated_shared?.totals?.allocated_total || 0);
+    const directTotal = Number(summary?.totals?.grand_total || 0);
+    const rows = [
+      ...(selectedVehicleId
+        ? [
+            {
+              label: "True Total",
+              value: money(directTotal + allocated),
+              sub: "direct + shared",
+            },
+          ]
+        : []),
+      ...(selectedVehicleId
+        ? [
+            {
+              label: "Shared Alloc.",
+              value: money(allocated),
+              sub: "estimated share",
+            },
+          ]
+        : []),
+    ];
+
     return [
+      ...rows,
       {
         label: "Rows",
         value: summary?.totals?.row_count || 0,
@@ -247,7 +271,7 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
         sub: "opex",
       },
     ];
-  }, [summary]);
+  }, [summary, selectedVehicleId]);
 
   const categoryRows = useMemo(() => {
     return (summary?.by_category || []).map((row) => ({
@@ -273,6 +297,28 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
       title: row.vehicle_label || "No vehicle",
       sub: `${row.row_count || 0} item${Number(row.row_count) === 1 ? "" : "s"}`,
       total: money(row.total),
+    }));
+  }, [summary]);
+
+  const allocatedCategoryRows = useMemo(() => {
+    return (summary?.allocated_shared?.by_category || []).map((row) => ({
+      key: row.category || "uncategorized",
+      title: row.category || "Uncategorized",
+      sub: `${row.source_row_count || 0} shared item${
+        Number(row.source_row_count) === 1 ? "" : "s"
+      }`,
+      total: money(row.allocated_total),
+    }));
+  }, [summary]);
+
+  const allocatedScopeRows = useMemo(() => {
+    return (summary?.allocated_shared?.by_scope || []).map((row) => ({
+      key: row.expense_scope || "unknown",
+      title: row.expense_scope || "—",
+      sub: `${row.source_row_count || 0} source item${
+        Number(row.source_row_count) === 1 ? "" : "s"
+      }`,
+      total: money(row.allocated_total),
     }));
   }, [summary]);
 
@@ -364,6 +410,22 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
             rows={scopeRows}
             emptyText="No scope data."
           />
+
+          {selectedVehicleId ? (
+            <CompactRowsBox
+              title={`Allocated Shared Costs (${summary?.allocated_shared?.method === "equal_active_vehicle_share" ? "equal fleet share" : "estimated"})`}
+              rows={allocatedCategoryRows}
+              emptyText="No shared costs in this range."
+            />
+          ) : null}
+
+          {selectedVehicleId ? (
+            <CompactRowsBox
+              title="Allocated Scope"
+              rows={allocatedScopeRows}
+              emptyText="No shared scope data."
+            />
+          ) : null}
 
           {!selectedVehicleId ? (
             <CompactRowsBox

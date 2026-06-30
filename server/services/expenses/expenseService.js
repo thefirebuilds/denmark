@@ -268,7 +268,8 @@ function normalizeListFilters(raw = {}) {
   };
 }
 
-function buildWhereClause(filters) {
+function buildWhereClause(filters, options = {}) {
+  const includeVehicle = options.includeVehicle !== false;
   const clauses = [];
   const values = [];
 
@@ -277,7 +278,7 @@ function buildWhereClause(filters) {
     clauses.push(sql.replace("?", `$${values.length}`));
   }
 
-  if (filters.vehicle_id != null) {
+  if (includeVehicle && filters.vehicle_id != null) {
     addClause("e.vehicle_id = ?", filters.vehicle_id);
   }
 
@@ -769,6 +770,7 @@ async function deleteExpense(id) {
 async function getExpenseSummary(rawFilters = {}) {
   const filters = normalizeListFilters(rawFilters);
   const { whereSql, values } = buildWhereClause(filters);
+  const allocation = await getAllocatedSharedExpenseSummary(filters);
 
   const [result, byCategory, byVehicle, byScope, byVendor] = await Promise.all([
     pool.query(
@@ -849,11 +851,118 @@ async function getExpenseSummary(rawFilters = {}) {
 
   return {
     totals: result.rows[0] || null,
+    allocated_shared: allocation,
     by_category: byCategory.rows,
     by_vehicle: byVehicle.rows,
     by_scope: byScope.rows,
     by_vendor: vendorSummaryRows,
     vendor_count: vendorSummaryRows.length,
+  };
+}
+
+async function getAllocatedSharedExpenseSummary(filters) {
+  if (filters.vehicle_id == null || filters.expense_scope === "direct") {
+    return null;
+  }
+
+  const allocationFilters = {
+    ...filters,
+    vehicle_id: null,
+    expense_scope:
+      filters.expense_scope && filters.expense_scope !== "direct"
+        ? filters.expense_scope
+        : null,
+  };
+  const { whereSql, values } = buildWhereClause(allocationFilters, {
+    includeVehicle: false,
+  });
+  const scopeClause = allocationFilters.expense_scope
+    ? ""
+    : `${whereSql ? " AND" : "WHERE"} COALESCE(e.expense_scope, 'direct') IN ('shared', 'apportioned', 'general')`;
+  const scopedWhereSql = `${whereSql}${scopeClause}`;
+
+  const [totalsResult, categoryResult, scopeResult] = await Promise.all([
+    pool.query(
+      `
+        WITH allocation_basis AS (
+          SELECT GREATEST(COUNT(*)::numeric, 1) AS vehicle_count
+          FROM vehicles
+          WHERE COALESCE(is_active, true) = true
+            AND COALESCE(in_service, true) = true
+        )
+        SELECT
+          COUNT(*)::int AS source_row_count,
+          allocation_basis.vehicle_count::int AS allocation_vehicle_count,
+          COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS source_total,
+          COALESCE(SUM((COALESCE(e.price, 0) + COALESCE(e.tax, 0)) / allocation_basis.vehicle_count), 0)::numeric(12,2) AS allocated_total,
+          COALESCE(SUM(CASE WHEN e.is_capitalized THEN (COALESCE(e.price, 0) + COALESCE(e.tax, 0)) / allocation_basis.vehicle_count ELSE 0 END), 0)::numeric(12,2) AS allocated_capitalized_total,
+          COALESCE(SUM(CASE WHEN NOT e.is_capitalized THEN (COALESCE(e.price, 0) + COALESCE(e.tax, 0)) / allocation_basis.vehicle_count ELSE 0 END), 0)::numeric(12,2) AS allocated_non_capitalized_total
+        FROM expenses e
+        CROSS JOIN allocation_basis
+        ${scopedWhereSql}
+        GROUP BY allocation_basis.vehicle_count
+      `,
+      values
+    ),
+    pool.query(
+      `
+        WITH allocation_basis AS (
+          SELECT GREATEST(COUNT(*)::numeric, 1) AS vehicle_count
+          FROM vehicles
+          WHERE COALESCE(is_active, true) = true
+            AND COALESCE(in_service, true) = true
+        )
+        SELECT
+          COALESCE(NULLIF(TRIM(e.category), ''), 'Uncategorized') AS category,
+          COUNT(*)::int AS source_row_count,
+          COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS source_total,
+          COALESCE(SUM((COALESCE(e.price, 0) + COALESCE(e.tax, 0)) / allocation_basis.vehicle_count), 0)::numeric(12,2) AS allocated_total
+        FROM expenses e
+        CROSS JOIN allocation_basis
+        ${scopedWhereSql}
+        GROUP BY COALESCE(NULLIF(TRIM(e.category), ''), 'Uncategorized')
+        ORDER BY allocated_total DESC, category ASC
+      `,
+      values
+    ),
+    pool.query(
+      `
+        WITH allocation_basis AS (
+          SELECT GREATEST(COUNT(*)::numeric, 1) AS vehicle_count
+          FROM vehicles
+          WHERE COALESCE(is_active, true) = true
+            AND COALESCE(in_service, true) = true
+        )
+        SELECT
+          e.expense_scope,
+          COUNT(*)::int AS source_row_count,
+          COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)::numeric(12,2) AS source_total,
+          COALESCE(SUM((COALESCE(e.price, 0) + COALESCE(e.tax, 0)) / allocation_basis.vehicle_count), 0)::numeric(12,2) AS allocated_total
+        FROM expenses e
+        CROSS JOIN allocation_basis
+        ${scopedWhereSql}
+        GROUP BY e.expense_scope
+        ORDER BY allocated_total DESC, e.expense_scope ASC
+      `,
+      values
+    ),
+  ]);
+
+  const totals =
+    totalsResult.rows[0] || {
+      source_row_count: 0,
+      allocation_vehicle_count: 0,
+      source_total: "0.00",
+      allocated_total: "0.00",
+      allocated_capitalized_total: "0.00",
+      allocated_non_capitalized_total: "0.00",
+    };
+
+  return {
+    method: "equal_active_vehicle_share",
+    totals,
+    by_category: categoryResult.rows,
+    by_scope: scopeResult.rows,
   };
 }
 
