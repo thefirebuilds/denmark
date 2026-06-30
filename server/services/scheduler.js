@@ -33,6 +33,10 @@ const {
 } = require("./googleCalendar/googleCalendarStore");
 const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
 const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
+const {
+  generateAndSaveDailyBrief,
+  getDailyBriefRunHistory,
+} = require("./dailyBriefService");
 const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
 const { runFleetAlerts } = require("./alerts/fleetAlerts");
 const { refreshVehicleOdometerRollups } = require("./vehicles/odometerRollupService");
@@ -62,6 +66,8 @@ let fmvInProgress = false;
 let fmvIntervalHandle = null;
 let businessMetricsInProgress = false;
 let businessMetricsIntervalHandle = null;
+let dailyBriefInProgress = false;
+let dailyBriefIntervalHandle = null;
 let odometerRollupInProgress = false;
 let odometerRollupIntervalHandle = null;
 let telemetryRetentionInProgress = false;
@@ -96,6 +102,16 @@ const SCHEDULER_DB_POOL_IDLE_RESERVE = getSchedulerNumber(
   "SCHEDULER_DB_POOL_IDLE_RESERVE",
   2
 );
+const DAILY_BRIEF_AM_HOUR = Math.min(
+  23,
+  Math.max(0, getSchedulerNumber("DAILY_BRIEF_AM_HOUR", 7))
+);
+const DAILY_BRIEF_AM_WINDOW_HOURS = Math.max(
+  1,
+  getSchedulerNumber("DAILY_BRIEF_AM_WINDOW_HOURS", 4)
+);
+const DAILY_BRIEF_TIME_ZONE =
+  process.env.DAILY_BRIEF_TIME_ZONE || "America/Chicago";
 
 function getSchedulerNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -105,6 +121,22 @@ function getSchedulerNumber(name, fallback) {
 function delay(ms) {
   if (!ms) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getLocalDateParts(date = new Date(), timeZone = DAILY_BRIEF_TIME_ZONE) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    date: `${map.year}-${map.month}-${map.day}`,
+    hour: Number(map.hour || 0),
+  };
 }
 
 function scheduleIntervalTask(name, intervalMs, offsetMs, taskFn) {
@@ -681,6 +713,63 @@ async function runBusinessMetricsSnapshot(reason = "interval") {
   }
 }
 
+async function runDailyBriefGeneration(reason = "interval") {
+  if (shouldDeferForDbPressure("dailyBrief", reason)) return;
+
+  if (!(await isIntegrationEnabled("dailyBrief"))) {
+    console.log(`[scheduler] dailyBrief skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
+  if (dailyBriefInProgress) {
+    console.log(`[scheduler] dailyBrief skipped | reason=${reason} alreadyRunning=true`);
+    return;
+  }
+
+  const local = getLocalDateParts();
+  if (!Number.isFinite(local.hour) || local.hour < DAILY_BRIEF_AM_HOUR) {
+    console.log(
+      `[scheduler] dailyBrief skipped | reason=${reason} beforeAmHour=true localHour=${local.hour} targetHour=${DAILY_BRIEF_AM_HOUR}`
+    );
+    return;
+  }
+
+  if (local.hour >= DAILY_BRIEF_AM_HOUR + DAILY_BRIEF_AM_WINDOW_HOURS) {
+    console.log(
+      `[scheduler] dailyBrief skipped | reason=${reason} outsideAmWindow=true localHour=${local.hour} targetHour=${DAILY_BRIEF_AM_HOUR} windowHours=${DAILY_BRIEF_AM_WINDOW_HOURS}`
+    );
+    return;
+  }
+
+  const history = await getDailyBriefRunHistory();
+  if (history[local.date]) {
+    console.log(
+      `[scheduler] dailyBrief skipped | reason=${reason} alreadyGenerated=true date=${local.date}`
+    );
+    return;
+  }
+
+  dailyBriefInProgress = true;
+  const startedAt = Date.now();
+
+  try {
+    console.log(`[scheduler] dailyBrief start | reason=${reason} date=${local.date}`);
+    const result = await generateAndSaveDailyBrief({
+      date: local.date,
+      timeZone: DAILY_BRIEF_TIME_ZONE,
+    });
+    console.log(
+      `[scheduler] dailyBrief done | reason=${reason} date=${result.date} chars=${String(result.brief || "").length} durationMs=${Date.now() - startedAt}`
+    );
+  } catch (err) {
+    console.error(
+      `[scheduler] dailyBrief failed | reason=${reason} error=${err.message || err}`
+    );
+  } finally {
+    dailyBriefInProgress = false;
+  }
+}
+
 async function runVehicleOdometerRollups(reason = "interval") {
   if (shouldDeferForDbPressure("odometerRollups", reason)) return;
 
@@ -871,6 +960,13 @@ function startScheduler() {
     () => runBusinessMetricsSnapshot("interval")
   );
 
+  dailyBriefIntervalHandle = scheduleIntervalTask(
+    "dailyBrief",
+    everyHourMs,
+    SCHEDULER_INTERVAL_OFFSET_STEP_MS * 13,
+    () => runDailyBriefGeneration("interval")
+  );
+
   odometerRollupIntervalHandle = scheduleIntervalTask(
     "odometerRollups",
     everyHourMs,
@@ -932,6 +1028,11 @@ function stopScheduler() {
   if (businessMetricsIntervalHandle) {
     stopScheduledInterval(businessMetricsIntervalHandle);
     businessMetricsIntervalHandle = null;
+  }
+
+  if (dailyBriefIntervalHandle) {
+    stopScheduledInterval(dailyBriefIntervalHandle);
+    dailyBriefIntervalHandle = null;
   }
 
   if (odometerRollupIntervalHandle) {

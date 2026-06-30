@@ -27,7 +27,8 @@ const {
 } = require("../services/metrics/parkingTransferService");
 const {
   collectDailyBriefContext,
-  generateDailyBrief,
+  generateAndSaveDailyBrief,
+  getLatestDailyBrief,
 } = require("../services/dailyBriefService");
 
 const router = express.Router();
@@ -199,9 +200,19 @@ router.get("/daily-brief/context", limitMetricRead(async (req, res) => {
   }
 }));
 
+router.get("/daily-brief/latest", async (req, res) => {
+  try {
+    const data = await getLatestDailyBrief();
+    return res.json({ latest: data });
+  } catch (err) {
+    console.error("GET /api/metrics/daily-brief/latest failed:", err);
+    return res.status(500).json({ error: "Failed to load latest daily brief" });
+  }
+});
+
 router.post("/daily-brief", limitMetricRead(async (req, res) => {
   try {
-    const data = await generateDailyBrief({
+    const data = await generateAndSaveDailyBrief({
       date: req.body?.date,
       timeZone: req.body?.timeZone,
     });

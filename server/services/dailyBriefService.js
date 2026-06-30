@@ -6,6 +6,8 @@ const DEFAULT_OPENAI_MODEL =
   process.env.OPENAI_FMV_MODEL ||
   "gpt-4.1-mini";
 const DEFAULT_TIME_ZONE = process.env.DAILY_BRIEF_TIME_ZONE || "America/Chicago";
+const DAILY_BRIEF_LATEST_KEY = "ai.dailyBrief.latest";
+const DAILY_BRIEF_RUN_HISTORY_KEY = "ai.dailyBrief.runHistory";
 
 function cleanText(value, maxLength = 1200) {
   return String(value || "")
@@ -219,13 +221,10 @@ async function collectDailyBriefContext(options = {}) {
       AND COALESCE(t.status, '') <> 'canceled'
   `;
 
-  const [tripsResult, tasksResult, messageResult, financeResult] =
-    await Promise.all([
-      client.query(tripsSql, params),
-      client.query(tasksSql),
-      client.query(messageSql),
-      client.query(financeSql, params),
-    ]);
+  const tripsResult = await client.query(tripsSql, params);
+  const tasksResult = await client.query(tasksSql);
+  const messageResult = await client.query(messageSql);
+  const financeResult = await client.query(financeSql, params);
 
   const trips = tripsResult.rows.map(mapTrip);
   const dayStartMs = new Date(`${date}T00:00:00`).getTime();
@@ -380,7 +379,93 @@ async function generateDailyBrief(options = {}) {
   };
 }
 
+async function getLatestDailyBrief(client = pool) {
+  const { rows } = await client.query(
+    `
+      SELECT value, updated_at
+      FROM app_settings
+      WHERE key = $1
+      LIMIT 1
+    `,
+    [DAILY_BRIEF_LATEST_KEY]
+  );
+
+  return rows[0]
+    ? {
+        ...(rows[0].value || {}),
+        savedAt: rows[0].updated_at,
+      }
+    : null;
+}
+
+async function getDailyBriefRunHistory(client = pool) {
+  const { rows } = await client.query(
+    `
+      SELECT value
+      FROM app_settings
+      WHERE key = $1
+      LIMIT 1
+    `,
+    [DAILY_BRIEF_RUN_HISTORY_KEY]
+  );
+
+  const value = rows[0]?.value;
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+async function saveDailyBriefResult(result, client = pool) {
+  const value = {
+    date: result.date,
+    timeZone: result.timeZone,
+    generatedAt: result.generatedAt,
+    model: result.model,
+    brief: result.brief,
+    context: result.context,
+  };
+  const history = await getDailyBriefRunHistory(client);
+  const historyValue = {
+    ...history,
+    [result.date]: {
+      generatedAt: result.generatedAt,
+      model: result.model,
+      briefLength: String(result.brief || "").length,
+    },
+  };
+
+  await client.query(
+    `
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ($1, $2::jsonb, NOW())
+      ON CONFLICT (key)
+      DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `,
+    [DAILY_BRIEF_LATEST_KEY, JSON.stringify(value)]
+  );
+
+  await client.query(
+    `
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ($1, $2::jsonb, NOW())
+      ON CONFLICT (key)
+      DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `,
+    [DAILY_BRIEF_RUN_HISTORY_KEY, JSON.stringify(historyValue)]
+  );
+
+  return value;
+}
+
+async function generateAndSaveDailyBrief(options = {}) {
+  const result = await generateDailyBrief(options);
+  await saveDailyBriefResult(result, options.client || pool);
+  return result;
+}
+
 module.exports = {
   collectDailyBriefContext,
+  generateAndSaveDailyBrief,
   generateDailyBrief,
+  getDailyBriefRunHistory,
+  getLatestDailyBrief,
+  saveDailyBriefResult,
 };
