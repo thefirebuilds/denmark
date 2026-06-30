@@ -481,31 +481,54 @@ body {
 }
 
 .raw-feed-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
+  display: grid;
+  gap: 6px;
+  padding: 8px 16px 10px;
   border-bottom: 1px solid var(--border);
   background:
     linear-gradient(90deg, rgba(59, 130, 246, 0.08), transparent 62%),
     rgba(255, 255, 255, 0.015);
+}
+
+.raw-feed-status {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25;
+  min-height: 0.9rem;
+}
+
+.raw-feed-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .raw-feed-label {
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  line-height: 1;
 }
 
 .raw-feed-chip {
   border-color: rgba(96, 165, 250, 0.32);
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  line-height: 1;
+  min-height: 24px;
 }
 
 .raw-feed-refresh {
-  margin-left: auto;
+  margin-left: 2px;
+  min-height: 24px;
+  padding: 4px 8px;
+  font-size: 0.68rem;
+  line-height: 1;
 }
 
 .raw-feed-panel {

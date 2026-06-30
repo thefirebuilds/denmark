@@ -3033,32 +3033,34 @@ async function handleExportGuestInspectionSheet(message) {
 
       {!showingTripMessages && (
         <div className="raw-feed-bar">
-          <span className="raw-feed-label">
+          <div className="raw-feed-status">
             {queueStatus || formatLastChecked(lastMessagesCheckedAt)}
-          </span>
-          <span className="raw-feed-label">Raw feeds</span>
-          {RAW_FEED_TYPES.map((type) => (
-            <button
-              key={type.id}
-              type="button"
-              className={`chip chip-filter raw-feed-chip ${
-                rawFeedType === type.id ? "is-active" : ""
-              }`}
-              onClick={() => selectRawFeed(type.id)}
-            >
-              {type.label}
-            </button>
-          ))}
-          {rawFeedType && (
-            <button
-              type="button"
-              className="message-action raw-feed-refresh"
-              disabled={rawFeedLoading}
-              onClick={() => loadRawFeed(rawFeedType, rawFeedPage)}
-            >
-              Refresh raw
-            </button>
-          )}
+          </div>
+          <div className="raw-feed-controls">
+            <span className="raw-feed-label">Raw feeds</span>
+            {RAW_FEED_TYPES.map((type) => (
+              <button
+                key={type.id}
+                type="button"
+                className={`chip chip-filter raw-feed-chip ${
+                  rawFeedType === type.id ? "is-active" : ""
+                }`}
+                onClick={() => selectRawFeed(type.id)}
+              >
+                {type.label}
+              </button>
+            ))}
+            {rawFeedType && (
+              <button
+                type="button"
+                className="message-action raw-feed-refresh"
+                disabled={rawFeedLoading}
+                onClick={() => loadRawFeed(rawFeedType, rawFeedPage)}
+              >
+                Refresh raw
+              </button>
+            )}
+          </div>
         </div>
       )}
 
