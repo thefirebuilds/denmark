@@ -76,9 +76,43 @@ jobs:
           script: |
             set -euo pipefail
 
-            cd /opt/denmark
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            if [ -z "$DEPLOY_PATH" ]; then
+              for candidate in "$HOME/denmark" /opt/denmark /srv/denmark; do
+                if [ -f "$candidate/docker-compose.yml" ]; then
+                  DEPLOY_PATH="$candidate"
+                  break
+                fi
+              done
+            fi
+
+            if [ -z "$DEPLOY_PATH" ] || [ ! -f "$DEPLOY_PATH/docker-compose.yml" ]; then
+              echo "Could not find docker-compose.yml for Denmark deploy." >&2
+              echo "whoami: $(whoami)" >&2
+              echo "pwd: $(pwd)" >&2
+              echo "HOME: ${HOME:-}" >&2
+              echo "Nearby files:" >&2
+              ls -la >&2 || true
+              echo "HOME nearby files:" >&2
+              ls -la "$HOME" >&2 || true
+              echo "Home files:" >&2
+              find "$HOME" -maxdepth 2 -type f \( -name 'docker-compose.yml' -o -name 'compose.yml' -o -name 'compose.yaml' \) -print 2>/dev/null >&2 || true
+              echo "/opt compose files:" >&2
+              find /opt -maxdepth 3 -type f \( -name 'docker-compose.yml' -o -name 'compose.yml' -o -name 'compose.yaml' \) -print 2>/dev/null >&2 || true
+              echo "/srv compose files:" >&2
+              find /srv -maxdepth 3 -type f \( -name 'docker-compose.yml' -o -name 'compose.yml' -o -name 'compose.yaml' \) -print 2>/dev/null >&2 || true
+              exit 1
+            fi
+
+            cd "$DEPLOY_PATH"
+
+            if [ -d .git ]; then
+              git pull --ff-only
+            fi
 
             docker compose pull app
+            docker compose run --rm app npm run db:bootstrap
+            docker compose run --rm app npm run db:verify
             docker compose up -d --force-recreate app
 
             docker image prune -f
