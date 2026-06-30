@@ -369,7 +369,7 @@ async function refreshTripTollCaches(client) {
 }
 
 async function syncTolls() {
-  const client = await pool.connect();
+  let client = null;
   let runId = null;
   const settings = await getEffectiveTollSettings();
 
@@ -395,12 +395,13 @@ async function syncTolls() {
       throw new Error("Toll provider login URL, activity URL, API pattern, username, and password are required");
     }
 
+    const { records } = await fetchTollTransactions(settings);
+    stats.recordsSeen = records.length;
+
+    client = await pool.connect();
     await client.query("BEGIN");
 
     runId = await createSyncRun(client);
-
-    const { records } = await fetchTollTransactions(settings);
-    stats.recordsSeen = records.length;
 
     for (const raw of records) {
       if (!isTollTransaction(raw)) {
@@ -441,9 +442,11 @@ async function syncTolls() {
       ...stats,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (client) {
+      await client.query("ROLLBACK");
+    }
 
-    if (runId) {
+    if (client && runId) {
       try {
         await finishSyncRun(client, runId, {
           status: "error",
@@ -457,7 +460,9 @@ async function syncTolls() {
 
     throw error;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 

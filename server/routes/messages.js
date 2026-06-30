@@ -12,6 +12,9 @@ const {
 const {
   ensureVehicleAliasesTable,
 } = require("../services/vehicles/vehicleAliases");
+const {
+  suggestGuestReply,
+} = require("../services/guestReplySuggestionService");
 
 const bridgeEmailMismatchGraceMinutes = Number(
   process.env.BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES || 5
@@ -3592,6 +3595,37 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("messages endpoint failed:", err);
     res.status(500).json({ error: "failed to load messages" });
+  }
+});
+
+router.post("/guest-reply-suggestion", async (req, res) => {
+  try {
+    const latestMessage =
+      typeof req.body?.latestMessage === "string"
+        ? req.body.latestMessage.trim()
+        : "";
+    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+
+    if (!latestMessage && messages.length === 0) {
+      return res.status(400).json({ error: "guest message context is required" });
+    }
+
+    const result = await suggestGuestReply({
+      guestName: req.body?.guestName,
+      vehicleName: req.body?.vehicleName,
+      reservationId: req.body?.reservationId,
+      subject: req.body?.subject,
+      latestMessage,
+      messages,
+      trip: req.body?.trip,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error("guest reply suggestion failed:", err);
+    res.status(err.statusCode || 500).json({
+      error: err.statusCode === 503 ? err.message : "failed to suggest reply",
+    });
   }
 });
 

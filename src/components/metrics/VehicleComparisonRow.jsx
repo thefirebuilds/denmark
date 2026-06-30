@@ -47,6 +47,27 @@ function getBookedRecoveryPercentValue(vehicle) {
   return Math.max(0, Math.min(1, (recovered + booked) / basis));
 }
 
+function getCapitalProfitOverBasis(vehicle) {
+  const basis = Number(vehicle?.capital_basis ?? 0);
+  const recovered = Number(vehicle?.capital_recovered ?? 0);
+  if (!Number.isFinite(basis) || !Number.isFinite(recovered)) return 0;
+  return Math.max(0, recovered - basis);
+}
+
+function getBookedCapitalProfitOverBasis(vehicle) {
+  const basis = Number(vehicle?.capital_basis ?? 0);
+  const recovered = Number(vehicle?.capital_recovered ?? 0);
+  const booked = Number(vehicle?.capital_booked_future ?? 0);
+  if (
+    !Number.isFinite(basis) ||
+    !Number.isFinite(recovered) ||
+    !Number.isFinite(booked)
+  ) {
+    return getCapitalProfitOverBasis(vehicle);
+  }
+  return Math.max(0, recovered + booked - basis);
+}
+
 function formatRecoveryPercent(vehicle) {
   return `${Math.round(getRecoveryPercentValue(vehicle) * 100)}%`;
 }
@@ -172,9 +193,19 @@ export default function VehicleComparisonRow({
 
   const recoveryPercentValue = getRecoveryPercentValue(vehicle);
   const bookedRecoveryPercentValue = getBookedRecoveryPercentValue(vehicle);
+  const capitalProfitOverBasis = getCapitalProfitOverBasis(vehicle);
+  const bookedCapitalProfitOverBasis = getBookedCapitalProfitOverBasis(vehicle);
+  const isCapitalPaidOff =
+    capitalBasis > 0 &&
+    (Number(vehicle?.capital_recovered ?? 0) >= capitalBasis ||
+      String(vehicle?.projected_payoff_status || "").toLowerCase() === "paid_off");
   const hasBookedFutureRecovery =
     Number(vehicle?.capital_booked_future || 0) > 0 &&
     bookedRecoveryPercentValue > recoveryPercentValue;
+  const hasBookedFutureProfit =
+    isCapitalPaidOff &&
+    Number(vehicle?.capital_booked_future || 0) > 0 &&
+    bookedCapitalProfitOverBasis > capitalProfitOverBasis;
   const payoffTimelineProgress = getTimelineProgress(vehicle);
   const payoffPaceTone = getPayoffPaceTone(
     recoveryPercentValue,
@@ -545,10 +576,16 @@ export default function VehicleComparisonRow({
 
                   <div className="vehicle-compare__payoff-hero">
                     <div className="vehicle-compare__payoff-hero-main">
-                      {projectedPayoffDate ? formatShortDate(projectedPayoffDate) : "—"}
+                      {isCapitalPaidOff
+                        ? formatCurrency(capitalProfitOverBasis)
+                        : projectedPayoffDate
+                        ? formatShortDate(projectedPayoffDate)
+                        : "—"}
                     </div>
                     <div className="vehicle-compare__payoff-hero-sub">
-                      {formatPayoffDays(projectedPayoffDays)}
+                      {isCapitalPaidOff
+                        ? "profit over capital basis"
+                        : formatPayoffDays(projectedPayoffDays)}
                     </div>
                   </div>
 
@@ -597,10 +634,12 @@ export default function VehicleComparisonRow({
 
                     <div className="vehicle-compare__payoff-axis-point vehicle-compare__payoff-axis-point--end">
                       <div className="vehicle-compare__payoff-axis-label">
-                        Projected Payoff
+                        {isCapitalPaidOff ? "Paid Off" : "Projected Payoff"}
                       </div>
                       <div className="vehicle-compare__payoff-axis-value">
-                        {formatShortDate(projectedPayoffDate)}
+                        {isCapitalPaidOff
+                          ? "Complete"
+                          : formatShortDate(projectedPayoffDate)}
                       </div>
                     </div>
                   </div>
@@ -622,6 +661,11 @@ export default function VehicleComparisonRow({
                         {formatCurrencyCompact(vehicle.capital_booked_future)} booked
                       </div>
                     ) : null}
+                    {hasBookedFutureProfit ? (
+                      <div className="vehicle-compare__payoff-chip vehicle-compare__payoff-chip--positive">
+                        {formatCurrencyCompact(bookedCapitalProfitOverBasis)} booked profit
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -641,9 +685,13 @@ export default function VehicleComparisonRow({
                   </div>
 
                   <div className="vehicle-compare__detail-stat">
-                    <div className="vehicle-compare__detail-label">Remaining</div>
+                    <div className="vehicle-compare__detail-label">
+                      {isCapitalPaidOff ? "Profit Over Basis" : "Remaining"}
+                    </div>
                     <div className="vehicle-compare__detail-value">
-                      {formatCurrency(vehicle?.capital_remaining)}
+                      {isCapitalPaidOff
+                        ? formatCurrency(capitalProfitOverBasis)
+                        : formatCurrency(vehicle?.capital_remaining)}
                     </div>
                   </div>
 

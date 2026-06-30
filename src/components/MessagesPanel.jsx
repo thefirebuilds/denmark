@@ -1055,6 +1055,70 @@ function isGoogleCalendarReconnectNotice(message) {
   return type === "google_calendar_reconnect_required";
 }
 
+function getGuestReplySuggestionKey(message) {
+  return String(message?.id || message?.messageId || message?.latest_message_id || "");
+}
+
+function isGuestReplySuggestionCandidate(message) {
+  const type = message?.type || message?.message_type;
+  if (type !== "guest_message" && type !== "guest_message_thread") return false;
+  return Boolean(
+    message?.guest_message ||
+      message?.latest_guest_message ||
+      (Array.isArray(message?.guest_messages) && message.guest_messages.length > 0)
+  );
+}
+
+function buildGuestReplySuggestionPayload(message) {
+  const guestMessages = Array.isArray(message?.guest_messages)
+    ? message.guest_messages
+    : [];
+  const latestMessage =
+    message?.latest_guest_message ||
+    message?.guest_message ||
+    guestMessages[guestMessages.length - 1]?.guest_message ||
+    "";
+
+  return {
+    messageId: message?.id || message?.messageId || null,
+    subject: message?.subject || "",
+    guestName:
+      message?.guest_thread_guest_name ||
+      message?.guest_name ||
+      message?.parsed?.guest ||
+      "",
+    vehicleName:
+      message?.guest_thread_vehicle_name ||
+      message?.vehicle_nickname ||
+      message?.vehicle_name ||
+      message?.parsed?.vehicle ||
+      "",
+    reservationId:
+      message?.guest_thread_reservation_id || message?.reservation_id || "",
+    latestMessage,
+    messages: guestMessages.length
+      ? guestMessages.map((guestMessage) => ({
+          timestamp: guestMessage.timestamp,
+          subject: guestMessage.subject,
+          text: guestMessage.guest_message || guestMessage.subject || "",
+        }))
+      : [
+          {
+            timestamp: message?.timestamp || message?.message_timestamp,
+            subject: message?.subject,
+            text: latestMessage,
+          },
+        ],
+    trip: {
+      start: message?.trip_record_start || message?.trip_start,
+      end: message?.trip_record_end || message?.trip_end,
+      status: message?.trip_status,
+      workflowStage: message?.trip_workflow_stage,
+      pickupLocation: message?.pickup_location,
+    },
+  };
+}
+
 function isOperationalTripNotice(message) {
   const type = message?.type || message?.message_type;
   if (!message?.trip_id && !message?.reservation_id) return false;
@@ -1531,6 +1595,10 @@ export default function MessagesPanel({
   const [printingPrepMessageId, setPrintingPrepMessageId] = useState(null);
   const [prepPrint, setPrepPrint] = useState(null);
   const [focusedCloseoutTask, setFocusedCloseoutTask] = useState(null);
+  const [replySuggestingMessageId, setReplySuggestingMessageId] = useState(null);
+  const [replySuggestions, setReplySuggestions] = useState({});
+  const [replySuggestionErrors, setReplySuggestionErrors] = useState({});
+  const [copiedReplySuggestionId, setCopiedReplySuggestionId] = useState(null);
   const [expandedMaintenanceIds, setExpandedMaintenanceIds] = useState(() => new Set());
   const [completedSyntheticTaskIds, setCompletedSyntheticTaskIds] = useState(() =>
     loadCompletedSyntheticTaskIds()
@@ -2238,6 +2306,77 @@ async function handleExportGuestInspectionSheet(message) {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  async function handleSuggestGuestReply(message) {
+    const key = getGuestReplySuggestionKey(message);
+    if (!key) return;
+
+    setReplySuggestingMessageId(key);
+    setReplySuggestionErrors((prev) => ({ ...prev, [key]: "" }));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/messages/guest-reply-suggestion`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(buildGuestReplySuggestionPayload(message)),
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Failed to suggest reply (${res.status})`);
+      }
+
+      const suggestion = String(data?.suggestion || "").trim();
+      if (!suggestion) {
+        throw new Error("No suggested reply came back");
+      }
+
+      setReplySuggestions((prev) => ({ ...prev, [key]: suggestion }));
+    } catch (err) {
+      setReplySuggestionErrors((prev) => ({
+        ...prev,
+        [key]: err.message || "Could not suggest a reply",
+      }));
+    } finally {
+      setReplySuggestingMessageId(null);
+    }
+  }
+
+  async function handleCopyGuestReplySuggestion(message, suggestion) {
+    const key = getGuestReplySuggestionKey(message);
+    const text = String(suggestion || "").trim();
+    if (!text) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+
+      setCopiedReplySuggestionId(key);
+      window.setTimeout(() => {
+        setCopiedReplySuggestionId((current) => (current === key ? null : current));
+      }, 1800);
+    } catch (err) {
+      setReplySuggestionErrors((prev) => ({
+        ...prev,
+        [key]: "Could not copy text from this browser",
+      }));
+    }
+  }
+
   async function loadMessages(isInitialLoad = false) {
     let statusLabel = "";
     try {
@@ -2816,6 +2955,11 @@ async function handleExportGuestInspectionSheet(message) {
               isGoogleCalendarReconnectNotice(message);
             const canReviewGuestThread =
               (message.type || message.message_type) === "guest_message_thread";
+            const canSuggestGuestReply = isGuestReplySuggestionCandidate(message);
+            const replySuggestionKey = getGuestReplySuggestionKey(message);
+            const replySuggestion = replySuggestions[replySuggestionKey] || "";
+            const replySuggestionError =
+              replySuggestionErrors[replySuggestionKey] || "";
             const canConfirmBooking = isBookingConfirmationTask(message);
             const canShowOperationalTripNotice =
               isOperationalTripNotice(message) && !canConfirmBooking;
@@ -3083,6 +3227,53 @@ async function handleExportGuestInspectionSheet(message) {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {canSuggestGuestReply && (replySuggestion || replySuggestionError) && (
+                  <div
+                    className="message-guest-reply"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="message-booking-title">
+                      Suggested reply
+                      <span>
+                        {replySuggestionError
+                          ? "Review"
+                          : copiedReplySuggestionId === replySuggestionKey
+                          ? "Copied"
+                          : "Draft"}
+                      </span>
+                    </div>
+                    {replySuggestion ? (
+                      <>
+                        <p className="message-guest-reply-text">
+                          {replySuggestion}
+                        </p>
+                        <div className="message-guest-reply-actions">
+                          <button
+                            type="button"
+                            className="message-action"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleCopyGuestReplySuggestion(
+                                message,
+                                replySuggestion
+                              );
+                            }}
+                          >
+                            {copiedReplySuggestionId === replySuggestionKey
+                              ? "Copied"
+                              : "Copy text"}
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                    {replySuggestionError ? (
+                      <div className="message-guest-reply-error">
+                        {replySuggestionError}
+                      </div>
+                    ) : null}
                   </div>
                 )}
 
@@ -3417,6 +3608,7 @@ async function handleExportGuestInspectionSheet(message) {
                   canEditTripValues ||
                   canCompleteSyntheticTask ||
                   canConfirmBooking ||
+                  canSuggestGuestReply ||
                   hasMaintenanceDetails ||
                   canOpenMaintenanceQueue ||
                   canReconnectGoogleCalendar ||
@@ -3624,6 +3816,24 @@ async function handleExportGuestInspectionSheet(message) {
                         }}
                       >
                         Reply
+                      </button>
+                    )}
+
+                    {canSuggestGuestReply && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={replySuggestingMessageId === replySuggestionKey}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleSuggestGuestReply(message);
+                        }}
+                      >
+                        {replySuggestingMessageId === replySuggestionKey
+                          ? "Drafting..."
+                          : replySuggestion
+                          ? "Refresh suggestion"
+                          : "Suggest reply"}
                       </button>
                     )}
 

@@ -25,11 +25,28 @@ const {
 const {
   getHomeParkingTransfers,
 } = require("../services/metrics/parkingTransferService");
+const {
+  collectDailyBriefContext,
+  generateDailyBrief,
+} = require("../services/dailyBriefService");
 
 const router = express.Router();
-const METRICS_MAX_CONCURRENT = Number(process.env.METRICS_MAX_CONCURRENT || 2);
+const METRICS_MAX_CONCURRENT = Number(process.env.METRICS_MAX_CONCURRENT || 1);
+const METRICS_QUEUE_MAX = Number(process.env.METRICS_QUEUE_MAX || 4);
+const METRICS_QUEUE_TIMEOUT_MS = Number(
+  process.env.METRICS_QUEUE_TIMEOUT_MS || 8000
+);
 let activeMetricReads = 0;
 const queuedMetricReads = [];
+
+function isDbPoolUnderPressure() {
+  if (typeof pool.getPoolStats !== "function") return false;
+  const stats = pool.getPoolStats();
+  const max = Number(stats.max || 0);
+  const checkedOut = Number(stats.checked_out || 0);
+  const waiting = Number(stats.waiting || 0);
+  return waiting > 0 || (max > 0 && checkedOut >= Math.max(1, max - 1));
+}
 
 function acquireMetricsSlot() {
   if (activeMetricReads < METRICS_MAX_CONCURRENT) {
@@ -37,8 +54,22 @@ function acquireMetricsSlot() {
     return Promise.resolve();
   }
 
-  return new Promise((resolve) => {
-    queuedMetricReads.push(resolve);
+  if (queuedMetricReads.length >= METRICS_QUEUE_MAX) {
+    const err = new Error("metrics queue full");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  return new Promise((resolve, reject) => {
+    const queued = { resolve, reject, timer: null };
+    queued.timer = setTimeout(() => {
+      const index = queuedMetricReads.indexOf(queued);
+      if (index >= 0) queuedMetricReads.splice(index, 1);
+      const err = new Error("metrics queue timeout");
+      err.statusCode = 503;
+      reject(err);
+    }, METRICS_QUEUE_TIMEOUT_MS);
+    queuedMetricReads.push(queued);
   }).then(() => {
     activeMetricReads += 1;
   });
@@ -47,12 +78,30 @@ function acquireMetricsSlot() {
 function releaseMetricsSlot() {
   activeMetricReads = Math.max(0, activeMetricReads - 1);
   const next = queuedMetricReads.shift();
-  if (next) next();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve();
+  }
 }
 
 function limitMetricRead(handler) {
   return async (req, res, next) => {
-    await acquireMetricsSlot();
+    if (isDbPoolUnderPressure()) {
+      return res.status(503).json({
+        error: "Metrics temporarily deferred while database is busy",
+        retry_after_seconds: 10,
+      });
+    }
+
+    try {
+      await acquireMetricsSlot();
+    } catch (err) {
+      return res.status(err.statusCode || 503).json({
+        error: "Metrics temporarily queued behind other work",
+        retry_after_seconds: 10,
+      });
+    }
+
     try {
       return await handler(req, res, next);
     } finally {
@@ -133,6 +182,34 @@ router.get("/parking/home-transfers", limitMetricRead(async (req, res) => {
     console.error("GET /api/metrics/parking/home-transfers failed:", err);
     return res.status(status).json({
       error: status === 500 ? "Failed to load parking transfer metrics" : err.message,
+    });
+  }
+}));
+
+router.get("/daily-brief/context", limitMetricRead(async (req, res) => {
+  try {
+    const data = await collectDailyBriefContext({
+      date: req.query.date,
+      timeZone: req.query.timeZone,
+    });
+    return res.json(data);
+  } catch (err) {
+    console.error("GET /api/metrics/daily-brief/context failed:", err);
+    return res.status(500).json({ error: "Failed to load daily brief context" });
+  }
+}));
+
+router.post("/daily-brief", limitMetricRead(async (req, res) => {
+  try {
+    const data = await generateDailyBrief({
+      date: req.body?.date,
+      timeZone: req.body?.timeZone,
+    });
+    return res.json(data);
+  } catch (err) {
+    console.error("POST /api/metrics/daily-brief failed:", err);
+    return res.status(err.statusCode || 500).json({
+      error: err.statusCode === 503 ? err.message : "Failed to generate daily brief",
     });
   }
 }));

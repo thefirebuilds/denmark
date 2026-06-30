@@ -55,6 +55,15 @@ function shouldSaveActualLabor(kind, row) {
   return status === "resolved" || status === "complete" || status === "completed";
 }
 
+function isDbPoolUnderPressure() {
+  if (typeof pool.getPoolStats !== "function") return false;
+  const stats = pool.getPoolStats();
+  const max = Number(stats.max || 0);
+  const checkedOut = Number(stats.checked_out || 0);
+  const waiting = Number(stats.waiting || 0);
+  return waiting > 0 || (max > 0 && checkedOut >= Math.max(1, max - 1));
+}
+
 router.get("/settings", async (req, res) => {
   try {
     const settings = await getBusinessFinancialSettings();
@@ -104,6 +113,13 @@ router.put("/vehicle-profiles/:vehicleId", async (req, res) => {
 
 router.get("/current", async (req, res) => {
   try {
+    if (isDbPoolUnderPressure()) {
+      return res.status(503).json({
+        error: "Business metrics temporarily deferred while database is busy",
+        retry_after_seconds: 10,
+      });
+    }
+
     const data = await getBusinessMetrics(req.query.range || "90d");
     res.json(data);
   } catch (err) {

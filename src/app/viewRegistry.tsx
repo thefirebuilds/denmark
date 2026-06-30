@@ -23,6 +23,8 @@ import InboxPanel from "../components/inbox/InboxPanel.jsx";
 // @ts-expect-error Legacy JSX component has no declaration file.
 import MetricsPanel from "../components/MetricsPanel.jsx";
 // @ts-expect-error Legacy JSX component has no declaration file.
+import DailyBriefPanel from "../components/DailyBriefPanel.jsx";
+// @ts-expect-error Legacy JSX component has no declaration file.
 import MarketplacePanel from "../components/MarketplacePanel.jsx";
 // @ts-expect-error Legacy JSX component has no declaration file.
 import FleetMapPanel from "../components/FleetMapPanel.jsx";
@@ -81,6 +83,7 @@ export function renderActiveView(ctx: ViewContext) {
 
   if (ctx.activeView === "inbox") return <InboxPanel />;
   if (ctx.activeView === "metrics") return <MetricsPanel />;
+  if (ctx.activeView === "daily-brief") return <DailyBriefPanel />;
 
   if (ctx.activeView === "marketplace") {
     return (

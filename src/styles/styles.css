@@ -1044,6 +1044,43 @@ body {
   background: rgba(127, 29, 29, 0.22);
 }
 
+.message-guest-reply {
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  background: rgba(20, 83, 45, 0.18);
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.message-guest-reply-text {
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  line-height: 1.42;
+}
+
+.message-guest-reply-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.message-guest-reply-error {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.24);
+  border: 1px solid rgba(248, 113, 113, 0.32);
+  border-radius: 8px;
+  padding: 8px 9px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .message-closeout-guide .message-booking-task {
   border-color: rgba(251, 191, 36, 0.42);
   background: rgba(69, 49, 20, 0.48);
@@ -1276,6 +1313,7 @@ body {
 .message-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 4px;
   padding-top: 2px;
@@ -1344,6 +1382,265 @@ body {
   color: #edf3ff;
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.14);
+}
+
+.daily-brief-shell {
+  grid-column: 2 / -1;
+  min-height: 0;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: minmax(440px, 1fr) minmax(300px, 380px);
+  gap: 14px;
+  overflow: auto;
+}
+
+.daily-brief-main,
+.daily-brief-side {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.daily-brief-toolbar,
+.daily-brief-output,
+.daily-brief-mini-list,
+.daily-brief-error {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: #10182c;
+  border-radius: 8px;
+}
+
+.daily-brief-toolbar {
+  padding: 14px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.daily-brief-toolbar h2 {
+  margin: 0;
+  font-size: 1.14rem;
+  line-height: 1.2;
+}
+
+.daily-brief-toolbar p {
+  margin: 4px 0 0;
+  color: #8fa2bf;
+  font-size: 0.84rem;
+}
+
+.daily-brief-controls {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.daily-brief-controls label {
+  display: grid;
+  gap: 4px;
+  color: #8fa2bf;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.daily-brief-controls input {
+  width: 148px;
+  min-height: 34px;
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.daily-brief-button {
+  appearance: none;
+  min-height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.035);
+  color: #bfd1ee;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.76rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.daily-brief-button--primary {
+  color: #dcebff;
+  background: rgba(96, 165, 250, 0.14);
+  border-color: rgba(96, 165, 250, 0.34);
+}
+
+.daily-brief-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.daily-brief-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.daily-brief-stat {
+  min-width: 0;
+  min-height: 82px;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  background: #111c31;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.daily-brief-stat span,
+.daily-brief-output-head,
+.daily-brief-mini-title {
+  color: #8fa2bf;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.daily-brief-stat strong {
+  color: #dbeafe;
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+}
+
+.daily-brief-stat em {
+  color: #aab8cd;
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.daily-brief-output {
+  min-height: 360px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.daily-brief-output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.daily-brief-output pre {
+  margin: 0;
+  padding: 14px;
+  color: #dbeafe;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.48;
+  overflow: auto;
+}
+
+.daily-brief-placeholder {
+  color: #8fa2bf;
+  padding: 14px;
+  font-size: 0.9rem;
+}
+
+.daily-brief-error {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.24);
+  border-color: rgba(248, 113, 113, 0.32);
+  padding: 10px 12px;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.daily-brief-mini-list {
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.daily-brief-mini-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.daily-brief-mini-title strong {
+  color: #dbeafe;
+}
+
+.daily-brief-mini-row {
+  border-top: 1px solid rgba(143, 162, 191, 0.14);
+  padding-top: 7px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.daily-brief-mini-row span {
+  color: #b8c4d8;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.daily-brief-mini-row strong {
+  color: #dbeafe;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.daily-brief-empty-row {
+  color: #8fa2bf;
+  border-top: 1px solid rgba(143, 162, 191, 0.14);
+  padding-top: 7px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 1120px) {
+  .daily-brief-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-brief-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .daily-brief-shell {
+    grid-column: 1 / -1;
+    padding: 12px;
+  }
+
+  .daily-brief-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daily-brief-controls {
+    justify-content: stretch;
+  }
+
+  .daily-brief-controls label,
+  .daily-brief-controls input,
+  .daily-brief-button {
+    width: 100%;
+  }
+
+  .daily-brief-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .message-tags {

@@ -6,6 +6,7 @@ import { useState } from "react";
 //--------------------------------------------------------------
 
 const NAV_ITEMS = [
+  { view: "daily-brief", label: "Daily Brief", icon: "AM" },
   { view: "dispatch", label: "Trips", icon: "✈️" },
   { view: "maintenance", label: "Maintenance", icon: "🚗" },
   { view: "metrics", label: "Metrics", icon: "📈" },
