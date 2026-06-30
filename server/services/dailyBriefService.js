@@ -114,6 +114,7 @@ function mapFleetStatusCandidate(row) {
   const costs = roundMoney(row.operating_cost);
   const netRevenue = roundMoney(revenue - costs);
   const bookedDays = roundMoney(row.booked_days);
+  const activeTripCount = Number(row.active_trip_count || 0);
   const avgDailyRate =
     bookedDays > 0 ? roundMoney(revenue / bookedDays) : roundMoney(row.avg_daily_rate);
   const bookingCount = Number(row.booking_count || 0);
@@ -151,6 +152,7 @@ function mapFleetStatusCandidate(row) {
     netRevenue,
     bookedDays,
     bookingCount,
+    activeTripCount,
     avgDailyRate,
     openMaintenanceTasks,
     blockerTasks,
@@ -426,24 +428,36 @@ async function collectDailyBriefContext(options = {}) {
         AND t.trip_start < b.range_end
         AND t.trip_end >= b.range_start
     ),
-    trip_metrics AS (
+    trip_window_metrics AS (
       SELECT
         tv.vehicle_id,
-        COUNT(*)::int AS booking_count,
-        COALESCE(SUM(COALESCE(tf.host_payout, tv.amount, 0)), 0) AS revenue,
-        COALESCE(SUM(
-          GREATEST(
-            0,
-            EXTRACT(EPOCH FROM (
-              LEAST(tv.trip_end, b.range_end) - GREATEST(tv.trip_start, b.range_start)
-            )) / 86400.0
-          )
-        ), 0) AS booked_days,
-        COUNT(*) FILTER (WHERE COALESCE(tf.issue_flag, false) = true)::int AS issue_trips
+        COALESCE(tf.host_payout, tv.amount, 0) AS total_revenue,
+        COALESCE(tf.issue_flag, false) AS issue_flag,
+        tv.trip_start >= b.range_start AND tv.trip_start < b.range_end AS started_in_window,
+        GREATEST(
+          0,
+          EXTRACT(EPOCH FROM (
+            LEAST(tv.trip_end, b.range_end) - GREATEST(tv.trip_start, b.range_start)
+          )) / 86400.0
+        ) AS overlap_days,
+        GREATEST(
+          EXTRACT(EPOCH FROM (tv.trip_end - tv.trip_start)) / 86400.0,
+          1
+        ) AS trip_days
       FROM trip_vehicle tv
       CROSS JOIN bounds b
       LEFT JOIN trip_financial_facts tf ON tf.trip_id = tv.id
-      GROUP BY tv.vehicle_id
+    ),
+    trip_metrics AS (
+      SELECT
+        vehicle_id,
+        COUNT(*) FILTER (WHERE started_in_window)::int AS booking_count,
+        COUNT(*)::int AS active_trip_count,
+        COALESCE(SUM(total_revenue * (overlap_days / NULLIF(trip_days, 0))), 0) AS revenue,
+        COALESCE(SUM(overlap_days), 0) AS booked_days,
+        COUNT(*) FILTER (WHERE issue_flag = true)::int AS issue_trips
+      FROM trip_window_metrics
+      GROUP BY vehicle_id
     ),
     expense_vehicle AS (
       SELECT
@@ -501,6 +515,7 @@ async function collectDailyBriefContext(options = {}) {
       f.id AS vehicle_id,
       f.vehicle_name,
       COALESCE(tm.booking_count, 0) AS booking_count,
+      COALESCE(tm.active_trip_count, 0) AS active_trip_count,
       COALESCE(tm.revenue, 0) AS revenue,
       COALESCE(tm.booked_days, 0) AS booked_days,
       CASE
