@@ -240,7 +240,7 @@ function selectCanonicalNicknameSql() {
 
 router.get("/status", async (req, res) => {
   try {
-    const feed = await getCombinedVehicleStatusFeed();
+    const feed = await getCachedVehicleStatusFeed();
     res.json(feed.map(withStatusCompatibilityFields));
   } catch (err) {
     console.error("Vehicle status error:", err);

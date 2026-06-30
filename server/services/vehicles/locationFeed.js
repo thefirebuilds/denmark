@@ -2,6 +2,13 @@ const pool = require("../../db");
 
 const RUNNING_FRESH_MS = 15 * 60 * 1000;
 const CLOCK_SKEW_GRACE_MS = 2 * 60 * 1000;
+const VEHICLE_LOCATIONS_CACHE_TTL_MS = Number(
+  process.env.VEHICLE_LOCATIONS_CACHE_TTL_MS || 15 * 1000
+);
+
+let vehicleLocationsCache = null;
+let vehicleLocationsCacheAt = 0;
+let vehicleLocationsInFlight = null;
 
 function toNumber(value) {
   if (value == null) return null;
@@ -332,13 +339,47 @@ async function getDimoLiveVehicleLocations() {
   return [];
 }
 
-async function getVehicleLocations(client = pool) {
-  const [storedLocations, dimoLiveLocations] = await Promise.all([
-    getStoredVehicleLocations(client),
-    getDimoLiveVehicleLocations(),
-  ]);
+async function loadVehicleLocations(client = pool) {
+  const storedLocations = await getStoredVehicleLocations(client);
+  const dimoLiveLocations = await getDimoLiveVehicleLocations();
 
   return [...storedLocations, ...dimoLiveLocations];
+}
+
+async function getVehicleLocations(client = pool, options = {}) {
+  const force = options.force === true;
+  const canCache = client === pool;
+  const now = Date.now();
+
+  if (
+    canCache &&
+    !force &&
+    vehicleLocationsCache &&
+    now - vehicleLocationsCacheAt <= VEHICLE_LOCATIONS_CACHE_TTL_MS
+  ) {
+    return vehicleLocationsCache;
+  }
+
+  if (canCache && vehicleLocationsInFlight) {
+    if (vehicleLocationsCache) return vehicleLocationsCache;
+    return vehicleLocationsInFlight;
+  }
+
+  const request = loadVehicleLocations(client);
+
+  if (!canCache) return request;
+
+  vehicleLocationsInFlight = request
+    .then((locations) => {
+      vehicleLocationsCache = locations;
+      vehicleLocationsCacheAt = Date.now();
+      return locations;
+    })
+    .finally(() => {
+      vehicleLocationsInFlight = null;
+    });
+
+  return vehicleLocationsInFlight;
 }
 
 async function getVehicleLocationTrail(vehicleId, options = {}, client = pool) {

@@ -38,7 +38,7 @@ const {
   getDailyBriefRunHistory,
 } = require("./dailyBriefService");
 const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
-const { runFleetAlerts } = require("./alerts/fleetAlerts");
+const { runFleetAlerts: runFleetAlertsCheck } = require("./alerts/fleetAlerts");
 const { refreshVehicleOdometerRollups } = require("./vehicles/odometerRollupService");
 const { logSystemActivity } = require("./systemActivityLog");
 const { isIntegrationEnabled } = require("./integrations/integrationSettings");
@@ -797,6 +797,23 @@ async function runVehicleOdometerRollups(reason = "interval") {
   }
 }
 
+async function runFleetAlertCheck(reason = "interval") {
+  if (shouldDeferForDbPressure("fleetAlerts", reason)) return;
+
+  if (!(await isIntegrationEnabled("fleetAlerts"))) {
+    console.log(`[scheduler] fleetAlerts skipped | reason=${reason} enabled=false`);
+    return;
+  }
+
+  try {
+    await runFleetAlertsCheck(reason);
+  } catch (err) {
+    console.error(
+      `[scheduler] fleetAlerts failed | reason=${reason} error=${err.message || err}`
+    );
+  }
+}
+
 async function runTelemetryRetention(reason = "interval") {
   if (shouldDeferForDbPressure("telemetryRetention", reason)) return;
 
@@ -893,7 +910,7 @@ function startScheduler() {
         ["businessMetrics", () => runBusinessMetricsSnapshot("startup")],
         ["odometerRollups", () => runVehicleOdometerRollups("startup")],
         ["telemetryRetention", () => runTelemetryRetention("startup")],
-        ["fleetAlerts", () => runFleetAlerts("startup")],
+        ["fleetAlerts", () => runFleetAlertCheck("startup")],
         ["publicAvailability", () => runPublicAvailabilityPush("server startup")],
         ["googleCalendar", () => runGoogleCalendarReconcile("startup")],
       ]);
@@ -943,7 +960,7 @@ function startScheduler() {
     "fleetAlerts",
     everyFiveMinutesMs,
     SCHEDULER_INTERVAL_OFFSET_STEP_MS * 3,
-    () => runFleetAlerts("interval")
+    () => runFleetAlertCheck("interval")
   );
 
   fmvIntervalHandle = scheduleIntervalTask(

@@ -11,6 +11,20 @@ const { getVehicles } = require("../bouncie/client");
 const { getBouncieStatusFeed } = require("../bouncie/statusFeed");
 const { getDimoStatusFeed } = require("../dimo/statusFeed");
 
+const COMBINED_STATUS_CACHE_TTL_MS = Number(
+  process.env.VEHICLE_STATUS_FEED_CACHE_TTL_MS || 30 * 1000
+);
+const CACHED_STATUS_CACHE_TTL_MS = Number(
+  process.env.VEHICLE_CACHED_STATUS_FEED_CACHE_TTL_MS || 15 * 1000
+);
+
+let combinedStatusCache = null;
+let combinedStatusCacheAt = 0;
+let combinedStatusInFlight = null;
+let cachedStatusCache = null;
+let cachedStatusCacheAt = 0;
+let cachedStatusInFlight = null;
+
 function normalizeVehicleSelector(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -397,23 +411,21 @@ registration: {
   return result;
 }
 
-async function getCombinedVehicleStatusFeed() {
-  const [dbVehiclesResult, bouncieVehicles, dimoVehicles] = await Promise.all([
-    pool.query(`
+async function loadCombinedVehicleStatusFeed() {
+  const dbVehiclesResult = await pool.query(`
       SELECT *
       FROM vehicles
       WHERE is_active = true
       ORDER BY nickname NULLS LAST, make, model
-    `),
-    getBouncieStatusFeed().catch((err) => {
-      console.warn("Combined status: Bouncie feed unavailable:", err.message || err);
-      return [];
-    }),
-    getDimoStatusFeed().catch((err) => {
-      console.warn("Combined status: DIMO feed unavailable:", err.message || err);
-      return [];
-    }),
-  ]);
+    `);
+  const bouncieVehicles = await getBouncieStatusFeed().catch((err) => {
+    console.warn("Combined status: Bouncie feed unavailable:", err.message || err);
+    return [];
+  });
+  const dimoVehicles = await getDimoStatusFeed().catch((err) => {
+    console.warn("Combined status: DIMO feed unavailable:", err.message || err);
+    return [];
+  });
 
   const bouncieIndex = indexVehicles(bouncieVehicles);
   const dimoIndex = indexVehicles(dimoVehicles);
@@ -449,7 +461,37 @@ async function getCombinedVehicleStatusFeed() {
   return rows;
 }
 
-async function getCachedVehicleStatusFeed() {
+async function getCombinedVehicleStatusFeed(options = {}) {
+  const force = options.force === true;
+  const now = Date.now();
+
+  if (
+    !force &&
+    combinedStatusCache &&
+    now - combinedStatusCacheAt <= COMBINED_STATUS_CACHE_TTL_MS
+  ) {
+    return combinedStatusCache;
+  }
+
+  if (combinedStatusInFlight) {
+    if (combinedStatusCache) return combinedStatusCache;
+    return combinedStatusInFlight;
+  }
+
+  combinedStatusInFlight = loadCombinedVehicleStatusFeed()
+    .then((feed) => {
+      combinedStatusCache = feed;
+      combinedStatusCacheAt = Date.now();
+      return feed;
+    })
+    .finally(() => {
+      combinedStatusInFlight = null;
+    });
+
+  return combinedStatusInFlight;
+}
+
+async function loadCachedVehicleStatusFeed() {
   const { rows } = await pool.query(`
     SELECT
       v.*,
@@ -615,6 +657,36 @@ async function getCachedVehicleStatusFeed() {
       telemetry,
     };
   });
+}
+
+async function getCachedVehicleStatusFeed(options = {}) {
+  const force = options.force === true;
+  const now = Date.now();
+
+  if (
+    !force &&
+    cachedStatusCache &&
+    now - cachedStatusCacheAt <= CACHED_STATUS_CACHE_TTL_MS
+  ) {
+    return cachedStatusCache;
+  }
+
+  if (cachedStatusInFlight) {
+    if (cachedStatusCache) return cachedStatusCache;
+    return cachedStatusInFlight;
+  }
+
+  cachedStatusInFlight = loadCachedVehicleStatusFeed()
+    .then((feed) => {
+      cachedStatusCache = feed;
+      cachedStatusCacheAt = Date.now();
+      return feed;
+    })
+    .finally(() => {
+      cachedStatusInFlight = null;
+    });
+
+  return cachedStatusInFlight;
 }
 
 module.exports = {

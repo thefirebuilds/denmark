@@ -1271,16 +1271,21 @@ async function sendTripUnderwayAlert(trip, options = {}) {
 }
 
 async function collectFleetAlerts() {
-  const groups = await Promise.all([
-    collectNewTripBookedAlerts(),
-    collectBridgeHeartbeatAlerts(),
-    collectBridgeTuroNotificationAlerts(),
-    collectDtcAlerts(),
-    collectLowVoltageAlerts(),
-    collectOverdueReturnAlerts(),
-    collectReturnedToParkingSpotAlerts(),
-    collectLocationEntryAlerts(),
-  ]);
+  const groups = [];
+
+  for (const collect of [
+    collectNewTripBookedAlerts,
+    collectBridgeHeartbeatAlerts,
+    collectBridgeTuroNotificationAlerts,
+    collectDtcAlerts,
+    collectLowVoltageAlerts,
+    collectOverdueReturnAlerts,
+    collectReturnedToParkingSpotAlerts,
+    collectLocationEntryAlerts,
+  ]) {
+    groups.push(await collect());
+  }
+
   return groups.flat();
 }
 

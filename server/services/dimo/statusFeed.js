@@ -4,8 +4,14 @@ const { getDimoFleetFromDb } = require("./client");
 
 const LIVE_SIGNAL_MAX_AGE_MINUTES = 15;
 const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
+const STATUS_FEED_CACHE_TTL_MS = Number(
+  process.env.DIMO_STATUS_FEED_CACHE_TTL_MS || 30 * 1000
+);
 
 let dimoInProgress = false;
+let cachedStatusFeed = null;
+let cachedStatusFeedAt = 0;
+let statusFeedInFlight = null;
 
 function celsiusToFahrenheit(celsius) {
   if (celsius == null || celsius === "") return null;
@@ -145,7 +151,7 @@ async function runDimo(reason = "interval") {
   }
 }
 
-async function getDimoStatusFeed() {
+async function loadDimoStatusFeed() {
   const configuredFleet = await getDimoFleetFromDb();
   const source = "database";
 
@@ -481,6 +487,36 @@ async function getDimoStatusFeed() {
       },
     };
   });
+}
+
+async function getDimoStatusFeed(options = {}) {
+  const force = options.force === true;
+  const now = Date.now();
+
+  if (
+    !force &&
+    cachedStatusFeed &&
+    now - cachedStatusFeedAt <= STATUS_FEED_CACHE_TTL_MS
+  ) {
+    return cachedStatusFeed;
+  }
+
+  if (statusFeedInFlight) {
+    if (cachedStatusFeed) return cachedStatusFeed;
+    return statusFeedInFlight;
+  }
+
+  statusFeedInFlight = loadDimoStatusFeed()
+    .then((feed) => {
+      cachedStatusFeed = feed;
+      cachedStatusFeedAt = Date.now();
+      return feed;
+    })
+    .finally(() => {
+      statusFeedInFlight = null;
+    });
+
+  return statusFeedInFlight;
 }
 
 module.exports = {
