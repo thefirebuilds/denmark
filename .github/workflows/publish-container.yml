@@ -14,6 +14,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
 
+    outputs:
+      image_name: ${{ steps.image.outputs.name }}
+      image_sha: ${{ github.sha }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -55,3 +59,25 @@ jobs:
             grep -q "node ../setup/bootstrap-db.js" /app/server/package.json
             grep -q "node ../setup/verify-db-bootstrap.js" /app/server/package.json
           '
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: publish
+    environment: production
+
+    steps:
+      - name: Deploy app on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            cd /opt/denmark
+
+            docker compose pull app
+            docker compose up -d --force-recreate app
+
+            docker image prune -f
