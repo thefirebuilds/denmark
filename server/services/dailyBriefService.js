@@ -356,7 +356,18 @@ async function collectDailyBriefContext(options = {}) {
       MAX(message_timestamp) FILTER (
         WHERE status = 'unread'
           AND COALESCE(message_type, '') NOT IN ('payment_notice', 'renter_activity')
-      ) AS newest_unread_at
+      ) AS newest_unread_at,
+      (
+        SELECT COALESCE(jsonb_object_agg(message_type, message_count), '{}'::jsonb)
+        FROM (
+          SELECT
+            COALESCE(NULLIF(message_type, ''), 'unknown') AS message_type,
+            COUNT(*)::int AS message_count
+          FROM messages
+          WHERE status = 'unread'
+          GROUP BY COALESCE(NULLIF(message_type, ''), 'unknown')
+        ) unread_by_type
+      ) AS unread_by_type
     FROM messages
   `;
 
@@ -773,6 +784,12 @@ async function collectDailyBriefContext(options = {}) {
       unreadGuestMessageCount: Number(messages.unread_guest_message_count || 0),
       actionableGuestThreadCount: Number(messages.actionable_guest_thread_count || 0),
       newestUnreadAt: messages.newest_unread_at || null,
+      unreadByType:
+        messages.unread_by_type &&
+        typeof messages.unread_by_type === "object" &&
+        !Array.isArray(messages.unread_by_type)
+          ? messages.unread_by_type
+          : {},
     },
     operations: {
       latestBookedTrip: mapLatestBookedTrip(operations.latest_booking),
@@ -815,7 +832,8 @@ function buildBriefPrompt(context) {
         "Include a Monthly Projection section using context.finance.monthlyProjection. Explain month-to-date revenue, booked remaining revenue, run-rate projection, and blendedProjectedRevenue.",
         "Prioritize New Trips Starting, Trips Ending Today, Trip Changes, closeout blockers, maintenance blockers, guest-message workload, and financial watchouts.",
         "For guest messages, lead with messages.actionableGuestThreadCount as the queue workload; mention messages.unreadGuestMessageCount only as raw message volume if useful.",
-        "Do not say there are no urgent guest messages unless the supplied context explicitly contains urgent guest-message classifications.",
+        "Do not mention messages.rawUnreadCount unless you also include the messages.unreadByType breakdown explaining what makes up that raw total.",
+        "Do not say there are no urgent guest messages or that urgent guest messages were flagged; this context does not include an urgency classifier.",
         "Keep it paste-ready for an internal morning post.",
         "Use short sections with bullets. Start with a one-line headline.",
         "Include exact money values where supplied.",
