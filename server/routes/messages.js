@@ -24,6 +24,7 @@ const BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES = Number.isFinite(
 )
   ? Math.max(0, bridgeEmailMismatchGraceMinutes)
   : 5;
+const TURNOVER_REFUEL_THRESHOLD_PERCENT = 95;
 
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
@@ -69,6 +70,12 @@ function toMoneyNumber(value) {
 function roundMoney(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+}
+
+function normalizeFuelPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return number <= 1 ? Math.round(number * 100) : Math.round(number);
 }
 
 function moneyDelta(actual, expected) {
@@ -991,6 +998,7 @@ function messageQueueRank(item) {
   if (item.type === "trip_overlap_detected") return 1;
   if (item.type === "late_toll_unbilled") return 1;
   if (item.type === "closeout_required") return 1;
+  if (item.type === "refuel_required") return 1;
   if (item.type === "inspection_export_required") return 2;
   if (item.type === "trip_booked" && item.is_booking_confirmation_task) return 2;
   if (item.type === "maintenance_required") return 3;
@@ -1058,6 +1066,15 @@ function compareQueueItems(a, b) {
   if (a.type === "closeout_required" && b.type === "closeout_required") {
     const aSortAt = new Date(a.closeout_sort_at || a.trip_end || 0).getTime();
     const bSortAt = new Date(b.closeout_sort_at || b.trip_end || 0).getTime();
+    const safeASortAt = Number.isFinite(aSortAt) ? aSortAt : 0;
+    const safeBSortAt = Number.isFinite(bSortAt) ? bSortAt : 0;
+
+    if (safeASortAt !== safeBSortAt) return safeBSortAt - safeASortAt;
+  }
+
+  if (a.type === "refuel_required" && b.type === "refuel_required") {
+    const aSortAt = new Date(a.refuel_sort_at || a.trip_end || 0).getTime();
+    const bSortAt = new Date(b.refuel_sort_at || b.trip_end || 0).getTime();
     const safeASortAt = Number.isFinite(aSortAt) ? aSortAt : 0;
     const safeBSortAt = Number.isFinite(bSortAt) ? bSortAt : 0;
 
@@ -1316,7 +1333,7 @@ function mapCloseoutNoticeRow(row) {
     closeout_expenses_pending: row.expenses_pending,
     closeout_tolls_pending: row.tolls_pending,
     closeout_fuel_low: fuelLow,
-    closeout_fuel_threshold: 97,
+    closeout_fuel_threshold: TURNOVER_REFUEL_THRESHOLD_PERCENT,
     closeout_latest_fuel_level: Number.isFinite(fuelLevel) ? fuelLevel : null,
     closeout_latest_fuel_source: row.latest_fuel_source,
     closeout_latest_fuel_at: row.latest_fuel_at,
@@ -1332,6 +1349,45 @@ function mapCloseoutNoticeRow(row) {
     has_tolls: row.has_tolls,
     closed_out: row.closed_out,
     created_at: row.trip_end,
+  };
+}
+
+function mapRefuelNoticeRow(row) {
+  const vehicleName = row.vehicle_nickname || row.vehicle_name || "vehicle";
+  const guestName = row.guest_name || "guest";
+  const fuelLevel = normalizeFuelPercent(row.latest_fuel_level);
+  const returnedAt = row.returned_at || row.trip_end;
+  const threshold = normalizeFuelPercent(row.refuel_threshold);
+
+  return {
+    id: `refuel:${row.trip_id}`,
+    messageId: `refuel:${row.trip_id}`,
+    subject: `${vehicleName} needs refueling`,
+    status: "read",
+    timestamp: returnedAt,
+    notification_created_at: returnedAt,
+    type: "refuel_required",
+    message_type: "refuel_required",
+    guest_name: guestName,
+    vehicle_name: row.vehicle_name,
+    vehicle_nickname: row.vehicle_nickname,
+    vehicle_vin: row.vehicle_vin,
+    reservation_id: row.reservation_id,
+    trip_id: row.trip_id,
+    trip_start: row.trip_start,
+    trip_end: row.trip_end,
+    trip_workflow_stage: row.workflow_stage,
+    trip_status: row.trip_status,
+    refuel_sort_at: returnedAt,
+    refuel_returned_at: returnedAt,
+    refuel_latest_fuel_level: fuelLevel,
+    refuel_latest_fuel_source: row.latest_fuel_source,
+    refuel_latest_fuel_at: row.latest_fuel_at,
+    refuel_threshold:
+      threshold == null ? TURNOVER_REFUEL_THRESHOLD_PERCENT : threshold,
+    refuel_next_trip_start: row.next_trip_start,
+    refuel_next_guest_name: row.next_guest_name,
+    created_at: returnedAt,
   };
 }
 
@@ -3359,7 +3415,7 @@ router.get("/", async (req, res) => {
         next_trip.trip_start AS next_trip_start,
         next_trip.guest_name AS next_guest_name,
         (
-          latest_fuel.fuel_level < 97
+          latest_fuel.fuel_level < ${TURNOVER_REFUEL_THRESHOLD_PERCENT}
           AND (
             next_trip.trip_start IS NULL
             OR next_trip.trip_start > NOW()
@@ -3420,7 +3476,7 @@ router.get("/", async (req, res) => {
             AND COALESCE(c.toll_review_status, '') NOT IN ('billed', 'waived')
           )
           OR (
-            latest_fuel.fuel_level < 97
+            latest_fuel.fuel_level < ${TURNOVER_REFUEL_THRESHOLD_PERCENT}
             AND (
               next_trip.trip_start IS NULL
               OR next_trip.trip_start > NOW()
@@ -3428,6 +3484,126 @@ router.get("/", async (req, res) => {
           )
         )
       ORDER BY c.trip_end DESC NULLS LAST, c.trip_id DESC
+      LIMIT 25
+    `;
+
+    const refuelSql = `
+      WITH refuel_candidates AS (
+        SELECT
+          t.id AS trip_id,
+          t.reservation_id,
+          t.guest_name,
+          t.vehicle_name,
+          v.nickname AS vehicle_nickname,
+          v.vin AS vehicle_vin,
+          t.turo_vehicle_id,
+          t.trip_start,
+          t.trip_end,
+          t.workflow_stage,
+          t.status AS trip_status,
+          MAX(COALESCE(ne.posted_at, ne.received_at)) AS returned_at
+        FROM trips t
+        LEFT JOIN vehicles v
+          ON (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+        LEFT JOIN notification_events ne
+          ON ne.reservation_id = t.reservation_id
+          AND ne.classification = 'trip_returned'
+          AND ne.received_at >= NOW() - INTERVAL '7 days'
+        WHERE t.trip_end >= NOW() - INTERVAL '7 days'
+          AND COALESCE(t.closed_out, false) = false
+          AND COALESCE(t.workflow_stage, '') <> 'canceled'
+          AND COALESCE(t.status, '') <> 'canceled'
+          AND (
+            t.trip_end <= NOW()
+            OR COALESCE(t.workflow_stage, '') IN ('turnaround', 'awaiting_expenses', 'complete', 'closed')
+            OR ne.id IS NOT NULL
+          )
+        GROUP BY
+          t.id,
+          t.reservation_id,
+          t.guest_name,
+          t.vehicle_name,
+          v.nickname,
+          v.vin,
+          t.turo_vehicle_id,
+          t.trip_start,
+          t.trip_end,
+          t.workflow_stage,
+          t.status
+      ),
+      candidate_vins AS (
+        SELECT DISTINCT LOWER(vehicle_vin) AS vin_key
+        FROM refuel_candidates
+        WHERE vehicle_vin IS NOT NULL
+      ),
+      latest_fuel AS (
+        SELECT DISTINCT ON (LOWER(s.vin))
+          LOWER(s.vin) AS vin_key,
+          s.fuel_level,
+          s.service_name,
+          COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) AS fuel_at
+        FROM vehicle_telemetry_snapshots s
+        JOIN candidate_vins cv
+          ON cv.vin_key = LOWER(s.vin)
+        WHERE s.fuel_level IS NOT NULL
+        ORDER BY
+          LOWER(s.vin),
+          COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
+          s.id DESC
+      )
+      SELECT
+        c.trip_id,
+        c.reservation_id,
+        c.guest_name,
+        c.vehicle_name,
+        c.vehicle_nickname,
+        c.vehicle_vin,
+        c.trip_start,
+        c.trip_end,
+        c.workflow_stage,
+        c.trip_status,
+        latest_fuel.fuel_level AS latest_fuel_level,
+        latest_fuel.service_name AS latest_fuel_source,
+        latest_fuel.fuel_at AS latest_fuel_at,
+        COALESCE(c.returned_at, c.trip_end) AS returned_at,
+        next_trip.trip_start AS next_trip_start,
+        next_trip.guest_name AS next_guest_name,
+        ${TURNOVER_REFUEL_THRESHOLD_PERCENT} AS refuel_threshold
+      FROM refuel_candidates c
+      JOIN latest_fuel
+        ON c.vehicle_vin IS NOT NULL
+        AND latest_fuel.vin_key = LOWER(c.vehicle_vin)
+      LEFT JOIN LATERAL (
+        SELECT nt.trip_start, nt.guest_name
+        FROM trips nt
+        WHERE nt.id <> c.trip_id
+          AND nt.trip_start > c.trip_end
+          AND COALESCE(nt.workflow_stage, '') <> 'canceled'
+          AND COALESCE(nt.status, '') <> 'canceled'
+          AND (
+            (
+              nt.turo_vehicle_id IS NOT NULL
+              AND c.turo_vehicle_id IS NOT NULL
+              AND CAST(nt.turo_vehicle_id AS text) = CAST(c.turo_vehicle_id AS text)
+            )
+            OR (
+              COALESCE(nt.vehicle_name, '') <> ''
+              AND COALESCE(c.vehicle_nickname, '') <> ''
+              AND LOWER(nt.vehicle_name) = LOWER(c.vehicle_nickname)
+            )
+          )
+        ORDER BY nt.trip_start ASC
+        LIMIT 1
+      ) next_trip ON true
+      WHERE latest_fuel.fuel_level < ${TURNOVER_REFUEL_THRESHOLD_PERCENT}
+      ORDER BY COALESCE(c.returned_at, c.trip_end) DESC NULLS LAST, c.trip_id DESC
       LIMIT 25
     `;
 
@@ -3600,6 +3776,9 @@ router.get("/", async (req, res) => {
     const closeoutResult = fast
       ? EMPTY_QUERY_RESULT
       : await timeQueueQuery(queueTimings, "closeout", db.query(closeoutSql));
+    const refuelResult = fast
+      ? EMPTY_QUERY_RESULT
+      : await timeQueueQuery(queueTimings, "refuel", db.query(refuelSql));
     const lateTollResult = fast
       ? EMPTY_QUERY_RESULT
       : await timeQueueQuery(queueTimings, "lateToll", db.query(lateTollSql));
@@ -3739,6 +3918,7 @@ router.get("/", async (req, res) => {
         ...attachedHandoffNotices,
         ...attachedInspectionExportNotices,
         ...closeoutResult.rows.map(mapCloseoutNoticeRow),
+        ...refuelResult.rows.map(mapRefuelNoticeRow),
         ...lateTollResult.rows.map(mapLateTollNoticeRow),
         ...overlapResult.rows.map(mapTripOverlapNoticeRow),
         ...visibleMessageRows.map(mapMessageRow),

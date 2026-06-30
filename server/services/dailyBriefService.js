@@ -109,6 +109,21 @@ function mapTripChange(row) {
   };
 }
 
+function mapLatestBookedTrip(row) {
+  if (!row) return null;
+  return {
+    timestamp: row.message_timestamp || row.created_at || row.trip_created_at,
+    guestName: row.guest_name,
+    vehicleName: row.vehicle_name || row.vehicle_nickname,
+    reservationId: row.reservation_id,
+    tripId: row.trip_id,
+    start: row.trip_start,
+    end: row.trip_end,
+    amount: row.amount == null ? null : Number(row.amount),
+    subject: row.subject,
+  };
+}
+
 function mapFleetStatusCandidate(row) {
   const revenue = roundMoney(row.revenue);
   const costs = roundMoney(row.operating_cost);
@@ -389,6 +404,96 @@ async function collectDailyBriefContext(options = {}) {
     LIMIT 30
   `;
 
+  const operationsSql = `
+    WITH bounds AS (
+      SELECT $1::date AS day_start, ($1::date + INTERVAL '1 day') AS day_end
+    ),
+    fleet AS (
+      SELECT
+        v.id,
+        v.vin,
+        COALESCE(v.nickname, v.turo_vehicle_name, v.vin) AS vehicle_name,
+        v.turo_vehicle_id
+      FROM vehicles v
+      WHERE COALESCE(v.is_active, true) = true
+        AND COALESCE(v.in_service, true) = true
+    ),
+    active_today AS (
+      SELECT DISTINCT f.id AS vehicle_id
+      FROM fleet f
+      JOIN trips t
+        ON (
+          t.turo_vehicle_id IS NOT NULL
+          AND f.turo_vehicle_id IS NOT NULL
+          AND t.turo_vehicle_id = f.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(t.vehicle_name) = LOWER(f.vehicle_name)
+        )
+      CROSS JOIN bounds b
+      WHERE t.deleted_at IS NULL
+        AND COALESCE(t.workflow_stage, '') <> 'canceled'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND t.trip_start < b.day_end
+        AND t.trip_end >= b.day_start
+    ),
+    latest_booking AS (
+      SELECT
+        m.id,
+        m.subject,
+        m.guest_name,
+        COALESCE(v.nickname, t.vehicle_name, m.vehicle_name) AS vehicle_nickname,
+        COALESCE(t.vehicle_name, m.vehicle_name) AS vehicle_name,
+        m.reservation_id,
+        COALESCE(m.trip_id, t.id) AS trip_id,
+        COALESCE(m.amount, t.amount) AS amount,
+        m.message_timestamp,
+        m.created_at,
+        t.created_at AS trip_created_at,
+        t.trip_start,
+        t.trip_end
+      FROM messages m
+      LEFT JOIN trips t
+        ON t.id = m.trip_id
+        OR (
+          m.reservation_id IS NOT NULL
+          AND t.reservation_id IS NOT NULL
+          AND m.reservation_id = t.reservation_id
+        )
+      LEFT JOIN vehicles v
+        ON (
+          t.turo_vehicle_id IS NOT NULL
+          AND v.turo_vehicle_id = t.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, m.vehicle_name, '') <> ''
+          AND LOWER(COALESCE(v.nickname, v.turo_vehicle_name, '')) =
+            LOWER(COALESCE(t.vehicle_name, m.vehicle_name))
+        )
+      WHERE m.message_type = 'trip_booked'
+        AND COALESCE(t.workflow_stage, '') <> 'canceled'
+        AND COALESCE(t.status, '') <> 'canceled'
+      ORDER BY COALESCE(m.message_timestamp, m.created_at, t.created_at) DESC NULLS LAST, m.id DESC
+      LIMIT 1
+    )
+    SELECT
+      (SELECT COUNT(*) FROM fleet)::int AS active_fleet_count,
+      (SELECT COUNT(*) FROM active_today)::int AS occupied_vehicle_count,
+      (
+        SELECT COALESCE(jsonb_agg(vehicle_name ORDER BY vehicle_name), '[]'::jsonb)
+        FROM (
+          SELECT f.vehicle_name
+          FROM fleet f
+          JOIN active_today a ON a.vehicle_id = f.id
+        ) occupied
+      ) AS occupied_vehicle_names,
+      (
+        SELECT to_jsonb(latest_booking)
+        FROM latest_booking
+      ) AS latest_booking
+  `;
+
   const fleetStatusSql = `
     WITH bounds AS (
       SELECT
@@ -590,6 +695,7 @@ async function collectDailyBriefContext(options = {}) {
   const tasksResult = await client.query(tasksSql);
   const messageResult = await client.query(messageSql);
   const tripChangesResult = await client.query(tripChangesSql, params);
+  const operationsResult = await client.query(operationsSql, params);
   const fleetStatusResult = await client.query(fleetStatusSql, params);
   const financeResult = await client.query(financeSql, params);
 
@@ -624,6 +730,13 @@ async function collectDailyBriefContext(options = {}) {
   const finance = financeResult.rows[0] || {};
   const monthlyProjection = buildMonthlyProjection(finance);
   const messages = messageResult.rows[0] || {};
+  const operations = operationsResult.rows[0] || {};
+  const activeFleetCount = Number(operations.active_fleet_count || 0);
+  const occupiedVehicleCount = Number(operations.occupied_vehicle_count || 0);
+  const occupancyPercent =
+    activeFleetCount > 0
+      ? Math.round((occupiedVehicleCount / activeFleetCount) * 1000) / 10
+      : null;
   const tripChanges = tripChangesResult.rows.map(mapTripChange);
   const fleetStatus = selectFleetStatus(
     fleetStatusResult.rows.map(mapFleetStatusCandidate)
@@ -661,6 +774,17 @@ async function collectDailyBriefContext(options = {}) {
       actionableGuestThreadCount: Number(messages.actionable_guest_thread_count || 0),
       newestUnreadAt: messages.newest_unread_at || null,
     },
+    operations: {
+      latestBookedTrip: mapLatestBookedTrip(operations.latest_booking),
+      occupancy: {
+        occupiedVehicleCount,
+        activeFleetCount,
+        occupancyPercent,
+        occupiedVehicleNames: Array.isArray(operations.occupied_vehicle_names)
+          ? operations.occupied_vehicle_names
+          : [],
+      },
+    },
     fleetStatus,
     finance: {
       openingTripRevenue: roundMoney(finance.opening_trip_revenue),
@@ -680,6 +804,8 @@ function buildBriefPrompt(context) {
       instructions: [
         "Write a concise AM daily brief for the fleet operator.",
         "Use only the supplied JSON. Do not invent amounts, guests, vehicles, or tasks.",
+        "Near the top, note the last time a new trip was booked using context.operations.latestBookedTrip. Include the vehicle and guest if supplied.",
+        "Near the top, note today's fleet occupancy using context.operations.occupancy: occupiedVehicleCount / activeFleetCount and occupancyPercent.",
         "Use these exact trip section labels when relevant: New Trips Starting, Trips Ending Today, Trip Changes.",
         "Trip Changes can include new trips and changes to existing trips that occurred today; use context.trips.changesToday for that section.",
         "Avoid the labels Openings and Closings.",

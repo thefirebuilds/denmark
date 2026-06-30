@@ -30,6 +30,7 @@ const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 90 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
   "maintenance_required",
   "closeout_required",
+  "refuel_required",
   "late_toll_unbilled",
   "trip_overlap_detected",
 ]);
@@ -785,6 +786,20 @@ function buildMessageBody(message) {
     return `Trip ended${end ? ` ${end}` : ""}. ${reasonText}`;
   }
 
+  if (type === "refuel_required") {
+    const returned = formatTripTime(message?.refuel_returned_at || message?.trip_end);
+    const vehicle = message?.vehicle_nickname || message?.vehicle_name || "Vehicle";
+    const fuel =
+      message?.refuel_latest_fuel_level == null
+        ? "below threshold"
+        : `${Math.round(Number(message.refuel_latest_fuel_level))}%`;
+    const threshold = Math.round(Number(message?.refuel_threshold || 95));
+
+    return `${vehicle} is back at the parking spot${
+      returned ? ` as of ${returned}` : ""
+    } with ${fuel} fuel. Plan refueling before the next handoff; threshold is ${threshold}%.`;
+  }
+
   if (type === "late_toll_unbilled") {
     const count = Number(message?.late_toll_count || 0);
     const total = formatMoney(message?.late_toll_total) || "$0.00";
@@ -984,6 +999,10 @@ function buildMessageTitle(message) {
     return message?.notification_title || "Return location check";
   }
 
+  if (type === "refuel_required") {
+    return `${message?.vehicle_nickname || message?.vehicle_name || "Vehicle"} needs fuel`;
+  }
+
   if (type === "vehicle_diagnostic_alert") {
     return message?.vehicle_name || message?.vehicle_nickname || "Vehicle diagnostic";
   }
@@ -1018,6 +1037,7 @@ function buildMessageSub(message) {
   if (type === "handoff_ready_required") return "Handoff prep required";
   if (type === "inspection_export_required") return "Guest inspection export";
   if (type === "closeout_required") return "Trip closeout needed";
+  if (type === "refuel_required") return "Turnover refuel needed";
   if (type === "late_toll_unbilled") return "Late toll billing needed";
   if (type === "trip_overlap_detected") return "Trip overlap detected";
   if (type === "return_location_check") return "Verify return GPS";
@@ -1115,6 +1135,11 @@ function isInspectionExportTask(message) {
 function isCloseoutTask(message) {
   const type = message?.type || message?.message_type;
   return type === "closeout_required" && message?.trip_id;
+}
+
+function isRefuelTask(message) {
+  const type = message?.type || message?.message_type;
+  return type === "refuel_required" && message?.trip_id;
 }
 
 function isLateTollTask(message) {
@@ -3114,6 +3139,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canAdvanceHandoff = isHandoffReadyTask(message);
             const canExportInspection = isInspectionExportTask(message);
             const canCloseoutTrip = isCloseoutTask(message);
+            const canReviewRefuel = isRefuelTask(message);
             const canReviewLateToll = isLateTollTask(message);
             const canReviewOverlap = isTripOverlapTask(message);
             const canEditTripValues =
@@ -3164,6 +3190,7 @@ async function handleExportGuestInspectionSheet(message) {
               (canAdvanceHandoff ||
                 canExportInspection ||
                 canCloseoutTrip ||
+                canReviewRefuel ||
                 canReviewLateToll ||
                 canReviewOverlap ||
                 canReviewUnmatchedNotification ||
@@ -3177,6 +3204,7 @@ async function handleExportGuestInspectionSheet(message) {
               !canAdvanceHandoff &&
               !canExportInspection &&
               !canCloseoutTrip &&
+              !canReviewRefuel &&
               !canConfirmBooking &&
               !canShowMaintenance;
             const maintenanceExpanded =
@@ -3789,6 +3817,43 @@ async function handleExportGuestInspectionSheet(message) {
                   </div>
                 )}
 
+                {canReviewRefuel && (
+                  <div className="message-booking-task">
+                    <div className="message-booking-title">
+                      Refuel before turnover
+                      <span>
+                        {message.refuel_latest_fuel_level == null
+                          ? "fuel low"
+                          : `${Math.round(
+                              Number(message.refuel_latest_fuel_level)
+                            )}% fuel`}
+                      </span>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Vehicle back</span>
+                      <strong>
+                        {formatTripTime(
+                          message.refuel_returned_at || message.trip_end
+                        ) || "Recently"}
+                      </strong>
+                    </div>
+                    <div className="message-closeout-hint">
+                      Fuel gauge is below{" "}
+                      {Math.round(Number(message.refuel_threshold || 95))}%.
+                      {message.refuel_latest_fuel_at
+                        ? ` Last fuel reading ${formatTripTime(
+                            message.refuel_latest_fuel_at
+                          )}.`
+                        : ""}
+                      {message.refuel_next_trip_start
+                        ? ` Next trip starts ${formatTripTime(
+                            message.refuel_next_trip_start
+                          )}.`
+                        : ""}
+                    </div>
+                  </div>
+                )}
+
                 {canReviewLateToll && (
                   <div className="message-booking-task">
                     <div className="message-booking-title">
@@ -3948,6 +4013,7 @@ async function handleExportGuestInspectionSheet(message) {
                   canAdvanceHandoff ||
                   canExportInspection ||
                   canCloseoutTrip ||
+                  canReviewRefuel ||
                   canReviewLateToll ||
                   canEditTripValues ||
                   canCompleteSyntheticTask ||
@@ -3972,6 +4038,8 @@ async function handleExportGuestInspectionSheet(message) {
                           ? "Loading..."
                           : canCloseoutTrip
                           ? "Close out trip"
+                          : canReviewRefuel
+                          ? "Open trip"
                           : canReviewLateToll
                           ? "Review tolls"
                           : canReviewOverlap
