@@ -95,6 +95,108 @@ function mapTask(row) {
   };
 }
 
+function mapTripChange(row) {
+  return {
+    id: row.id,
+    type: row.message_type,
+    subject: row.subject,
+    guestName: row.guest_name,
+    vehicleName: row.vehicle_name || row.vehicle_nickname,
+    reservationId: row.reservation_id,
+    tripId: row.trip_id,
+    amount: row.amount == null ? null : Number(row.amount),
+    timestamp: row.message_timestamp || row.created_at,
+  };
+}
+
+function mapFleetStatusCandidate(row) {
+  const revenue = roundMoney(row.revenue);
+  const costs = roundMoney(row.operating_cost);
+  const netRevenue = roundMoney(revenue - costs);
+  const bookedDays = roundMoney(row.booked_days);
+  const avgDailyRate =
+    bookedDays > 0 ? roundMoney(revenue / bookedDays) : roundMoney(row.avg_daily_rate);
+  const bookingCount = Number(row.booking_count || 0);
+  const blockerTasks = Number(row.blocker_tasks || 0);
+  const highPriorityTasks = Number(row.high_priority_tasks || 0);
+  const openMaintenanceTasks = Number(row.open_maintenance_tasks || 0);
+  const blockerDays = roundMoney(row.blocker_days);
+  const issueTrips = Number(row.issue_trips || 0);
+  const chadScore = roundMoney(
+    netRevenue +
+      avgDailyRate * 1.5 +
+      bookingCount * 25 +
+      bookedDays * 10 -
+      blockerDays * 35 -
+      blockerTasks * 50 -
+      highPriorityTasks * 25 -
+      issueTrips * 25
+  );
+  const princessScore = roundMoney(
+    costs +
+      blockerDays * 75 +
+      blockerTasks * 100 +
+      highPriorityTasks * 50 +
+      openMaintenanceTasks * 15 +
+      issueTrips * 50 -
+      revenue * 0.2 -
+      bookingCount * 10
+  );
+
+  return {
+    vehicleId: row.vehicle_id,
+    vehicleName: row.vehicle_name,
+    revenue,
+    costs,
+    netRevenue,
+    bookedDays,
+    bookingCount,
+    avgDailyRate,
+    openMaintenanceTasks,
+    blockerTasks,
+    highPriorityTasks,
+    blockerDays,
+    issueTrips,
+    chadScore,
+    princessScore,
+  };
+}
+
+function selectFleetStatus(candidates) {
+  const ranked = Array.isArray(candidates) ? candidates : [];
+  const activeCandidates = ranked.filter(
+    (item) =>
+      item.bookingCount > 0 ||
+      item.revenue > 0 ||
+      item.costs > 0 ||
+      item.openMaintenanceTasks > 0
+  );
+  if (!activeCandidates.length) {
+    return {
+      lookbackDays: 10,
+      chad: null,
+      princess: null,
+      candidates: [],
+    };
+  }
+
+  const byChad = [...activeCandidates].sort(
+    (a, b) => b.chadScore - a.chadScore || b.netRevenue - a.netRevenue
+  );
+  const byPrincess = [...activeCandidates].sort(
+    (a, b) => b.princessScore - a.princessScore || b.costs - a.costs
+  );
+
+  return {
+    lookbackDays: 10,
+    chad: byChad[0] || null,
+    princess: byPrincess[0] || null,
+    candidates: activeCandidates
+      .sort((a, b) => b.chadScore - a.chadScore)
+      .slice(0, 8),
+  };
+}
+
 async function collectDailyBriefContext(options = {}) {
   const date = normalizeBriefDate(options.date);
   const timeZone = cleanText(options.timeZone, 80) || DEFAULT_TIME_ZONE;
@@ -173,13 +275,216 @@ async function collectDailyBriefContext(options = {}) {
 
   const messageSql = `
     SELECT
-      COUNT(*) FILTER (WHERE status = 'unread') AS unread_count,
+      COUNT(*) FILTER (WHERE status = 'unread') AS raw_unread_count,
       COUNT(*) FILTER (
         WHERE status = 'unread'
           AND message_type IN ('guest_message', 'guest_message_thread')
-      ) AS unread_guest_count,
-      MAX(message_timestamp) FILTER (WHERE status = 'unread') AS newest_unread_at
+      ) AS raw_unread_guest_count,
+      COUNT(*) FILTER (
+        WHERE status = 'unread'
+          AND COALESCE(message_type, '') NOT IN ('payment_notice', 'renter_activity')
+          AND NOT (
+            message_type = 'turo_notification'
+            AND trip_id IS NOT NULL
+            AND subject ILIKE '%upcoming trip%'
+          )
+      ) AS actionable_unread_count,
+      COUNT(*) FILTER (
+        WHERE status = 'unread'
+          AND message_type = 'guest_message'
+      ) AS unread_guest_message_count,
+      COUNT(DISTINCT CASE
+        WHEN status = 'unread'
+          AND message_type = 'guest_message'
+        THEN COALESCE(
+          CASE WHEN trip_id IS NOT NULL THEN 'trip:' || trip_id::text END,
+          CASE WHEN reservation_id IS NOT NULL THEN 'reservation:' || reservation_id::text END,
+          'guest:' || LOWER(COALESCE(guest_name, 'unknown')) || ':' || LOWER(COALESCE(vehicle_name, 'unknown'))
+        )
+      END) AS actionable_guest_thread_count,
+      MAX(message_timestamp) FILTER (
+        WHERE status = 'unread'
+          AND COALESCE(message_type, '') NOT IN ('payment_notice', 'renter_activity')
+      ) AS newest_unread_at
     FROM messages
+  `;
+
+  const tripChangesSql = `
+    WITH bounds AS (
+      SELECT $1::date AS day_start, ($1::date + INTERVAL '1 day') AS day_end
+    )
+    SELECT
+      m.id,
+      m.message_type,
+      m.subject,
+      m.guest_name,
+      COALESCE(v.nickname, t.vehicle_name, m.vehicle_name) AS vehicle_nickname,
+      COALESCE(t.vehicle_name, m.vehicle_name) AS vehicle_name,
+      m.reservation_id,
+      COALESCE(m.trip_id, t.id) AS trip_id,
+      m.amount,
+      m.message_timestamp,
+      m.created_at
+    FROM messages m
+    LEFT JOIN trips t
+      ON t.id = m.trip_id
+      OR (
+        m.reservation_id IS NOT NULL
+        AND t.reservation_id IS NOT NULL
+        AND m.reservation_id = t.reservation_id
+      )
+    LEFT JOIN vehicles v
+      ON (
+        t.turo_vehicle_id IS NOT NULL
+        AND v.turo_vehicle_id = t.turo_vehicle_id
+      )
+      OR (
+        COALESCE(t.vehicle_name, m.vehicle_name, '') <> ''
+        AND LOWER(COALESCE(v.nickname, v.turo_vehicle_name, '')) =
+          LOWER(COALESCE(t.vehicle_name, m.vehicle_name))
+      )
+    CROSS JOIN bounds b
+    WHERE COALESCE(m.message_timestamp, m.created_at) >= b.day_start
+      AND COALESCE(m.message_timestamp, m.created_at) < b.day_end
+      AND m.message_type IN ('trip_booked', 'trip_changed')
+      AND COALESCE(t.workflow_stage, '') <> 'canceled'
+      AND COALESCE(t.status, '') <> 'canceled'
+    ORDER BY COALESCE(m.message_timestamp, m.created_at) DESC, m.id DESC
+    LIMIT 30
+  `;
+
+  const fleetStatusSql = `
+    WITH bounds AS (
+      SELECT
+        ($1::date + INTERVAL '1 day') AS range_end,
+        ($1::date + INTERVAL '1 day' - INTERVAL '10 days') AS range_start
+    ),
+    fleet AS (
+      SELECT
+        v.id,
+        v.vin,
+        COALESCE(v.nickname, v.turo_vehicle_name, v.vin) AS vehicle_name,
+        v.turo_vehicle_id
+      FROM vehicles v
+      WHERE COALESCE(v.is_active, true) = true
+        AND COALESCE(v.in_service, true) = true
+    ),
+    trip_vehicle AS (
+      SELECT
+        t.*,
+        f.id AS vehicle_id,
+        f.vehicle_name
+      FROM trips t
+      JOIN fleet f
+        ON (
+          t.turo_vehicle_id IS NOT NULL
+          AND f.turo_vehicle_id IS NOT NULL
+          AND t.turo_vehicle_id = f.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(t.vehicle_name) = LOWER(f.vehicle_name)
+        )
+      CROSS JOIN bounds b
+      WHERE t.deleted_at IS NULL
+        AND COALESCE(t.workflow_stage, '') <> 'canceled'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND t.trip_start < b.range_end
+        AND t.trip_end >= b.range_start
+    ),
+    trip_metrics AS (
+      SELECT
+        tv.vehicle_id,
+        COUNT(*)::int AS booking_count,
+        COALESCE(SUM(COALESCE(tf.host_payout, tv.amount, 0)), 0) AS revenue,
+        COALESCE(SUM(
+          GREATEST(
+            0,
+            EXTRACT(EPOCH FROM (
+              LEAST(tv.trip_end, b.range_end) - GREATEST(tv.trip_start, b.range_start)
+            )) / 86400.0
+          )
+        ), 0) AS booked_days,
+        COUNT(*) FILTER (WHERE COALESCE(tf.issue_flag, false) = true)::int AS issue_trips
+      FROM trip_vehicle tv
+      CROSS JOIN bounds b
+      LEFT JOIN trip_financial_facts tf ON tf.trip_id = tv.id
+      GROUP BY tv.vehicle_id
+    ),
+    expense_vehicle AS (
+      SELECT
+        COALESCE(e.vehicle_id::bigint, tv.vehicle_id) AS vehicle_id,
+        e.price,
+        e.tax
+      FROM expenses e
+      CROSS JOIN bounds b
+      LEFT JOIN trip_vehicle tv ON tv.id = e.trip_id
+      WHERE e.date >= b.range_start::date
+        AND e.date < b.range_end::date
+        AND COALESCE(e.is_capitalized, false) = false
+    ),
+    expense_metrics AS (
+      SELECT
+        vehicle_id,
+        COALESCE(SUM(COALESCE(price, 0) + COALESCE(tax, 0)), 0) AS operating_cost
+      FROM expense_vehicle
+      WHERE vehicle_id IS NOT NULL
+      GROUP BY vehicle_id
+    ),
+    maintenance_metrics AS (
+      SELECT
+        f.id AS vehicle_id,
+        COUNT(*) FILTER (
+          WHERE mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+        )::int AS open_maintenance_tasks,
+        COUNT(*) FILTER (
+          WHERE mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+            AND (mt.blocks_rental = true OR mt.blocks_guest_export = true)
+        )::int AS blocker_tasks,
+        COUNT(*) FILTER (
+          WHERE mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+            AND mt.priority IN ('urgent', 'high')
+        )::int AS high_priority_tasks,
+        COALESCE(SUM(
+          CASE
+            WHEN mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+              AND (mt.blocks_rental = true OR mt.blocks_guest_export = true)
+            THEN GREATEST(
+              0,
+              EXTRACT(EPOCH FROM (
+                b.range_end - GREATEST(mt.created_at::timestamptz, b.range_start)
+              )) / 86400.0
+            )
+            ELSE 0
+          END
+        ), 0) AS blocker_days
+      FROM fleet f
+      CROSS JOIN bounds b
+      LEFT JOIN maintenance_tasks mt ON mt.vehicle_vin = f.vin
+      GROUP BY f.id
+    )
+    SELECT
+      f.id AS vehicle_id,
+      f.vehicle_name,
+      COALESCE(tm.booking_count, 0) AS booking_count,
+      COALESCE(tm.revenue, 0) AS revenue,
+      COALESCE(tm.booked_days, 0) AS booked_days,
+      CASE
+        WHEN COALESCE(tm.booked_days, 0) > 0
+        THEN COALESCE(tm.revenue, 0) / tm.booked_days
+        ELSE 0
+      END AS avg_daily_rate,
+      COALESCE(tm.issue_trips, 0) AS issue_trips,
+      COALESCE(em.operating_cost, 0) AS operating_cost,
+      COALESCE(mm.open_maintenance_tasks, 0) AS open_maintenance_tasks,
+      COALESCE(mm.blocker_tasks, 0) AS blocker_tasks,
+      COALESCE(mm.high_priority_tasks, 0) AS high_priority_tasks,
+      COALESCE(mm.blocker_days, 0) AS blocker_days
+    FROM fleet f
+    LEFT JOIN trip_metrics tm ON tm.vehicle_id = f.id
+    LEFT JOIN expense_metrics em ON em.vehicle_id = f.id
+    LEFT JOIN maintenance_metrics mm ON mm.vehicle_id = f.id
+    ORDER BY COALESCE(tm.revenue, 0) DESC, f.vehicle_name ASC
   `;
 
   const financeSql = `
@@ -224,6 +529,8 @@ async function collectDailyBriefContext(options = {}) {
   const tripsResult = await client.query(tripsSql, params);
   const tasksResult = await client.query(tasksSql);
   const messageResult = await client.query(messageSql);
+  const tripChangesResult = await client.query(tripChangesSql, params);
+  const fleetStatusResult = await client.query(fleetStatusSql, params);
   const financeResult = await client.query(financeSql, params);
 
   const trips = tripsResult.rows.map(mapTrip);
@@ -256,6 +563,10 @@ async function collectDailyBriefContext(options = {}) {
   const tasks = tasksResult.rows.map(mapTask);
   const finance = financeResult.rows[0] || {};
   const messages = messageResult.rows[0] || {};
+  const tripChanges = tripChangesResult.rows.map(mapTripChange);
+  const fleetStatus = selectFleetStatus(
+    fleetStatusResult.rows.map(mapFleetStatusCandidate)
+  );
 
   return {
     date,
@@ -264,8 +575,11 @@ async function collectDailyBriefContext(options = {}) {
     trips: {
       opening: openingTrips,
       closing: closingTrips,
+      newTripsStarting: openingTrips,
+      tripsEndingToday: closingTrips,
       active: activeTrips,
       pendingCloseouts,
+      changesToday: tripChanges,
     },
     tasks: {
       totalOpen: tasks.length,
@@ -278,10 +592,15 @@ async function collectDailyBriefContext(options = {}) {
       sample: tasks.slice(0, 12),
     },
     messages: {
-      unreadCount: Number(messages.unread_count || 0),
-      unreadGuestCount: Number(messages.unread_guest_count || 0),
+      unreadCount: Number(messages.actionable_unread_count || 0),
+      unreadGuestCount: Number(messages.actionable_guest_thread_count || 0),
+      rawUnreadCount: Number(messages.raw_unread_count || 0),
+      rawUnreadGuestCount: Number(messages.raw_unread_guest_count || 0),
+      unreadGuestMessageCount: Number(messages.unread_guest_message_count || 0),
+      actionableGuestThreadCount: Number(messages.actionable_guest_thread_count || 0),
       newestUnreadAt: messages.newest_unread_at || null,
     },
+    fleetStatus,
     finance: {
       openingTripRevenue: roundMoney(finance.opening_trip_revenue),
       closingTripRevenue: roundMoney(finance.closing_trip_revenue),
@@ -299,7 +618,15 @@ function buildBriefPrompt(context) {
       instructions: [
         "Write a concise AM daily brief for the fleet operator.",
         "Use only the supplied JSON. Do not invent amounts, guests, vehicles, or tasks.",
-        "Prioritize today's openings, today's closings, closeout blockers, maintenance blockers, guest-message urgency, and financial watchouts.",
+        "Use these exact trip section labels when relevant: New Trips Starting, Trips Ending Today, Trip Changes.",
+        "Trip Changes can include new trips and changes to existing trips that occurred today; use context.trips.changesToday for that section.",
+        "Avoid the labels Openings and Closings.",
+        "Include a Chad Status section using context.fleetStatus.chad: the best recent performer over the lookback window.",
+        "Include a Princess Status section using context.fleetStatus.princess: the vehicle creating the most cost, downtime, or maintenance drag over the lookback window.",
+        "For Chad and Princess, cite the useful metrics supplied: netRevenue, revenue, costs, bookingCount, avgDailyRate, blockerTasks, blockerDays, issueTrips, and lookbackDays.",
+        "Prioritize New Trips Starting, Trips Ending Today, Trip Changes, closeout blockers, maintenance blockers, guest-message workload, and financial watchouts.",
+        "For guest messages, lead with messages.actionableGuestThreadCount as the queue workload; mention messages.unreadGuestMessageCount only as raw message volume if useful.",
+        "Do not say there are no urgent guest messages unless the supplied context explicitly contains urgent guest-message classifications.",
         "Keep it paste-ready for an internal morning post.",
         "Use short sections with bullets. Start with a one-line headline.",
         "Include exact money values where supplied.",

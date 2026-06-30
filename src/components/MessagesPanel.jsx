@@ -24,6 +24,7 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
 const LIVE_MESSAGE_CACHE_STORAGE_KEY = "denmark.liveMessageQueue";
+const DAILY_BRIEF_DISPLAY_STORAGE_KEY = "denmark.dailyBriefDisplay";
 const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
 const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 90 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
@@ -141,6 +142,29 @@ function saveCompletedSyntheticTaskIds(ids) {
     window.localStorage.setItem(
       COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY,
       JSON.stringify([...ids])
+    );
+  } catch {
+    // localStorage may be unavailable in privacy modes.
+  }
+}
+
+function loadDailyBriefDisplayState() {
+  try {
+    const raw = window.localStorage.getItem(DAILY_BRIEF_DISPLAY_STORAGE_KEY);
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveDailyBriefDisplayState(state) {
+  try {
+    window.localStorage.setItem(
+      DAILY_BRIEF_DISPLAY_STORAGE_KEY,
+      JSON.stringify(state || {})
     );
   } catch {
     // localStorage may be unavailable in privacy modes.
@@ -670,6 +694,25 @@ function getMaintenanceNoticeCopy(message) {
   };
 }
 
+function getMaintenanceBriefEntryCopy(entry) {
+  const mode = entry?.maintenance_mode;
+  const state = entry?.trip_state;
+
+  if (mode === "during_trip") {
+    return state === "active" ? "Due during current trip" : "May come due during trip";
+  }
+
+  if (mode === "after_return" || state === "active") {
+    return "Plan after return";
+  }
+
+  if (state === "upcoming") {
+    return "Before next handoff";
+  }
+
+  return "Available now";
+}
+
 function getMaintenanceVehicleKey(message) {
   return (
     message?.maintenance_vehicle_name ||
@@ -687,12 +730,25 @@ function buildMessageBody(message) {
     if (generated) parts.push(`Generated ${generated}`);
     if (message?.daily_brief_unread_guest_count != null) {
       const count = Number(message.daily_brief_unread_guest_count || 0);
-      parts.push(`${count} unread guest message${count === 1 ? "" : "s"}`);
+      parts.push(`${count} guest thread${count === 1 ? "" : "s"}`);
     }
     if (message?.daily_brief_month_to_date_revenue != null) {
       parts.push(`${formatMoney(message.daily_brief_month_to_date_revenue)} MTD`);
     }
     return parts.join(" | ") || "Morning fleet briefing is ready.";
+  }
+
+  if (type === "maintenance_brief") {
+    const today = Number(message?.maintenance_brief_today_count || 0);
+    const future = Number(message?.maintenance_brief_future_count || 0);
+    const tasks = Number(message?.maintenance_task_count || 0);
+    const todayText = `${today} vehicle${today === 1 ? "" : "s"} can be handled today`;
+    const futureText = `${future} future watchlist vehicle${
+      future === 1 ? "" : "s"
+    }`;
+    return `${todayText}; ${futureText}. ${tasks} maintenance item${
+      tasks === 1 ? "" : "s"
+    } total.`;
   }
 
   if (type === "handoff_ready_required") {
@@ -917,6 +973,10 @@ function buildMessageTitle(message) {
     return "Daily fleet brief";
   }
 
+  if (type === "maintenance_brief") {
+    return "Maintenance brief";
+  }
+
   if (type === "return_location_check") {
     const guest = message?.guest_name;
     const vehicle = message?.vehicle_name || message?.vehicle_nickname;
@@ -954,6 +1014,7 @@ function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
 
   if (type === "daily_brief") return "AM briefing";
+  if (type === "maintenance_brief") return "Fleet maintenance rollup";
   if (type === "handoff_ready_required") return "Handoff prep required";
   if (type === "inspection_export_required") return "Guest inspection export";
   if (type === "closeout_required") return "Trip closeout needed";
@@ -1036,6 +1097,11 @@ function isMaintenanceNotice(message) {
   return type === "maintenance_required" && message?.trip_id;
 }
 
+function isMaintenanceBriefNotice(message) {
+  const type = message?.type || message?.message_type;
+  return type === "maintenance_brief";
+}
+
 function isHandoffReadyTask(message) {
   const type = message?.type || message?.message_type;
   return type === "handoff_ready_required" && message?.trip_id;
@@ -1094,6 +1160,16 @@ function isGoogleCalendarReconnectNotice(message) {
 function isDailyBriefNotice(message) {
   const type = message?.type || message?.message_type;
   return type === "daily_brief" && Boolean(message?.daily_brief_text);
+}
+
+function getDailyBriefDisplayKey(message) {
+  return String(
+    message?.id ||
+      message?.message_id ||
+      message?.daily_brief_date ||
+      message?.daily_brief_generated_at ||
+      "daily-brief"
+  );
 }
 
 function getGuestReplySuggestionKey(message) {
@@ -1641,6 +1717,9 @@ export default function MessagesPanel({
   const [replySuggestionErrors, setReplySuggestionErrors] = useState({});
   const [copiedReplySuggestionId, setCopiedReplySuggestionId] = useState(null);
   const [copiedDailyBriefId, setCopiedDailyBriefId] = useState(null);
+  const [dailyBriefDisplay, setDailyBriefDisplay] = useState(() =>
+    loadDailyBriefDisplayState()
+  );
   const [expandedMaintenanceIds, setExpandedMaintenanceIds] = useState(() => new Set());
   const [completedSyntheticTaskIds, setCompletedSyntheticTaskIds] = useState(() =>
     loadCompletedSyntheticTaskIds()
@@ -2423,6 +2502,15 @@ async function handleExportGuestInspectionSheet(message) {
     }
   }
 
+  function setDailyBriefDisplayMode(message, mode) {
+    const key = getDailyBriefDisplayKey(message);
+    setDailyBriefDisplay((prev) => {
+      const next = { ...prev, [key]: mode };
+      saveDailyBriefDisplayState(next);
+      return next;
+    });
+  }
+
   async function loadMessages(isInitialLoad = false) {
     let statusLabel = "";
     try {
@@ -3007,10 +3095,17 @@ async function handleExportGuestInspectionSheet(message) {
             const replySuggestion = replySuggestions[replySuggestionKey] || "";
             const replySuggestionError =
               replySuggestionErrors[replySuggestionKey] || "";
+            const dailyBriefDisplayKey = getDailyBriefDisplayKey(message);
+            const dailyBriefMode = dailyBriefDisplay[dailyBriefDisplayKey] || "open";
+            const isDailyBriefMinimized =
+              canShowDailyBrief && dailyBriefMode === "minimized";
+            const isDailyBriefDismissed =
+              canShowDailyBrief && dailyBriefMode === "dismissed";
             const canConfirmBooking = isBookingConfirmationTask(message);
             const canShowOperationalTripNotice =
               isOperationalTripNotice(message) && !canConfirmBooking;
             const canShowMaintenance = isMaintenanceNotice(message);
+            const canShowMaintenanceBrief = isMaintenanceBriefNotice(message);
             const maintenanceVehicleKey = getMaintenanceVehicleKey(message);
             const hasMaintenanceDetails =
               Number(message.maintenance_task_count || 0) > 0 &&
@@ -3081,6 +3176,10 @@ async function handleExportGuestInspectionSheet(message) {
             ).length;
             const canShowInvoiceSummary = isReimbursementInvoiceMessage(message);
 
+            if (isDailyBriefDismissed) {
+              return null;
+            }
+
             return (
               <article
                 key={message.id}
@@ -3117,11 +3216,15 @@ async function handleExportGuestInspectionSheet(message) {
                   </div>
                 </div>
 
-                <div className="message-body">{buildMessageBody(message)}</div>
+                {!isDailyBriefDismissed && (
+                  <div className="message-body">{buildMessageBody(message)}</div>
+                )}
 
-                {canShowDailyBrief && (
+                {canShowDailyBrief && !isDailyBriefDismissed && (
                   <div
-                    className="message-daily-brief"
+                    className={`message-daily-brief ${
+                      isDailyBriefMinimized ? "message-daily-brief--minimized" : ""
+                    }`}
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div className="message-booking-title">
@@ -3132,10 +3235,25 @@ async function handleExportGuestInspectionSheet(message) {
                           "Latest"}
                       </span>
                     </div>
-                    <p className="message-daily-brief-text">
-                      {message.daily_brief_text}
-                    </p>
+                    {!isDailyBriefMinimized ? (
+                      <p className="message-daily-brief-text">
+                        {message.daily_brief_text}
+                      </p>
+                    ) : null}
                     <div className="message-guest-reply-actions">
+                      <button
+                        type="button"
+                        className="message-action"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDailyBriefDisplayMode(
+                            message,
+                            isDailyBriefMinimized ? "open" : "minimized"
+                          );
+                        }}
+                      >
+                        {isDailyBriefMinimized ? "Expand" : "Minimize"}
+                      </button>
                       <button
                         type="button"
                         className="message-action"
@@ -3149,7 +3267,101 @@ async function handleExportGuestInspectionSheet(message) {
                           ? "Copied"
                           : "Copy text"}
                       </button>
+                      <button
+                        type="button"
+                        className="message-action"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDailyBriefDisplayMode(message, "dismissed");
+                        }}
+                      >
+                        Close
+                      </button>
                     </div>
+                  </div>
+                )}
+
+                {canShowMaintenanceBrief && (
+                  <div
+                    className="message-maintenance-brief"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {[
+                      {
+                        key: "today",
+                        title: "Can do today",
+                        items: message.maintenance_brief_today || [],
+                      },
+                      {
+                        key: "future",
+                        title: "Future watchlist",
+                        items: message.maintenance_brief_future || [],
+                      },
+                    ].map((section) => (
+                      <div
+                        key={section.key}
+                        className="message-maintenance-brief-section"
+                      >
+                        <div className="message-booking-title">
+                          {section.title}
+                          <span>
+                            {section.items.length} vehicle
+                            {section.items.length === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                        {section.items.length ? (
+                          <div className="message-maintenance-list">
+                            {section.items.slice(0, 6).map((entry) => (
+                              <div
+                                key={`${section.key}:${
+                                  entry.vehicle_vin ||
+                                  entry.trip_id ||
+                                  entry.vehicle_name
+                                }`}
+                                className="message-maintenance-item message-maintenance-brief-item"
+                              >
+                                <div>
+                                  <strong>
+                                    {entry.vehicle_name || "Vehicle"}
+                                  </strong>
+                                  <span>
+                                    {getMaintenanceBriefEntryCopy(entry)} -{" "}
+                                    {formatMaintenancePlanDate(entry.available_at)}
+                                  </span>
+                                  {(entry.tasks || []).slice(0, 3).map((task) => (
+                                    <span key={task.id || task.title}>
+                                      {task.title || "Maintenance task"}
+                                      {Number(task.duplicate_count || 0) > 1
+                                        ? ` (${Number(
+                                            task.duplicate_count
+                                          )} grouped)`
+                                        : ""}
+                                    </span>
+                                  ))}
+                                  {Number(entry.task_count || 0) > 3 ? (
+                                    <span>
+                                      +{Number(entry.task_count || 0) - 3} more
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <em>
+                                  {entry.has_high_priority ? "high" : "plan"}
+                                </em>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="message-maintenance-empty">
+                            Nothing in this bucket.
+                          </div>
+                        )}
+                        {section.items.length > 6 ? (
+                          <div className="message-maintenance-more">
+                            +{section.items.length - 6} more vehicles
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
                   </div>
                 )}
 

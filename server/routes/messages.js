@@ -978,6 +978,7 @@ function messageQueueRank(item) {
   }
   if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
   if (item.type === "daily_brief") return -2;
+  if (item.type === "maintenance_brief") return -2;
   if (item.type === "google_calendar_reconnect_required") return -2;
   if (item.type === "return_location_check") return -2;
   if (item.type === "notification_unmatched") return -2;
@@ -1463,6 +1464,101 @@ function mapMaintenanceNoticeRow(row) {
   };
 }
 
+function buildMaintenanceBriefEntry(notice) {
+  const tripState =
+    notice.trip_start &&
+    notice.trip_end &&
+    new Date(notice.trip_start).getTime() <= Date.now() &&
+    new Date(notice.trip_end).getTime() > Date.now()
+      ? "active"
+      : notice.trip_start && new Date(notice.trip_start).getTime() > Date.now()
+      ? "upcoming"
+      : "home";
+  const mode = notice.maintenance_tasks.some(
+    (task) => task?.planning_mode === "during_trip"
+  )
+    ? "during_trip"
+    : notice.maintenance_tasks.some((task) => task?.planning_mode === "after_return")
+    ? "after_return"
+    : "standard";
+
+  return {
+    vehicle_name: notice.maintenance_vehicle_name || notice.vehicle_name || "Vehicle",
+    vehicle_vin: notice.maintenance_vehicle_vin || null,
+    trip_id: notice.trip_id,
+    reservation_id: notice.reservation_id,
+    guest_name: notice.guest_name,
+    trip_start: notice.trip_start,
+    trip_end: notice.trip_end,
+    trip_state: tripState,
+    maintenance_mode: mode,
+    available_at: notice.maintenance_available_at,
+    task_count: notice.maintenance_task_count,
+    open_task_record_count: notice.maintenance_open_task_record_count,
+    has_high_priority: notice.maintenance_has_high_priority,
+    tasks: notice.maintenance_tasks,
+  };
+}
+
+function buildMaintenanceBriefNotice(notices) {
+  const entries = (notices || [])
+    .filter((notice) => Number(notice?.maintenance_task_count || 0) > 0)
+    .map(buildMaintenanceBriefEntry);
+
+  if (!entries.length) return null;
+
+  const today = [];
+  const future = [];
+  for (const entry of entries) {
+    if (isMaintenanceAvailableToday(entry.available_at)) {
+      today.push(entry);
+    } else {
+      future.push(entry);
+    }
+  }
+
+  const sortByAvailableAt = (a, b) => {
+    const aTime = new Date(a.available_at || 0).getTime();
+    const bTime = new Date(b.available_at || 0).getTime();
+    const safeA = Number.isFinite(aTime) ? aTime : 0;
+    const safeB = Number.isFinite(bTime) ? bTime : 0;
+    if (safeA !== safeB) return safeA - safeB;
+    return String(a.vehicle_name || "").localeCompare(String(b.vehicle_name || ""));
+  };
+  today.sort(sortByAvailableAt);
+  future.sort(sortByAvailableAt);
+
+  const totalTasks = entries.reduce(
+    (sum, entry) => sum + Number(entry.task_count || 0),
+    0
+  );
+  const latestTaskAt = notices
+    .map((notice) => notice.created_at || notice.timestamp)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+  const dateKey = getLocalDateKey(new Date());
+  const todayLabel = `${today.length} vehicle${today.length === 1 ? "" : "s"} today`;
+  const futureLabel = `${future.length} upcoming`;
+
+  return {
+    id: `maintenance-brief:${dateKey}`,
+    messageId: `maintenance-brief:${dateKey}`,
+    subject: `Maintenance brief: ${todayLabel}, ${futureLabel}`,
+    status: "read",
+    timestamp: latestTaskAt || new Date().toISOString(),
+    notification_created_at: latestTaskAt || new Date().toISOString(),
+    type: "maintenance_brief",
+    message_type: "maintenance_brief",
+    maintenance_brief_today: today,
+    maintenance_brief_future: future,
+    maintenance_brief_vehicle_count: entries.length,
+    maintenance_brief_today_count: today.length,
+    maintenance_brief_future_count: future.length,
+    maintenance_task_count: totalTasks,
+    created_at: latestTaskAt || new Date().toISOString(),
+  };
+}
+
 function getDiagnosticDtcKey({ codes, hasMil, dtcCount }) {
   if (Array.isArray(codes) && codes.length) return codes.join("-");
   if (hasMil) return "mil-on-no-codes";
@@ -1670,6 +1766,9 @@ function mapDailyBriefNoticeRow(row) {
     daily_brief_month_to_date_revenue: finance.monthToDateRevenue ?? null,
     daily_brief_open_closeout_count: finance.openCloseoutCount ?? null,
     daily_brief_unread_guest_count: messages.unreadGuestCount ?? null,
+    daily_brief_unread_guest_message_count:
+      messages.unreadGuestMessageCount ?? null,
+    daily_brief_raw_unread_guest_count: messages.rawUnreadGuestCount ?? null,
     notification_title: "Daily fleet brief",
     notification_body: brief,
   };
@@ -2954,7 +3053,8 @@ router.get("/", async (req, res) => {
           open_vehicle_tasks.vehicle_vin,
           CASE
             WHEN active_trip.id IS NOT NULL THEN active_trip.trip_end
-            ELSE next_trip.trip_start
+            WHEN next_trip.id IS NOT NULL THEN next_trip.trip_start
+            ELSE NOW()
           END AS maintenance_available_at,
           open_vehicle_tasks.open_task_count,
           open_vehicle_tasks.latest_task_created_at,
@@ -3110,7 +3210,6 @@ router.get("/", async (req, res) => {
           ORDER BY upcoming.trip_start ASC NULLS LAST, upcoming.id ASC
           LIMIT 1
         ) next_trip ON true
-        WHERE COALESCE(next_trip.id, active_trip.id) IS NOT NULL
       )
       SELECT *
       FROM scheduled_vehicle_tasks
@@ -3580,6 +3679,8 @@ router.get("/", async (req, res) => {
     const visibleMaintenanceNotices = maintenanceNotices.filter(
       (item) => !prepTaskTripIds.has(Number(item.trip_id))
     );
+    const maintenanceBriefNotice =
+      buildMaintenanceBriefNotice(visibleMaintenanceNotices);
     const diagnosticNotices = [
       ...diagnosticResult.rows.map(mapVehicleDiagnosticNoticeRow),
       ...lowVoltageResult.rows.map(mapLowVoltageNoticeRow),
@@ -3643,7 +3744,7 @@ router.get("/", async (req, res) => {
         ...visibleMessageRows.map(mapMessageRow),
         ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
         ...visibleDiagnosticNotices,
-        ...visibleMaintenanceNotices,
+        ...(maintenanceBriefNotice ? [maintenanceBriefNotice] : []),
       ])
     )
       .sort(compareQueueItems)

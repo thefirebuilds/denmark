@@ -1069,6 +1069,8 @@ body {
 .message-guest-reply-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .message-guest-reply-error {
@@ -1101,6 +1103,10 @@ body {
   overflow-wrap: anywhere;
   font-size: 0.86rem;
   line-height: 1.42;
+}
+
+.message-daily-brief--minimized {
+  gap: 8px;
 }
 
 .message-closeout-guide .message-booking-task {
@@ -1137,6 +1143,39 @@ body {
 .message-maintenance-task--compact .message-maintenance-list,
 .message-maintenance-task--compact .message-maintenance-more {
   display: none;
+}
+
+.message-maintenance-brief {
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  background: #111c31;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 12px;
+}
+
+.message-maintenance-brief-section {
+  display: grid;
+  gap: 8px;
+}
+
+.message-maintenance-brief-section + .message-maintenance-brief-section {
+  border-top: 1px solid rgba(143, 162, 191, 0.14);
+  padding-top: 10px;
+}
+
+.message-maintenance-brief-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.message-maintenance-empty {
+  color: #8fa2bf;
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  border-radius: 8px;
+  padding: 8px 9px;
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .message-booking-title {
