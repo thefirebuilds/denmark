@@ -977,6 +977,7 @@ function messageQueueRank(item) {
     return -4;
   }
   if (isGuestMessageItem(item) || item.type === "guest_message_thread") return -3;
+  if (item.type === "daily_brief") return -2;
   if (item.type === "google_calendar_reconnect_required") return -2;
   if (item.type === "return_location_check") return -2;
   if (item.type === "notification_unmatched") return -2;
@@ -1620,6 +1621,57 @@ function mapGoogleCalendarReconnectNoticeRow(row) {
     calendar_synced_trips: Number(row.synced_trips || 0),
     notification_title: "Google Calendar reconnect required",
     notification_body: `Denmark cannot update ${calendarName}. Google returned ${error}. Reconnect Google Calendar so trip changes can update calendar events.`,
+  };
+}
+
+function mapDailyBriefNoticeRow(row) {
+  const value =
+    row.value && typeof row.value === "object" && !Array.isArray(row.value)
+      ? row.value
+      : {};
+  const brief = String(value.brief || "").trim();
+  const generatedAt =
+    value.generatedAt || value.savedAt || row.updated_at || new Date().toISOString();
+  const displayAt = row.updated_at || generatedAt;
+  const briefDate =
+    value.date ||
+    (generatedAt && !Number.isNaN(new Date(generatedAt).getTime())
+      ? new Date(generatedAt).toISOString().slice(0, 10)
+      : "latest");
+  const context =
+    value.context && typeof value.context === "object" && !Array.isArray(value.context)
+      ? value.context
+      : {};
+  const finance =
+    context.finance && typeof context.finance === "object" && !Array.isArray(context.finance)
+      ? context.finance
+      : {};
+  const messages =
+    context.messages && typeof context.messages === "object" && !Array.isArray(context.messages)
+      ? context.messages
+      : {};
+
+  return {
+    id: `daily-brief:${briefDate}`,
+    message_id: `daily-brief:${briefDate}`,
+    subject: "Daily fleet brief",
+    status: "read",
+    type: "daily_brief",
+    message_type: "daily_brief",
+    timestamp: displayAt,
+    display_at: displayAt,
+    created_at: displayAt,
+    message_timestamp: displayAt,
+    notification_created_at: generatedAt,
+    daily_brief_date: briefDate,
+    daily_brief_generated_at: generatedAt,
+    daily_brief_text: brief,
+    daily_brief_model: value.model || null,
+    daily_brief_month_to_date_revenue: finance.monthToDateRevenue ?? null,
+    daily_brief_open_closeout_count: finance.openCloseoutCount ?? null,
+    daily_brief_unread_guest_count: messages.unreadGuestCount ?? null,
+    notification_title: "Daily fleet brief",
+    notification_body: brief,
   };
 }
 
@@ -3425,6 +3477,15 @@ router.get("/", async (req, res) => {
       LIMIT 1
     `;
 
+    const dailyBriefSql = `
+      SELECT value, updated_at
+      FROM app_settings
+      WHERE key = 'ai.dailyBrief.latest'
+        AND COALESCE(NULLIF(value->>'brief', ''), '') <> ''
+        AND updated_at >= NOW() - INTERVAL '36 hours'
+      LIMIT 1
+    `;
+
     const bridgeSettings = await getBridgeAlertSettings();
     const androidBridgeEnabled = bridgeSettings.enabled !== false;
     const handoffResult = await timeQueueQuery(
@@ -3477,6 +3538,11 @@ router.get("/", async (req, res) => {
       queueTimings,
       "googleCalendarReconnect",
       db.query(googleCalendarReconnectSql)
+    );
+    const dailyBriefResult = await timeQueueQuery(
+      queueTimings,
+      "dailyBrief",
+      db.query(dailyBriefSql)
     );
 
     messagesResult.rows.forEach((row) => {
@@ -3567,6 +3633,7 @@ router.get("/", async (req, res) => {
 
     const queueItems = compactTripChangedNotices(
       compactGuestMessageThreads([
+        ...dailyBriefResult.rows.map(mapDailyBriefNoticeRow),
         ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
         ...attachedHandoffNotices,
         ...attachedInspectionExportNotices,

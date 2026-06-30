@@ -88,6 +88,23 @@ function clearLiveMessageQueueCache() {
   }
 }
 
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
 async function waitForExportAssetPaint(root) {
   await new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
@@ -664,6 +681,20 @@ function getMaintenanceVehicleKey(message) {
 
 function buildMessageBody(message) {
   const type = message?.type || message?.message_type;
+  if (type === "daily_brief") {
+    const generated = formatTripTime(message?.daily_brief_generated_at);
+    const parts = [];
+    if (generated) parts.push(`Generated ${generated}`);
+    if (message?.daily_brief_unread_guest_count != null) {
+      const count = Number(message.daily_brief_unread_guest_count || 0);
+      parts.push(`${count} unread guest message${count === 1 ? "" : "s"}`);
+    }
+    if (message?.daily_brief_month_to_date_revenue != null) {
+      parts.push(`${formatMoney(message.daily_brief_month_to_date_revenue)} MTD`);
+    }
+    return parts.join(" | ") || "Morning fleet briefing is ready.";
+  }
+
   if (type === "handoff_ready_required") {
     const start = formatTripTime(message?.trip_start);
     const vehicleName = message?.vehicle_nickname || message?.vehicle_name || "Vehicle";
@@ -882,6 +913,10 @@ function formatQueueTimingSummary(debugTiming) {
 
 function buildMessageTitle(message) {
   const type = message?.type || message?.message_type;
+  if (type === "daily_brief") {
+    return "Daily fleet brief";
+  }
+
   if (type === "return_location_check") {
     const guest = message?.guest_name;
     const vehicle = message?.vehicle_name || message?.vehicle_nickname;
@@ -918,6 +953,7 @@ function buildMessageTitle(message) {
 function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
 
+  if (type === "daily_brief") return "AM briefing";
   if (type === "handoff_ready_required") return "Handoff prep required";
   if (type === "inspection_export_required") return "Guest inspection export";
   if (type === "closeout_required") return "Trip closeout needed";
@@ -1053,6 +1089,11 @@ function isVehicleDiagnosticAlert(message) {
 function isGoogleCalendarReconnectNotice(message) {
   const type = message?.type || message?.message_type;
   return type === "google_calendar_reconnect_required";
+}
+
+function isDailyBriefNotice(message) {
+  const type = message?.type || message?.message_type;
+  return type === "daily_brief" && Boolean(message?.daily_brief_text);
 }
 
 function getGuestReplySuggestionKey(message) {
@@ -1599,6 +1640,7 @@ export default function MessagesPanel({
   const [replySuggestions, setReplySuggestions] = useState({});
   const [replySuggestionErrors, setReplySuggestionErrors] = useState({});
   const [copiedReplySuggestionId, setCopiedReplySuggestionId] = useState(null);
+  const [copiedDailyBriefId, setCopiedDailyBriefId] = useState(null);
   const [expandedMaintenanceIds, setExpandedMaintenanceIds] = useState(() => new Set());
   const [completedSyntheticTaskIds, setCompletedSyntheticTaskIds] = useState(() =>
     loadCompletedSyntheticTaskIds()
@@ -2351,19 +2393,7 @@ async function handleExportGuestInspectionSheet(message) {
     if (!text) return;
 
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.setAttribute("readonly", "");
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
+      await copyTextToClipboard(text);
 
       setCopiedReplySuggestionId(key);
       window.setTimeout(() => {
@@ -2374,6 +2404,22 @@ async function handleExportGuestInspectionSheet(message) {
         ...prev,
         [key]: "Could not copy text from this browser",
       }));
+    }
+  }
+
+  async function handleCopyDailyBrief(message) {
+    const key = String(message?.id || message?.message_id || "daily-brief");
+    const text = String(message?.daily_brief_text || "").trim();
+    if (!text) return;
+
+    try {
+      await copyTextToClipboard(text);
+      setCopiedDailyBriefId(key);
+      window.setTimeout(() => {
+        setCopiedDailyBriefId((current) => (current === key ? null : current));
+      }, 1800);
+    } catch (err) {
+      console.error("Could not copy daily brief:", err);
     }
   }
 
@@ -2953,6 +2999,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canReviewDiagnostic = isVehicleDiagnosticAlert(message);
             const canReconnectGoogleCalendar =
               isGoogleCalendarReconnectNotice(message);
+            const canShowDailyBrief = isDailyBriefNotice(message);
             const canReviewGuestThread =
               (message.type || message.message_type) === "guest_message_thread";
             const canSuggestGuestReply = isGuestReplySuggestionCandidate(message);
@@ -3071,6 +3118,40 @@ async function handleExportGuestInspectionSheet(message) {
                 </div>
 
                 <div className="message-body">{buildMessageBody(message)}</div>
+
+                {canShowDailyBrief && (
+                  <div
+                    className="message-daily-brief"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="message-booking-title">
+                      Morning brief
+                      <span>
+                        {formatTripTime(message.daily_brief_generated_at) ||
+                          message.daily_brief_date ||
+                          "Latest"}
+                      </span>
+                    </div>
+                    <p className="message-daily-brief-text">
+                      {message.daily_brief_text}
+                    </p>
+                    <div className="message-guest-reply-actions">
+                      <button
+                        type="button"
+                        className="message-action"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleCopyDailyBrief(message);
+                        }}
+                      >
+                        {copiedDailyBriefId ===
+                        String(message.id || message.message_id || "daily-brief")
+                          ? "Copied"
+                          : "Copy text"}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {canShowInvoiceSummary && (
                   <ReimbursementInvoiceSummary message={message} />
