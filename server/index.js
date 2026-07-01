@@ -34,11 +34,16 @@ process.on("SIGINT", () => {
 const PORT = process.env.PORT || 5000;
 const app = createApp({ port: PORT });
 
+// Track server startup time
+const SERVER_STARTUP_TIME = new Date();
+global.SERVER_STARTUP_TIME = SERVER_STARTUP_TIME;
+
 app.listen(PORT, () => {
   const authEnforced = isAuthEnforced();
   const oidcConfig = getOidcConfig();
 
   console.log(`[server] listening on http://localhost:${PORT}`);
+  console.log(`[server] startup time: ${SERVER_STARTUP_TIME.toISOString()}`);
   console.log(
     `[server] auth enforcement: ${authEnforced ? "ENABLED" : "DISABLED"}`
   );

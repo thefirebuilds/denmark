@@ -2002,6 +2002,21 @@ router.get("/stats", async (req, res) => {
     }
     const row = result.rows[0];
 
+    // Calculate server uptime
+    const serverStartTime = global.SERVER_STARTUP_TIME || new Date();
+    const serverUptimeMs = Date.now() - serverStartTime.getTime();
+    const serverUptimeMinutes = Math.floor(serverUptimeMs / 60000);
+    const serverUptimeHours = Math.floor(serverUptimeMinutes / 60);
+    const serverUptimeDays = Math.floor(serverUptimeHours / 24);
+    let uptimeLabel = "just started";
+    if (serverUptimeDays > 0) {
+      uptimeLabel = `${serverUptimeDays}d ${serverUptimeHours % 24}h uptime`;
+    } else if (serverUptimeHours > 0) {
+      uptimeLabel = `${serverUptimeHours}h ${serverUptimeMinutes % 60}m uptime`;
+    } else if (serverUptimeMinutes > 0) {
+      uptimeLabel = `${serverUptimeMinutes}m uptime`;
+    }
+
     const payload = {
       unread: Number(row.unread_count || 0),
       read: Number(row.read_count || 0),
@@ -2013,6 +2028,8 @@ router.get("/stats", async (req, res) => {
       unknown: Number(row.unknown_count || 0),
       total: Number(row.total_count || 0),
       lastReceived: row.last_received,
+      serverStartedAt: serverStartTime.toISOString(),
+      serverUptimeLabel: uptimeLabel,
       androidBridgeEnabled,
       androidBridgeSettings: bridgeSettings,
       bridgeHeartbeat: androidBridgeEnabled ? row.bridge_heartbeat || null : null,

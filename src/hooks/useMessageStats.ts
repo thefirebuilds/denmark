@@ -16,6 +16,7 @@ export function useMessageStats({
   const [messageStats, setMessageStats] = useState({
     unread: 0,
     lastReceived: null as string | null,
+    serverUptimeLabel: null as string | null,
   });
   const [messageStatsLoading, setMessageStatsLoading] = useState(true);
   const [messageStatsRefreshing, setMessageStatsRefreshing] = useState(false);
@@ -102,6 +103,7 @@ export function useMessageStats({
         setMessageStats({
           unread: nextUnread,
           lastReceived: data?.lastReceived ?? null,
+          serverUptimeLabel: data?.serverUptimeLabel ?? null,
         });
       }
     } catch (err) {
@@ -116,6 +118,7 @@ export function useMessageStats({
         setMessageStats({
           unread: 0,
           lastReceived: null,
+          serverUptimeLabel: null,
         });
       }
     } finally {

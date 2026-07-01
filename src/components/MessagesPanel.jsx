@@ -26,7 +26,7 @@ const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
 const LIVE_MESSAGE_CACHE_STORAGE_KEY = "denmark.liveMessageQueue";
 const DAILY_BRIEF_DISPLAY_STORAGE_KEY = "denmark.dailyBriefDisplay";
 const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
-const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 90 * 1000;
+const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 180 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
   "maintenance_required",
   "closeout_required",
@@ -1969,6 +1969,16 @@ async function handleMarkAsRead(messageId) {
       Math.max(0, prev - Number(data?.resolved_count || ids.length))
     );
     notifyMessageStatsUpdated();
+    
+    // Force immediate refresh to ensure consistency
+    // This prevents messages from reappearing due to cache timing issues
+    try {
+      setTimeout(() => {
+        loadMessages(false);
+      }, 250);
+    } catch (err) {
+      console.warn("Failed to schedule follow-up message refresh:", err);
+    }
   } catch (err) {
     setMessages(previousMessages);
     setNewMessageIds(previousNewMessageIds);
@@ -2012,6 +2022,15 @@ async function handleAckNotification(message) {
 
     invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
+    
+    // Force immediate refresh to ensure consistency
+    try {
+      setTimeout(() => {
+        loadMessages(false);
+      }, 250);
+    } catch (err) {
+      console.warn("Failed to schedule follow-up message refresh:", err);
+    }
   } catch (err) {
     setError(err.message || "Failed to acknowledge notification");
   } finally {
@@ -2059,6 +2078,15 @@ async function handleResolveMaintenance(message) {
     knownQueueItemIdsRef.current.delete(String(message.id));
     invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
+    
+    // Force immediate refresh to ensure consistency
+    try {
+      setTimeout(() => {
+        loadMessages(false);
+      }, 250);
+    } catch (err) {
+      console.warn("Failed to schedule follow-up message refresh:", err);
+    }
   } catch (err) {
     setError(err.message || "Failed to resolve maintenance");
   } finally {
@@ -2110,6 +2138,15 @@ async function handleSuppressDiagnostic(message, action = "acknowledge") {
     knownQueueItemIdsRef.current.delete(String(message.id));
     invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
+    
+    // Force immediate refresh to ensure consistency
+    try {
+      setTimeout(() => {
+        loadMessages(false);
+      }, 250);
+    } catch (err) {
+      console.warn("Failed to schedule follow-up message refresh:", err);
+    }
   } catch (err) {
     setError(err.message || "Failed to update diagnostic alert");
   } finally {
@@ -2206,6 +2243,15 @@ async function handleAcknowledgeRefuel(message) {
     knownQueueItemIdsRef.current.delete(String(message.id));
     invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
+    
+    // Force immediate refresh to ensure consistency
+    try {
+      setTimeout(() => {
+        loadMessages(false);
+      }, 250);
+    } catch (err) {
+      console.warn("Failed to schedule follow-up message refresh:", err);
+    }
   } catch (err) {
     setError(err.message || "Failed to acknowledge refuel alert");
   } finally {

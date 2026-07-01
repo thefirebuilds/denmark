@@ -116,7 +116,7 @@ export default function TopBanner({
               ? "Loading..."
               : `${todayLabel} • ${stats?.unread ?? 0} unread • last received ${formatLastReceived(
                   stats?.lastReceived
-                )} • ${effectiveLayoutMode} view`}
+                )} • ${stats?.serverUptimeLabel || "server"} • ${effectiveLayoutMode} view`}
           </span>
         </div>
       </div>
