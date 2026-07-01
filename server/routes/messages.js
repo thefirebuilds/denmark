@@ -25,6 +25,7 @@ const BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES = Number.isFinite(
   ? Math.max(0, bridgeEmailMismatchGraceMinutes)
   : 5;
 const TURNOVER_REFUEL_THRESHOLD_PERCENT = 95;
+const REFUEL_ACK_SETTINGS_KEY = "messages.refuelAcknowledgements";
 
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
@@ -3602,7 +3603,17 @@ router.get("/", async (req, res) => {
         ORDER BY nt.trip_start ASC
         LIMIT 1
       ) next_trip ON true
+      LEFT JOIN app_settings refuel_ack
+        ON refuel_ack.key = '${REFUEL_ACK_SETTINGS_KEY}'
       WHERE latest_fuel.fuel_level < ${TURNOVER_REFUEL_THRESHOLD_PERCENT}
+        AND (
+          next_trip.trip_start IS NULL
+          OR next_trip.trip_start > NOW()
+        )
+        AND NOT COALESCE(
+          refuel_ack.value ? ('refuel:' || c.trip_id::text),
+          false
+        )
       ORDER BY COALESCE(c.returned_at, c.trip_end) DESC NULLS LAST, c.trip_id DESC
       LIMIT 25
     `;
@@ -4013,6 +4024,56 @@ router.patch("/notifications/:id/ack", async (req, res) => {
   } catch (err) {
     console.error("ack notification failed:", err);
     res.status(500).json({ error: "failed to acknowledge notification" });
+  }
+});
+
+router.patch("/refuel/:tripId/ack", async (req, res) => {
+  try {
+    const tripId = Number(req.params.tripId);
+    if (!Number.isInteger(tripId) || tripId <= 0) {
+      return res.status(400).json({ error: "invalid trip id" });
+    }
+
+    const reason =
+      typeof req.body?.reason === "string" && req.body.reason.trim()
+        ? req.body.reason.trim().slice(0, 160)
+        : "refuel alert acknowledged from dispatch queue";
+    const refuelKey = `refuel:${tripId}`;
+
+    const result = await db.query(
+      `
+        INSERT INTO app_settings (key, value, updated_at)
+        VALUES (
+          $1,
+          jsonb_build_object(
+            $2::text,
+            jsonb_build_object(
+              'tripId', $3::int,
+              'acknowledgedAt', NOW(),
+              'acknowledgedBy', 'dashboard',
+              'reason', $4::text
+            )
+          ),
+          NOW()
+        )
+        ON CONFLICT (key)
+        DO UPDATE SET
+          value = COALESCE(app_settings.value, '{}'::jsonb) || EXCLUDED.value,
+          updated_at = NOW()
+        RETURNING value -> $2 AS acknowledgement
+      `,
+      [REFUEL_ACK_SETTINGS_KEY, refuelKey, tripId, reason]
+    );
+
+    invalidateMessageCaches();
+    res.json({
+      ok: true,
+      key: refuelKey,
+      acknowledgement: result.rows[0]?.acknowledgement || null,
+    });
+  } catch (err) {
+    console.error("ack refuel alert failed:", err);
+    res.status(500).json({ error: "failed to acknowledge refuel alert" });
   }
 });
 

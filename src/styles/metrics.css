@@ -1406,6 +1406,79 @@
   gap: 8px;
 }
 
+.labor-hours-panel {
+  gap: 9px;
+}
+
+.labor-hours-summary {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(260px, 1.5fr) minmax(220px, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.labor-hours-total,
+.labor-hours-airport,
+.labor-hours-row {
+  min-width: 0;
+  border: 1px solid rgba(42, 57, 93, 0.72);
+  background: rgba(10, 16, 28, 0.42);
+}
+
+.labor-hours-total,
+.labor-hours-airport {
+  display: grid;
+  gap: 3px;
+  align-content: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.labor-hours-total span,
+.labor-hours-airport span,
+.labor-hours-row span {
+  color: #8fa6ca;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.labor-hours-total strong {
+  color: #eef4ff;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.labor-hours-total em,
+.labor-hours-airport em {
+  color: #8fa6ca;
+  font-size: 0.7rem;
+  font-style: normal;
+  line-height: 1.2;
+}
+
+.labor-hours-breakdown {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.labor-hours-row {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  padding: 8px;
+  border-radius: 9px;
+}
+
+.labor-hours-row strong,
+.labor-hours-airport strong {
+  color: #dbeafe;
+  font-size: 0.86rem;
+  line-height: 1.15;
+}
+
 /* --------------------------------------------------------------
    Toll stat
 -------------------------------------------------------------- */
@@ -1973,6 +2046,14 @@
   .vehicle-grid {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
+
+  .labor-hours-summary {
+    grid-template-columns: minmax(120px, 0.6fr) minmax(240px, 1fr);
+  }
+
+  .labor-hours-airport {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1988,6 +2069,11 @@
   .vehicle-grid {
     gap: 8px;
   }
+
+  .labor-hours-summary,
+  .labor-hours-breakdown {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 700px) {
@@ -2001,6 +2087,11 @@
 
   .vehicle-card__stats {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .labor-hours-summary,
+  .labor-hours-breakdown {
+    grid-template-columns: 1fr;
   }
 
   .metrics-audit-summary,

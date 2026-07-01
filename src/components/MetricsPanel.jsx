@@ -1597,6 +1597,13 @@ const mileageStats = useMemo(() => {
       delivery: Number(
         breakdown.delivery ?? summary.estimated_delivery_hours ?? 0
       ),
+      airportService: Number(
+        breakdown.airportService ?? summary.estimated_airport_service_hours ?? 0
+      ),
+      airportTurnovers: Number(summary.airport_service_turnover_count ?? 0),
+      airportMiles: Number(summary.airport_service_miles ?? 0),
+      airportFuelCost: Number(summary.airport_service_fuel_cost ?? 0),
+      airportAssumptions: summary.airport_service_assumptions || {},
       missing: Number(summary.maintenance_labor_missing_count ?? 0),
     };
   }, [businessMetrics]);
@@ -2328,45 +2335,58 @@ const mileageStats = useMemo(() => {
           ) : null}
 
           {businessMetrics?.fleet_summary ? (
-            <section className="toll-panel">
+            <section className="toll-panel labor-hours-panel">
               <div className="toll-panel__header">
                 <div className="toll-panel__title">Labor Hours</div>
                 <div className="toll-panel__subtitle">
                   Owner time included in profit after labor for the selected period
                 </div>
               </div>
-              <div className="metrics-ops-row">
-                <MetricCard
-                  label="Total Hours"
-                  value={`${formatNumber(laborHoursBreakdown.total, 1)}h`}
-                  subtitle={
-                    laborHoursBreakdown.missing > 0
-                      ? `${formatNumber(laborHoursBreakdown.missing)} maintenance item(s) missing`
-                      : "Cleaning, maintenance, admin, and handoff"
-                  }
-                  tone={laborHoursBreakdown.missing > 0 ? "warning" : "default"}
-                />
-                <MetricCard
-                  label="Cleaning"
-                  value={`${formatNumber(laborHoursBreakdown.cleaning, 1)}h`}
-                  subtitle="Turns and post-trip cleaning"
-                />
-                <MetricCard
-                  label="Maintenance"
-                  value={`${formatNumber(laborHoursBreakdown.maintenance, 1)}h`}
-                  subtitle="Tasks and maintenance history"
-                  tone={laborHoursBreakdown.missing > 0 ? "warning" : "default"}
-                />
-                <MetricCard
-                  label="Admin"
-                  value={`${formatNumber(laborHoursBreakdown.admin, 1)}h`}
-                  subtitle="Trip admin work"
-                />
-                <MetricCard
-                  label="Handoff"
-                  value={`${formatNumber(laborHoursBreakdown.delivery, 1)}h`}
-                  subtitle="Delivery and pickup time"
-                />
+              <div className="labor-hours-summary">
+                <div className="labor-hours-total">
+                  <span>Total</span>
+                  <strong>{formatNumber(laborHoursBreakdown.total, 1)}h</strong>
+                  <em>
+                    {laborHoursBreakdown.missing > 0
+                      ? `${formatNumber(laborHoursBreakdown.missing)} missing`
+                      : "complete"}
+                  </em>
+                </div>
+                <div className="labor-hours-breakdown">
+                  {[
+                    ["Cleaning", laborHoursBreakdown.cleaning],
+                    ["Maintenance", laborHoursBreakdown.maintenance],
+                    ["Admin", laborHoursBreakdown.admin],
+                    ["Handoff", laborHoursBreakdown.delivery],
+                    ["Airport service", laborHoursBreakdown.airportService],
+                  ].map(([label, hours]) => (
+                    <div key={label} className="labor-hours-row">
+                      <span>{label}</span>
+                      <strong>{formatNumber(hours, 1)}h</strong>
+                    </div>
+                  ))}
+                </div>
+                <div className="labor-hours-airport">
+                  <span>Airport deadhead</span>
+                  <strong>
+                    {formatNumber(laborHoursBreakdown.airportTurnovers)} turn
+                    {laborHoursBreakdown.airportTurnovers === 1 ? "" : "s"} ·{" "}
+                    {formatNumber(laborHoursBreakdown.airportMiles, 0)} mi ·{" "}
+                    {formatCurrencyCompact(laborHoursBreakdown.airportFuelCost)} fuel
+                  </strong>
+                  <em>
+                    {formatNumber(
+                      laborHoursBreakdown.airportAssumptions?.minutes_per_turnover,
+                      0
+                    )}{" "}
+                    min /{" "}
+                    {formatNumber(
+                      laborHoursBreakdown.airportAssumptions?.miles_per_turnover,
+                      0
+                    )}{" "}
+                    mi per airport turnover
+                  </em>
+                </div>
               </div>
             </section>
           ) : null}

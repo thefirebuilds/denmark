@@ -34,6 +34,19 @@ const DEFAULT_BUSINESS_SETTINGS = {
   target_payback_period_months: 24,
 };
 
+const DEFAULT_AIRPORT_SERVICE_MINUTES = Number(
+  process.env.BUSINESS_AIRPORT_SERVICE_MINUTES || 90
+);
+const DEFAULT_AIRPORT_SERVICE_MILES = Number(
+  process.env.BUSINESS_AIRPORT_SERVICE_MILES || 45
+);
+const DEFAULT_AIRPORT_SERVICE_MPG = Number(
+  process.env.BUSINESS_AIRPORT_SERVICE_MPG || 25
+);
+const DEFAULT_AIRPORT_SERVICE_FUEL_PRICE = Number(
+  process.env.BUSINESS_AIRPORT_SERVICE_FUEL_PRICE_PER_GALLON || 3.25
+);
+
 function normalizeText(value) {
   if (value == null) return null;
   const cleaned = String(value).trim();
@@ -46,6 +59,19 @@ function normalizeNumberOrNull(value) {
   if (!cleaned) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
+}
+
+function envNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function isAirportLocationText(value) {
+  const text = String(value || "").toLowerCase();
+  if (!text) return false;
+  return /airport|\biah\b|\bhou\b|hobby|intercontinental|bush|terminal|the parking spot/.test(
+    text
+  );
 }
 
 function normalizeDateOrNull(value) {
@@ -857,9 +883,12 @@ async function fetchTripsForBusinessMetrics(client, startDate, endDate) {
         t.reservation_id,
         t.guest_name,
         t.status,
+        t.vehicle_name,
         t.turo_vehicle_id,
         t.trip_start,
         t.trip_end,
+        t.pickup_location,
+        t.return_location,
         t.amount,
         t.toll_total,
         t.toll_charged_total,
@@ -1227,6 +1256,24 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     vehicleOps.map((item) => [String(item.vehicle_id), item])
   );
   const maps = buildTripVehicleMap(vehicles);
+  const airportServiceMinutes = envNumber(
+    DEFAULT_AIRPORT_SERVICE_MINUTES,
+    90
+  );
+  const airportServiceMiles = envNumber(DEFAULT_AIRPORT_SERVICE_MILES, 45);
+  const airportServiceMpg = Math.max(
+    1,
+    envNumber(DEFAULT_AIRPORT_SERVICE_MPG, 25)
+  );
+  const airportServiceFuelPrice = envNumber(
+    DEFAULT_AIRPORT_SERVICE_FUEL_PRICE,
+    3.25
+  );
+  const airportServiceFuelCost = roundMoney(
+    (airportServiceMiles / airportServiceMpg) * airportServiceFuelPrice
+  );
+  const tripsByVehicleForTurnover = new Map();
+  const nextTripByTripId = new Map();
 
   const periodKey =
     key === "all"
@@ -1240,6 +1287,26 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
   const tripIdToVehicleId = new Map();
   const firstTripStartByVehicle = new Map();
   const monthWeight = monthEquivalentForRange(startDate || endDate, endDate);
+
+  for (const trip of trips) {
+    const vehicleId = resolveTripVehicleId(trip, maps);
+    if (!vehicleId) continue;
+    if (!tripsByVehicleForTurnover.has(vehicleId)) {
+      tripsByVehicleForTurnover.set(vehicleId, []);
+    }
+    tripsByVehicleForTurnover.get(vehicleId).push(trip);
+  }
+
+  for (const vehicleTrips of tripsByVehicleForTurnover.values()) {
+    vehicleTrips.sort(
+      (a, b) =>
+        new Date(a.trip_start || 0).getTime() -
+        new Date(b.trip_start || 0).getTime()
+    );
+    for (let index = 0; index < vehicleTrips.length - 1; index += 1) {
+      nextTripByTripId.set(String(vehicleTrips[index].id), vehicleTrips[index + 1]);
+    }
+  }
 
   for (const vehicle of vehicles) {
     const vehicleId = String(vehicle.id);
@@ -1319,6 +1386,10 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       estimated_cleaning_hours: 0,
       estimated_admin_hours: 0,
       estimated_delivery_hours: 0,
+      estimated_airport_service_hours: 0,
+      airport_service_turnover_count: 0,
+      airport_service_miles: 0,
+      airport_service_fuel_cost: 0,
       estimated_maintenance_labor_hours: 0,
       maintenance_labor_missing_count: 0,
       current_equity: 0,
@@ -1472,10 +1543,21 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
         : toNumber(trip.owner_cleaning_minutes);
     const deliveryMinutes = toNumber(trip.owner_delivery_minutes);
     const adminMinutes = toNumber(trip.owner_admin_minutes);
+    const nextTrip = nextTripByTripId.get(String(trip.id));
+    const airportServiceApplies =
+      tripEndedInRange &&
+      nextTrip &&
+      !isTripCanceledForBusinessMetrics(nextTrip) &&
+      isAirportLocationText(trip.return_location) &&
+      isAirportLocationText(nextTrip.pickup_location);
+    const airportServiceHours = airportServiceApplies
+      ? airportServiceMinutes / 60
+      : 0;
     const ownerMinutes =
       cleaningMinutes +
       deliveryMinutes +
-      adminMinutes;
+      adminMinutes +
+      airportServiceHours * 60;
     const overlapDays = getOverlapDays(
       trip.trip_start,
       trip.trip_end,
@@ -1495,6 +1577,13 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     metric.estimated_cleaning_hours += cleaningMinutes / 60;
     metric.estimated_delivery_hours += deliveryMinutes / 60;
     metric.estimated_admin_hours += adminMinutes / 60;
+    if (airportServiceApplies) {
+      metric.estimated_airport_service_hours += airportServiceHours;
+      metric.airport_service_turnover_count += 1;
+      metric.airport_service_miles += airportServiceMiles;
+      metric.airport_service_fuel_cost += airportServiceFuelCost;
+      metric.net_profit -= airportServiceFuelCost;
+    }
     metric.days_booked += overlapDays;
     metric.source_metrics.trip_count += 1;
 
@@ -1920,6 +2009,13 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       estimated_cleaning_hours: roundNumber(metric.estimated_cleaning_hours, 2),
       estimated_admin_hours: roundNumber(metric.estimated_admin_hours, 2),
       estimated_delivery_hours: roundNumber(metric.estimated_delivery_hours, 2),
+      estimated_airport_service_hours: roundNumber(
+        metric.estimated_airport_service_hours,
+        2
+      ),
+      airport_service_turnover_count: metric.airport_service_turnover_count,
+      airport_service_miles: roundNumber(metric.airport_service_miles, 2),
+      airport_service_fuel_cost: roundMoney(metric.airport_service_fuel_cost),
       estimated_maintenance_labor_hours: roundNumber(
         metric.estimated_maintenance_labor_hours,
         2
@@ -1959,7 +2055,8 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
         (sum, item) =>
           sum +
           toNumber(item.maintenance_total_to_date) +
-          toNumber(item.repairs_total_to_date),
+          toNumber(item.repairs_total_to_date) +
+          toNumber(item.airport_service_fuel_cost),
         0
       )
     ),
@@ -2003,6 +2100,34 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_delivery_hours), 0),
       2
     ),
+    estimated_airport_service_hours: roundNumber(
+      fleetMetrics.reduce(
+        (sum, item) => sum + toNumber(item.estimated_airport_service_hours),
+        0
+      ),
+      2
+    ),
+    airport_service_turnover_count: fleetMetrics.reduce(
+      (sum, item) => sum + Number(item.airport_service_turnover_count || 0),
+      0
+    ),
+    airport_service_miles: roundNumber(
+      fleetMetrics.reduce((sum, item) => sum + toNumber(item.airport_service_miles), 0),
+      2
+    ),
+    airport_service_fuel_cost: roundMoney(
+      fleetMetrics.reduce(
+        (sum, item) => sum + toNumber(item.airport_service_fuel_cost),
+        0
+      )
+    ),
+    airport_service_assumptions: {
+      minutes_per_turnover: roundNumber(airportServiceMinutes, 1),
+      miles_per_turnover: roundNumber(airportServiceMiles, 1),
+      mpg: roundNumber(airportServiceMpg, 1),
+      fuel_price_per_gallon: roundMoney(airportServiceFuelPrice),
+      fuel_cost_per_turnover: roundMoney(airportServiceFuelCost),
+    },
     estimated_maintenance_labor_hours: roundNumber(
       fleetMetrics.reduce(
         (sum, item) => sum + toNumber(item.estimated_maintenance_labor_hours),
@@ -2028,6 +2153,13 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       ),
       delivery: roundNumber(
         fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_delivery_hours), 0),
+        2
+      ),
+      airportService: roundNumber(
+        fleetMetrics.reduce(
+          (sum, item) => sum + toNumber(item.estimated_airport_service_hours),
+          0
+        ),
         2
       ),
     },

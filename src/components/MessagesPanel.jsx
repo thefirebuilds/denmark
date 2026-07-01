@@ -1743,6 +1743,7 @@ export default function MessagesPanel({
   const [copiedReplySuggestionId, setCopiedReplySuggestionId] = useState(null);
   const [copiedDailyBriefId, setCopiedDailyBriefId] = useState(null);
   const [refreshingDailyBriefId, setRefreshingDailyBriefId] = useState(null);
+  const [ackingRefuelId, setAckingRefuelId] = useState(null);
   const [dailyBriefDisplay, setDailyBriefDisplay] = useState(() =>
     loadDailyBriefDisplayState()
   );
@@ -2165,6 +2166,50 @@ async function handleEditTripFromMessage(message) {
   const trip = await handleFocusTrip(message);
   if (trip?.id) {
     onEditTrip?.(trip);
+  }
+}
+
+async function handleAcknowledgeRefuel(message) {
+  if (!message?.trip_id) {
+    setError("No linked trip found for this refuel alert");
+    return;
+  }
+
+  try {
+    setAckingRefuelId(message.id);
+    setError("");
+
+    const res = await fetch(
+      `${API_BASE}/api/messages/refuel/${message.trip_id}/ack`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          reason: "refuel alert acknowledged from dispatch queue",
+        }),
+      }
+    );
+
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+
+    if (!res.ok) {
+      throw new Error(data?.error || `Failed to acknowledge refuel alert (${res.status})`);
+    }
+
+    setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
+    setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
+    seenIdsRef.current.delete(message.id);
+    knownQueueItemIdsRef.current.delete(String(message.id));
+    invalidateLiveQueueCache();
+    notifyMessageStatsUpdated();
+  } catch (err) {
+    setError(err.message || "Failed to acknowledge refuel alert");
+  } finally {
+    setAckingRefuelId(null);
   }
 }
 
@@ -4064,6 +4109,22 @@ async function handleExportGuestInspectionSheet(message) {
                         }}
                       >
                         Reconnect Google
+                      </button>
+                    )}
+
+                    {canReviewRefuel && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        disabled={ackingRefuelId === message.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleAcknowledgeRefuel(message);
+                        }}
+                      >
+                        {ackingRefuelId === message.id
+                          ? "Acknowledging..."
+                          : "Acknowledge fuel alert"}
                       </button>
                     )}
 
