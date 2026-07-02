@@ -376,6 +376,7 @@ router.get("/", async (req, res) => {
         v.registration_month,
         v.registration_year,
         v.lockbox_pin,
+        COALESCE(v.lockbox_pin_public, true) AS lockbox_pin_public,
         v.bouncie_vehicle_id,
         v.dimo_token_id,
         v.turo_vehicle_id,
@@ -516,6 +517,8 @@ router.post("/", async (req, res) => {
       oil_capacity_liters: toNullableNumber(req.body.oil_capacity_liters),
       battery_installed_at: toNullableDate(req.body.battery_installed_at),
       rockauto_url: toNullableText(req.body.rockauto_url),
+      lockbox_pin: toNullableText(req.body.lockbox_pin),
+      lockbox_pin_public: toNullableBoolean(req.body.lockbox_pin_public, true),
       onboarding_date: toNullableDate(req.body.onboarding_date),
       acquisition_cost: toNullableNumber(req.body.acquisition_cost),
       retired_at: toNullableDate(req.body.retired_at),
@@ -948,6 +951,15 @@ router.patch("/:selector", async (req, res) => {
         ? toNullableText(req.body.lockbox_pin)
         : existing.lockbox_pin;
 
+    const lockbox_pin_public =
+      req.body.lockbox_pin_public !== undefined ||
+      req.body.lockboxPinPublic !== undefined
+        ? toNullableBoolean(
+            req.body.lockbox_pin_public ?? req.body.lockboxPinPublic,
+            existing.lockbox_pin_public !== false
+          )
+        : existing.lockbox_pin_public !== false;
+
     const bouncie_vehicle_id =
       req.body.bouncie_vehicle_id !== undefined
         ? toNullableText(req.body.bouncie_vehicle_id)
@@ -1052,19 +1064,20 @@ router.patch("/:selector", async (req, res) => {
         rockauto_url = $14,
         battery_installed_at = $15,
         lockbox_pin = $16,
-        bouncie_vehicle_id = $17,
-        dimo_token_id = $18,
-        provider_vehicle_id = $19,
-        external_vehicle_key = COALESCE($20, CASE WHEN $18::bigint IS NOT NULL THEN 'dimo:' || $18::text ELSE NULL END),
-        turo_vehicle_id = $21,
-        turo_vehicle_name = $22,
-        onboarding_date = $23,
-        acquisition_cost = $24,
-        retired_at = $25,
-        in_service = $26,
-        is_active = $27,
+        lockbox_pin_public = $17,
+        bouncie_vehicle_id = $18,
+        dimo_token_id = $19,
+        provider_vehicle_id = $20,
+        external_vehicle_key = COALESCE($21, CASE WHEN $19::bigint IS NOT NULL THEN 'dimo:' || $19::text ELSE NULL END),
+        turo_vehicle_id = $22,
+        turo_vehicle_name = $23,
+        onboarding_date = $24,
+        acquisition_cost = $25,
+        retired_at = $26,
+        in_service = $27,
+        is_active = $28,
         updated_at = NOW()
-      WHERE id = $28
+      WHERE id = $29
       RETURNING *
     `;
 
@@ -1085,6 +1098,7 @@ router.patch("/:selector", async (req, res) => {
       rockauto_url,
       battery_installed_at,
       lockbox_pin,
+      lockbox_pin_public,
       bouncie_vehicle_id,
       dimo_token_id,
       provider_vehicle_id,

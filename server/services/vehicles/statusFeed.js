@@ -335,6 +335,8 @@ async function getVehicleStatusFeed() {
 
   license_plate: normalizePlate(vehicle.license_plate),
   lockbox_pin: vehicle.lockbox_pin || null,
+  lockbox_pin_public: vehicle.lockbox_pin_public !== false,
+  lockboxPinPublic: vehicle.lockbox_pin_public !== false,
 
 registration: {
   state: vehicle.license_state || null,

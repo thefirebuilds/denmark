@@ -1313,6 +1313,22 @@ export function mapMaintenanceSummaryToGuestInspectionVehicle(
         fallbackVehicle?.lockbox_pin,
         fallbackVehicle?.lockboxPin
       ) || "",
+    lockbox_pin_public:
+      sourceVehicle.lockbox_pin_public ??
+      sourceVehicle.lockboxPinPublic ??
+      fleetVehicle?.lockbox_pin_public ??
+      fleetVehicle?.lockboxPinPublic ??
+      fallbackVehicle?.lockbox_pin_public ??
+      fallbackVehicle?.lockboxPinPublic ??
+      true,
+    lockboxPinPublic:
+      sourceVehicle.lockboxPinPublic ??
+      sourceVehicle.lockbox_pin_public ??
+      fleetVehicle?.lockboxPinPublic ??
+      fleetVehicle?.lockbox_pin_public ??
+      fallbackVehicle?.lockboxPinPublic ??
+      fallbackVehicle?.lockbox_pin_public ??
+      true,
     rentable: !summary?.blocksRental,
     in_service: fleetVehicle?.in_service !== false,
     map_vehicle_id: fleetVehicle?.id ?? sourceVehicle.id ?? fallbackId,
@@ -1326,6 +1342,7 @@ export function mapMaintenanceSummaryToGuestInspectionVehicle(
     engine_temperature: buildEngineTemperatureStatus(fleetVehicle || fallbackVehicle),
     engine_rpm: buildEngineRpmStatus(fleetVehicle || fallbackVehicle),
     body_condition: notes.length ? "documented" : "good",
+    body_note_count: notes.length,
     body_notes: notes.length
       ? notes
       : ["No guest-visible cosmetic notes recorded"],
@@ -1764,6 +1781,14 @@ export function getActiveTrip(trips) {
   });
 }
 
+export function getReadyForHandoffTrip(trips) {
+  return getRelevantTrips(trips).find((trip) => {
+    const stage = String(trip?.workflow_stage || "").toLowerCase();
+    const bucket = String(trip?.queue_bucket || "").toLowerCase();
+    return stage === "ready_for_handoff" || bucket === "ready_for_handoff";
+  });
+}
+
 export function getNextUpcomingTrip(trips) {
   const now = getNow();
 
@@ -1774,6 +1799,10 @@ export function getNextUpcomingTrip(trips) {
 }
 
 export function getEarliestAvailableDate(trips) {
+  if (getReadyForHandoffTrip(trips)) {
+    return "9999-12-31T23:59:59.999Z";
+  }
+
   const activeTrip = getActiveTrip(trips);
 
   if (activeTrip?.trip_end) {
@@ -1796,6 +1825,10 @@ export function getEarliestAvailableLabel(trips) {
   }
 
   const activeTrip = getActiveTrip(trips);
+
+  if (getReadyForHandoffTrip(trips)) {
+    return "Ready for handoff";
+  }
 
   if (activeTrip?.trip_end) {
     const end = parseDateTime(activeTrip.trip_end);

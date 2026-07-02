@@ -39,6 +39,8 @@ export default function GuestSafetySnapshotCard({ vehicle, cardRef, guestName })
   const footerLabel = String(guestName || "").trim()
     ? `Prepared for ${String(guestName || "").trim()}`
     : "Generated for guest review";
+  const showLockboxPin =
+    vehicle.lockbox_pin_public !== false && vehicle.lockboxPinPublic !== false;
 
   return (
     <div className="guest-snapshot-shell">
@@ -94,10 +96,12 @@ export default function GuestSafetySnapshotCard({ vehicle, cardRef, guestName })
               <span>Body condition</span>
               <strong>{vehicle.body_condition}</strong>
             </div>
-            <div className="guest-snapshot-row">
-              <span>Lockbox PIN</span>
-              <strong>{vehicle.lockbox_pin || "Not set"}</strong>
-            </div>
+            {showLockboxPin ? (
+              <div className="guest-snapshot-row">
+                <span>Lockbox PIN</span>
+                <strong>{vehicle.lockbox_pin || "Not set"}</strong>
+              </div>
+            ) : null}
           </div>
 
           <div className="guest-snapshot-block">

@@ -16,6 +16,7 @@ import {
   getPriorityScore,
   getActiveTrip,
   getNextUpcomingTrip,
+  getReadyForHandoffTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
 } from "../../utils/maintUtils";
@@ -327,6 +328,8 @@ function groupFleetItemsByAvailabilityDate(items) {
 }
 
 function buildFleetQueueItems(vehicleCard, summary, historyMap = {}) {
+  if (vehicleCard.readyForHandoff) return [];
+
   const baseItems = buildQueueItemsFromSummary(summary, historyMap);
 
   return baseItems.map((item) => ({
@@ -531,6 +534,7 @@ export default function MaintenanceQueuePanel({
             );
 
             const nextAvailableDate = getEarliestAvailableDate(trips);
+            const readyForHandoff = Boolean(getReadyForHandoffTrip(trips));
 
             return {
               id: normalizeVehicleKey(vehicle.nickname || vehicle.vin || vehicle.id),
@@ -548,6 +552,7 @@ export default function MaintenanceQueuePanel({
               nextOffTrip: getEarliestAvailableLabel(trips),
               nextAvailableDate,
               nextPlanningDate: getVehiclePlanningDate(trips, nextAvailableDate),
+              readyForHandoff,
             };
           })
           .filter((v) => v.vin);

@@ -1656,6 +1656,12 @@ select.drawer-input option {
   gap: 6px;
 }
 
+.fleet-maintenance-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .fleet-maintenance-registration-grid input,
 .fleet-maintenance-registration-grid select {
   appearance: none;
@@ -1684,11 +1690,36 @@ select.drawer-input option {
   color: #f9fafb;
 }
 
-.fleet-maintenance-registration-grid label span {
+.fleet-maintenance-registration-grid label span,
+.fleet-maintenance-form-field > span {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: rgba(249, 250, 251, 0.68);
+}
+
+.fleet-maintenance-checkbox-row {
+  display: flex;
+  min-height: 38px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.fleet-maintenance-registration-grid .fleet-maintenance-checkbox-row input {
+  width: auto;
+  padding: 0;
+}
+
+.fleet-maintenance-registration-grid .fleet-maintenance-checkbox-row span {
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #f9fafb;
 }
 
 .fleet-maintenance-registration-actions {

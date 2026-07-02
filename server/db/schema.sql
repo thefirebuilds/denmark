@@ -1689,7 +1689,8 @@ CREATE TABLE public.vehicles (
     external_vehicle_key text,
     provider_vehicle_id text,
     rockauto_url text,
-    lockbox_pin text
+    lockbox_pin text,
+    lockbox_pin_public boolean DEFAULT true NOT NULL
 );
 
 

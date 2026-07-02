@@ -74,6 +74,8 @@ export default function PreflightCard({
 
   const checklistSections = buildChecklistSections();
   const dueList = Array.isArray(dueItems) ? dueItems.slice(0, 12) : [];
+  const showLockboxPin =
+    vehicle?.lockbox_pin_public !== false && vehicle?.lockboxPinPublic !== false;
 
   useLayoutEffect(() => {
     function measureAndScale() {
@@ -116,6 +118,8 @@ export default function PreflightCard({
     vehicle?.currentOdometerMiles,
     vehicle?.vin,
     vehicle?.vin_last6,
+    vehicle?.lockbox_pin_public,
+    vehicle?.lockboxPinPublic,
     windowLabel,
     dueList.length,
     vehicle?.body_notes?.length,
@@ -195,10 +199,12 @@ export default function PreflightCard({
                   </strong>
                 </div>
 
-                <div className="preflight-row">
-                  <span>Lockbox PIN</span>
-                  <strong>{vehicle.lockbox_pin || "Not set"}</strong>
-                </div>
+                {showLockboxPin ? (
+                  <div className="preflight-row">
+                    <span>Lockbox PIN</span>
+                    <strong>{vehicle.lockbox_pin || "Not set"}</strong>
+                  </div>
+                ) : null}
               </div>
 
               <div className="preflight-block">

@@ -192,6 +192,7 @@ const EMPTY_VEHICLE = {
   oil_capacity_liters: "",
   rockauto_url: "",
   lockbox_pin: "",
+  lockbox_pin_public: true,
   registration_month: "",
   registration_year: "",
   battery_installed_at: "",
@@ -478,6 +479,7 @@ function toPayloadVehicle(form) {
       vehicleFields.oil_capacity_liters === ""
         ? null
         : Number(vehicleFields.oil_capacity_liters),
+    lockbox_pin_public: vehicleFields.lockbox_pin_public !== false,
   };
 }
 
@@ -1936,6 +1938,7 @@ function toVehicleForm(vehicle = EMPTY_VEHICLE) {
     ),
     onboarding_date_source: vehicle.onboarding_date_source || "",
     retired_at: toDateInputValue(vehicle.retired_at),
+    lockbox_pin_public: vehicle.lockbox_pin_public !== false,
     in_service: vehicle.in_service !== false,
     is_active: vehicle.is_active !== false,
   };
@@ -2085,6 +2088,18 @@ function VehicleConfigFields({ form, update, mode = "edit" }) {
           onChange={(e) => update("lockbox_pin", e.target.value)}
         />
       </label>
+
+      <div className="settings-field">
+        <span>Guest printout</span>
+        <label className="settings-check-row">
+          <input
+            type="checkbox"
+            checked={form.lockbox_pin_public !== false}
+            onChange={(e) => update("lockbox_pin_public", e.target.checked)}
+          />
+          <span>Publish lockbox PIN</span>
+        </label>
+      </div>
 
       <label className="settings-field">
         <span>Turo vehicle ID</span>

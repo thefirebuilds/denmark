@@ -28,6 +28,7 @@ import {
   buildQueueItemsFromSummary,
   mapRuleStatusToInspectionItem,
   getActiveTrip,
+  getReadyForHandoffTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
   getNextUpcomingTrip,
@@ -723,6 +724,18 @@ function mapMaintenanceSummaryToVehicle(
         fleetVehicle?.lockbox_pin,
         fleetVehicle?.lockboxPin
       ) || "",
+    lockbox_pin_public:
+      sourceVehicle.lockbox_pin_public ??
+      sourceVehicle.lockboxPinPublic ??
+      fleetVehicle?.lockbox_pin_public ??
+      fleetVehicle?.lockboxPinPublic ??
+      true,
+    lockboxPinPublic:
+      sourceVehicle.lockboxPinPublic ??
+      sourceVehicle.lockbox_pin_public ??
+      fleetVehicle?.lockboxPinPublic ??
+      fleetVehicle?.lockbox_pin_public ??
+      true,
     battery_installed_at:
       sourceVehicle.battery_installed_at ||
       sourceVehicle.batteryInstalledAt ||
@@ -743,6 +756,7 @@ function mapMaintenanceSummaryToVehicle(
     engine_rpm: buildEngineRpmStatus(fleetVehicle),
     speed_status: buildSpeedStatus(fleetVehicle),
     body_condition: notes.length ? "documented" : "good",
+    body_note_count: notes.length,
     body_notes: notes.length
       ? notes
       : ["No guest-visible cosmetic notes recorded"],
@@ -769,7 +783,10 @@ function getStatusIcon(status) {
 
 function buildFleetPlanningCard(vehicle, trips, summary) {
   const historyMap = buildInspectionHistoryMap(summary);
-  const queueItems = buildQueueItemsFromSummary(summary, historyMap);
+  const readyForHandoff = Boolean(getReadyForHandoffTrip(trips));
+  const queueItems = readyForHandoff
+    ? []
+    : buildQueueItemsFromSummary(summary, historyMap);
   const activeTrip = getActiveTrip(trips);
 
   const blockingItems = queueItems.filter(
@@ -796,7 +813,11 @@ function buildFleetPlanningCard(vehicle, trips, summary) {
       vehicle.currentOdometerMiles ??
       null,
     nextAvailableDate: getEarliestAvailableDate(trips),
-    nextOffTrip: activeTrip ? getEarliestAvailableLabel(trips) : "Available now",
+    nextOffTrip:
+      activeTrip || readyForHandoff
+        ? getEarliestAvailableLabel(trips)
+        : "Available now",
+    readyForHandoff,
     totalOpenItems: queueItems.length,
     blockingCount: blockingItems.length,
     attentionCount: attentionItems.length,
@@ -847,6 +868,11 @@ function formatOnboardingDate(value) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function formatCountLabel(value, singular, plural = `${singular}s`) {
+  const count = Number(value) || 0;
+  return `${count.toLocaleString("en-US")} ${count === 1 ? singular : plural}`;
 }
 
 function sortFleetPlanningCards(cards) {
@@ -969,6 +995,7 @@ export default function FleetMaintenancePanel({
   const [savingLockboxPin, setSavingLockboxPin] = useState(false);
   const [lockboxPinError, setLockboxPinError] = useState("");
   const [lockboxPinForm, setLockboxPinForm] = useState("");
+  const [lockboxPinPublicForm, setLockboxPinPublicForm] = useState(true);
   const [editingBatteryAge, setEditingBatteryAge] = useState(false);
   const [savingBatteryAge, setSavingBatteryAge] = useState(false);
   const [batteryAgeError, setBatteryAgeError] = useState("");
@@ -1640,13 +1667,24 @@ export default function FleetMaintenancePanel({
         vehicle?.lockbox_pin ||
         ""
     );
+    setLockboxPinPublicForm(
+      selectedFleetVehicle?.lockbox_pin_public ??
+        selectedFleetVehicle?.lockboxPinPublic ??
+        vehicle?.lockbox_pin_public ??
+        vehicle?.lockboxPinPublic ??
+        true
+    );
     setEditingLockboxPin(false);
     setLockboxPinError("");
   }, [
     selectedFleetVehicle?.vin,
     selectedFleetVehicle?.lockbox_pin,
     selectedFleetVehicle?.lockboxPin,
+    selectedFleetVehicle?.lockbox_pin_public,
+    selectedFleetVehicle?.lockboxPinPublic,
     vehicle?.lockbox_pin,
+    vehicle?.lockbox_pin_public,
+    vehicle?.lockboxPinPublic,
   ]);
 
   useEffect(() => {
@@ -1907,6 +1945,7 @@ export default function FleetMaintenancePanel({
           },
           body: JSON.stringify({
             lockbox_pin: lockboxPinForm.trim() || null,
+            lockbox_pin_public: lockboxPinPublicForm,
           }),
         }
       );
@@ -1923,6 +1962,8 @@ export default function FleetMaintenancePanel({
             ? {
                 ...item,
                 lockbox_pin: body.lockbox_pin || "",
+                lockbox_pin_public: body.lockbox_pin_public !== false,
+                lockboxPinPublic: body.lockbox_pin_public !== false,
               }
             : item
         )
@@ -1936,6 +1977,8 @@ export default function FleetMaintenancePanel({
                 ...(prev.vehicle || {}),
                 lockbox_pin: body.lockbox_pin || null,
                 lockboxPin: body.lockbox_pin || null,
+                lockbox_pin_public: body.lockbox_pin_public !== false,
+                lockboxPinPublic: body.lockbox_pin_public !== false,
               },
             }
           : prev
@@ -2762,13 +2805,13 @@ export default function FleetMaintenancePanel({
                 <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
                   <div className="fleet-maintenance-meta-row">
                     <span className="fleet-maintenance-meta-label">
-                      Onboarded
+                      Fleet history
                     </span>
                   </div>
 
                   <div className="fleet-maintenance-registration-readonly">
                     <span className="fleet-maintenance-meta-value">
-                      {formatOnboardingDate(vehicle.onboarding_date)}
+                      Onboarded {formatOnboardingDate(vehicle.onboarding_date)}
                     </span>
                     <span className="fleet-maintenance-registration-subvalue">
                       {vehicle.onboarding_date_source === "first_trip"
@@ -2776,6 +2819,17 @@ export default function FleetMaintenancePanel({
                         : vehicle.onboarding_date
                         ? "vehicle profile"
                         : "set in vehicle settings"}
+                    </span>
+                    <span className="fleet-maintenance-registration-subvalue">
+                      Start odometer:{" "}
+                      {formatMiles(vehicle.onboardingOdometerMiles)}
+                    </span>
+                    <span className="fleet-maintenance-registration-subvalue">
+                      Turo miles: {formatMiles(vehicle.totalTuroMiles)} from{" "}
+                      {formatCountLabel(
+                        vehicle.countedTuroMileageTrips,
+                        "trip"
+                      )}
                     </span>
                   </div>
                 </div>
@@ -2804,7 +2858,9 @@ export default function FleetMaintenancePanel({
                         {vehicle.lockbox_pin || "Not set"}
                       </span>
                       <span className="fleet-maintenance-registration-subvalue">
-                        Publish on guest printout
+                        {vehicle.lockbox_pin_public === false
+                          ? "Hidden from guest printout"
+                          : "Published on guest printout"}
                       </span>
                     </div>
                   ) : (
@@ -2819,6 +2875,20 @@ export default function FleetMaintenancePanel({
                             disabled={savingLockboxPin}
                           />
                         </label>
+                        <div className="fleet-maintenance-form-field">
+                          <span>Guest printout</span>
+                          <label className="fleet-maintenance-checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={lockboxPinPublicForm}
+                              onChange={(e) =>
+                                setLockboxPinPublicForm(e.target.checked)
+                              }
+                              disabled={savingLockboxPin}
+                            />
+                            <span>Publish PIN</span>
+                          </label>
+                        </div>
                       </div>
 
                       {lockboxPinError ? (
@@ -2833,6 +2903,9 @@ export default function FleetMaintenancePanel({
                           className="fleet-maintenance-action-button"
                           onClick={() => {
                             setLockboxPinForm(vehicle.lockbox_pin || "");
+                            setLockboxPinPublicForm(
+                              vehicle.lockbox_pin_public !== false
+                            );
                             setEditingLockboxPin(false);
                             setLockboxPinError("");
                           }}
@@ -2856,47 +2929,16 @@ export default function FleetMaintenancePanel({
 
                 <div className="fleet-maintenance-meta-item">
                   <span className="fleet-maintenance-meta-label">
-                    Recall status
+                    Recall & body
                   </span>
                   <span className="fleet-maintenance-meta-value">
-                    ✅ No Open Recalls
-                  </span>
-                </div>
-
-                <div className="fleet-maintenance-meta-item">
-                  <span className="fleet-maintenance-meta-label">
-                    Body condition
-                  </span>
-                  <span className="fleet-maintenance-meta-value">
-                    {vehicle.body_condition}
-                  </span>
-                </div>
-
-                <div className="fleet-maintenance-meta-item">
-                  <span className="fleet-maintenance-meta-label">
-                    Onboarding odometer
-                  </span>
-                  <span className="fleet-maintenance-meta-value">
-                    {formatMiles(vehicle.onboardingOdometerMiles)}
-                  </span>
-                </div>
-
-                <div className="fleet-maintenance-meta-item">
-                  <span className="fleet-maintenance-meta-label">
-                    Total Turo miles
-                  </span>
-                  <span className="fleet-maintenance-meta-value">
-                    {formatMiles(vehicle.totalTuroMiles)}
+                    No open recalls
                   </span>
                   <span className="fleet-maintenance-registration-subvalue">
-                    {vehicle.countedTuroMileageTrips
-                      ? `${Number(
-                          vehicle.countedTuroMileageTrips
-                        ).toLocaleString("en-US")} trips with odometers`
-                      : "No closed trip odometers counted"}
+                    Body: {vehicle.body_condition || "unknown"}.{" "}
+                    {formatCountLabel(vehicle.body_note_count, "note")}
                   </span>
                 </div>
-
                 <div
                   className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
                     vehicle.telematics?.tone || "unknown"

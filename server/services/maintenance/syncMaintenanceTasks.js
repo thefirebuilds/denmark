@@ -25,18 +25,38 @@ function buildOkRuleLookup(ruleStatuses = []) {
   };
 }
 
-function getRuleCodeForTaskTypeSql(taskTypeExpression = "mt.task_type") {
+function getRuleCodeForTaskSql(
+  taskTypeExpression = "mt.task_type",
+  titleExpression = "mt.title"
+) {
   return `
-    CASE ${taskTypeExpression}
-      WHEN 'battery_voltage_inspection' THEN 'battery_test'
-      WHEN 'post_trip_brake_inspection' THEN 'brake_inspection'
-      WHEN 'post_trip_tread_depth_check' THEN 'tread_depth'
-      WHEN 'post_trip_tire_pressure_check' THEN 'tire_pressure_check'
-      WHEN 'post_trip_fluid_leak_check' THEN 'fluid_leak_check'
-      WHEN 'post_trip_oil_level_check' THEN 'fluid_leak_check'
-      WHEN 'post_trip_condition_review' THEN 'cleaning'
-      WHEN 'handoff_prep' THEN 'cleaning'
-      WHEN 'vehicle_prep' THEN 'cleaning'
+    CASE
+      WHEN ${taskTypeExpression} = 'battery_voltage_inspection'
+        OR lower(COALESCE(${titleExpression}, '')) LIKE '%battery%'
+        THEN 'battery_test'
+      WHEN ${taskTypeExpression} = 'post_trip_brake_inspection'
+        OR lower(COALESCE(${taskTypeExpression}, '')) LIKE '%brake%'
+        OR lower(COALESCE(${titleExpression}, '')) LIKE '%brake%'
+        THEN 'brake_inspection'
+      WHEN ${taskTypeExpression} = 'post_trip_tread_depth_check'
+        OR lower(COALESCE(${taskTypeExpression}, '')) LIKE '%tread%'
+        OR lower(COALESCE(${titleExpression}, '')) LIKE '%tread%'
+        THEN 'tread_depth'
+      WHEN ${taskTypeExpression} = 'post_trip_tire_pressure_check'
+        OR lower(COALESCE(${titleExpression}, '')) LIKE '%tire pressure%'
+        THEN 'tire_pressure_check'
+      WHEN ${taskTypeExpression} = 'post_trip_fluid_leak_check'
+        OR ${taskTypeExpression} = 'post_trip_oil_level_check'
+        OR lower(COALESCE(${titleExpression}, '')) LIKE '%fluid%'
+        OR lower(COALESCE(${titleExpression}, '')) LIKE '%leak%'
+        THEN 'fluid_leak_check'
+      WHEN ${taskTypeExpression} IN (
+          'post_trip_condition_review',
+          'handoff_prep',
+          'vehicle_prep'
+        )
+        OR lower(COALESCE(${titleExpression}, '')) LIKE '%clean%'
+        THEN 'cleaning'
       ELSE NULL
     END
   `;
@@ -56,6 +76,9 @@ async function closeSatisfiedMaintenanceTasks(client, vehicleVin, options = {}) 
         updated_at = NOW()
       WHERE mt.vehicle_vin = $1
         AND mt.status = ANY($2::text[])
+        AND COALESCE(mt.source, '') <> 'manual'
+        AND COALESCE(mt.trigger_type, '') <> 'manual'
+        AND COALESCE(mt.task_type, '') <> 'manual_todo'
         AND (
           EXISTS (
             SELECT 1
@@ -71,13 +94,13 @@ async function closeSatisfiedMaintenanceTasks(client, vehicleVin, options = {}) 
                   COALESCE(mt.trigger_context->>'ruleCode', '') <> ''
                   AND mr.rule_code = mt.trigger_context->>'ruleCode'
                 )
-                OR mr.rule_code = ${getRuleCodeForTaskTypeSql("mt.task_type")}
+                OR mr.rule_code = ${getRuleCodeForTaskSql("mt.task_type", "mt.title")}
               )
           )
           OR (
             mt.rule_id = ANY($4::bigint[])
             OR lower(COALESCE(mt.trigger_context->>'ruleCode', '')) = ANY($5::text[])
-            OR ${getRuleCodeForTaskTypeSql("mt.task_type")} = ANY($5::text[])
+            OR ${getRuleCodeForTaskSql("mt.task_type", "mt.title")} = ANY($5::text[])
           )
         )
     `,
