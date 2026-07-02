@@ -436,6 +436,14 @@ export function getTaskLinkedRuleCodes(task) {
     return ["tire_pressure_inspection", "tire_pressure_check"];
   }
 
+  if (type.includes("brake") || title.includes("brake")) {
+    return ["brake_inspection"];
+  }
+
+  if (type.includes("tread") || title.includes("tread")) {
+    return ["tread_depth"];
+  }
+
   if (type.includes("leak") || title.includes("leak check")) {
     return ["fluid_leak_check", "leak_check"];
   }
@@ -677,6 +685,27 @@ function getQueueFamilyFromRuleCode(ruleCode) {
     };
   }
 
+  if (["brake_inspection", "brake_check", "brakes"].includes(code)) {
+    return {
+      key: "brake_inspection",
+      title: "Brake Inspection",
+    };
+  }
+
+  if (["tread_depth", "tread_depth_check"].includes(code)) {
+    return {
+      key: "tread_depth",
+      title: "Tread Depth Inspection",
+    };
+  }
+
+  if (["cleaning", "condition_review"].includes(code)) {
+    return {
+      key: "cleaning",
+      title: "Cleaning",
+    };
+  }
+
   return null;
 }
 
@@ -730,6 +759,33 @@ function getQueueFamilyFromItem(item) {
     return {
       key: "tire_pressure_check",
       title: "Tire pressure check",
+    };
+  }
+
+  if (title.includes("brake") || type.includes("brake")) {
+    return {
+      key: "brake_inspection",
+      title: "Brake Inspection",
+    };
+  }
+
+  if (title.includes("tread") || type.includes("tread")) {
+    return {
+      key: "tread_depth",
+      title: "Tread Depth Inspection",
+    };
+  }
+
+  if (
+    title.includes("clean") ||
+    title.includes("condition review") ||
+    type.includes("clean") ||
+    type.includes("condition review") ||
+    type.includes("conditionreview")
+  ) {
+    return {
+      key: "cleaning",
+      title: "Cleaning",
     };
   }
 

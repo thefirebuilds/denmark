@@ -804,7 +804,13 @@ async function getVehicleMaintenanceSummary(
             me.notes,
             me.data
           FROM maintenance_events me
+          LEFT JOIN maintenance_rules event_rule
+            ON event_rule.id = me.rule_id
           WHERE me.rule_id = r.id
+             OR (
+              me.vehicle_vin = r.vehicle_vin
+              AND event_rule.rule_code = r.rule_code
+            )
           ORDER BY
             CASE
               WHEN me.performed_at > NOW() + INTERVAL '7 days' THEN 1

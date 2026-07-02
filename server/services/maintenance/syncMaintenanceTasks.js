@@ -25,6 +25,23 @@ function buildOkRuleLookup(ruleStatuses = []) {
   };
 }
 
+function getRuleCodeForTaskTypeSql(taskTypeExpression = "mt.task_type") {
+  return `
+    CASE ${taskTypeExpression}
+      WHEN 'battery_voltage_inspection' THEN 'battery_test'
+      WHEN 'post_trip_brake_inspection' THEN 'brake_inspection'
+      WHEN 'post_trip_tread_depth_check' THEN 'tread_depth'
+      WHEN 'post_trip_tire_pressure_check' THEN 'tire_pressure_check'
+      WHEN 'post_trip_fluid_leak_check' THEN 'fluid_leak_check'
+      WHEN 'post_trip_oil_level_check' THEN 'fluid_leak_check'
+      WHEN 'post_trip_condition_review' THEN 'cleaning'
+      WHEN 'handoff_prep' THEN 'cleaning'
+      WHEN 'vehicle_prep' THEN 'cleaning'
+      ELSE NULL
+    END
+  `;
+}
+
 async function closeSatisfiedMaintenanceTasks(client, vehicleVin, options = {}) {
   const vin = String(vehicleVin || "").trim();
   if (!vin) return { closedRuleTaskCount: 0, closedObjectiveTaskCount: 0 };
@@ -54,6 +71,7 @@ async function closeSatisfiedMaintenanceTasks(client, vehicleVin, options = {}) 
                   COALESCE(mt.trigger_context->>'ruleCode', '') <> ''
                   AND mr.rule_code = mt.trigger_context->>'ruleCode'
                 )
+                OR mr.rule_code = ${getRuleCodeForTaskTypeSql("mt.task_type")}
               )
           )
           OR (
