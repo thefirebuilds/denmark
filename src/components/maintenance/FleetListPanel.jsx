@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import {
   normalizeVehicleKey,
   getActiveTrip,
+  getReadyForHandoffTrip,
   getEarliestAvailableDate,
   getEarliestAvailableLabel,
   getNextUpcomingTrip,
@@ -120,6 +121,10 @@ function getNextActivitySort(trips = []) {
 }
 
 function getMaintenanceSort(vehicleCard) {
+  if (vehicleCard?.maintenanceEligible === false) {
+    return { group: 9, value: Number.POSITIVE_INFINITY };
+  }
+
   const due = vehicleCard?.nextMaintenanceDue;
   const currentOdometer =
     vehicleCard?.currentOdometerMiles != null
@@ -156,6 +161,11 @@ function getMaintenanceSort(vehicleCard) {
 }
 
 function compareFleetByMaintenance(a, b) {
+  const aEligible = a?.maintenanceEligible !== false;
+  const bEligible = b?.maintenanceEligible !== false;
+
+  if (aEligible !== bEligible) return aEligible ? -1 : 1;
+
   const aActivity = a?.nextActivitySort || { group: 3, value: Number.POSITIVE_INFINITY };
   const bActivity = b?.nextActivitySort || { group: 3, value: Number.POSITIVE_INFINITY };
 
@@ -188,19 +198,25 @@ function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
   const batteryStatus = vehicle?.telemetry?.battery?.status;
   const batteryStale = vehicle?.telemetry?.battery?.is_stale;
   const activeTrip = getActiveTrip(trips);
+  const readyForHandoffTrip = getReadyForHandoffTrip(trips);
   const nextUpcomingTrip = getNextUpcomingTrip(trips);
   const hasActiveTrip = Boolean(activeTrip);
+  const readyForHandoff = Boolean(readyForHandoffTrip);
   const hasUpcomingTrip = Boolean(nextUpcomingTrip);
+  const maintenanceEligible = !hasActiveTrip && !readyForHandoff;
 
   let status = "Guest-ready";
   let tone = "good";
 
-  if (milOn || serviceDue) {
-    status = "Maintenance due";
-    tone = "bad";
+  if (readyForHandoff) {
+    status = "Ready for handoff";
+    tone = "warn";
   } else if (hasActiveTrip) {
     status = "On trip";
     tone = "warn";
+  } else if (milOn || serviceDue) {
+    status = "Maintenance due";
+    tone = "bad";
   } else if (hasUpcomingTrip) {
     status = "Booked";
     tone = "warn";
@@ -219,8 +235,15 @@ function buildLiveFleetCard(vehicle, trips = [], maintenanceSummary = null) {
     model: vehicle.model || "",
     status,
     tone,
-    nextOffTrip: getEarliestAvailableLabel(trips),
+    nextOffTrip: maintenanceEligible
+      ? getEarliestAvailableLabel(trips)
+      : readyForHandoff
+      ? "Not eligible - ready for handoff"
+      : "Not eligible - on trip",
     nextAvailableDate: getEarliestAvailableDate(trips),
+    maintenanceEligible,
+    readyForHandoff,
+    hasActiveTrip,
     currentOdometerMiles:
       maintenanceSummary?.currentOdometerMiles ??
       vehicle?.telemetry?.odometer ??

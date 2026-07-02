@@ -110,9 +110,20 @@ function isTripActiveNow(trip: TripLike, now: number) {
   return start != null && end != null && start <= now && end >= now;
 }
 
+function isTripReadyForHandoff(trip: TripLike) {
+  const bucket = normalizeVehicleMatchValue(trip?.queue_bucket);
+  const stage = normalizeVehicleMatchValue(trip?.workflow_stage);
+  return bucket === "ready_for_handoff" || stage === "ready_for_handoff";
+}
+
 function getNextUpcomingTripTime(trips: TripLike[], now: number) {
   const upcomingTimes = trips
-    .filter((trip) => !isTripClosed(trip) && !isTripActiveNow(trip, now))
+    .filter(
+      (trip) =>
+        !isTripClosed(trip) &&
+        !isTripActiveNow(trip, now) &&
+        !isTripReadyForHandoff(trip)
+    )
     .map((trip) => getTripTime(trip, "start"))
     .filter((time): time is number => time != null && time > now);
 
@@ -132,6 +143,9 @@ function pickDefaultMaintenanceVehicleId(
       const vehicleTrips = trips.filter((trip) => tripMatchesVehicle(vehicle, trip));
       const activeTrip = vehicleTrips.find((trip) => isTripActiveNow(trip, now));
       if (activeTrip) return null;
+
+      const readyForHandoffTrip = vehicleTrips.find(isTripReadyForHandoff);
+      if (readyForHandoffTrip) return null;
 
       const nextTripAt = getNextUpcomingTripTime(vehicleTrips, now);
       if (nextTripAt == null) return null;

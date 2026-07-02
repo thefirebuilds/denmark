@@ -3,6 +3,13 @@
 // Shared helpers for maintenance + fleet vehicle normalization
 // ------------------------------------------------------------
 
+const SATISFYING_MAINTENANCE_RESULTS = new Set([
+  "pass",
+  "performed",
+  "measured",
+  "not_applicable",
+]);
+
 export function formatMiles(value) {
   if (value == null || value === "") return "Unknown";
   const n = Number(value);
@@ -579,6 +586,74 @@ function isEventRecentEnoughForTask(event, summary) {
   return false;
 }
 
+function getRuleHistoryEntries(historyMap, ruleCode) {
+  const normalized = normalizeRuleCode(ruleCode);
+  if (!normalized || !historyMap) return [];
+
+  return Object.entries(historyMap).reduce((entries, [key, value]) => {
+    if (normalizeRuleCode(key) !== normalized || !Array.isArray(value)) {
+      return entries;
+    }
+
+    return entries.concat(value);
+  }, []);
+}
+
+function getLatestSatisfyingHistoryEntry(historyMap, ruleCode) {
+  return getRuleHistoryEntries(historyMap, ruleCode)
+    .filter((entry) =>
+      SATISFYING_MAINTENANCE_RESULTS.has(
+        String(entry?.result || "").trim().toLowerCase()
+      )
+    )
+    .sort((a, b) => {
+      const aDate = new Date(
+        a?.performedAt || a?.performed_at || a?.createdAt || a?.created_at || 0
+      ).getTime();
+      const bDate = new Date(
+        b?.performedAt || b?.performed_at || b?.createdAt || b?.created_at || 0
+      ).getTime();
+      if (aDate !== bDate) return bDate - aDate;
+
+      const aOdometer = Number(a?.odometerMiles ?? a?.odometer_miles);
+      const bOdometer = Number(b?.odometerMiles ?? b?.odometer_miles);
+      return (Number.isFinite(bOdometer) ? bOdometer : -1) -
+        (Number.isFinite(aOdometer) ? aOdometer : -1);
+    })[0] || null;
+}
+
+function isRuleSatisfiedByHistory(rule, historyMap) {
+  const latest = getLatestSatisfyingHistoryEntry(historyMap, rule?.ruleCode);
+  if (!latest) return false;
+
+  const performedRaw =
+    latest?.performedAt ||
+    latest?.performed_at ||
+    latest?.createdAt ||
+    latest?.created_at;
+  const performedAt = performedRaw ? new Date(performedRaw) : null;
+  const nextDueDate = rule?.nextDueDate ? new Date(rule.nextDueDate) : null;
+
+  if (
+    performedAt &&
+    !Number.isNaN(performedAt.getTime()) &&
+    nextDueDate &&
+    !Number.isNaN(nextDueDate.getTime()) &&
+    performedAt >= nextDueDate
+  ) {
+    return true;
+  }
+
+  const odometer = Number(latest?.odometerMiles ?? latest?.odometer_miles);
+  const nextDueMiles = Number(rule?.nextDueMiles);
+
+  return (
+    Number.isFinite(odometer) &&
+    Number.isFinite(nextDueMiles) &&
+    odometer >= nextDueMiles
+  );
+}
+
 export function isTaskSatisfiedByRule(task, summary) {
   if (isStandaloneTask(task)) {
     return false;
@@ -633,6 +708,16 @@ export function isTaskSatisfiedByRule(task, summary) {
 
     return isEventRecentEnoughForTask(event, summary);
   });
+}
+
+function isTaskSatisfiedByRuleHistory(task, summary, historyMap) {
+  if (isStandaloneTask(task)) {
+    return false;
+  }
+
+  return getLinkedRulesForTask(summary, task).some((rule) =>
+    isRuleSatisfiedByHistory(rule, historyMap)
+  );
 }
 
 export function getPriorityScore(priority) {
@@ -878,6 +963,7 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
   const taskItems = tasks
     .filter((task) => String(task?.status || "").toLowerCase() === "open")
     .filter((task) => !isTaskSatisfiedByRule(task, summary))
+    .filter((task) => !isTaskSatisfiedByRuleHistory(task, summary, historyMap))
     .map((task) => {
       const linkedRuleCodes = getTaskLinkedRuleCodes(task);
       const linkedRules = getLinkedRulesForTask(summary, task);
@@ -908,29 +994,31 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
       };
     });
 
-  const ruleItems = actionableRules.map((rule) => ({
-    id: `rule-${rule.ruleId || rule.ruleCode}`,
-    title: rule.title || rule.ruleCode || "Inspection item",
-    type: "inspection rule",
-    priority:
-      rule.blocksRentalWhenOverdue || rule.blocksGuestExportWhenOverdue
-        ? "high"
-        : "medium",
-    notes:
-      String(rule.status || "").toLowerCase() === "failed"
-        ? "Inspection result failed and needs attention."
-        : "Inspection item is due now or overdue.",
-    source: "rule",
-    linkedRuleCode: rule.ruleCode,
-    linkedRuleCodes: [rule.ruleCode].filter(Boolean),
-    nextDueMiles: rule.nextDueMiles ?? null,
-    nextDueDate: rule.nextDueDate ?? null,
-    ruleStatus: rule.status ?? null,
-    nextDueText: getNextIntervalDueText(rule, currentOdometerMiles),
-    history: historyMap[rule.ruleCode] || [],
-    blocksRentalWhenOverdue: Boolean(rule.blocksRentalWhenOverdue),
-    blocksGuestExportWhenOverdue: Boolean(rule.blocksGuestExportWhenOverdue),
-  }));
+  const ruleItems = actionableRules
+    .filter((rule) => !isRuleSatisfiedByHistory(rule, historyMap))
+    .map((rule) => ({
+      id: `rule-${rule.ruleId || rule.ruleCode}`,
+      title: rule.title || rule.ruleCode || "Inspection item",
+      type: "inspection rule",
+      priority:
+        rule.blocksRentalWhenOverdue || rule.blocksGuestExportWhenOverdue
+          ? "high"
+          : "medium",
+      notes:
+        String(rule.status || "").toLowerCase() === "failed"
+          ? "Inspection result failed and needs attention."
+          : "Inspection item is due now or overdue.",
+      source: "rule",
+      linkedRuleCode: rule.ruleCode,
+      linkedRuleCodes: [rule.ruleCode].filter(Boolean),
+      nextDueMiles: rule.nextDueMiles ?? null,
+      nextDueDate: rule.nextDueDate ?? null,
+      ruleStatus: rule.status ?? null,
+      nextDueText: getNextIntervalDueText(rule, currentOdometerMiles),
+      history: historyMap[rule.ruleCode] || [],
+      blocksRentalWhenOverdue: Boolean(rule.blocksRentalWhenOverdue),
+      blocksGuestExportWhenOverdue: Boolean(rule.blocksGuestExportWhenOverdue),
+    }));
 
   const merged = [...taskItems, ...ruleItems];
   return mergeQueueItems(merged);

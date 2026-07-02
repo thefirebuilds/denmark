@@ -784,10 +784,11 @@ function getStatusIcon(status) {
 function buildFleetPlanningCard(vehicle, trips, summary) {
   const historyMap = buildInspectionHistoryMap(summary);
   const readyForHandoff = Boolean(getReadyForHandoffTrip(trips));
-  const queueItems = readyForHandoff
-    ? []
-    : buildQueueItemsFromSummary(summary, historyMap);
   const activeTrip = getActiveTrip(trips);
+  const maintenanceEligible = !readyForHandoff && !activeTrip;
+  const queueItems = maintenanceEligible
+    ? buildQueueItemsFromSummary(summary, historyMap)
+    : [];
 
   const blockingItems = queueItems.filter(
     (item) =>
@@ -818,6 +819,7 @@ function buildFleetPlanningCard(vehicle, trips, summary) {
         ? getEarliestAvailableLabel(trips)
         : "Available now",
     readyForHandoff,
+    maintenanceEligible,
     totalOpenItems: queueItems.length,
     blockingCount: blockingItems.length,
     attentionCount: attentionItems.length,
@@ -2347,6 +2349,11 @@ export default function FleetMaintenancePanel({
 
       await saveRes.json();
       await loadSelectedVehicleMaintenance();
+      notifyMaintenanceTasksUpdated({
+        vehicleVin: vin,
+        ruleCode: payload.ruleCode,
+        source: "inspection_event",
+      });
       handleCloseInspectionDrawer();
     } catch (err) {
       console.error("Failed to save inspection item:", err);

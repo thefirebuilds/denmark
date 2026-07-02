@@ -328,7 +328,7 @@ function groupFleetItemsByAvailabilityDate(items) {
 }
 
 function buildFleetQueueItems(vehicleCard, summary, historyMap = {}) {
-  if (vehicleCard.readyForHandoff) return [];
+  if (vehicleCard.maintenanceEligible === false) return [];
 
   const baseItems = buildQueueItemsFromSummary(summary, historyMap);
 
@@ -535,6 +535,8 @@ export default function MaintenanceQueuePanel({
 
             const nextAvailableDate = getEarliestAvailableDate(trips);
             const readyForHandoff = Boolean(getReadyForHandoffTrip(trips));
+            const activeTrip = getActiveTrip(trips);
+            const maintenanceEligible = !readyForHandoff && !activeTrip;
 
             return {
               id: normalizeVehicleKey(vehicle.nickname || vehicle.vin || vehicle.id),
@@ -553,6 +555,7 @@ export default function MaintenanceQueuePanel({
               nextAvailableDate,
               nextPlanningDate: getVehiclePlanningDate(trips, nextAvailableDate),
               readyForHandoff,
+              maintenanceEligible,
             };
           })
           .filter((v) => v.vin);
