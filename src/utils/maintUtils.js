@@ -594,6 +594,10 @@ export function isTaskSatisfiedByRule(task, summary) {
   return linkedRules.some((rule) => {
     const ruleStatus = String(rule?.status || "").toLowerCase();
 
+    if (ruleStatus === "ok") {
+      return true;
+    }
+
     // For projection / due-risk tasks, if the rule is currently OK, the task is satisfied.
     if (
       taskType === "trip_projection_maintenance_risk" ||

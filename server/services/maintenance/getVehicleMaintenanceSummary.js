@@ -816,6 +816,12 @@ async function getVehicleMaintenanceSummary(
               WHEN me.performed_at > NOW() + INTERVAL '7 days' THEN 1
               ELSE 0
             END,
+            me.performed_at::date DESC,
+            me.odometer_miles DESC NULLS LAST,
+            CASE
+              WHEN me.result = ANY(ARRAY['pass', 'performed', 'measured', 'not_applicable']) THEN 0
+              ELSE 1
+            END,
             me.performed_at DESC,
             me.id DESC
           LIMIT 1
@@ -986,6 +992,12 @@ async function getVehicleMaintenanceSummary(
           CASE
             WHEN me.performed_at > NOW() + INTERVAL '7 days' THEN 1
             ELSE 0
+          END,
+          me.performed_at::date DESC,
+          me.odometer_miles DESC NULLS LAST,
+          CASE
+            WHEN me.result = ANY(ARRAY['pass', 'performed', 'measured', 'not_applicable']) THEN 0
+            ELSE 1
           END,
           me.performed_at DESC,
           me.id DESC
