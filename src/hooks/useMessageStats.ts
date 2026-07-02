@@ -16,6 +16,9 @@ export function useMessageStats({
   const [messageStats, setMessageStats] = useState({
     unread: 0,
     lastReceived: null as string | null,
+    deploymentLabel: null as string | null,
+    codeUpdatedAt: null as string | null,
+    codeVersion: null as string | null,
     serverUptimeLabel: null as string | null,
   });
   const [messageStatsLoading, setMessageStatsLoading] = useState(true);
@@ -103,6 +106,9 @@ export function useMessageStats({
         setMessageStats({
           unread: nextUnread,
           lastReceived: data?.lastReceived ?? null,
+          deploymentLabel: data?.deploymentLabel ?? null,
+          codeUpdatedAt: data?.codeUpdatedAt ?? null,
+          codeVersion: data?.codeVersion ?? null,
           serverUptimeLabel: data?.serverUptimeLabel ?? null,
         });
       }
@@ -118,6 +124,9 @@ export function useMessageStats({
         setMessageStats({
           unread: 0,
           lastReceived: null,
+          deploymentLabel: null,
+          codeUpdatedAt: null,
+          codeVersion: null,
           serverUptimeLabel: null,
         });
       }

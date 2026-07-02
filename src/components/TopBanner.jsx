@@ -51,6 +51,8 @@ export default function TopBanner({
       day: "numeric",
     }).format(new Date());
   }, []);
+  const serverFreshnessLabel =
+    stats?.deploymentLabel || stats?.serverUptimeLabel || "server";
 
   return (
     <div className="top-banner">
@@ -116,7 +118,7 @@ export default function TopBanner({
               ? "Loading..."
               : `${todayLabel} • ${stats?.unread ?? 0} unread • last received ${formatLastReceived(
                   stats?.lastReceived
-                )} • ${stats?.serverUptimeLabel || "server"} • ${effectiveLayoutMode} view`}
+                )} • ${serverFreshnessLabel} • ${effectiveLayoutMode} view`}
           </span>
         </div>
       </div>

@@ -1,6 +1,7 @@
 ﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const { getDeploymentInfo } = require("../deploymentInfo");
 const {
   getBridgeAlertSettings,
   isAndroidBridgeEnabled,
@@ -2001,6 +2002,7 @@ router.get("/stats", async (req, res) => {
       console.log(`[messages] stats load ${statsMs}ms`);
     }
     const row = result.rows[0];
+    const deploymentInfo = getDeploymentInfo();
 
     // Calculate server uptime
     const serverStartTime = global.SERVER_STARTUP_TIME || new Date();
@@ -2028,6 +2030,7 @@ router.get("/stats", async (req, res) => {
       unknown: Number(row.unknown_count || 0),
       total: Number(row.total_count || 0),
       lastReceived: row.last_received,
+      ...deploymentInfo,
       serverStartedAt: serverStartTime.toISOString(),
       serverUptimeLabel: uptimeLabel,
       androidBridgeEnabled,

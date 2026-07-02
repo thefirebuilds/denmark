@@ -23,7 +23,11 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 
 FROM node:22.12-bookworm-slim AS runtime
+ARG DENMARK_BUILD_COMMIT=unknown
+ARG DENMARK_BUILD_TIME=unknown
 ENV NODE_ENV=production
+ENV DENMARK_BUILD_COMMIT=${DENMARK_BUILD_COMMIT}
+ENV DENMARK_BUILD_TIME=${DENMARK_BUILD_TIME}
 ENV POSTGRES_CLIENT_MAJOR=18
 ENV TZ=America/Chicago
 WORKDIR /app
