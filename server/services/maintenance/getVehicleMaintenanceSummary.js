@@ -809,7 +809,7 @@ async function getVehicleMaintenanceSummary(
           WHERE me.rule_id = r.id
              OR (
               me.vehicle_vin = r.vehicle_vin
-              AND event_rule.rule_code = r.rule_code
+              AND COALESCE(event_rule.rule_code, me.event_type) = r.rule_code
             )
           ORDER BY
             CASE

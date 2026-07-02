@@ -75,11 +75,9 @@ async function closeSatisfiedMaintenanceTasks(client, vehicleVin, options = {}) 
               )
           )
           OR (
-            mt.task_type = 'trip_projection_maintenance_risk'
-            AND (
-              mt.rule_id = ANY($4::bigint[])
-              OR lower(COALESCE(mt.trigger_context->>'ruleCode', '')) = ANY($5::text[])
-            )
+            mt.rule_id = ANY($4::bigint[])
+            OR lower(COALESCE(mt.trigger_context->>'ruleCode', '')) = ANY($5::text[])
+            OR ${getRuleCodeForTaskTypeSql("mt.task_type")} = ANY($5::text[])
           )
         )
     `,
