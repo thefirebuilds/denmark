@@ -75,8 +75,10 @@ async function evaluatePostTripMaintenance(client, { vehicle, trip, summary }) {
 
   // Always: post-trip condition review
   {
+    const cleaningRule = ruleMap.get("cleaning") || null;
     const result = await createTaskIfMissing(client, {
       vehicleVin: vehicle.vin,
+      ruleId: cleaningRule?.ruleId || null,
       relatedTripId: trip.id,
       taskType: "post_trip_condition_review",
       title: "Post-trip condition review",
@@ -88,6 +90,10 @@ async function evaluatePostTripMaintenance(client, { vehicle, trip, summary }) {
       sourceKey: `trip:${trip.id}:stage:turnaround:post_trip_condition_review`,
       triggerContext: {
         ...baseContext,
+        ruleCode: cleaningRule?.ruleCode || "cleaning",
+        ruleStatus: cleaningRule?.status || null,
+        nextDueMiles: cleaningRule?.nextDueMiles ?? null,
+        nextDueDate: cleaningRule?.nextDueDate ?? null,
         reason: "after_every_trip",
       },
     });

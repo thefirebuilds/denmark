@@ -14,6 +14,7 @@ const {
 } = require("./ruleTemplates");
 const {
   ACTIVE_TASK_STATUSES,
+  cancelDuplicateRuleTasks,
   closeSatisfiedMaintenanceTasks,
 } = require("./syncMaintenanceTasks");
 const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
@@ -49,6 +50,16 @@ function addDays(dateValue, days) {
   if (Number.isNaN(d.getTime())) return null;
   d.setDate(d.getDate() + days);
   return d;
+}
+
+const BATTERY_LOW_VOLTAGE_THRESHOLD = 11.9;
+const BATTERY_LOW_VOLTAGE_QUIET_HOURS = 24;
+
+function getHoursSince(dateValue, now = new Date()) {
+  if (!dateValue) return null;
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, (now.getTime() - date.getTime()) / 3600000);
 }
 
 async function getBatteryVoltageHealth(client, vin) {
@@ -147,18 +158,32 @@ async function getBatteryVoltageHealth(client, vin) {
   let status = "No voltage history";
   let needsInspection = false;
   let inspectionReason = null;
+  const now = new Date();
+  const lowVoltageAgeHours = getHoursSince(row.low_recorded_at, now);
+  const currentLowVoltage =
+    currentVoltage != null && currentVoltage < BATTERY_LOW_VOLTAGE_THRESHOLD;
+  const recentLowVoltage =
+    lowVoltage != null &&
+    lowVoltage < BATTERY_LOW_VOLTAGE_THRESHOLD &&
+    lowVoltageAgeHours != null &&
+    lowVoltageAgeHours <= BATTERY_LOW_VOLTAGE_QUIET_HOURS;
 
   if (currentVoltage != null) {
     tone = "pass";
     status = "Voltage normal";
 
-    if (lowVoltage != null && lowVoltage < 11.9) {
+    if (currentLowVoltage || recentLowVoltage) {
+      const alertVoltage = currentLowVoltage ? currentVoltage : lowVoltage;
       tone = "fail";
-      status = `Voltage dropped to ${lowVoltage.toFixed(
+      status = `Voltage dropped to ${alertVoltage.toFixed(
         2
-      )}v below 11.90v`;
+      )}v below ${BATTERY_LOW_VOLTAGE_THRESHOLD.toFixed(2)}v`;
       needsInspection = true;
       inspectionReason = "critical_low_voltage";
+    } else if (lowVoltage != null && lowVoltage < BATTERY_LOW_VOLTAGE_THRESHOLD) {
+      const quietHours =
+        lowVoltageAgeHours == null ? "more than 24" : Math.round(lowVoltageAgeHours);
+      status = `Voltage recovered; last low reading was ${quietHours}h ago`;
     }
 
     if (
@@ -179,6 +204,9 @@ async function getBatteryVoltageHealth(client, vin) {
     currentRecordedAt: row.current_recorded_at || null,
     lowVoltage,
     lowRecordedAt: row.low_recorded_at || null,
+    lowVoltageAgeHours:
+      lowVoltageAgeHours == null ? null : Number(lowVoltageAgeHours.toFixed(1)),
+    lowVoltageQuietHours: BATTERY_LOW_VOLTAGE_QUIET_HOURS,
     highVoltage,
     highRecordedAt: row.high_recorded_at || null,
     averageVoltage,
@@ -195,6 +223,19 @@ async function getBatteryVoltageHealth(client, vin) {
 }
 
 async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
+  const batteryRuleResult = await client.query(
+    `
+      SELECT id
+      FROM maintenance_rules
+      WHERE vehicle_vin = $1
+        AND rule_code = 'battery_test'
+        AND is_active = TRUE
+      LIMIT 1
+    `,
+    [vin]
+  );
+  const batteryRuleId = batteryRuleResult.rows[0]?.id || null;
+
   if (!batteryHealth?.needsInspection) {
     await client.query(
       `
@@ -225,11 +266,17 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
       SELECT id
       FROM maintenance_tasks
       WHERE vehicle_vin = $1
-        AND task_type = 'battery_voltage_inspection'
         AND status = ANY($2::text[])
+        AND (
+          rule_id = $3
+          OR (
+            $3::bigint IS NULL
+            AND task_type = 'battery_voltage_inspection'
+          )
+        )
       LIMIT 1
     `,
-    [vin, ACTIVE_TASK_STATUSES]
+    [vin, ACTIVE_TASK_STATUSES, batteryRuleId]
   );
 
   if (existing.rows[0]) {
@@ -241,7 +288,8 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
           priority = $3,
           blocks_rental = $4,
           needs_review = true,
-          trigger_context = $5::jsonb,
+          rule_id = COALESCE(rule_id, $5),
+          trigger_context = trigger_context || $6::jsonb,
           updated_at = NOW()
         WHERE id = $1
       `,
@@ -250,8 +298,10 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
         description,
         priority,
         batteryHealth.tone === "fail",
+        batteryRuleId,
         JSON.stringify({
           createdFrom: "battery_voltage_health",
+          ruleCode: "battery_test",
           reason: batteryHealth.inspectionReason,
           batteryHealth,
         }),
@@ -272,6 +322,7 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
     `
       INSERT INTO maintenance_tasks (
         vehicle_vin,
+        rule_id,
         task_type,
         title,
         description,
@@ -287,6 +338,7 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
       )
       VALUES (
         $1,
+        $6,
         'battery_voltage_inspection',
         'Battery inspection',
         $2,
@@ -298,7 +350,7 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
         'system',
         $5,
         'telemetry_battery_voltage',
-        $6::jsonb
+        $7::jsonb
       )
       ON CONFLICT (source_key) DO NOTHING
       RETURNING id
@@ -309,8 +361,10 @@ async function ensureBatteryVoltageInspectionTask(client, vin, batteryHealth) {
       priority,
       batteryHealth.tone === "fail",
       sourceKey,
+      batteryRuleId,
       JSON.stringify({
         createdFrom: "battery_voltage_health",
+        ruleCode: "battery_test",
         reason: batteryHealth.inspectionReason,
         batteryHealth,
       }),
@@ -807,6 +861,7 @@ async function getVehicleMaintenanceSummary(
   await ensureBatteryVoltageInspectionTask(client, vin, batteryVoltageHealth);
 
   await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
+  await cancelDuplicateRuleTasks(client, vin);
 
   const [tasksResult, taskHistoryResult, notesResult, historyResult] = await Promise.all([
     client.query(

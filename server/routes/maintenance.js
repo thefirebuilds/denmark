@@ -154,6 +154,128 @@ async function createManualMaintenanceTask(client, vin, input = {}) {
   return result.rows[0];
 }
 
+const TASK_RULE_CODE_MAP = new Map([
+  ["battery_voltage_inspection", "battery_test"],
+  ["post_trip_brake_inspection", "brake_inspection"],
+  ["post_trip_tread_depth_check", "tread_depth"],
+  ["post_trip_tire_pressure_check", "tire_pressure_check"],
+  ["post_trip_fluid_leak_check", "fluid_leak_check"],
+  ["post_trip_oil_level_check", "fluid_leak_check"],
+  ["post_trip_condition_review", "cleaning"],
+  ["handoff_prep", "cleaning"],
+  ["vehicle_prep", "cleaning"],
+]);
+
+function getTaskRuleCode(task) {
+  const contextRuleCode = String(task?.trigger_context?.ruleCode || "").trim();
+  if (contextRuleCode) return contextRuleCode;
+
+  return TASK_RULE_CODE_MAP.get(String(task?.task_type || "").trim()) || null;
+}
+
+async function getRuleForTask(client, task) {
+  if (!task) return null;
+
+  if (task.rule_id) {
+    const result = await client.query(
+      `
+        SELECT id, rule_code, title, requires_pass_result
+        FROM maintenance_rules
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [task.rule_id]
+    );
+
+    if (result.rows[0]) return result.rows[0];
+  }
+
+  const ruleCode = getTaskRuleCode(task);
+  if (!ruleCode) return null;
+
+  const result = await client.query(
+    `
+      SELECT id, rule_code, title, requires_pass_result
+      FROM maintenance_rules
+      WHERE vehicle_vin = $1
+        AND rule_code = $2
+        AND is_active = TRUE
+      LIMIT 1
+    `,
+    [task.vehicle_vin, ruleCode]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getTaskResolutionOdometer(client, task) {
+  const context = task?.trigger_context || {};
+  const contextOdometer = Number(
+    context.currentOdometerMiles ??
+      context.odometerMiles ??
+      context.nextDueMiles ??
+      NaN
+  );
+
+  if (Number.isFinite(contextOdometer) && contextOdometer >= 0) {
+    return Math.round(contextOdometer);
+  }
+
+  const result = await client.query(
+    `
+      SELECT MAX(odometer_miles)::int AS odometer_miles
+      FROM (
+        SELECT current_odometer_miles AS odometer_miles
+        FROM vehicles
+        WHERE vin = $1
+        UNION ALL
+        SELECT odometer_miles
+        FROM maintenance_events
+        WHERE vehicle_vin = $1
+      ) odometer_sources
+      WHERE odometer_miles IS NOT NULL
+    `,
+    [task.vehicle_vin]
+  );
+
+  const odometer = Number(result.rows[0]?.odometer_miles);
+  return Number.isFinite(odometer) && odometer >= 0 ? Math.round(odometer) : null;
+}
+
+async function createEventForResolvedTask(client, task, { actualLaborHours = null } = {}) {
+  const rule = await getRuleForTask(client, task);
+  if (!rule) return null;
+
+  const odometerMiles = await getTaskResolutionOdometer(client, task);
+  const result = rule.requires_pass_result ? "pass" : "performed";
+  const context = task.trigger_context || {};
+  const notes = [
+    `Completed from maintenance task #${task.id}: ${task.title}`,
+    task.description || "",
+    context.reason ? `Reason: ${context.reason}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return createMaintenanceEvent({
+    vin: task.vehicle_vin,
+    ruleId: rule.id,
+    performedAt: new Date().toISOString(),
+    odometerMiles,
+    result,
+    notes,
+    data: {
+      completedTaskId: task.id,
+      completedTaskType: task.task_type,
+      triggerType: task.trigger_type || null,
+      triggerContext: context,
+    },
+    source: "inspection",
+    actualLaborHours,
+    allowMissingOdometer: true,
+  });
+}
+
 // ------------------------------------------------------------
 // GET reusable maintenance rule templates
 // ------------------------------------------------------------
@@ -428,6 +550,31 @@ router.patch("/maintenance-tasks/:taskId", async (req, res) => {
       }
     }
 
+    let linkedEvent = null;
+
+    if (statusProvided && status === "resolved") {
+      const taskResult = await pool.query(
+        `
+          SELECT *
+          FROM maintenance_tasks
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [taskId]
+      );
+      const task = taskResult.rows[0] || null;
+
+      if (!task) {
+        return res.status(404).json({ error: "Maintenance task not found" });
+      }
+
+      if (!["resolved", "canceled"].includes(String(task.status || ""))) {
+        linkedEvent = await createEventForResolvedTask(pool, task, {
+          actualLaborHours,
+        });
+      }
+    }
+
     const updates = [];
     const values = [taskId];
 
@@ -470,6 +617,7 @@ router.patch("/maintenance-tasks/:taskId", async (req, res) => {
     res.json({
       ok: true,
       task: result.rows[0],
+      linkedEvent,
     });
   } catch (err) {
     console.error(`PATCH /maintenance-tasks/${req.params.taskId} failed:`, err);

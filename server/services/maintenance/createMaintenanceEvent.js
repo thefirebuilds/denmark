@@ -23,6 +23,10 @@ function getResolvableTaskTypesForRuleCode(ruleCode) {
     return ["post_trip_tire_pressure_check"];
   }
 
+  if (normalized === "cleaning") {
+    return ["post_trip_condition_review", "handoff_prep", "vehicle_prep"];
+  }
+
   return [];
 }
 
@@ -130,8 +134,10 @@ function normalizeResult(value) {
   return normalized;
 }
 
-function normalizeOdometerMiles(value) {
+function normalizeOdometerMiles(value, { allowMissing = false } = {}) {
   if (value === undefined || value === null || value === "") {
+    if (allowMissing) return null;
+
     const err = new Error("Odometer is required for maintenance entries");
     err.statusCode = 400;
     throw err;
@@ -157,6 +163,8 @@ function normalizeData(value) {
 }
 
 async function recordVehicleOdometer(client, vehicle, odometerMiles, recordedAt) {
+  if (odometerMiles == null) return;
+
   await client.query(
     `
       UPDATE vehicles
@@ -199,6 +207,7 @@ async function createMaintenanceEvent({
   source,
   estimatedLaborHours,
   actualLaborHours,
+  allowMissingOdometer = false,
 }) {
   if (!vin) {
     const err = new Error("VIN required");
@@ -214,7 +223,9 @@ async function createMaintenanceEvent({
     const vehicle = await ensureVehicleExists(client, vin);
     const rule = await resolveRule(client, { ruleId, ruleCode });
     const performedTimestamp = normalizePerformedAt(performedAt);
-    const odo = normalizeOdometerMiles(odometerMiles);
+    const odo = normalizeOdometerMiles(odometerMiles, {
+      allowMissing: allowMissingOdometer,
+    });
     const normalizedResult = normalizeResult(result);
     const normalizedData = normalizeData(data);
     const estimatedLabor =
@@ -338,7 +349,7 @@ async function createMaintenanceEvent({
         Number(syncResult.closedObjectiveTaskCount || 0),
       vehicle_current_odometer_miles: Math.max(
         Number(vehicle.current_odometer_miles || 0),
-        odo
+        Number(odo || 0)
       ),
     };
   } catch (err) {

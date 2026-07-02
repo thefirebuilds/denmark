@@ -109,8 +109,47 @@ async function closeSatisfiedMaintenanceTasks(client, vehicleVin, options = {}) 
   };
 }
 
+async function cancelDuplicateRuleTasks(client, vehicleVin) {
+  const vin = String(vehicleVin || "").trim();
+  if (!vin) return { canceledDuplicateTaskCount: 0 };
+
+  const result = await client.query(
+    `
+      WITH ranked AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY vehicle_vin, rule_id
+            ORDER BY created_at ASC, id ASC
+          ) AS duplicate_rank
+        FROM maintenance_tasks
+        WHERE vehicle_vin = $1
+          AND rule_id IS NOT NULL
+          AND status = ANY($2::text[])
+      )
+      UPDATE maintenance_tasks mt
+      SET
+        status = 'canceled',
+        updated_at = NOW(),
+        trigger_context = mt.trigger_context || jsonb_build_object(
+          'canceledAsDuplicate', true,
+          'canceledAsDuplicateAt', NOW()
+        )
+      FROM ranked
+      WHERE mt.id = ranked.id
+        AND ranked.duplicate_rank > 1
+    `,
+    [vin, ACTIVE_TASK_STATUSES]
+  );
+
+  return {
+    canceledDuplicateTaskCount: Number(result.rowCount || 0),
+  };
+}
+
 module.exports = {
   ACTIVE_TASK_STATUSES,
   SATISFYING_RESULTS,
+  cancelDuplicateRuleTasks,
   closeSatisfiedMaintenanceTasks,
 };

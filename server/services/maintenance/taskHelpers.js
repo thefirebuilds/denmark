@@ -105,6 +105,55 @@ async function createTaskIfMissing(
     });
   const actualLabor = normalizeLaborHours(actualLaborHours);
 
+  if (ruleId) {
+    const activeRuleTaskResult = await client.query(
+      `
+        SELECT *
+        FROM maintenance_tasks
+        WHERE vehicle_vin = $1
+          AND rule_id = $2
+          AND status IN ('open', 'scheduled', 'in_progress', 'deferred')
+        ORDER BY created_at ASC
+        LIMIT 1
+      `,
+      [vehicleVin, ruleId]
+    );
+    const activeRuleTask = activeRuleTaskResult.rows[0] || null;
+
+    if (activeRuleTask) {
+      if (sourceKey && activeRuleTask.source_key !== sourceKey) {
+        await client.query(
+          `
+            UPDATE maintenance_tasks
+            SET
+              description = COALESCE($2, description),
+              priority = $3,
+              blocks_rental = blocks_rental OR $4,
+              blocks_guest_export = blocks_guest_export OR $5,
+              needs_review = needs_review OR $6,
+              trigger_context = trigger_context || $7::jsonb,
+              updated_at = NOW()
+            WHERE id = $1
+          `,
+          [
+            activeRuleTask.id,
+            description,
+            priority,
+            blocksRental,
+            blocksGuestExport,
+            needsReview,
+            JSON.stringify(triggerContext || {}),
+          ]
+        );
+      }
+
+      return {
+        task: activeRuleTask,
+        created: false,
+      };
+    }
+  }
+
   if (sourceKey) {
     const result = await client.query(
       `
