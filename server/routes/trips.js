@@ -34,7 +34,19 @@ const router = express.Router();
 
 function isOverdueTrip(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
+  const queueBucket = String(trip?.queue_bucket || "").toLowerCase();
   const end = trip?.trip_end ? new Date(trip.trip_end) : null;
+
+  if (
+    queueBucket === "needs_closeout" ||
+    stage === "turnaround" ||
+    stage === "awaiting_expenses" ||
+    stage === "complete" ||
+    stage === "closed" ||
+    trip?.closed_out === true
+  ) {
+    return false;
+  }
 
   return (
     stage === "in_progress" &&

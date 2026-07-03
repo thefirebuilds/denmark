@@ -16,10 +16,14 @@ export function AppShell(props: AppShellProps) {
   const useMobileMaintenanceShell =
     props.activeView === "maintenance" &&
     props.effectiveLayoutMode === "mobile";
+  const viewClass = `app--view-${String(props.activeView || "dispatch").replace(
+    /[^a-z0-9_-]/gi,
+    "-"
+  )}`;
 
   return (
     <div
-      className={`app ${
+      className={`app ${viewClass} ${
         useMobileMaintenanceShell ? "app--mobile-maintenance" : ""
       }`}
     >

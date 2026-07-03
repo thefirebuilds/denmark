@@ -1168,6 +1168,10 @@ async function getSummaryMetrics(rangeKey = "30d") {
       (sum, trip) => sum + getTripMiles(trip),
       0
     );
+    const previousTripMiles = previousTrips.reduce(
+      (sum, trip) => sum + getTripMiles(trip),
+      0
+    );
 
     const tripCountProrated = trips.reduce(
       (sum, trip) => sum + getTripProratedCount(trip, startDate, endDate),
@@ -1337,6 +1341,12 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
     const revenuePerTripMile = safeDivide(revenue, tripMiles);
     const profitPerTripMile = safeDivide(netProfit, tripMiles);
     const expensePerTripMile = safeDivide(expensesTotal, tripMiles);
+    const previousRevenuePerTripMile = safeDivide(previousRevenue, previousTripMiles);
+    const previousProfitPerTripMile = safeDivide(previousNetProfit, previousTripMiles);
+    const previousExpensePerTripMile = safeDivide(
+      previousExpensesTotal,
+      previousTripMiles
+    );
     const yearOverYearRevenuePerTripMile = safeDivide(
       yearOverYearRevenue,
       yearOverYearTripMiles
@@ -1471,6 +1481,12 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
         safeDivide(revenue, tripCountProrated)
       ),
       revenue_per_trip_mile: roundMoney(revenuePerTripMile),
+      previous_revenue_per_trip_mile:
+        previousTripMiles > 0 ? roundMoney(previousRevenuePerTripMile) : null,
+      revenue_per_trip_mile_delta:
+        previousTripMiles > 0
+          ? roundMoney(revenuePerTripMile - previousRevenuePerTripMile)
+          : null,
       last_year_revenue_per_trip_mile:
         yearOverYearTripMiles > 0 ? roundMoney(yearOverYearRevenuePerTripMile) : null,
       revenue_per_trip_mile_yoy_delta:
@@ -1478,6 +1494,12 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
           ? roundMoney(revenuePerTripMile - yearOverYearRevenuePerTripMile)
           : null,
       profit_per_trip_mile: roundMoney(profitPerTripMile),
+      previous_profit_per_trip_mile:
+        previousTripMiles > 0 ? roundMoney(previousProfitPerTripMile) : null,
+      profit_per_trip_mile_delta:
+        previousTripMiles > 0
+          ? roundMoney(profitPerTripMile - previousProfitPerTripMile)
+          : null,
       last_year_profit_per_trip_mile:
         yearOverYearTripMiles > 0 ? roundMoney(yearOverYearProfitPerTripMile) : null,
       profit_per_trip_mile_yoy_delta:
@@ -1485,6 +1507,12 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
           ? roundMoney(profitPerTripMile - yearOverYearProfitPerTripMile)
           : null,
       expense_per_trip_mile: roundMoney(expensePerTripMile),
+      previous_expense_per_trip_mile:
+        previousTripMiles > 0 ? roundMoney(previousExpensePerTripMile) : null,
+      expense_per_trip_mile_delta:
+        previousTripMiles > 0
+          ? roundMoney(expensePerTripMile - previousExpensePerTripMile)
+          : null,
       last_year_expense_per_trip_mile:
         yearOverYearTripMiles > 0 ? roundMoney(yearOverYearExpensePerTripMile) : null,
       expense_per_trip_mile_yoy_delta:

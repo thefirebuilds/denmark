@@ -230,9 +230,19 @@ export function isOverdueTrip(trip) {
 
   if (!Number.isFinite(endMs) || endMs === Number.MAX_SAFE_INTEGER) return false;
   if (isCanceledTrip(trip)) return false;
+  if (isClosedTrip(trip)) return false;
 
   const stage = String(trip?.workflow_stage || "").toLowerCase();
+  const queueBucket = String(trip?.queue_bucket || "").toLowerCase();
   const status = String(trip?.display_status || "").toLowerCase();
+
+  if (
+    queueBucket === "needs_closeout" ||
+    stage === "turnaround" ||
+    stage === "awaiting_expenses"
+  ) {
+    return false;
+  }
 
   const tripIsLive =
     stage === "in_progress" ||
@@ -378,6 +388,9 @@ export function deriveStatusLabel(trip) {
   if (isCanceledTrip(trip)) return "Canceled";
   if (isOverdueTrip(trip)) return "Overdue";
   if (isClosed) return "Complete";
+  if (needsCloseout) {
+    return tollReviewStatus === "pending" ? "Needs tolls" : "Needs expenses";
+  }
 
   if (isSameLocalDay(startMs, now) && !isReadyForCustomer) {
     return "Not ready for pickup";
@@ -397,10 +410,6 @@ export function deriveStatusLabel(trip) {
 
   if (isTomorrowLocalDay(endMs, now)) {
     return "Dropoff tomorrow";
-  }
-
-  if (needsCloseout) {
-    return tollReviewStatus === "pending" ? "Needs tolls" : "Needs expenses";
   }
 
   if (stage === "in_progress") return "In trip";

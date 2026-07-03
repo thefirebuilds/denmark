@@ -1829,6 +1829,10 @@ body {
       "trips"
       "messages"
       "details";
+    gap: 10px;
+    min-height: 100dvh;
+    padding: 8px;
+    align-items: stretch;
   }
 
   .app:has(.rail.rail--expanded) {
@@ -1836,26 +1840,101 @@ body {
   }
 
   .rail {
-    border-radius: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    max-width: 100%;
+    border-radius: 16px;
     flex-direction: row;
     justify-content: flex-start;
     overflow: auto;
     width: 100%;
     align-items: center;
+    gap: 6px;
+    padding: 8px;
+    -webkit-overflow-scrolling: touch;
   }
 
   .rail.rail--expanded {
     width: 100%;
   }
 
+  .rail-brand {
+    display: none;
+  }
+
+  .rail .rail-btn,
   .rail.rail--expanded .rail-brand,
   .rail.rail--expanded .rail-btn {
     width: auto;
-    min-width: 52px;
+    min-width: max-content;
+    height: 42px;
+    grid-template-columns: 22px max-content;
+    justify-items: start;
+    gap: 6px;
+    padding: 0 11px;
+    border-radius: 999px;
+    border-color: rgba(42, 57, 93, 0.9);
+    background: rgba(15, 23, 42, 0.72);
   }
 
+  .rail .rail-btn.active,
+  .rail.rail--expanded .rail-btn.active {
+    border-color: rgba(96, 165, 250, 0.48);
+    background: rgba(37, 99, 235, 0.22);
+  }
+
+  .rail:not(.rail--expanded) .rail-btn.active::before,
+  .rail.rail--expanded .rail-btn.active::before {
+    display: none;
+  }
+
+  .rail .rail-icon,
+  .rail:not(.rail--expanded) .rail-icon {
+    min-width: 22px;
+    width: 22px;
+    height: 22px;
+    font-size: 1rem;
+    transform: none;
+  }
+
+  .rail .rail-label,
   .rail.rail--expanded .rail-label {
-    max-width: 130px;
+    max-width: none;
+    opacity: 1;
+    font-size: 0.72rem;
+    color: #dbeafe;
+  }
+
+  .panel,
+  .metrics-panel,
+  .expenses-vehicle-panel,
+  .expenses-panel,
+  .expenses-summary-panel,
+  .trips-panel,
+  .messages-panel,
+  .detail-panel {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    border-radius: 16px;
+  }
+
+  .panel-header {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .panel-subbar {
+    padding: 10px 12px;
+    gap: 6px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .panel-subbar .chip {
+    flex: 0 0 auto;
   }
 
   .rail-spacer {
@@ -1872,6 +1951,27 @@ body {
       "rail"
       "banner"
       "content";
+  }
+
+  .app.app--view-metrics {
+    grid-template-areas:
+      "rail"
+      "banner"
+      "content";
+  }
+
+  .app.app--view-metrics .metrics-panel {
+    grid-area: content;
+    grid-column: 1 / -1;
+  }
+
+  .app.app--view-expenses {
+    grid-template-areas:
+      "rail"
+      "banner"
+      "messages"
+      "details"
+      "trips";
   }
 
   .app.app--mobile-maintenance:has(.rail.rail--expanded) {

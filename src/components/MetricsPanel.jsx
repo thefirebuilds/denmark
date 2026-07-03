@@ -539,6 +539,219 @@ function formatPerMileYoYSubtitle(delta, lastYearValue) {
   )}`;
 }
 
+function formatPreviousComp(delta, previousValue, formatter = formatCurrencyCompact) {
+  if (delta == null || previousValue == null) return "No previous-period comp";
+  return `${formatCurrencyTrend(delta)} / prev ${formatter(previousValue)}`;
+}
+
+function getMoneyTone(value, favorable = "higher") {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num) || num === 0) return "neutral";
+  const good = favorable === "lower" ? num < 0 : num > 0;
+  return good ? "positive" : "warning";
+}
+
+function HeartbeatMetric({ label, value, comp, tone = "neutral", size = "normal" }) {
+  return (
+    <div className={`heartbeat-metric heartbeat-metric--${tone} heartbeat-metric--${size}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {comp ? <em>{comp}</em> : null}
+    </div>
+  );
+}
+
+function HeartbeatRow({ label, children }) {
+  return (
+    <div className="heartbeat-row">
+      <div className="heartbeat-row__label">{label}</div>
+      <div className="heartbeat-row__metrics">{children}</div>
+    </div>
+  );
+}
+
+function BusinessHeartbeat({ summary, businessSummary, parkingSummary }) {
+  const margin = safeDivide(summary?.net_profit, summary?.revenue);
+  const tollLeakage =
+    Number(summary?.tolls_unattributed ?? 0) +
+    Number(summary?.tolls_attributed_outstanding ?? 0);
+  const parkingNet = Number(parkingSummary?.passNetValue ?? 0);
+
+  return (
+    <section className="business-heartbeat">
+      <div className="business-heartbeat__header">
+        <div>
+          <div className="metrics-section-title">Corporate Heartbeat</div>
+          <div className="metrics-section-subtitle">
+            Dollars, unit economics, pace, and margin leaks for the selected range
+          </div>
+        </div>
+        <div className="business-heartbeat__range">
+          {formatNumber(summary?.trip_count_overlapping)} trips /{" "}
+          {formatNumber(summary?.trip_miles)} trip miles
+        </div>
+      </div>
+
+      <HeartbeatRow label="Money">
+        <HeartbeatMetric
+          label="Revenue"
+          value={formatCurrency(summary?.revenue)}
+          comp={formatCurrencyTrend(summary?.revenue_delta)}
+          tone={getMoneyTone(summary?.revenue_delta)}
+          size="large"
+        />
+        <HeartbeatMetric
+          label="Net Profit"
+          value={formatCurrency(summary?.net_profit)}
+          comp={formatCurrencyTrend(summary?.net_profit_delta)}
+          tone={
+            Number(summary?.net_profit ?? 0) < 0
+              ? "negative"
+              : getMoneyTone(summary?.net_profit_delta)
+          }
+          size="large"
+        />
+        <HeartbeatMetric
+          label="Expenses"
+          value={formatCurrency(summary?.expenses)}
+          comp={formatCurrencyTrend(summary?.expenses_delta)}
+          tone={getMoneyTone(summary?.expenses_delta, "lower")}
+          size="large"
+        />
+        <HeartbeatMetric
+          label="Margin"
+          value={formatPercent(margin, 1)}
+          comp="Net profit / revenue"
+          tone={margin >= 0.25 ? "positive" : margin >= 0.1 ? "warning" : "negative"}
+        />
+      </HeartbeatRow>
+
+      <HeartbeatRow label="Per Mile">
+        <HeartbeatMetric
+          label="Revenue / Mile"
+          value={formatCurrencyCompact(summary?.revenue_per_trip_mile)}
+          comp={formatPreviousComp(
+            summary?.revenue_per_trip_mile_delta,
+            summary?.previous_revenue_per_trip_mile
+          )}
+          tone={getMoneyTone(summary?.revenue_per_trip_mile_delta)}
+        />
+        <HeartbeatMetric
+          label="Profit / Mile"
+          value={formatCurrencyCompact(summary?.profit_per_trip_mile)}
+          comp={formatPreviousComp(
+            summary?.profit_per_trip_mile_delta,
+            summary?.previous_profit_per_trip_mile
+          )}
+          tone={
+            Number(summary?.profit_per_trip_mile ?? 0) < 0
+              ? "negative"
+              : getMoneyTone(summary?.profit_per_trip_mile_delta)
+          }
+        />
+        <HeartbeatMetric
+          label="Expenses / Mile"
+          value={formatCurrencyCompact(summary?.expense_per_trip_mile)}
+          comp={formatPreviousComp(
+            summary?.expense_per_trip_mile_delta,
+            summary?.previous_expense_per_trip_mile
+          )}
+          tone={getMoneyTone(summary?.expense_per_trip_mile_delta, "lower")}
+        />
+      </HeartbeatRow>
+
+      <HeartbeatRow label="Yield + Pace">
+        <HeartbeatMetric
+          label="Run Rate"
+          value={`${formatCurrencyCompact(
+            summary?.vehicle_run_rate?.operating_run_rate_daily
+          )}/day`}
+          comp={formatCurrencyTrend(
+            summary?.vehicle_run_rate?.operating_run_rate_daily_delta
+          )}
+          tone={getMoneyTone(
+            summary?.vehicle_run_rate?.operating_run_rate_daily_delta,
+            "lower"
+          )}
+        />
+        <HeartbeatMetric
+          label="Revenue / Booked Day"
+          value={formatCurrencyCompact(summary?.revenue_per_booked_day)}
+          comp={formatCurrencyTrend(summary?.revenue_per_booked_day_delta)}
+          tone={getMoneyTone(summary?.revenue_per_booked_day_delta)}
+        />
+        <HeartbeatMetric
+          label="Occupancy"
+          value={formatPercent(summary?.occupancy_rate, 1)}
+          comp={formatOccupancyTrend(summary?.occupancy_rate_delta)}
+          tone={getMoneyTone(summary?.occupancy_rate_delta)}
+        />
+      </HeartbeatRow>
+
+      <HeartbeatRow label="Margin Leaks">
+        <HeartbeatMetric
+          label="Toll Exposure"
+          value={formatCurrencyCompact(tollLeakage)}
+          comp={`${formatCurrencyCompact(summary?.tolls_unattributed)} unattributed / ${formatCurrencyCompact(
+            summary?.tolls_attributed_outstanding
+          )} outstanding`}
+          tone={tollLeakage > 0 ? "warning" : "positive"}
+        />
+        <HeartbeatMetric
+          label="Parking Net"
+          value={parkingSummary?.passNetValue == null ? "--" : formatSignedCurrency(parkingNet)}
+          comp="Modeled parking value after fixed cost"
+          tone={parkingNet >= 0 ? "positive" : "warning"}
+        />
+        <HeartbeatMetric
+          label="After Owner Labor"
+          value={
+            businessSummary?.net_profit_after_owner_labor == null
+              ? "--"
+              : formatCurrency(businessSummary.net_profit_after_owner_labor)
+          }
+          comp={`${formatNumber(businessSummary?.estimated_owner_hours, 1)} owner hrs`}
+          tone={
+            Number(businessSummary?.net_profit_after_owner_labor ?? 0) >= 0
+              ? "positive"
+              : "negative"
+          }
+        />
+      </HeartbeatRow>
+    </section>
+  );
+}
+
+function CompactLedger({ title, subtitle, children, action = null }) {
+  return (
+    <section className="compact-ledger">
+      <div className="compact-ledger__header">
+        <div>
+          <div className="metrics-section-title">{title}</div>
+          {subtitle ? <div className="metrics-section-subtitle">{subtitle}</div> : null}
+        </div>
+        {action}
+      </div>
+      <div className="compact-ledger__body">{children}</div>
+    </section>
+  );
+}
+
+function LedgerLine({ label, value, detail = null, tone = "neutral", onClick = null }) {
+  const clickable = typeof onClick === "function";
+  const Tag = clickable ? "button" : "div";
+  return (
+    <Tag
+      {...(clickable ? { type: "button", onClick } : {})}
+      className={`ledger-line ledger-line--${tone} ${clickable ? "ledger-line--clickable" : ""}`}
+    >
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail ? <em>{detail}</em> : null}
+    </Tag>
+  );
+}
+
 function getVehicleTollRiskScore(vehicle) {
   const unresolvedTotal = Number(vehicle?.unresolved_toll_charge_total ?? 0);
   const unresolvedCount = Number(vehicle?.unresolved_toll_charge_count ?? 0);
@@ -1970,6 +2183,178 @@ const mileageStats = useMemo(() => {
           <RevenueExpenseSparkline trends={trends} summary={summary} />
           <MonthlyProfitLossChart trends={trends} />
 
+          <BusinessHeartbeat
+            summary={summary}
+            businessSummary={businessMetrics?.fleet_summary}
+            parkingSummary={parkingMetrics?.summary}
+          />
+
+          <div className="metrics-ledger-grid">
+            <CompactLedger
+              title="Capital + Fleet Value"
+              subtitle="Cash recovery, equity coverage, and market value in one pass"
+              action={
+                <button
+                  type="button"
+                  className="metrics-inline-button"
+                  onClick={handleRefreshFmvNow}
+                  disabled={fmvRefreshing}
+                >
+                  {fmvRefreshing ? "Refreshing..." : "Refresh values"}
+                </button>
+              }
+            >
+              <LedgerLine
+                label="Fleet Value"
+                value={formatCurrency(summary.fleet_value)}
+                detail={`${formatValueTrend(summary.fleet_value_change)} / ${formatUpdatedLabel(
+                  summary.fleet_value_updated_at
+                )}`}
+                tone={Number(summary.fleet_value_change ?? 0) >= 0 ? "positive" : "negative"}
+              />
+              <LedgerLine
+                label="Owner Cash In"
+                value={
+                  Number(
+                    businessMetrics?.fleet_summary?.owner_cash_invested ??
+                      businessMetrics?.settings?.owner_cash_invested ??
+                      0
+                  ) > 0
+                    ? formatCurrency(
+                        businessMetrics?.fleet_summary?.owner_cash_invested ??
+                          businessMetrics?.settings?.owner_cash_invested
+                      )
+                    : "--"
+                }
+                detail="Total owner capital basis"
+              />
+              <LedgerLine
+                label="Cash Back"
+                value={formatCurrency(businessMetrics?.fleet_summary?.total_cash_returned)}
+                detail={
+                  businessMetrics?.fleet_summary?.cash_recovered_pct != null
+                    ? `${formatPercent(
+                        businessMetrics.fleet_summary.cash_recovered_pct,
+                        0
+                      )} recovered`
+                    : "Set owner cash for recovery %"
+                }
+                tone="positive"
+              />
+              <LedgerLine
+                label="Unrecovered Cash"
+                value={formatCurrency(businessMetrics?.fleet_summary?.unrecovered_owner_cash)}
+                detail="Owner cash in minus cash back"
+                tone={
+                  Number(businessMetrics?.fleet_summary?.unrecovered_owner_cash ?? 0) <= 0
+                    ? "positive"
+                    : "warning"
+                }
+              />
+              <LedgerLine
+                label="Capital Coverage"
+                value={
+                  businessMetrics?.fleet_summary?.owner_capital_coverage_pct != null
+                    ? formatPercent(
+                        businessMetrics.fleet_summary.owner_capital_coverage_pct,
+                        0
+                      )
+                    : "--"
+                }
+                detail="Cash back plus fleet equity vs owner cash"
+                tone={
+                  Number(businessMetrics?.fleet_summary?.owner_capital_coverage_pct ?? 0) >= 1
+                    ? "positive"
+                    : "warning"
+                }
+              />
+            </CompactLedger>
+
+            <CompactLedger
+              title="Labor + Profit Quality"
+              subtitle="Whether profit survives debt, owner time, and data confidence"
+            >
+              <LedgerLine
+                label="Operating Profit"
+                value={formatCurrency(businessMetrics?.fleet_summary?.net_operating_profit)}
+                detail={formatConfidenceLabel(businessMetrics?.fleet_summary?.data_confidence)}
+                tone={
+                  Number(businessMetrics?.fleet_summary?.net_operating_profit ?? 0) >= 0
+                    ? "positive"
+                    : "negative"
+                }
+              />
+              <LedgerLine
+                label="After Debt Service"
+                value={formatCurrency(
+                  businessMetrics?.fleet_summary?.net_profit_after_debt_service
+                )}
+                detail="Operating profit after vehicle debt"
+                tone={
+                  Number(
+                    businessMetrics?.fleet_summary?.net_profit_after_debt_service ?? 0
+                  ) >= 0
+                    ? "positive"
+                    : "negative"
+                }
+              />
+              <LedgerLine
+                label="After Owner Labor"
+                value={formatCurrency(
+                  businessMetrics?.fleet_summary?.net_profit_after_owner_labor
+                )}
+                detail={`${formatNumber(laborHoursBreakdown.total, 1)}h owner time / ${formatCurrencyCompact(
+                  businessMetrics?.fleet_summary?.avg_profit_per_owner_hour
+                )}/hr`}
+                tone={
+                  Number(
+                    businessMetrics?.fleet_summary?.net_profit_after_owner_labor ?? 0
+                  ) >= 0
+                    ? "positive"
+                    : "negative"
+                }
+              />
+              <LedgerLine
+                label="Labor Mix"
+                value={`${formatNumber(laborHoursBreakdown.total, 1)}h`}
+                detail={`Clean ${formatNumber(laborHoursBreakdown.cleaning, 1)}h / Maint ${formatNumber(
+                  laborHoursBreakdown.maintenance,
+                  1
+                )}h / Admin ${formatNumber(laborHoursBreakdown.admin, 1)}h`}
+                tone={laborHoursBreakdown.missing > 0 ? "warning" : "positive"}
+              />
+              <LedgerLine
+                label="Airport Deadhead"
+                value={`${formatNumber(laborHoursBreakdown.airportTurnovers)} turns`}
+                detail={`${formatNumber(laborHoursBreakdown.airportMiles, 0)} mi / ${formatCurrencyCompact(
+                  laborHoursBreakdown.airportFuelCost
+                )} fuel / ${formatNumber(laborHoursBreakdown.airportService, 1)}h`}
+              />
+              <LedgerLine
+                label="Data Flags"
+                value={`${formatNumber(
+                  Number(businessMetrics?.fleet_summary?.flag_counts?.high ?? 0) +
+                    Number(businessMetrics?.fleet_summary?.flag_counts?.medium ?? 0) +
+                    Number(businessMetrics?.fleet_summary?.flag_counts?.low ?? 0)
+                )} flags`}
+                detail={`High ${formatNumber(
+                  businessMetrics?.fleet_summary?.flag_counts?.high ?? 0
+                )} / Med ${formatNumber(
+                  businessMetrics?.fleet_summary?.flag_counts?.medium ?? 0
+                )}`}
+                tone={
+                  Number(businessMetrics?.fleet_summary?.flag_counts?.high ?? 0) > 0
+                    ? "negative"
+                    : Number(businessMetrics?.fleet_summary?.flag_counts?.medium ?? 0) > 0
+                    ? "warning"
+                    : "positive"
+                }
+              />
+            </CompactLedger>
+          </div>
+
+          {false ? (
+          <>
           <section className="metrics-section">
             <div className="metrics-section-header">
               <div className="metrics-section-title">Financial Performance</div>
@@ -2369,8 +2754,145 @@ const mileageStats = useMemo(() => {
               </div>
             </section>
           ) : null}
+          </>
+          ) : null}
 
           {parkingMetrics?.summary ? (
+            <CompactLedger
+              title="Parking Economics"
+              subtitle="Pass value, actual expense, and positioning-transfer drag"
+            >
+              <LedgerLine
+                label="Parking Value"
+                value={formatCurrency(parkingMetrics.summary.parkingValue)}
+                detail={`${formatNumber(
+                  parkingMetrics.summary.fleetVehicleDays
+                )} vehicle-days at ${formatCurrencyCompact(
+                  parkingMetrics.assumptions?.dayRate
+                )}/day`}
+                tone="positive"
+              />
+              <LedgerLine
+                label="Modeled Fixed Cost"
+                value={formatCurrency(parkingMetrics.summary.fixedPassCost)}
+                detail={`${formatCurrencyCompact(
+                  Number(parkingMetrics.assumptions?.unlimitedMonthly ?? 0) +
+                    Number(parkingMetrics.assumptions?.transponderMonthly ?? 0)
+                )}/car/mo standard`}
+              />
+              <LedgerLine
+                label="Pass Net Value"
+                value={formatSignedCurrency(parkingMetrics.summary.passNetValue)}
+                detail={`Break-even ${formatNumber(
+                  parkingMetrics.assumptions?.standardBreakEvenDays,
+                  1
+                )} days/mo`}
+                tone={Number(parkingMetrics.summary.passNetValue ?? 0) >= 0 ? "positive" : "warning"}
+              />
+              <LedgerLine
+                label="Actual Parking Cost"
+                value={
+                  parkingMetrics.summary.actualParkingExpense == null
+                    ? "--"
+                    : formatCurrency(parkingMetrics.summary.actualParkingExpense)
+                }
+                detail={`${formatNumber(
+                  parkingMetrics.summary.parkingExpenseCount
+                )} expense records / ${formatSignedCurrency(
+                  parkingMetrics.summary.valueVsActualParkingExpense
+                )} value vs actual`}
+                tone={
+                  Number(parkingMetrics.summary.valueVsActualParkingExpense ?? 0) >= 0
+                    ? "positive"
+                    : "warning"
+                }
+              />
+              <LedgerLine
+                label="Keep / Drop Unlimited"
+                value={`${formatNumber(
+                  Number(parkingMetrics.summary.keepUnlimitedCount ?? 0) +
+                    Number(parkingMetrics.summary.residentCount ?? 0)
+                )} / ${formatNumber(parkingMetrics.summary.dropUnlimitedCount)}`}
+                detail="Unlimited justified / below break-even"
+              />
+              <LedgerLine
+                label="Home / Parking Transfers"
+                value={formatNumber(parkingTransfers?.summary?.transfers ?? 0)}
+                detail={`${formatNumber(
+                  parkingTransfers?.summary?.homeToParking ?? 0
+                )} out / ${formatNumber(
+                  parkingTransfers?.summary?.parkingToHome ?? 0
+                )} home / ${formatNumber(
+                  parkingTransfers?.summary?.totalMiles ?? 0,
+                  1
+                )} mi / ${formatNumber(
+                  parkingTransfers?.summary?.totalHours ?? 0,
+                  1
+                )}h`}
+              />
+              <LedgerLine
+                label="Transfer Fuel"
+                value={formatCurrencyCompact(
+                  parkingTransfers?.summary?.estimatedFuelCost ?? 0
+                )}
+                detail={`${formatNumber(
+                  parkingTransfers?.summary?.estimatedGallons ?? 0,
+                  1
+                )} gal`}
+                tone={
+                  Number(parkingTransfers?.summary?.estimatedFuelCost ?? 0) > 0
+                    ? "warning"
+                    : "neutral"
+                }
+              />
+
+              {parkingRecommendationGroups.keep.length ||
+              parkingRecommendationGroups.drop.length ||
+              parkingRecommendationGroups.resident.length ? (
+                <div className="parking-recommendation-grid parking-recommendation-grid--compact">
+                  {[
+                    ["Keep Unlimited", parkingRecommendationGroups.keep, "keep"],
+                    ["Drop Unlimited", parkingRecommendationGroups.drop, "drop"],
+                    ["Resident Hot Swap", parkingRecommendationGroups.resident, "resident"],
+                  ]
+                    .filter(([, rows]) => rows.length)
+                    .map(([label, rows, kind]) => (
+                      <article
+                        key={label}
+                        className={`parking-recommendation-card parking-recommendation-card--${kind}`}
+                      >
+                        <div className="parking-recommendation-card__header">
+                          <div className="metrics-business-card__title">{label}</div>
+                          <div className="vehicle-compare__value">
+                            {formatNumber(rows.length)}
+                          </div>
+                        </div>
+                        <div className="parking-recommendation-list">
+                          {rows.slice(0, 5).map((vehicle) => (
+                            <div
+                              key={vehicle.vehicleId}
+                              className="parking-recommendation-row"
+                            >
+                              <span>{vehicle.vehicleName}</span>
+                              <strong>
+                                {formatNumber(vehicle.parkingDays)}d /{" "}
+                                {formatSignedCurrency(
+                                  kind === "drop"
+                                    ? vehicle.savingsIfPayPerDay
+                                    : vehicle.passNetValue ?? -vehicle.fixedPassCost
+                                )}
+                              </strong>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                </div>
+              ) : null}
+            </CompactLedger>
+          ) : null}
+
+          {false && parkingMetrics?.summary ? (
             <section className="metrics-section">
               <div className="metrics-section-header">
                 <div className="metrics-section-title">Parking Economics</div>
@@ -3280,6 +3802,50 @@ const mileageStats = useMemo(() => {
         onClose={() => setTollAuditOpen(false)}
       />
 
+          <CompactLedger
+            title="Toll Margin"
+            subtitle="Paid, recovered, outstanding, and unattributed toll exposure"
+          >
+            <LedgerLine
+              label="Paid"
+              value={formatCurrencyCompact(summary.tolls_paid)}
+              detail="Toll expense recorded in this range"
+            />
+            <LedgerLine
+              label="Recovered"
+              value={formatCurrencyCompact(summary.tolls_recovered)}
+              detail={`${formatPercent(summary.toll_recovery_rate, 0)} direct recovery`}
+              tone="positive"
+            />
+            <LedgerLine
+              label="Outstanding"
+              value={formatCurrencyCompact(summary.tolls_attributed_outstanding)}
+              detail="Matched to trips but not recovered yet"
+              tone="warning"
+              onClick={() => openTollAudit("outstanding")}
+            />
+            <LedgerLine
+              label="Unattributed"
+              value={formatCurrencyCompact(summary.tolls_unattributed)}
+              detail="Paid tolls not assigned to a trip"
+              tone={Number(summary.tolls_unattributed ?? 0) > 0 ? "negative" : "positive"}
+              onClick={() => openTollAudit("unattributed")}
+            />
+            <LedgerLine
+              label="Effective Recovery"
+              value={formatPercent(summary.toll_effective_recovery_rate, 0)}
+              detail="Recovered plus outstanding against paid"
+              tone={
+                Number(summary.toll_effective_recovery_rate) >= 0.85
+                  ? "positive"
+                  : Number(summary.toll_effective_recovery_rate) >= 0.65
+                  ? "warning"
+                  : "negative"
+              }
+            />
+          </CompactLedger>
+
+          {false ? (
           <section className="toll-panel">
             <div className="toll-panel__header">
               <div className="toll-panel__title">Tolls</div>
@@ -3342,6 +3908,7 @@ const mileageStats = useMemo(() => {
               />
             </div>
           </section>
+          ) : null}
 
           <section className="metrics-vehicles-section">
             <div className="metrics-section-header">

@@ -556,8 +556,25 @@
 -------------------------------------------------------------- */
 
 @media (max-width: 980px) {
+  .expenses-subbar {
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .expenses-subbar .chip,
+  .expenses-filter-input {
+    flex: 0 0 auto;
+  }
+
   .expenses-search {
-    min-width: 0;
+    min-width: 210px;
+    flex: 0 0 230px;
+  }
+
+  .expenses-filter-input[type="date"] {
+    min-width: 138px;
   }
 
   .expense-form-grid {
@@ -589,8 +606,19 @@
   .expenses-summary-row-count {
     grid-column: 1 / -1;
   }
-    .expense-drawer {
+
+  .expense-drawer {
     width: 100vw;
+  }
+}
+
+@media (max-width: 560px) {
+  .panel-header-actions {
+    width: 100%;
+  }
+
+  .expenses-add-btn {
+    width: 100%;
   }
 }
 
