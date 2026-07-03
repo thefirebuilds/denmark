@@ -309,6 +309,14 @@ export function getCommAlert(vehicle) {
   const hours = getHoursSince(vehicle?.telemetry?.last_comm);
 
   if (hours == null) {
+    if (
+      vehicle?.dimo_token_id ||
+      vehicle?.bouncie_vehicle_id ||
+      vehicle?.external_vehicle_key
+    ) {
+      return { level: "critical", label: "No comm data" };
+    }
+
     return { level: "unknown", label: "No comm data" };
   }
 

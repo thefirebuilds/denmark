@@ -2100,6 +2100,10 @@ async function handleSuppressDiagnostic(message, action = "acknowledge") {
     setError("No diagnostic alert key found");
     return;
   }
+  const snoozeHours = Math.max(
+    1,
+    Math.min(72, Number(message?.diagnostic_snooze_hours || 12) || 12)
+  );
 
   try {
     setSuppressingDiagnosticId(message.id);
@@ -2117,10 +2121,10 @@ async function handleSuppressDiagnostic(message, action = "acknowledge") {
           ? message.diagnostic_legacy_keys
           : [],
         action,
-        hours: 12,
+        hours: snoozeHours,
         reason:
           action === "snooze"
-            ? "snoozed from dispatch queue"
+            ? `snoozed from dispatch queue for ${snoozeHours} hours`
             : "acknowledged from dispatch queue",
       }),
     });
@@ -3659,7 +3663,7 @@ async function handleExportGuestInspectionSheet(message) {
                           handleSuppressDiagnostic(message, "snooze");
                         }}
                       >
-                        Snooze 12h
+                        Snooze {Number(message.diagnostic_snooze_hours || 12) || 12}h
                       </button>
                     </div>
                   </div>

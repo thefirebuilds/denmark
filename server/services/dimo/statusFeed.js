@@ -366,6 +366,20 @@ async function loadDimoStatusFeed() {
       rawSignals.powertrainCombustionEngineSpeed?.timestamp,
       ignitionLastUpdated
     ), row.captured_at);
+    const lastCommAt = normalizeDisplayTimestamp(firstNonNull(
+      row.vehicle_last_updated,
+      row.ignition_last_updated,
+      rawSignals.isIgnitionOn?.timestamp,
+      row.location_last_updated,
+      rawSignals.currentLocationCoordinates?.timestamp,
+      rawSignals.currentLocationApproximateCoordinates?.timestamp,
+      row.speed_last_updated,
+      rawSignals.speed?.timestamp,
+      row.odometer_last_updated,
+      rawSignals.powertrainTransmissionTravelledDistance?.timestamp,
+      row.fuel_level_last_updated,
+      rawSignals.fuelLevel?.timestamp
+    ), row.captured_at);
     const ignitionFresh = isFreshLiveSignal(ignitionLastUpdated);
     const speedFresh = isFreshLiveSignal(speedLastUpdated);
     const rpmFresh = isFreshLiveSignal(rpmLastUpdated);
@@ -388,10 +402,7 @@ async function loadDimoStatusFeed() {
       telemetry: {
         active_trip: row.active_trip || null,
         local_time_zone: row.local_time_zone,
-        last_comm: normalizeDisplayTimestamp(
-          row.vehicle_last_updated || row.captured_at,
-          row.captured_at
-        ),
+        last_comm: lastCommAt,
         odometer: row.odometer,
         fuel_level: row.fuel_level,
         engine_running: ignitionFresh ? row.is_running : null,

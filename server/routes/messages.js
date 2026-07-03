@@ -27,6 +27,8 @@ const BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES = Number.isFinite(
   : 5;
 const TURNOVER_REFUEL_THRESHOLD_PERCENT = 95;
 const REFUEL_ACK_SETTINGS_KEY = "messages.refuelAcknowledgements";
+const DEVICE_CONNECTIVITY_STALE_HOURS = 24;
+const DEVICE_CONNECTIVITY_SNOOZE_HOURS = 8;
 
 function parseSubject(subject) {
   if (!subject) return { type: "unknown" };
@@ -1788,6 +1790,57 @@ function mapLowVoltageNoticeRow(row) {
   };
 }
 
+function formatHoursLabel(value) {
+  const hours = Number(value);
+  if (!Number.isFinite(hours)) return "unknown";
+  if (hours < 48) return `${Math.max(1, Math.round(hours))}h`;
+  const days = hours / 24;
+  return `${Math.max(2, Math.round(days))}d`;
+}
+
+function mapDeviceConnectivityNoticeRow(row) {
+  const vehicleName = row.vehicle_name || row.vehicle_nickname || row.vin || "vehicle";
+  const source = row.service_name || (row.dimo_token_id ? "dimo" : "telematics");
+  const lastSeen = normalizeDiagnosticDisplayTimestamp(
+    row,
+    row.last_comm_at,
+    row.captured_at
+  );
+  const staleHours = Number(row.stale_hours);
+  const staleLabel = formatHoursLabel(staleHours);
+  const rawLastComm = row.last_comm_at ? new Date(row.last_comm_at) : null;
+  const lastCommKey =
+    rawLastComm && !Number.isNaN(rawLastComm.getTime())
+      ? rawLastComm.toISOString().replace(/[^0-9]/g, "").slice(0, 14)
+      : "never";
+  const diagnosticKey = `device_connectivity:${row.vehicle_id}:${lastCommKey}`;
+
+  return {
+    id: `vehicle-diagnostic:${diagnosticKey}`,
+    messageId: `vehicle-diagnostic:${diagnosticKey}`,
+    subject: `${vehicleName} has not reported in ${staleLabel}`,
+    status: "read",
+    timestamp: lastSeen || row.captured_at || new Date().toISOString(),
+    notification_created_at: lastSeen || row.captured_at || new Date().toISOString(),
+    type: "vehicle_diagnostic_alert",
+    vehicle_name: vehicleName,
+    vehicle_nickname: row.vehicle_nickname,
+    vehicle_vin: row.vin,
+    diagnostic_source: source,
+    diagnostic_label: `device silent ${staleLabel}`,
+    diagnostic_codes: [],
+    diagnostic_mil_on: false,
+    diagnostic_dtc_count: 0,
+    diagnostic_key: diagnosticKey,
+    diagnostic_legacy_keys: [],
+    diagnostic_first_reported_at: lastSeen,
+    diagnostic_last_seen: lastSeen,
+    diagnostic_snooze_hours: DEVICE_CONNECTIVITY_SNOOZE_HOURS,
+    diagnostic_kind: "device_connectivity_stale",
+    created_at: lastSeen || row.captured_at || new Date().toISOString(),
+  };
+}
+
 function mapGoogleCalendarReconnectNoticeRow(row) {
   const checkedAt = row.token_checked_at || row.updated_at || new Date().toISOString();
   const calendarName = row.calendar_summary || row.calendar_id || "selected calendar";
@@ -3045,6 +3098,108 @@ router.get("/", async (req, res) => {
       LIMIT 10
     `;
 
+    const deviceConnectivitySql = `
+      SELECT
+        v.id AS vehicle_id,
+        v.vin,
+        v.nickname AS vehicle_name,
+        v.nickname AS vehicle_nickname,
+        v.dimo_token_id,
+        v.bouncie_vehicle_id,
+        latest.id AS snapshot_id,
+        latest.service_name,
+        latest.vehicle_last_updated,
+        latest.ignition_last_updated,
+        latest.location_last_updated,
+        latest.speed_last_updated,
+        latest.odometer_last_updated,
+        latest.fuel_level_last_updated,
+        latest.captured_at,
+        latest.last_comm_at,
+        EXTRACT(EPOCH FROM (NOW() - latest.last_comm_at)) / 3600 AS stale_hours
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT
+          s.id,
+          s.service_name,
+          s.vin,
+          s.nickname,
+          s.vehicle_last_updated,
+          s.ignition_last_updated,
+          s.location_last_updated,
+          s.speed_last_updated,
+          s.odometer_last_updated,
+          s.fuel_level_last_updated,
+          s.captured_at,
+          CASE
+            WHEN s.service_name = 'dimo' THEN COALESCE(
+              s.vehicle_last_updated,
+              s.ignition_last_updated,
+              s.location_last_updated,
+              s.speed_last_updated,
+              s.odometer_last_updated,
+              s.fuel_level_last_updated
+            )
+            ELSE COALESCE(
+              s.vehicle_last_updated,
+              s.ignition_last_updated,
+              s.location_last_updated,
+              s.speed_last_updated,
+              s.odometer_last_updated,
+              s.fuel_level_last_updated,
+              s.captured_at
+            )
+          END AS last_comm_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE (
+          (
+            v.vin IS NOT NULL
+            AND v.vin <> ''
+            AND s.vin IS NOT NULL
+            AND s.vin <> ''
+            AND LOWER(s.vin) = LOWER(v.vin)
+          )
+          OR (
+            v.dimo_token_id IS NOT NULL
+            AND s.dimo_token_id = v.dimo_token_id
+          )
+          OR (
+            v.bouncie_vehicle_id IS NOT NULL
+            AND v.bouncie_vehicle_id <> ''
+            AND s.external_vehicle_key = v.bouncie_vehicle_id
+          )
+          OR (
+            v.external_vehicle_key IS NOT NULL
+            AND v.external_vehicle_key <> ''
+            AND s.external_vehicle_key = v.external_vehicle_key
+          )
+        )
+        ORDER BY COALESCE(
+          s.vehicle_last_updated,
+          s.ignition_last_updated,
+          s.location_last_updated,
+          s.speed_last_updated,
+          s.odometer_last_updated,
+          s.fuel_level_last_updated,
+          s.captured_at
+        ) DESC NULLS LAST,
+        s.id DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE COALESCE(v.is_active, true) = true
+        AND (
+          v.dimo_token_id IS NOT NULL
+          OR COALESCE(v.bouncie_vehicle_id, '') <> ''
+          OR COALESCE(v.external_vehicle_key, '') <> ''
+        )
+        AND (
+          latest.last_comm_at IS NULL
+          OR latest.last_comm_at < NOW() - ($1::int * INTERVAL '1 hour')
+        )
+      ORDER BY latest.last_comm_at ASC NULLS FIRST
+      LIMIT 10
+    `;
+
     const maintenanceSql = `
       WITH active_maintenance_tasks AS (
         SELECT mt.*
@@ -3876,6 +4031,13 @@ router.get("/", async (req, res) => {
       "lowVoltage",
       light ? Promise.resolve(EMPTY_QUERY_RESULT) : db.query(lowVoltageSql)
     );
+    const deviceConnectivityResult = await timeQueueQuery(
+      queueTimings,
+      "deviceConnectivity",
+      light
+        ? Promise.resolve(EMPTY_QUERY_RESULT)
+        : db.query(deviceConnectivitySql, [DEVICE_CONNECTIVITY_STALE_HOURS])
+    );
     const maintenanceResult = await timeQueueQuery(
       queueTimings,
       "maintenance",
@@ -3932,6 +4094,7 @@ router.get("/", async (req, res) => {
     const diagnosticNotices = [
       ...diagnosticResult.rows.map(mapVehicleDiagnosticNoticeRow),
       ...lowVoltageResult.rows.map(mapLowVoltageNoticeRow),
+      ...deviceConnectivityResult.rows.map(mapDeviceConnectivityNoticeRow),
     ];
     let visibleDiagnosticNotices = diagnosticNotices;
 

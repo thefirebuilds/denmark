@@ -12,6 +12,9 @@ let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
 const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
 const LOCATION_ENTRY_STALE_LOCATION_MS = 15 * 60 * 1000;
+const DEVICE_STALE_HOURS = 24;
+const DEVICE_STALE_SNOOZE_HOURS = 8;
+const DEVICE_RECOVERY_FRESH_MINUTES = 90;
 
 function normalizeDisplayTimestamp(value, fallback = null) {
   if (!value) return fallback;
@@ -160,6 +163,14 @@ function distanceMiles(aLat, aLon, bLat, bLon) {
   return earthRadiusMiles * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function getEightHourBucketKey(value = new Date()) {
+  const date = value instanceof Date ? new Date(value) : new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString();
+  date.setUTCMinutes(0, 0, 0);
+  date.setUTCHours(Math.floor(date.getUTCHours() / 8) * 8);
+  return date.toISOString();
+}
+
 function getTimestampMs(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -243,6 +254,20 @@ async function ensureFleetAlertTables(client = pool) {
 
         CREATE INDEX IF NOT EXISTS idx_fleet_alert_deliveries_type_sent
           ON public.fleet_alert_deliveries (alert_type, sent_at DESC);
+
+        CREATE TABLE IF NOT EXISTS public.vehicle_diagnostic_suppressions (
+          id bigserial PRIMARY KEY,
+          diagnostic_key text NOT NULL UNIQUE,
+          action text NOT NULL DEFAULT 'acknowledged',
+          acknowledged_at timestamptz,
+          snoozed_until timestamptz,
+          reason text,
+          created_at timestamptz DEFAULT now() NOT NULL,
+          updated_at timestamptz DEFAULT now() NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_vehicle_diagnostic_suppressions_snoozed
+          ON public.vehicle_diagnostic_suppressions (snoozed_until);
       `)
       .catch((err) => {
         ensureFleetAlertTablesPromise = null;
@@ -835,6 +860,203 @@ async function collectOverdueReturnAlerts() {
       };
     })
     .filter(Boolean);
+}
+
+async function collectDeviceConnectivityAlerts() {
+  const staleCutoffHours = DEVICE_STALE_HOURS;
+  const snoozeHours = DEVICE_STALE_SNOOZE_HOURS;
+  const recoveryFreshMinutes = DEVICE_RECOVERY_FRESH_MINUTES;
+
+  const { rows } = await pool.query(
+    `
+      WITH latest AS (
+        SELECT
+          v.id AS vehicle_id,
+          v.vin,
+          v.nickname AS vehicle_name,
+          v.dimo_token_id,
+          v.bouncie_vehicle_id,
+          s.id AS snapshot_id,
+          s.service_name,
+          s.vehicle_last_updated,
+          s.ignition_last_updated,
+          s.location_last_updated,
+          s.speed_last_updated,
+          s.odometer_last_updated,
+          s.fuel_level_last_updated,
+          s.captured_at,
+          CASE
+            WHEN s.service_name = 'dimo' THEN COALESCE(
+              s.vehicle_last_updated,
+              s.ignition_last_updated,
+              s.location_last_updated,
+              s.speed_last_updated,
+              s.odometer_last_updated,
+              s.fuel_level_last_updated
+            )
+            ELSE COALESCE(
+              s.vehicle_last_updated,
+              s.ignition_last_updated,
+              s.location_last_updated,
+              s.speed_last_updated,
+              s.odometer_last_updated,
+              s.fuel_level_last_updated,
+              s.captured_at
+            )
+          END AS last_comm_at
+        FROM vehicles v
+        LEFT JOIN LATERAL (
+          SELECT s.*
+          FROM vehicle_telemetry_snapshots s
+          WHERE (
+            (
+              v.vin IS NOT NULL
+              AND v.vin <> ''
+              AND s.vin IS NOT NULL
+              AND s.vin <> ''
+              AND LOWER(s.vin) = LOWER(v.vin)
+            )
+            OR (
+              v.dimo_token_id IS NOT NULL
+              AND s.dimo_token_id = v.dimo_token_id
+            )
+            OR (
+              v.bouncie_vehicle_id IS NOT NULL
+              AND v.bouncie_vehicle_id <> ''
+              AND s.external_vehicle_key = v.bouncie_vehicle_id
+            )
+            OR (
+              v.external_vehicle_key IS NOT NULL
+              AND v.external_vehicle_key <> ''
+              AND s.external_vehicle_key = v.external_vehicle_key
+            )
+          )
+          ORDER BY COALESCE(
+            s.vehicle_last_updated,
+            s.ignition_last_updated,
+            s.location_last_updated,
+            s.speed_last_updated,
+            s.odometer_last_updated,
+            s.fuel_level_last_updated,
+            s.captured_at
+          ) DESC NULLS LAST,
+          s.id DESC
+          LIMIT 1
+        ) s ON true
+        WHERE COALESCE(v.is_active, true) = true
+          AND (
+            v.dimo_token_id IS NOT NULL
+            OR COALESCE(v.bouncie_vehicle_id, '') <> ''
+            OR COALESCE(v.external_vehicle_key, '') <> ''
+          )
+      ),
+      stale AS (
+        SELECT latest.*
+        FROM latest
+        WHERE latest.last_comm_at IS NULL
+          OR latest.last_comm_at < NOW() - ($1::int * INTERVAL '1 hour')
+      ),
+      recovered AS (
+        SELECT latest.*
+        FROM latest
+        WHERE latest.last_comm_at >= NOW() - ($2::int * INTERVAL '1 minute')
+          AND EXISTS (
+            SELECT 1
+            FROM public.fleet_alert_deliveries delivery
+            WHERE delivery.alert_type = 'device_connectivity_stale'
+              AND CASE
+                WHEN delivery.details->>'vehicleId' ~ '^[0-9]+$'
+                  THEN (delivery.details->>'vehicleId')::int
+                ELSE NULL
+              END = latest.vehicle_id
+              AND delivery.sent_at < latest.last_comm_at
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.fleet_alert_deliveries delivery
+            WHERE delivery.alert_type = 'device_connectivity_recovered'
+              AND CASE
+                WHEN delivery.details->>'vehicleId' ~ '^[0-9]+$'
+                  THEN (delivery.details->>'vehicleId')::int
+                ELSE NULL
+              END = latest.vehicle_id
+              AND delivery.sent_at > latest.last_comm_at - INTERVAL '5 minutes'
+          )
+      )
+      SELECT 'stale' AS alert_kind, stale.*
+      FROM stale
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM public.vehicle_diagnostic_suppressions suppression
+        WHERE suppression.diagnostic_key = CONCAT(
+            'device_connectivity:',
+            stale.vehicle_id,
+            ':',
+            COALESCE(
+              to_char(stale.last_comm_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISS'),
+              'never'
+            )
+          )
+          AND (
+            suppression.action = 'acknowledge'
+            OR suppression.snoozed_until > NOW()
+          )
+      )
+      UNION ALL
+      SELECT 'recovered' AS alert_kind, recovered.*
+      FROM recovered
+    `,
+    [staleCutoffHours, recoveryFreshMinutes]
+  );
+
+  const bucket = getEightHourBucketKey();
+
+  return rows.map((row) => {
+    const vehicle = row.vehicle_name || row.vin || `Vehicle ${row.vehicle_id}`;
+    const source = row.service_name || (row.dimo_token_id ? "dimo" : "telematics");
+    const lastSeen = row.last_comm_at
+      ? normalizeDisplayTimestamp(row.last_comm_at, row.captured_at)
+      : null;
+    const details = {
+      ...row,
+      vehicleId: row.vehicle_id,
+      vehicle,
+      source,
+      lastSeen,
+      diagnosticKey: `device_connectivity:${row.vehicle_id}:${
+        row.last_comm_at
+          ? new Date(row.last_comm_at).toISOString().replace(/[^0-9]/g, "").slice(0, 14)
+          : "never"
+      }`,
+      staleCutoffHours,
+      snoozeHours,
+      recoveryFreshMinutes,
+    };
+
+    if (row.alert_kind === "recovered") {
+      return {
+        alertKey: `device-connectivity-recovered:${row.vehicle_id}:${
+          lastSeen ? new Date(lastSeen).toISOString() : row.snapshot_id || bucket
+        }`,
+        alertType: "device_connectivity_recovered",
+        severity: "info",
+        body: `Denmark: ${vehicle} is reporting again via ${source}. Last heard ${formatChicago(
+          lastSeen
+        )}.`,
+        details,
+      };
+    }
+
+    return {
+      alertKey: `device-connectivity-stale:${row.vehicle_id}:${bucket}`,
+      alertType: "device_connectivity_stale",
+      severity: "urgent",
+      body: `Denmark: ${vehicle} has not reported via ${source} in ${staleCutoffHours}+ hours. Last heard ${
+        lastSeen ? formatChicago(lastSeen) : "never"
+      }. Snooze from Messages to recheck in ${snoozeHours} hours.`,
+      details,
+    };
+  });
 }
 
 async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
@@ -1452,6 +1674,7 @@ async function collectFleetAlerts() {
     collectBridgeTuroNotificationAlerts,
     collectDtcAlerts,
     collectLowVoltageAlerts,
+    collectDeviceConnectivityAlerts,
     collectOverdueReturnAlerts,
     collectReturnedToParkingSpotAlerts,
     collectLocationEntryAlerts,
