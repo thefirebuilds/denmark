@@ -279,7 +279,7 @@ function MonthlyProfitLossChart({ trends }) {
         <div>
           <div className="metrics-section-title">12 Month P&amp;L</div>
           <div className="metrics-section-subtitle">
-            Month-by-month profit and loss, revenue less expenses
+            Calendar-month profit and loss, recognized revenue less expenses
           </div>
         </div>
         <div className="metrics-pnl-chart__summary">
@@ -527,6 +527,16 @@ function formatFlagMeta(flag) {
     parts.push(`Missing ${flag.missing_fields.join(" + ")}`);
   }
   return parts.join(" · ");
+}
+
+function formatPerMileYoYSubtitle(delta, lastYearValue) {
+  if (delta == null || lastYearValue == null) {
+    return "No same-range last-year comp";
+  }
+
+  return `${formatCurrencyTrend(delta, "vs same range last year")} · LY ${formatCurrencyCompact(
+    lastYearValue
+  )}`;
 }
 
 function getVehicleTollRiskScore(vehicle) {
@@ -1359,29 +1369,6 @@ export default function MetricsPanel() {
     return days > 0 ? booked / days : 0;
   }, [summary]);
 
-  const avgRevenuePerTrip = useMemo(() => {
-    if (!summary) return 0;
-    return Number(summary.revenue_per_overlapping_trip ?? 0);
-  }, [summary]);
-
-  const avgRevenuePerTripYoYDelta =
-    summary?.avg_revenue_per_trip_yoy_delta == null
-      ? null
-      : Number(summary.avg_revenue_per_trip_yoy_delta);
-  const avgRevenuePerTripCountLabel = `${formatNumber(
-    summary?.trip_count_overlapping
-  )} overlapping trips`;
-  const avgRevenuePerTripYoYSubtitle =
-    avgRevenuePerTripYoYDelta == null
-      ? `${avgRevenuePerTripCountLabel} · No last-year comp`
-      : `${avgRevenuePerTripCountLabel} · ${formatCurrencyTrend(
-          avgRevenuePerTripYoYDelta,
-          "vs same range last year"
-        )} · ${formatNumber(
-          summary?.avg_revenue_per_trip_last_year_period
-            ?.trip_count_overlapping ?? 0
-        )} trips last year`;
-
   const filteredAndSortedVehicles = useMemo(() => {
     const next = [...vehicles].filter((vehicle) => {
       const profit = Number(vehicle?.net_profit ?? 0);
@@ -1555,9 +1542,6 @@ const mileageStats = useMemo(() => {
     ? Math.max(0, explicitUnaccountedMiles)
     : Math.max(0, totalMiles - tripMiles - accountedOffTripMiles);
 
-  const revenue = Number(summary?.revenue ?? 0);
-  const expenses = Number(summary?.expenses ?? 0);
-  const netProfit = Number(summary?.net_profit ?? 0);
   const trips = Number(summary?.trip_count_overlapping ?? 0);
 
   return {
@@ -1566,10 +1550,6 @@ const mileageStats = useMemo(() => {
     offTripMiles,
     accountedOffTripMiles,
     unaccountedMiles,
-    revenuePerTripMile: safeDivide(revenue, tripMiles),
-    profitPerTripMile: safeDivide(netProfit, tripMiles),
-    expensePerMile: safeDivide(expenses, totalMiles),
-    profitPerTotalMile: safeDivide(netProfit, totalMiles),
     tripMileUtilization: safeDivide(tripMiles, totalMiles),
     offTripShare: safeDivide(offTripMiles, totalMiles),
     unaccountedShare: safeDivide(unaccountedMiles, totalMiles),
@@ -2061,43 +2041,57 @@ const mileageStats = useMemo(() => {
               />
 
               <MetricCard
-                label="Expense / Total Mile"
-                value={formatCurrencyCompact(
-                  summary.vehicle_run_rate?.operating_expense_per_mile
-                )}
-                subtitle={`${formatCurrencyTrend(
-                  summary.vehicle_run_rate?.operating_expense_per_mile_delta
-                )} vs prior; total miles`}
-                tone={
-                  Number(
-                    summary.vehicle_run_rate?.operating_expense_per_mile_delta ?? 0
-                  ) > 0
-                    ? "warning"
-                    : Number(
-                        summary.vehicle_run_rate?.operating_expense_per_mile_delta ?? 0
-                      ) < 0
-                    ? "positive"
-                    : undefined
-                }
-              />
-
-              <MetricCard
-                label="Rev / Calendar Day"
-                value={formatCurrencyCompact(summary.revenue_per_calendar_day)}
-                subtitle={formatCurrencyTrend(
-                  summary.revenue_per_calendar_day_delta
+                label="Revenue / Trip Mile"
+                value={formatCurrencyCompact(summary.revenue_per_trip_mile)}
+                subtitle={formatPerMileYoYSubtitle(
+                  summary.revenue_per_trip_mile_yoy_delta,
+                  summary.last_year_revenue_per_trip_mile
                 )}
                 tone={
-                  Number(summary.revenue_per_calendar_day_delta ?? 0) > 0
+                  Number(summary.revenue_per_trip_mile_yoy_delta ?? 0) > 0
                     ? "positive"
-                    : Number(summary.revenue_per_calendar_day_delta ?? 0) < 0
+                    : Number(summary.revenue_per_trip_mile_yoy_delta ?? 0) < 0
                     ? "warning"
                     : undefined
                 }
               />
 
               <MetricCard
-                label="Rev / Booked Day"
+                label="Profit / Trip Mile"
+                value={formatCurrencyCompact(summary.profit_per_trip_mile)}
+                subtitle={formatPerMileYoYSubtitle(
+                  summary.profit_per_trip_mile_yoy_delta,
+                  summary.last_year_profit_per_trip_mile
+                )}
+                tone={
+                  Number(summary.profit_per_trip_mile_yoy_delta ?? 0) > 0
+                    ? "positive"
+                    : Number(summary.profit_per_trip_mile_yoy_delta ?? 0) < 0
+                    ? "warning"
+                    : Number(summary.profit_per_trip_mile ?? 0) >= 0
+                    ? "positive"
+                    : "negative"
+                }
+              />
+
+              <MetricCard
+                label="Expense / Trip Mile"
+                value={formatCurrencyCompact(summary.expense_per_trip_mile)}
+                subtitle={formatPerMileYoYSubtitle(
+                  summary.expense_per_trip_mile_yoy_delta,
+                  summary.last_year_expense_per_trip_mile
+                )}
+                tone={
+                  Number(summary.expense_per_trip_mile_yoy_delta ?? 0) > 0
+                    ? "warning"
+                    : Number(summary.expense_per_trip_mile_yoy_delta ?? 0) < 0
+                    ? "positive"
+                    : undefined
+                }
+              />
+
+              <MetricCard
+                label="Revenue / Booked Day"
                 value={formatCurrencyCompact(summary.revenue_per_booked_day)}
                 subtitle={formatCurrencyTrend(
                   summary.revenue_per_booked_day_delta
@@ -2106,21 +2100,6 @@ const mileageStats = useMemo(() => {
                   Number(summary.revenue_per_booked_day_delta ?? 0) > 0
                     ? "positive"
                     : Number(summary.revenue_per_booked_day_delta ?? 0) < 0
-                    ? "warning"
-                    : undefined
-                }
-              />
-
-              <MetricCard
-                label="Avg Rev / Trip"
-                value={formatCurrencyCompact(avgRevenuePerTrip)}
-                subtitle={avgRevenuePerTripYoYSubtitle}
-                tone={
-                  avgRevenuePerTripYoYDelta == null
-                    ? undefined
-                    : avgRevenuePerTripYoYDelta > 0
-                    ? "positive"
-                    : avgRevenuePerTripYoYDelta < 0
                     ? "warning"
                     : undefined
                 }
@@ -3278,30 +3257,6 @@ const mileageStats = useMemo(() => {
                 onClick={() => setOffTripAuditOpen(true)}
               />
 
-              <MetricCard
-                label="Rev / Trip Mile"
-                value={formatCurrencyCompact(mileageStats.revenuePerTripMile)}
-                subtitle="Revenue divided by on-trip miles"
-              />
-
-              <MetricCard
-                label="Profit / Trip Mile"
-                value={formatCurrencyCompact(mileageStats.profitPerTripMile)}
-                tone={
-                  mileageStats.profitPerTripMile >= 0.25
-                    ? "positive"
-                    : mileageStats.profitPerTripMile >= 0.1
-                    ? "warning"
-                    : "negative"
-                }
-                subtitle={`${formatCurrencyCompact(mileageStats.profitPerTotalMile)} / total mile`}
-              />
-
-              <MetricCard
-                label="Expense / Total Mile"
-                value={formatCurrencyCompact(mileageStats.expensePerMile)}
-                subtitle="Expenses divided by all miles"
-              />
             </div>
           </section>
 
@@ -3460,9 +3415,9 @@ const mileageStats = useMemo(() => {
               <div className="vehicle-compare-header__cell">Value</div>
               <div className="vehicle-compare-header__cell">Rented / Available</div>
               <div className="vehicle-compare-header__cell">Occupancy</div>
-              <div className="vehicle-compare-header__cell">Rev / Day</div>
               <div className="vehicle-compare-header__cell">Rev / Trip Mi</div>
-              <div className="vehicle-compare-header__cell">Exp / Total Mi</div>
+              <div className="vehicle-compare-header__cell">Profit / Trip Mi</div>
+              <div className="vehicle-compare-header__cell">Exp / Trip Mi</div>
               <div className="vehicle-compare-header__cell">Trips</div>
               <div className="vehicle-compare-header__cell">Run Rate</div>
               <div className="vehicle-compare-header__cell"></div>

@@ -432,7 +432,6 @@ function getReturnLocationConfig() {
 
 async function autoAcknowledgeVerifiedReturnNotifications() {
   const location = getReturnLocationConfig();
-  if (!location) return { verified: 0 };
 
   await ensureNotificationAckColumns();
 
@@ -455,6 +454,7 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
           ne.id AS notification_id,
           ne.event_at,
           t.id AS trip_id,
+          t.workflow_stage,
           COALESCE(v.vin, '') AS vehicle_vin,
           COALESCE(v.nickname, t.vehicle_name, '') AS vehicle_name
         FROM candidate_notifications ne
@@ -488,6 +488,7 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
         SELECT
           mt.notification_id,
           mt.trip_id,
+          mt.workflow_stage,
           latest.latitude,
           latest.longitude,
           COALESCE(
@@ -506,7 +507,7 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
             )
           ) AS miles_from_return_location
         FROM matched_trips mt
-        JOIN LATERAL (
+        LEFT JOIN LATERAL (
           SELECT
             s.latitude,
             s.longitude,
@@ -514,7 +515,9 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
             s.vehicle_last_updated,
             s.captured_at
           FROM vehicle_telemetry_snapshots s
-          WHERE s.latitude IS NOT NULL
+          WHERE $1::double precision IS NOT NULL
+            AND $2::double precision IS NOT NULL
+            AND s.latitude IS NOT NULL
             AND s.longitude IS NOT NULL
             AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at)
               >= mt.event_at - INTERVAL '2 hours'
@@ -534,42 +537,45 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
             s.id DESC
           LIMIT 1
         ) latest ON true
-      ),
-      verified AS (
-        SELECT *
-        FROM latest_locations
-        WHERE miles_from_return_location <= $3::double precision
       )
       UPDATE notification_events ne
       SET
         acknowledged_at = NOW(),
         acknowledged_by = 'return-location-auto-check',
-        acknowledged_reason = CONCAT(
-          'Vehicle GPS verified within ',
-          ROUND(verified.miles_from_return_location::numeric, 2),
-          ' mi of ',
-          $4::text
-        )
-      FROM verified
-      WHERE ne.id = verified.notification_id
-      RETURNING ne.id, verified.trip_id, verified.miles_from_return_location
+        acknowledged_reason = CASE
+          WHEN latest_locations.miles_from_return_location <= $3::double precision
+          THEN CONCAT(
+            'Vehicle GPS verified within ',
+            ROUND(latest_locations.miles_from_return_location::numeric, 2),
+            ' mi of ',
+            $4::text
+          )
+          ELSE 'Turo returned notification matched to trip'
+        END
+      FROM latest_locations
+      WHERE ne.id = latest_locations.notification_id
+      RETURNING
+        ne.id,
+        latest_locations.trip_id,
+        latest_locations.workflow_stage,
+        latest_locations.miles_from_return_location
     `,
-    [location.lat, location.lon, location.radiusMiles, location.label]
+    [
+      location?.lat ?? null,
+      location?.lon ?? null,
+      location?.radiusMiles ?? 0,
+      location?.label || "configured return location",
+    ]
   );
 
   if (result.rowCount > 0) {
     for (const row of result.rows) {
       if (!row.trip_id) continue;
       try {
-        await transitionTripStage(row.trip_id, "turnaround", {
-          changedBy: "system:return-location-auto-check",
-          reason: `return GPS verified within ${Number(
-            row.miles_from_return_location
-          ).toFixed(2)} mi of ${location.label}`,
-        });
+        await advanceTripAfterReturnNotification(row, location);
       } catch (err) {
         console.warn(
-          `[messages] return GPS auto-stage skipped for trip ${row.trip_id}:`,
+          `[messages] returned trip auto-stage skipped for trip ${row.trip_id}:`,
           err.message || err
         );
       }
@@ -582,6 +588,37 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
   }
 
   return { verified: result.rowCount, rows: result.rows };
+}
+
+async function advanceTripAfterReturnNotification(row, location) {
+  const stage = String(row?.workflow_stage || "").trim();
+  if (["awaiting_expenses", "complete", "closed", "canceled"].includes(stage)) {
+    return null;
+  }
+  if (!["in_progress", "turnaround"].includes(stage)) {
+    return null;
+  }
+
+  const gpsMiles =
+    row?.miles_from_return_location == null
+      ? null
+      : Number(row.miles_from_return_location);
+  const locationLabel = location?.label || "configured return location";
+  const reason = Number.isFinite(gpsMiles)
+    ? `return notification matched; GPS ${gpsMiles.toFixed(2)} mi from ${locationLabel}`
+    : "Turo return notification matched to trip";
+
+  if (stage === "in_progress") {
+    await transitionTripStage(row.trip_id, "turnaround", {
+      changedBy: "system:return-notification-auto-closeout",
+      reason,
+    });
+  }
+
+  return transitionTripStage(row.trip_id, "awaiting_expenses", {
+    changedBy: "system:return-notification-auto-closeout",
+    reason,
+  });
 }
 
 async function ensureNotificationAckColumns() {
@@ -2196,6 +2233,17 @@ router.get("/", async (req, res) => {
     const cacheBust = String(req.query.cacheBust || "").trim() !== "";
     const cacheKey = `limit:${limit}:fast:${fast ? "1" : "0"}:light:${light ? "1" : "0"}`;
     const cacheTtlMs = light ? MESSAGE_QUEUE_LIGHT_CACHE_MS : MESSAGE_QUEUE_CACHE_MS;
+
+    if (!fast) {
+      await ensureNotificationAckColumns();
+      await ensureVehicleAliasesTable();
+      await timeQueueQuery(
+        queueTimings,
+        "returnLocationAutoAck",
+        autoAcknowledgeVerifiedReturnNotifications()
+      );
+    }
+
     const cached = cacheBust
       ? null
       : getCachedPayload(messageQueueCache, cacheKey, cacheTtlMs);
@@ -2212,16 +2260,6 @@ router.get("/", async (req, res) => {
         });
       }
       return res.json(cached);
-    }
-
-    if (!fast) {
-      await ensureNotificationAckColumns();
-      await ensureVehicleAliasesTable();
-      await timeQueueQuery(
-        queueTimings,
-        "returnLocationAutoAck",
-        autoAcknowledgeVerifiedReturnNotifications()
-      );
     }
 
     const messagesSql = `

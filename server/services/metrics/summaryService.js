@@ -1015,6 +1015,13 @@ async function getSummaryMetrics(rangeKey = "30d") {
           previousRange.endDate
         )
       : [];
+    const yearOverYearExpenses = yearOverYearRange.startDate
+      ? await fetchExpensesInRange(
+          client,
+          yearOverYearRange.startDate,
+          yearOverYearRange.endDate
+        )
+      : [];
     const activeVehicleCount = await fetchActiveVehicleCount(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
@@ -1156,6 +1163,11 @@ async function getSummaryMetrics(rangeKey = "30d") {
 
     const tripCountOverlapping = trips.length;
     const yearOverYearTripCountOverlapping = yearOverYearTrips.length;
+    const tripMiles = trips.reduce((sum, trip) => sum + getTripMiles(trip), 0);
+    const yearOverYearTripMiles = yearOverYearTrips.reduce(
+      (sum, trip) => sum + getTripMiles(trip),
+      0
+    );
 
     const tripCountProrated = trips.reduce(
       (sum, trip) => sum + getTripProratedCount(trip, startDate, endDate),
@@ -1216,6 +1228,10 @@ async function getSummaryMetrics(rangeKey = "30d") {
       0
     );
     const previousExpensesTotal = previousExpenses.reduce(
+      (sum, expense) => sum + getExpenseTotal(expense),
+      0
+    );
+    const yearOverYearExpensesTotal = yearOverYearExpenses.reduce(
       (sum, expense) => sum + getExpenseTotal(expense),
       0
     );
@@ -1317,6 +1333,22 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       revenuePerBookedDay - previousRevenuePerBookedDay;
     const netProfit = revenue - expensesTotal;
     const previousNetProfit = previousRevenue - previousExpensesTotal;
+    const yearOverYearNetProfit = yearOverYearRevenue - yearOverYearExpensesTotal;
+    const revenuePerTripMile = safeDivide(revenue, tripMiles);
+    const profitPerTripMile = safeDivide(netProfit, tripMiles);
+    const expensePerTripMile = safeDivide(expensesTotal, tripMiles);
+    const yearOverYearRevenuePerTripMile = safeDivide(
+      yearOverYearRevenue,
+      yearOverYearTripMiles
+    );
+    const yearOverYearProfitPerTripMile = safeDivide(
+      yearOverYearNetProfit,
+      yearOverYearTripMiles
+    );
+    const yearOverYearExpensePerTripMile = safeDivide(
+      yearOverYearExpensesTotal,
+      yearOverYearTripMiles
+    );
     const fleetValue = latestFmvEstimates.reduce(
       (sum, estimate) => sum + Number(estimate?.estimate_mid ?? 0),
       0
@@ -1388,6 +1420,7 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
 
       trip_count_overlapping: tripCountOverlapping,
       trip_count_prorated: roundNumber(tripCountProrated, 2),
+      trip_miles: roundNumber(tripMiles, 1),
       trip_length_distribution: tripLengthDistribution,
 
       booked_vehicle_days: bookedVehicleDays,
@@ -1437,6 +1470,27 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       revenue_per_prorated_trip: roundMoney(
         safeDivide(revenue, tripCountProrated)
       ),
+      revenue_per_trip_mile: roundMoney(revenuePerTripMile),
+      last_year_revenue_per_trip_mile:
+        yearOverYearTripMiles > 0 ? roundMoney(yearOverYearRevenuePerTripMile) : null,
+      revenue_per_trip_mile_yoy_delta:
+        yearOverYearTripMiles > 0
+          ? roundMoney(revenuePerTripMile - yearOverYearRevenuePerTripMile)
+          : null,
+      profit_per_trip_mile: roundMoney(profitPerTripMile),
+      last_year_profit_per_trip_mile:
+        yearOverYearTripMiles > 0 ? roundMoney(yearOverYearProfitPerTripMile) : null,
+      profit_per_trip_mile_yoy_delta:
+        yearOverYearTripMiles > 0
+          ? roundMoney(profitPerTripMile - yearOverYearProfitPerTripMile)
+          : null,
+      expense_per_trip_mile: roundMoney(expensePerTripMile),
+      last_year_expense_per_trip_mile:
+        yearOverYearTripMiles > 0 ? roundMoney(yearOverYearExpensePerTripMile) : null,
+      expense_per_trip_mile_yoy_delta:
+        yearOverYearTripMiles > 0
+          ? roundMoney(expensePerTripMile - yearOverYearExpensePerTripMile)
+          : null,
       revenue_per_booked_day: roundMoney(
         revenuePerBookedDay
       ),

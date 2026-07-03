@@ -69,7 +69,7 @@ function getReturnLocationConfig() {
 
 async function autoVerifyReturnedNotificationByGps(event, notificationId) {
   const location = getReturnLocationConfig();
-  if (!location || !notificationId) return null;
+  if (!notificationId) return null;
 
   const trip = await findTripForReturnedNotification(event);
   if (!trip?.id) return null;
@@ -107,18 +107,21 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
             latest.vehicle_last_updated,
             latest.captured_at
           ) AS location_at,
-          (
-            3958.8 * 2 * asin(
-              sqrt(
-                power(sin(radians((latest.latitude::double precision - $3::double precision) / 2)), 2) +
-                cos(radians($3::double precision)) *
-                cos(radians(latest.latitude::double precision)) *
-                power(sin(radians((latest.longitude::double precision - $4::double precision) / 2)), 2)
+          CASE
+            WHEN $3::double precision IS NULL OR $4::double precision IS NULL THEN NULL
+            ELSE (
+              3958.8 * 2 * asin(
+                sqrt(
+                  power(sin(radians((latest.latitude::double precision - $3::double precision) / 2)), 2) +
+                  cos(radians($3::double precision)) *
+                  cos(radians(latest.latitude::double precision)) *
+                  power(sin(radians((latest.longitude::double precision - $4::double precision) / 2)), 2)
+                )
               )
             )
-          ) AS miles_from_return_location
+          END AS miles_from_return_location
         FROM matched_trip mt
-        JOIN LATERAL (
+        LEFT JOIN LATERAL (
           SELECT
             s.latitude,
             s.longitude,
@@ -126,7 +129,9 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
             s.vehicle_last_updated,
             s.captured_at
           FROM vehicle_telemetry_snapshots s
-          WHERE s.latitude IS NOT NULL
+          WHERE $3::double precision IS NOT NULL
+            AND $4::double precision IS NOT NULL
+            AND s.latitude IS NOT NULL
             AND s.longitude IS NOT NULL
             AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at)
               >= $2::timestamptz - INTERVAL '2 hours'
@@ -149,10 +154,15 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
       )
       SELECT *
       FROM latest_location
-      WHERE miles_from_return_location <= $5::double precision
       LIMIT 1
     `,
-    [trip.id, eventAt, location.lat, location.lon, location.radiusMiles]
+    [
+      trip.id,
+      eventAt,
+      location?.lat ?? null,
+      location?.lon ?? null,
+      location?.radiusMiles ?? 0,
+    ]
   );
 
   const match = result.rows[0];
@@ -164,23 +174,49 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
       SET
         acknowledged_at = NOW(),
         acknowledged_by = 'return-location-auto-check',
-        acknowledged_reason = CONCAT(
-          'Vehicle GPS verified within ',
-          ROUND($2::numeric, 2),
-          ' mi of ',
-          $3::text
-        )
+        acknowledged_reason = CASE
+          WHEN $2::numeric <= $4::numeric
+          THEN CONCAT(
+            'Vehicle GPS verified within ',
+            ROUND($2::numeric, 2),
+            ' mi of ',
+            $3::text
+          )
+          ELSE 'Turo returned notification matched to trip'
+        END
       WHERE id = $1
     `,
-    [notificationId, match.miles_from_return_location, location.label]
+    [
+      notificationId,
+      match.miles_from_return_location,
+      location?.label || "configured return location",
+      location?.radiusMiles ?? 0,
+    ]
   );
 
-  if (match.workflow_stage === "in_progress") {
+  const currentStage = String(match.workflow_stage || "");
+  const gpsMiles =
+    match.miles_from_return_location == null
+      ? null
+      : Number(match.miles_from_return_location);
+  const reason = Number.isFinite(gpsMiles)
+    ? `Turo return notification matched; GPS ${gpsMiles.toFixed(2)} mi from ${
+        location?.label || "configured return location"
+      }`
+    : "Turo returned notification matched to trip";
+
+  if (currentStage === "in_progress") {
     await transitionTripStage(trip.id, "turnaround", {
       changedBy: "system:return-location-notification",
-      reason: `Turo return notification GPS verified within ${Number(
-        match.miles_from_return_location
-      ).toFixed(2)} mi of ${location.label}`,
+      reason,
+      changedAt: eventAt,
+    });
+  }
+
+  if (["in_progress", "turnaround"].includes(currentStage)) {
+    await transitionTripStage(trip.id, "awaiting_expenses", {
+      changedBy: "system:return-location-notification",
+      reason,
       changedAt: eventAt,
     });
   }

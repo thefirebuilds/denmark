@@ -1306,6 +1306,10 @@ async function getVehicleMetrics(rangeKey = "30d") {
         revenue_per_booked_day: 0,
         revenue_per_mile: 0,
         revenue_per_mile_basis: "missing",
+        profit_per_mile: 0,
+        profit_per_mile_basis: "missing",
+        expense_per_trip_mile: 0,
+        expense_per_trip_mile_basis: "missing",
         trip_miles: 0,
         total_miles: totalMiles,
         off_trip_miles: 0,
@@ -1690,6 +1694,20 @@ async function getVehicleMetrics(rangeKey = "30d") {
         safeDivide(metrics.revenue_total, revenueMiles)
       );
       metrics.revenue_per_mile_basis =
+        toNumber(metrics.trip_miles) > 0
+          ? "trip_miles"
+          : "missing";
+      metrics.profit_per_mile = roundMoney(
+        safeDivide(metrics.net_profit, revenueMiles)
+      );
+      metrics.profit_per_mile_basis =
+        toNumber(metrics.trip_miles) > 0
+          ? "trip_miles"
+          : "missing";
+      metrics.expense_per_trip_mile = roundMoney(
+        safeDivide(metrics.total_expenses, revenueMiles)
+      );
+      metrics.expense_per_trip_mile_basis =
         toNumber(metrics.trip_miles) > 0
           ? "trip_miles"
           : "missing";

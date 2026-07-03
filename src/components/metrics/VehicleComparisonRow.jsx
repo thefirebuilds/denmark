@@ -116,8 +116,8 @@ function formatRevenuePerMileBasis(value) {
 
 function formatExpensePerMileBasis(value) {
   const basis = String(value || "").toLowerCase();
+  if (basis === "trip_miles") return "Operating spend / on-trip mile";
   if (basis === "total_miles") return "Operating spend / total mile";
-  if (basis === "trip_miles") return "Legacy trip-mile basis";
   return "No miles";
 }
 
@@ -225,8 +225,15 @@ export default function VehicleComparisonRow({
   const revenuePerBookedDay = Number(
     vehicle?.revenue_per_booked_day ?? vehicle?.income_per_booked_day ?? 0
   );
+  const tripMiles = Number(vehicle?.trip_miles ?? 0);
   const revenuePerMile = Number(vehicle?.revenue_per_mile ?? 0);
-  const expensePerMile = Number(vehicle?.operating_expense_per_mile ?? 0);
+  const profitPerMile = Number(
+    vehicle?.profit_per_mile ?? (tripMiles > 0 ? netProfit / tripMiles : 0)
+  );
+  const expensePerMile = Number(
+    vehicle?.expense_per_trip_mile ??
+      (tripMiles > 0 ? Number(vehicle?.total_expenses ?? 0) / tripMiles : 0)
+  );
   const unaccountedMiles = Number(
     vehicle?.unaccounted_miles ?? vehicle?.unallocated_miles ?? 0
   );
@@ -305,13 +312,19 @@ export default function VehicleComparisonRow({
 
         <div className="vehicle-compare__cell">
           <div className="vehicle-compare__value">
-            {formatCurrencyCompact(revenuePerBookedDay)}
+            {formatCurrencyCompact(revenuePerMile)}
           </div>
         </div>
 
         <div className="vehicle-compare__cell">
-          <div className="vehicle-compare__value">
-            {formatCurrencyCompact(revenuePerMile)}
+          <div
+            className={`vehicle-compare__value ${
+              profitPerMile >= 0
+                ? "vehicle-compare__value--positive"
+                : "vehicle-compare__value--negative"
+            }`}
+          >
+            {formatCurrencyCompact(profitPerMile)}
           </div>
         </div>
 
@@ -398,32 +411,7 @@ export default function VehicleComparisonRow({
               </div>
 
               <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Run Rate</div>
-                <div className="vehicle-compare__detail-value">
-                  {formatCurrencyCompact(runRateDaily)}/day
-                </div>
-                <div className="vehicle-compare__detail-hint">
-                  {formatCurrencyCompact(runRateExpenses)} operating spend over{" "}
-                  {formatNumber(runRateDays)} days; excludes capital layout
-                </div>
-              </div>
-
-              <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Rev / Trip</div>
-                <div className="vehicle-compare__detail-value">
-                  {formatCurrencyCompact(vehicle?.income_per_overlapping_trip)}
-                </div>
-              </div>
-
-              <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Rev / Day</div>
-                <div className="vehicle-compare__detail-value">
-                  {formatCurrencyCompact(revenuePerBookedDay)}
-                </div>
-              </div>
-
-              <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Rev / Trip Mile</div>
+                <div className="vehicle-compare__detail-label">Revenue / Trip Mile</div>
                 <div className="vehicle-compare__detail-value">
                   {formatCurrencyCompact(revenuePerMile)}
                 </div>
@@ -433,14 +421,43 @@ export default function VehicleComparisonRow({
               </div>
 
               <div className="vehicle-compare__detail-stat">
-                <div className="vehicle-compare__detail-label">Expense / Total Mile</div>
+                <div className="vehicle-compare__detail-label">Profit / Trip Mile</div>
+                <div
+                  className={`vehicle-compare__detail-value ${
+                    profitPerMile >= 0
+                      ? "vehicle-compare__detail-value--positive"
+                      : "vehicle-compare__detail-value--negative"
+                  }`}
+                >
+                  {formatCurrencyCompact(profitPerMile)}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Expense / Trip Mile</div>
                 <div className="vehicle-compare__detail-value">
                   {formatCurrencyCompact(expensePerMile)}
                 </div>
                 <div className="vehicle-compare__detail-hint">
-                  {formatExpensePerMileBasis(
-                    vehicle?.operating_expense_per_mile_basis
-                  )}
+                  {formatExpensePerMileBasis(vehicle?.expense_per_trip_mile_basis)}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Revenue / Booked Day</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatCurrencyCompact(revenuePerBookedDay)}
+                </div>
+              </div>
+
+              <div className="vehicle-compare__detail-stat">
+                <div className="vehicle-compare__detail-label">Run Rate</div>
+                <div className="vehicle-compare__detail-value">
+                  {formatCurrencyCompact(runRateDaily)}/day
+                </div>
+                <div className="vehicle-compare__detail-hint">
+                  {formatCurrencyCompact(runRateExpenses)} operating spend over{" "}
+                  {formatNumber(runRateDays)} days; excludes capital layout
                 </div>
               </div>
             </div>

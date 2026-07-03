@@ -11,6 +11,7 @@ const { transitionTripStage } = require("../trips/transitionTripStage");
 let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
 const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
+const LOCATION_ENTRY_STALE_LOCATION_MS = 15 * 60 * 1000;
 
 function normalizeDisplayTimestamp(value, fallback = null) {
   if (!value) return fallback;
@@ -157,6 +158,24 @@ function distanceMiles(aLat, aLon, bLat, bLon) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return earthRadiusMiles * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getTimestampMs(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.getTime();
+}
+
+function isStaleLocationEntrySignal(row) {
+  const serviceName = String(row?.service_name || "").toLowerCase();
+  if (serviceName !== "dimo") return false;
+
+  const locationAt = getTimestampMs(row.location_last_updated);
+  const capturedAt = getTimestampMs(row.captured_at);
+  if (locationAt == null || capturedAt == null) return false;
+
+  return capturedAt - locationAt > LOCATION_ENTRY_STALE_LOCATION_MS;
 }
 
 function normalizeLocationText(value) {
@@ -1038,6 +1057,8 @@ async function collectLocationEntryAlerts() {
         s.service_name,
         s.latitude,
         s.longitude,
+        s.location_last_updated,
+        s.captured_at,
         COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
       FROM vehicle_telemetry_snapshots s
       JOIN vehicles v
@@ -1119,6 +1140,7 @@ async function collectLocationEntryAlerts() {
     const lat = toNumber(row.latitude);
     const lon = toNumber(row.longitude);
     if (lat == null || lon == null) continue;
+    if (isStaleLocationEntrySignal(row)) continue;
 
     for (const location of locations) {
       const milesAway = distanceMiles(
@@ -1131,9 +1153,9 @@ async function collectLocationEntryAlerts() {
 
       const previousLat = toNumber(row.previous_latitude);
       const previousLon = toNumber(row.previous_longitude);
+      if (previousLat == null || previousLon == null) continue;
+
       const wasAlreadyInside =
-        previousLat != null &&
-        previousLon != null &&
         distanceMiles(
           previousLat,
           previousLon,
@@ -1206,6 +1228,8 @@ async function sendLocationEntryAlertsForSnapshot(snapshotId) {
           s.nickname,
           s.latitude,
           s.longitude,
+          s.location_last_updated,
+          s.captured_at,
           COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
         FROM vehicle_telemetry_snapshots s
         WHERE s.id = $1
@@ -1319,6 +1343,9 @@ async function sendLocationEntryAlertsForSnapshot(snapshotId) {
   if (lat == null || lon == null) {
     return { checked: true, sent: 0, skipped: 0, reason: "no_coordinates" };
   }
+  if (isStaleLocationEntrySignal(row)) {
+    return { checked: true, sent: 0, skipped: 0, reason: "stale_location_signal" };
+  }
 
   let sent = 0;
   let skipped = 0;
@@ -1329,9 +1356,12 @@ async function sendLocationEntryAlertsForSnapshot(snapshotId) {
 
     const previousLat = toNumber(row.previous_latitude);
     const previousLon = toNumber(row.previous_longitude);
+    if (previousLat == null || previousLon == null) {
+      skipped += 1;
+      continue;
+    }
+
     const wasAlreadyInside =
-      previousLat != null &&
-      previousLon != null &&
       distanceMiles(
         previousLat,
         previousLon,

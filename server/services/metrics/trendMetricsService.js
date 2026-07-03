@@ -7,6 +7,9 @@ const pool = require("../../db");
 const {
   endOfDay,
   getDateRange,
+  getTripFuelReimbursementValue,
+  getTripProratedAmount,
+  getTripRecognizedTollRevenueValue,
   getTripTotalDays,
   roundMoney,
   startOfDay,
@@ -91,14 +94,15 @@ function addTripRevenueToBuckets(bucketMap, trip, rangeStart, rangeEnd, granular
     if (!label) return;
     const bucket = bucketMap.get(label);
     if (!bucket) return;
-    bucket.revenue += toNumber(trip.amount);
+    bucket.revenue += getRecognizedTripRevenue(trip, rangeStart, rangeEnd);
     return;
   }
 
   const totalDays = getTripTotalDays(trip.trip_start, trip.trip_end);
   if (!totalDays) return;
 
-  const dailyRevenue = toNumber(trip.amount) / totalDays;
+  const totalRevenue = getRecognizedTripRevenue(trip, trip.trip_start, trip.trip_end);
+  const dailyRevenue = totalRevenue / totalDays;
   const tripStart = startOfDay(trip.trip_start);
   const tripEnd = startOfDay(trip.trip_end);
   const effectiveStart = rangeStart
@@ -119,6 +123,14 @@ function addTripRevenueToBuckets(bucketMap, trip, rangeStart, rangeEnd, granular
   }
 }
 
+function getRecognizedTripRevenue(trip, rangeStart, rangeEnd) {
+  return (
+    getTripProratedAmount(trip, rangeStart, rangeEnd) +
+    getTripFuelReimbursementValue(trip, rangeStart, rangeEnd) +
+    getTripRecognizedTollRevenueValue(trip, rangeStart, rangeEnd)
+  );
+}
+
 function addTripMonthlyRevenueToBuckets(bucketMap, trip) {
   if (!trip?.trip_start || !trip?.trip_end) return;
 
@@ -127,7 +139,7 @@ function addTripMonthlyRevenueToBuckets(bucketMap, trip) {
   if (Number.isNaN(tripStart.getTime()) || Number.isNaN(tripEnd.getTime())) return;
 
   const totalDays = getTripTotalDays(trip.trip_start, trip.trip_end);
-  const totalRevenue = toNumber(trip.amount);
+  const totalRevenue = getRecognizedTripRevenue(trip, trip.trip_start, trip.trip_end);
   if (!totalDays || !totalRevenue) return;
 
   const dailyRevenue = totalRevenue / totalDays;
@@ -164,6 +176,13 @@ async function fetchTripsInRange(client, startDate, endDate) {
         trip_start,
         trip_end,
         amount,
+        fuel_reimbursement_total,
+        toll_total,
+        toll_charged_total,
+        toll_review_status,
+        workflow_stage,
+        expense_status,
+        completed_at,
         canceled_at
       FROM trips
       WHERE trip_start <= $2
