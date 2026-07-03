@@ -1886,8 +1886,14 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     metric.utilization_rate = safeDivide(metric.days_booked, metric.days_available, 0);
     metric.revenue_per_available_day = safeDivide(recognizedRevenue, metric.days_available, 0);
     metric.revenue_per_booked_day = safeDivide(recognizedRevenue, metric.days_booked, 0);
+    metric.revenue_per_mile = safeDivide(recognizedRevenue, metric.total_miles_basis, 0);
     metric.profit_per_available_day = safeDivide(metric.net_profit_after_labor, metric.days_available, 0);
     metric.profit_per_booked_day = safeDivide(metric.net_profit_after_labor, metric.days_booked, 0);
+    metric.profit_per_mile = safeDivide(
+      metric.net_profit_after_labor,
+      metric.total_miles_basis,
+      0
+    );
     metric.profit_per_owner_hour = safeDivide(metric.net_profit_after_labor, metric.estimated_owner_hours, 0);
     metric.monthly_profit_equivalent = safeDivide(metric.net_profit_after_labor, monthWeight || 1, 0);
     metric.maintenance_cost_per_mile = safeDivide(
@@ -2024,8 +2030,10 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       utilization_rate: roundNumber(metric.utilization_rate, 4),
       revenue_per_available_day: roundMoney(metric.revenue_per_available_day),
       revenue_per_booked_day: roundMoney(metric.revenue_per_booked_day),
+      revenue_per_mile: roundMoney(metric.revenue_per_mile),
       profit_per_available_day: roundMoney(metric.profit_per_available_day),
       profit_per_booked_day: roundMoney(metric.profit_per_booked_day),
+      profit_per_mile: roundMoney(metric.profit_per_mile),
       profit_per_owner_hour: roundMoney(metric.profit_per_owner_hour),
       maintenance_cost_per_mile: roundMoney(metric.maintenance_cost_per_mile),
       repair_cost_per_mile: roundMoney(metric.repair_cost_per_mile),

@@ -9,9 +9,9 @@ export default function VehicleCard({
   formatNumber,
 }) {
   const netProfit = Number(vehicle?.net_profit ?? 0);
-  const incomePerBookedDay = Number(vehicle?.income_per_booked_day ?? 0);
-  const incomePerTrip = Number(vehicle?.income_per_overlapping_trip ?? 0);
-  const tripCount = Number(vehicle?.trip_count_overlapping ?? 0);
+  const revenuePerMile = Number(vehicle?.revenue_per_mile ?? 0);
+  const profitPerMile = Number(vehicle?.profit_per_mile ?? 0);
+  const totalMiles = Number(vehicle?.total_miles ?? vehicle?.total_miles_basis ?? 0);
   const bookedDays = Number(vehicle?.booked_vehicle_days ?? 0);
 
   return (
@@ -56,23 +56,23 @@ export default function VehicleCard({
         </div>
 
         <div className="vehicle-card__stat">
-          <div className="vehicle-card__stat-label">Rev / Booked Day</div>
+          <div className="vehicle-card__stat-label">Revenue / Mile</div>
           <div className="vehicle-card__stat-value">
-            {formatCurrencyCompact(incomePerBookedDay)}
+            {formatCurrencyCompact(revenuePerMile)}
           </div>
         </div>
 
         <div className="vehicle-card__stat">
-          <div className="vehicle-card__stat-label">Rev / Trip</div>
+          <div className="vehicle-card__stat-label">Profit / Mile</div>
           <div className="vehicle-card__stat-value">
-            {formatCurrencyCompact(incomePerTrip)}
+            {formatCurrencyCompact(profitPerMile)}
           </div>
         </div>
 
         <div className="vehicle-card__stat">
-          <div className="vehicle-card__stat-label">Trips</div>
+          <div className="vehicle-card__stat-label">Miles</div>
           <div className="vehicle-card__stat-value">
-            {formatNumber(tripCount)}
+            {formatNumber(totalMiles)}
           </div>
         </div>
 

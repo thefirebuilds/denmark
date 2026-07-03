@@ -6,6 +6,7 @@ const {
   getEnabledLocations,
   getPrimaryParkingLocation,
 } = require("../locations/locationSettings");
+const { transitionTripStage } = require("../trips/transitionTripStage");
 
 let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
@@ -156,6 +157,51 @@ function distanceMiles(aLat, aLon, bLat, bLon) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return earthRadiusMiles * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function normalizeLocationText(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function tripReturnLocationMatchesNamedLocation(tripReturnLocation, location) {
+  const tripLocation = normalizeLocationText(tripReturnLocation);
+  if (!tripLocation || !location) return false;
+
+  return [location.label, location.id, location.kind]
+    .map(normalizeLocationText)
+    .filter(Boolean)
+    .some(
+      (candidate) =>
+        candidate.length >= 3 &&
+        (tripLocation.includes(candidate) || candidate.includes(tripLocation))
+    );
+}
+
+function getMatchedTripReturnGeoLocation(row, locations) {
+  const lat = toNumber(row.latitude);
+  const lon = toNumber(row.longitude);
+  if (lat == null || lon == null) return null;
+
+  for (const location of locations) {
+    if (!tripReturnLocationMatchesNamedLocation(row.return_location, location)) {
+      continue;
+    }
+
+    const milesAway = distanceMiles(
+      lat,
+      lon,
+      location.latitude,
+      location.longitude
+    );
+    if (milesAway <= location.radiusMiles) {
+      return { location, milesAway };
+    }
+  }
+
+  return null;
 }
 
 async function ensureFleetAlertTables(client = pool) {
@@ -662,6 +708,7 @@ async function collectOverdueReturnAlerts() {
       v.vin AS vehicle_vin,
       t.guest_name,
       t.trip_end,
+      t.return_location,
       t.workflow_stage,
       t.status,
       latest.service_name,
@@ -741,9 +788,12 @@ async function collectOverdueReturnAlerts() {
   `);
 
   const parking = await getPrimaryParkingLocation();
+  const returnLocations = await getEnabledLocations();
 
   return rows
     .map((row) => {
+      if (getMatchedTripReturnGeoLocation(row, returnLocations)) return null;
+
       if (parking.enabled) {
         const lat = toNumber(row.latitude);
         const lon = toNumber(row.longitude);
@@ -766,6 +816,99 @@ async function collectOverdueReturnAlerts() {
       };
     })
     .filter(Boolean);
+}
+
+async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
+  const returnLocations = await getEnabledLocations();
+  if (!returnLocations.length) return { advanced: 0 };
+
+  const { rows } = await pool.query(`
+    SELECT
+      t.id,
+      t.reservation_id,
+      t.vehicle_name,
+      v.nickname AS vehicle_nickname,
+      v.vin AS vehicle_vin,
+      t.guest_name,
+      t.trip_end,
+      t.return_location,
+      latest.service_name,
+      latest.latitude,
+      latest.longitude,
+      latest.vehicle_last_updated,
+      latest.location_last_updated,
+      latest.captured_at
+    FROM trips t
+    LEFT JOIN vehicles v
+      ON t.turo_vehicle_id IS NOT NULL
+      AND v.turo_vehicle_id = t.turo_vehicle_id
+    LEFT JOIN LATERAL (
+      SELECT
+        s.service_name,
+        s.latitude,
+        s.longitude,
+        s.vehicle_last_updated,
+        s.location_last_updated,
+        s.captured_at
+      FROM vehicle_telemetry_snapshots s
+      WHERE s.latitude IS NOT NULL
+        AND s.longitude IS NOT NULL
+        AND (
+          s.captured_at >= t.trip_end - INTERVAL '6 hours'
+          OR COALESCE(s.location_last_updated, s.vehicle_last_updated) >= t.trip_end - INTERVAL '6 hours'
+        )
+        AND (
+          (
+            v.vin IS NOT NULL
+            AND s.vin IS NOT NULL
+            AND LOWER(s.vin) = LOWER(v.vin)
+          )
+          OR (
+            v.nickname IS NOT NULL
+            AND s.nickname IS NOT NULL
+            AND LOWER(s.nickname) = LOWER(v.nickname)
+          )
+          OR (
+            t.vehicle_name IS NOT NULL
+            AND s.nickname IS NOT NULL
+            AND LOWER(s.nickname) = LOWER(t.vehicle_name)
+          )
+        )
+      ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
+        s.id DESC
+      LIMIT 1
+    ) latest ON true
+    WHERE t.trip_end < NOW()
+      AND t.trip_end >= NOW() - INTERVAL '24 hours'
+      AND COALESCE(t.closed_out, false) = false
+      AND COALESCE(t.workflow_stage, '') = 'in_progress'
+      AND COALESCE(t.status, '') <> 'canceled'
+      AND COALESCE(t.return_location, '') <> ''
+    ORDER BY t.trip_end ASC
+    LIMIT 20
+  `);
+
+  let advanced = 0;
+  for (const row of rows) {
+    const match = getMatchedTripReturnGeoLocation(row, returnLocations);
+    if (!match) continue;
+
+    try {
+      await transitionTripStage(row.id, "turnaround", {
+        changedBy: "system:return-geo-location",
+        reason: `return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}`,
+      });
+      advanced += 1;
+    } catch (err) {
+      console.warn(
+        `[alerts] return geo auto-stage skipped for trip ${row.id}: ${
+          err.message || err
+        }`
+      );
+    }
+  }
+
+  return { advanced };
 }
 
 async function collectReturnedToParkingSpotAlerts() {
@@ -1299,6 +1442,7 @@ async function runFleetAlerts(reason = "interval") {
 
   try {
     await ensureFleetAlertTables();
+    const returnedTripResult = await autoAdvanceReturnedTripsAtExpectedGeoLocations();
     const alerts = await collectFleetAlerts();
     const results = [];
 
@@ -1322,12 +1466,20 @@ async function runFleetAlerts(reason = "interval") {
 
     const sent = results.filter((item) => item.sent).length;
     console.log(
-      `[alerts] checked reason=${reason} candidates=${alerts.length} sent=${sent} durationMs=${
+      `[alerts] checked reason=${reason} candidates=${alerts.length} sent=${sent} returnedTripsAdvanced=${
+        returnedTripResult.advanced || 0
+      } durationMs=${
         Date.now() - startedAt
       }`
     );
 
-    return { ran: true, candidates: alerts.length, sent, results };
+    return {
+      ran: true,
+      candidates: alerts.length,
+      sent,
+      returnedTripsAdvanced: returnedTripResult.advanced || 0,
+      results,
+    };
   } finally {
     fleetAlertsInProgress = false;
   }
