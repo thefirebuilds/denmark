@@ -10,6 +10,7 @@ export function useCitiCardBalance() {
     availableBalance: null as number | null,
     debtBalance: null as number | null,
     lastFour: "4483",
+    balanceSource: null as string | null,
     fetchedAt: null as string | null,
   });
 
@@ -38,6 +39,7 @@ export function useCitiCardBalance() {
             availableBalance: data.availableBalance ?? null,
             debtBalance: data.debtBalance ?? null,
             lastFour: data.lastFour || "4483",
+            balanceSource: data.balanceSource || null,
             fetchedAt: data.fetchedAt || null,
           });
         }

@@ -154,6 +154,15 @@ async function getTransactions(token, accountId) {
   return res.data || [];
 }
 
+async function getAccountBalances(token, accountId) {
+  const res = await axios.get(`${API}/accounts/${accountId}/balances`, {
+    httpsAgent: agent,
+    auth: { username: token, password: "" },
+  });
+
+  return res.data || {};
+}
+
 function normalizeAccount(account) {
   if (!account) return null;
 
@@ -208,6 +217,33 @@ function accountMatchesCiti4483(account) {
   );
 }
 
+async function getLatestStoredAccountBalance(accountId) {
+  if (!accountId) return null;
+
+  const { rows } = await pool.query(
+    `
+      SELECT running_balance, transaction_date, updated_at
+      FROM teller_transactions
+      WHERE teller_account_id = $1
+        AND running_balance IS NOT NULL
+      ORDER BY transaction_date DESC NULLS LAST, updated_at DESC NULLS LAST, id DESC
+      LIMIT 1
+    `,
+    [accountId]
+  );
+
+  const row = rows[0];
+  if (!row) return null;
+  const balance = Number(row.running_balance);
+  if (!Number.isFinite(balance)) return null;
+
+  return {
+    balance,
+    transactionDate: row.transaction_date || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
 async function getCiti4483BalanceSummary() {
   const tokens = await getAccessTokens();
 
@@ -220,6 +256,7 @@ async function getCiti4483BalanceSummary() {
       availableBalance: null,
       debtBalance: null,
       account: null,
+      balanceSource: null,
       fetchedAt: new Date().toISOString(),
     };
   }
@@ -229,7 +266,18 @@ async function getCiti4483BalanceSummary() {
     const account = accounts.find(accountMatchesCiti4483);
     if (!account) continue;
 
-    const currentBalance = getAccountBalanceAmount(account, [
+    let liveBalances = null;
+    try {
+      liveBalances = await getAccountBalances(tokenRow.access_token, account.id);
+    } catch (err) {
+      console.warn(
+        `[teller] failed to fetch Citi 4483 balances account=${account.id}: ${
+          err.message || err
+        }`
+      );
+    }
+
+    const accountCurrentBalance = getAccountBalanceAmount(account, [
       "balances.current",
       "balances.ledger",
       "balances.available",
@@ -239,12 +287,40 @@ async function getCiti4483BalanceSummary() {
       "ledger_balance",
       "balance",
     ]);
-    const availableBalance = getAccountBalanceAmount(account, [
+    const liveCurrentBalance = getAccountBalanceAmount(liveBalances, [
+      "current",
+      "ledger",
+      "available",
+      "current_balance",
+      "ledger_balance",
+      "balance",
+      "balances.current",
+      "balances.ledger",
+      "balances.available",
+    ]);
+    const accountAvailableBalance = getAccountBalanceAmount(account, [
       "balances.available",
       "balance.available",
       "available_balance",
       "credit.available",
     ]);
+    const liveAvailableBalance = getAccountBalanceAmount(liveBalances, [
+      "available",
+      "available_balance",
+      "balances.available",
+    ]);
+    const storedBalance = await getLatestStoredAccountBalance(account.id);
+    const currentBalance =
+      liveCurrentBalance ?? accountCurrentBalance ?? storedBalance?.balance ?? null;
+    const availableBalance = liveAvailableBalance ?? accountAvailableBalance ?? null;
+    const balanceSource =
+      liveCurrentBalance != null
+        ? "teller_balances"
+        : accountCurrentBalance != null
+        ? "teller_account"
+        : storedBalance?.balance != null
+        ? "stored_transaction_running_balance"
+        : null;
     const debtBalance =
       currentBalance == null ? null : Math.abs(Number(currentBalance));
 
@@ -256,6 +332,8 @@ async function getCiti4483BalanceSummary() {
       availableBalance,
       debtBalance,
       account: normalizeAccount(account),
+      balanceSource,
+      balanceAsOf: storedBalance?.transactionDate || null,
       fetchedAt: new Date().toISOString(),
     };
   }
@@ -268,6 +346,7 @@ async function getCiti4483BalanceSummary() {
     availableBalance: null,
     debtBalance: null,
     account: null,
+    balanceSource: null,
     fetchedAt: new Date().toISOString(),
   };
 }
