@@ -38,6 +38,7 @@ function money(value) {
 export default function TopBanner({
   stats,
   mercuryBalance = null,
+  citiCardBalance = null,
   loading = false,
   refreshing = false,
   authInfo = null,
@@ -111,6 +112,17 @@ export default function TopBanner({
               : mercuryBalance?.loading
                 ? "loading"
                 : money(mercuryBalance?.availableBalance ?? mercuryBalance?.currentBalance)}
+          </span>
+
+          <span className="top-banner-balance top-banner-balance--debt">
+            Citi {citiCardBalance?.lastFour || "4483"}{" "}
+            {citiCardBalance?.configured === false
+              ? "not configured"
+              : citiCardBalance?.loading
+                ? "loading"
+                : citiCardBalance?.found === false
+                  ? "not found"
+                  : money(citiCardBalance?.debtBalance ?? citiCardBalance?.currentBalance)}
           </span>
 
           <span>

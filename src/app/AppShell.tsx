@@ -32,6 +32,7 @@ export function AppShell(props: AppShellProps) {
       <TopBanner
         stats={props.messageStats}
         mercuryBalance={props.mercuryBalance}
+        citiCardBalance={props.citiCardBalance}
         loading={props.messageStatsLoading}
         refreshing={props.messageStatsRefreshing}
         authInfo={props.authInfo}

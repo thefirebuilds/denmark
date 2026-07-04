@@ -15,6 +15,7 @@ import { StartupScreen } from "../app/StartupScreen";
 import type { EditTripRequest, TripLike, UnknownRecord } from "../app/appTypes";
 import { useAuthStatus } from "../hooks/useAuthStatus";
 import { useBackendAvailability } from "../hooks/useBackendAvailability";
+import { useCitiCardBalance } from "../hooks/useCitiCardBalance";
 import { useLayoutMode } from "../hooks/useLayoutMode";
 import { useMercuryBalance } from "../hooks/useMercuryBalance";
 import { useMessageStats } from "../hooks/useMessageStats";
@@ -183,6 +184,7 @@ export default function Home() {
   >(null);
   const { effectiveLayoutMode, layoutMode, setLayoutMode } = useLayoutMode();
   const mercuryBalance = useMercuryBalance();
+  const citiCardBalance = useCitiCardBalance();
   const maintenanceVehicleTouchedRef = useRef(false);
 
   const handleStartupAuthRequired = useCallback(() => {}, []);
@@ -333,6 +335,7 @@ export default function Home() {
     <AppShell
       activeView={activeView}
       authInfo={authInfo}
+      citiCardBalance={citiCardBalance}
       dispatchSettings={dispatchSettings}
       editTripRequest={editTripRequest}
       effectiveLayoutMode={effectiveLayoutMode}

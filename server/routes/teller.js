@@ -131,6 +131,16 @@ router.get("/mercury/balance", async (req, res) => {
   }
 });
 
+router.get("/citi-4483/balance", async (req, res) => {
+  try {
+    const result = await syncTellerTransactions.getCiti4483BalanceSummary();
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to load Citi 4483 balance:", err);
+    sendRouteError(res, err, "Failed to load Citi 4483 balance");
+  }
+});
+
 router.post("/mercury/sync", async (req, res) => {
   try {
     const result = await syncMercuryTransactions();

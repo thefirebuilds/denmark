@@ -1701,6 +1701,12 @@ body {
   white-space: nowrap;
 }
 
+.top-banner-balance--debt {
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(127, 29, 29, 0.22);
+  color: #fecaca;
+}
+
 .layout-mode-switch {
   display: inline-flex;
   align-items: center;

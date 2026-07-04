@@ -6,6 +6,7 @@ const {
   getMarketplaceCatalogModule,
   inferListingYearFromText,
 } = require("../marketplace/marketplaceCohort");
+const { getAiPromptSettings } = require("../aiPromptSettings");
 
 const DEFAULT_OPENAI_MODEL = process.env.OPENAI_FMV_MODEL || "gpt-4.1-mini";
 const DEFAULT_MARKET_LABEL =
@@ -879,6 +880,8 @@ async function requestOpenAIFmvEstimate(snapshot, options = {}) {
   }
 
   const model = options.model || DEFAULT_OPENAI_MODEL;
+  const promptSettings = await getAiPromptSettings();
+  const vehiclePurchasePrompt = promptSettings.vehiclePurchaseReview || {};
   const payload = {
     model,
     input: [
@@ -887,22 +890,10 @@ async function requestOpenAIFmvEstimate(snapshot, options = {}) {
         content: [
           {
             type: "input_text",
-            text:
-              "You estimate a rough private-party fair market value in USD for a used vehicle. " +
-              "Use the provided vehicle condition snapshot and marketplace cohort context when available. " +
-              "Weight close marketplace comps meaningfully, but adjust for condition, mileage, and missing data. " +
-              "If marketplaceCohort.strategy is marketplace_listing_anchor and listing_anchor is present, treat listing_anchor.cohort_baseline_price as the primary market anchor. " +
-              "Do not discard a strong listing anchor just because a few cheaper comps exist nearby. " +
-              "If marketplaceCohort includes weight_recommendation_pct / weight_recommendation_ratio, follow that guidance. " +
-              "A 2-car cohort should be treated as a weak signal and a sanity check, not a primary anchor. " +
-              "A large cohort around 40 good comps can anchor the estimate much more strongly. " +
-              "If usable_cohort_count is under 3, do not anchor the estimate to the observed median; treat the cohort as a weak floor/sanity check only. " +
-              "If the subject vehicle is still Turo-eligible but many comps are not, avoid letting non-eligible high-mileage comps drag the estimate down too aggressively. " +
-              "Do not treat routine maintenance due items like air filters, tire pressure checks, oil service, or basic fluid inspections as major FMV defects by themselves. " +
-              "Give meaningful negative weight only to actual failed inspections, explicit defect flags, severe condition notes, or evidence of major mechanical/body issues. " +
-              "When cohort weight is low, rely more on vehicle condition, broader market intuition, and avoid overreacting to suspiciously cheap comps. " +
-              "Be conservative, acknowledge uncertainty, and widen the range when condition data is sparse. " +
-              "Output only JSON matching the schema.",
+            text: String(
+              vehiclePurchasePrompt.systemPrompt ||
+                "Output only JSON matching the schema."
+            ),
           },
         ],
       },

@@ -44,6 +44,9 @@ const {
   ensureAuthPublicUrlSettings,
 } = require("../services/authPublicUrlSettings");
 const {
+  ensureAiPromptSettings,
+} = require("../services/aiPromptSettings");
+const {
   ensureMessageRuntimeSchema,
 } = require("../services/messageRuntimeSchema");
 
@@ -98,6 +101,7 @@ async function initializeStartupTables() {
     ["auth tables", ensureAuthTables],
     ["system activity log", ensureSystemActivityLogTable],
     ["auth public URL settings", ensureAuthPublicUrlSettings],
+    ["AI prompt settings", ensureAiPromptSettings],
   ];
 
   for (const [label, ensureFn] of startupEnsures) {

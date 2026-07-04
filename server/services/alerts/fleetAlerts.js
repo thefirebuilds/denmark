@@ -957,20 +957,25 @@ async function collectDeviceConnectivityAlerts() {
           OR latest.last_comm_at < NOW() - ($1::int * INTERVAL '1 hour')
       ),
       recovered AS (
-        SELECT latest.*
+        SELECT
+          latest.*,
+          stale_delivery.id AS recovered_from_alert_id,
+          stale_delivery.sent_at AS recovered_from_alert_sent_at
         FROM latest
+        JOIN LATERAL (
+          SELECT delivery.id, delivery.sent_at
+          FROM public.fleet_alert_deliveries delivery
+          WHERE delivery.alert_type = 'device_connectivity_stale'
+            AND CASE
+              WHEN delivery.details->>'vehicleId' ~ '^[0-9]+$'
+                THEN (delivery.details->>'vehicleId')::int
+              ELSE NULL
+            END = latest.vehicle_id
+          ORDER BY delivery.sent_at DESC, delivery.id DESC
+          LIMIT 1
+        ) stale_delivery ON true
         WHERE latest.last_comm_at >= NOW() - ($2::int * INTERVAL '1 minute')
-          AND EXISTS (
-            SELECT 1
-            FROM public.fleet_alert_deliveries delivery
-            WHERE delivery.alert_type = 'device_connectivity_stale'
-              AND CASE
-                WHEN delivery.details->>'vehicleId' ~ '^[0-9]+$'
-                  THEN (delivery.details->>'vehicleId')::int
-                ELSE NULL
-              END = latest.vehicle_id
-              AND delivery.sent_at < latest.last_comm_at
-          )
+          AND stale_delivery.sent_at < latest.last_comm_at
           AND NOT EXISTS (
             SELECT 1
             FROM public.fleet_alert_deliveries delivery
@@ -978,9 +983,9 @@ async function collectDeviceConnectivityAlerts() {
               AND CASE
                 WHEN delivery.details->>'vehicleId' ~ '^[0-9]+$'
                   THEN (delivery.details->>'vehicleId')::int
-                ELSE NULL
-              END = latest.vehicle_id
-              AND delivery.sent_at > latest.last_comm_at - INTERVAL '5 minutes'
+              ELSE NULL
+            END = latest.vehicle_id
+              AND delivery.sent_at > stale_delivery.sent_at
           )
       )
       SELECT 'stale' AS alert_kind, stale.*
@@ -1036,7 +1041,7 @@ async function collectDeviceConnectivityAlerts() {
     if (row.alert_kind === "recovered") {
       return {
         alertKey: `device-connectivity-recovered:${row.vehicle_id}:${
-          lastSeen ? new Date(lastSeen).toISOString() : row.snapshot_id || bucket
+          row.recovered_from_alert_id || row.snapshot_id || bucket
         }`,
         alertType: "device_connectivity_recovered",
         severity: "info",

@@ -1,4 +1,5 @@
 const pool = require("../db");
+const { getAiPromptSettings } = require("./aiPromptSettings");
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_OPENAI_MODEL =
@@ -245,6 +246,283 @@ function buildMonthlyProjection(finance) {
       bookedProjectedRevenue >= runRateProjectedRevenue
         ? "booked_remaining"
         : "run_rate",
+  };
+}
+
+function clampScore(value) {
+  const score = Math.round(Number(value));
+  if (!Number.isFinite(score)) return 0;
+  return Math.max(0, Math.min(100, score));
+}
+
+function mapVehicleOperationsRow(row) {
+  const openMaintenanceItems = Number(row.open_maintenance_items || 0);
+  const blockerMaintenanceItems = Number(row.blocker_maintenance_items || 0);
+  const diagnosticAlerts =
+    row.mil_on === true || Number(row.dtc_count || 0) > 0 ? 1 : 0;
+  const lastCommAt =
+    row.last_comm_at || row.vehicle_last_updated || row.captured_at || null;
+  const lastCommMs = lastCommAt ? new Date(lastCommAt).getTime() : NaN;
+  const lastCommAgeHours = Number.isFinite(lastCommMs)
+    ? Math.max(0, Math.round((Date.now() - lastCommMs) / 3600000))
+    : null;
+  const downtimeRisk =
+    blockerMaintenanceItems > 0 || diagnosticAlerts > 0 || lastCommAgeHours == null || lastCommAgeHours >= 24
+      ? "high"
+      : openMaintenanceItems > 0 || lastCommAgeHours >= 6
+      ? "medium"
+      : "low";
+
+  return {
+    vehicleId: row.vehicle_id,
+    vin: row.vin,
+    vehicleName: row.vehicle_name,
+    inService: row.in_service !== false,
+    mileage: row.current_odometer_miles == null ? null : Number(row.current_odometer_miles),
+    currentLocation: row.address || (row.latitude != null && row.longitude != null
+      ? `${Number(row.latitude).toFixed(3)}, ${Number(row.longitude).toFixed(3)}`
+      : null),
+    telemetrySource: row.service_name || null,
+    lastCommAt,
+    lastCommAgeHours,
+    fuelLevel: row.fuel_level == null ? null : Number(row.fuel_level),
+    batteryVoltage: row.battery_voltage == null ? null : Number(row.battery_voltage),
+    diagnosticAlerts,
+    milOn: row.mil_on === true,
+    dtcCount: Number(row.dtc_count || 0),
+    registration: {
+      month: row.registration_month == null ? null : Number(row.registration_month),
+      year: row.registration_year == null ? null : Number(row.registration_year),
+    },
+    insuranceMonthly: row.insurance_monthly == null ? null : Number(row.insurance_monthly),
+    registrationAnnual: row.registration_annual == null ? null : Number(row.registration_annual),
+    loanBalance: row.loan_balance == null ? null : Number(row.loan_balance),
+    monthlyPayment: row.monthly_payment == null ? null : Number(row.monthly_payment),
+    nextReservation: row.next_trip_id
+      ? {
+          tripId: row.next_trip_id,
+          guestName: row.next_guest_name,
+          start: row.next_trip_start,
+          end: row.next_trip_end,
+          amount: row.next_amount == null ? null : Number(row.next_amount),
+        }
+      : null,
+    openMaintenanceItems,
+    blockerMaintenanceItems,
+    highPriorityMaintenanceItems: Number(row.high_priority_maintenance_items || 0),
+    estimatedMaintenanceLaborHours:
+      row.estimated_maintenance_labor_hours == null
+        ? null
+        : Number(row.estimated_maintenance_labor_hours),
+    estimatedRepairCost:
+      row.estimated_maintenance_labor_hours == null
+        ? null
+        : roundMoney(Number(row.estimated_maintenance_labor_hours) * 75),
+    maintenanceTitles: Array.isArray(row.maintenance_titles)
+      ? row.maintenance_titles
+      : [],
+    downtimeRisk,
+  };
+}
+
+function buildExecutiveOperationsContext({
+  activeTrips,
+  closingTrips,
+  finance,
+  fleetStatus,
+  messages,
+  monthlyProjection,
+  openingTrips,
+  operations,
+  pendingCloseouts,
+  tasks,
+  tripChanges,
+  vehicleStatus,
+}) {
+  const activeFleetCount = Number(operations.active_fleet_count || 0);
+  const occupiedVehicleCount = Number(operations.occupied_vehicle_count || 0);
+  const offlineVehicles = vehicleStatus.filter(
+    (vehicle) => vehicle.inService === false || vehicle.downtimeRisk === "high"
+  );
+  const availableVehicleCount = Math.max(
+    0,
+    activeFleetCount - occupiedVehicleCount - offlineVehicles.length
+  );
+  const monthToDateRevenue = roundMoney(finance.month_to_date_revenue);
+  const monthToDateExpenses = roundMoney(finance.month_to_date_expenses);
+  const monthToDateProfit = roundMoney(monthToDateRevenue - monthToDateExpenses);
+  const revenuePerVehicle = activeFleetCount
+    ? roundMoney(monthToDateRevenue / activeFleetCount)
+    : 0;
+  const profitPerVehicle = activeFleetCount
+    ? roundMoney(monthToDateProfit / activeFleetCount)
+    : 0;
+  const urgentTasks = tasks.filter((task) =>
+    ["urgent", "high"].includes(String(task.priority || "").toLowerCase())
+  );
+  const blockers = tasks.filter(
+    (task) => task.blocksRental || task.blocksGuestExport || task.needsReview
+  );
+  const staleTelemetryCount = vehicleStatus.filter(
+    (vehicle) => vehicle.lastCommAgeHours == null || vehicle.lastCommAgeHours >= 24
+  ).length;
+  const diagnosticVehicleCount = vehicleStatus.filter(
+    (vehicle) => vehicle.diagnosticAlerts > 0
+  ).length;
+  const vehiclesWithNext30Risk = vehicleStatus.filter(
+    (vehicle) => vehicle.downtimeRisk !== "low" && vehicle.nextReservation
+  );
+  const upcomingReservationCount = vehicleStatus.filter(
+    (vehicle) => vehicle.nextReservation
+  ).length;
+  const totalLoanBalance = roundMoney(
+    vehicleStatus.reduce((sum, vehicle) => sum + toNumber(vehicle.loanBalance), 0)
+  );
+  const upcomingLoanPayments = roundMoney(
+    vehicleStatus.reduce((sum, vehicle) => sum + toNumber(vehicle.monthlyPayment), 0)
+  );
+  const insurancePayments = roundMoney(
+    vehicleStatus.reduce((sum, vehicle) => sum + toNumber(vehicle.insuranceMonthly), 0)
+  );
+  const registrationRenewals = roundMoney(
+    vehicleStatus.reduce((sum, vehicle) => sum + toNumber(vehicle.registrationAnnual) / 12, 0)
+  );
+  const expectedMaintenanceCosts = roundMoney(
+    vehicleStatus.reduce((sum, vehicle) => sum + toNumber(vehicle.estimatedRepairCost), 0)
+  );
+  const projected30DayCashFlow = roundMoney(
+    monthlyProjection.runRateDailyRevenue * 30 -
+      monthToDateExpenses -
+      upcomingLoanPayments -
+      insurancePayments -
+      expectedMaintenanceCosts
+  );
+
+  const categoryScores = {
+    fleetReliability: clampScore(100 - staleTelemetryCount * 12 - diagnosticVehicleCount * 15),
+    cashFlow: clampScore(70 + Math.min(25, monthToDateProfit / 100) - Math.max(0, -projected30DayCashFlow / 50)),
+    utilization: clampScore(occupiedVehicleCount && activeFleetCount ? (occupiedVehicleCount / activeFleetCount) * 100 : 45),
+    maintenanceReadiness: clampScore(100 - blockers.length * 18 - urgentTasks.length * 10),
+    bookingPipeline: clampScore(50 + openingTrips.length * 8 + tripChanges.length * 3 + Number(finance.booked_remaining_month_revenue || 0) / 100),
+    revenuePerformance: clampScore(50 + monthToDateProfit / 50 + monthlyProjection.blendedProjectedRevenue / 200),
+    operationalRisk: clampScore(100 - vehiclesWithNext30Risk.length * 15 - pendingCloseouts.length * 8),
+  };
+  const fleetHealthScore = clampScore(
+    Object.values(categoryScores).reduce((sum, score) => sum + score, 0) /
+      Object.values(categoryScores).length
+  );
+
+  const profitLeaks = [
+    pendingCloseouts.length
+      ? {
+          issue: "Unclosed trips / reimbursements",
+          evidence: `${pendingCloseouts.length} closeout(s), ${roundMoney(finance.open_closeout_tolls)} tolls exposed`,
+          estimatedAnnualImpact: roundMoney(toNumber(finance.open_closeout_tolls) * 12),
+        }
+      : null,
+    blockers.length
+      ? {
+          issue: "Maintenance blockers",
+          evidence: `${blockers.length} blocker task(s) can reduce availability`,
+          estimatedAnnualImpact: roundMoney(blockers.length * 350 * 12),
+        }
+      : null,
+    fleetStatus.princess
+      ? {
+          issue: `${fleetStatus.princess.vehicleName} cost / downtime drag`,
+          evidence: `${fleetStatus.princess.costs} costs, ${fleetStatus.princess.blockerDays} blocker days in ${fleetStatus.lookbackDays}d`,
+          estimatedAnnualImpact: roundMoney(toNumber(fleetStatus.princess.costs) * 36.5),
+        }
+      : null,
+  ].filter(Boolean);
+
+  return {
+    fleetHealthScore,
+    categoryScores,
+    businessSnapshot: {
+      vehiclesInService: activeFleetCount,
+      vehiclesRented: occupiedVehicleCount,
+      vehiclesAvailable: availableVehicleCount,
+      vehiclesOffline: offlineVehicles.length,
+      todaysPickups: openingTrips.length,
+      todaysReturns: closingTrips.length,
+      upcomingReservations: upcomingReservationCount,
+      currentOccupancy: operations.occupancyPercent,
+      rolling30DayOccupancy: null,
+      monthToDateRevenue,
+      monthToDateProfit,
+      revenuePerVehicle,
+      profitPerVehicle,
+      cashAvailableForFleetOperations: null,
+    },
+    cashFlow: {
+      operatingCash: null,
+      outstandingReimbursements: roundMoney(finance.open_closeout_tolls),
+      upcomingLoanPayments,
+      insurancePayments,
+      registrationRenewals,
+      expectedMaintenanceCosts,
+      projected30DayCashFlow,
+      totalLoanBalance,
+    },
+    reservationIntelligence: {
+      checkInsToday: openingTrips,
+      checkOutsToday: closingTrips,
+      lateReturns: pendingCloseouts,
+      guestIssues: messages.unreadGuestCount,
+      schedulingConflicts: [],
+      vehiclesAtRiskOfMissingBooking: vehiclesWithNext30Risk,
+    },
+    maintenanceOutlook: {
+      totalOpen: tasks.length,
+      urgentOrHigh: urgentTasks,
+      blockers,
+      estimatedMaintenanceSpend: expectedMaintenanceCosts,
+      likelyDowntime: vehicleStatus.filter((vehicle) => vehicle.downtimeRisk === "high"),
+    },
+    profitLeakDetection: profitLeaks,
+    revenueOpportunities: [
+      fleetStatus.chad
+        ? {
+            opportunity: `Protect and replicate ${fleetStatus.chad.vehicleName} performance`,
+            evidence: `${fleetStatus.chad.netRevenue} net revenue over ${fleetStatus.lookbackDays}d`,
+            estimatedImpact: roundMoney(Math.max(0, fleetStatus.chad.netRevenue) * 3),
+            confidence: "medium",
+          }
+        : null,
+      availableVehicleCount > 0
+        ? {
+            opportunity: "Fill idle available fleet days",
+            evidence: `${availableVehicleCount} available vehicle(s) today`,
+            estimatedImpact: roundMoney(availableVehicleCount * 45 * 30),
+            confidence: "medium",
+          }
+        : null,
+    ].filter(Boolean),
+    operationalRisks: [
+      staleTelemetryCount
+        ? { severity: "high", risk: "Telemetry blind spots", evidence: `${staleTelemetryCount} vehicle(s) stale or missing comms` }
+        : null,
+      totalLoanBalance > 0
+        ? { severity: "medium", risk: "Debt exposure", evidence: `${totalLoanBalance} fleet loan balance tracked` }
+        : null,
+      vehiclesWithNext30Risk.length
+        ? { severity: "high", risk: "Booking disruption", evidence: `${vehiclesWithNext30Risk.length} vehicle(s) have risk plus upcoming trips` }
+        : null,
+    ].filter(Boolean),
+    kpiDashboard: {
+      occupancy: operations.occupancyPercent,
+      revenue: monthToDateRevenue,
+      profit: monthToDateProfit,
+      revenuePerAvailableVehicle: revenuePerVehicle,
+      fleetUtilization: operations.occupancyPercent,
+      downtimeRiskVehicles: offlineVehicles.length,
+      maintenanceCostPerMile: null,
+      guestRating: null,
+      trendComparisons: "Previous-day, last-week, and last-month trend fields are not yet materialized in this context; call out missing trend data instead of inventing it.",
+    },
+    decisionsRequired: [],
+    blindSpot: profitLeaks[0] || null,
   };
 }
 
@@ -680,6 +958,13 @@ async function collectDailyBriefContext(options = {}) {
         THEN COALESCE(tf.host_payout, t.amount, 0)
         ELSE 0
       END), 0) AS month_to_date_revenue,
+      (
+        SELECT COALESCE(SUM(COALESCE(e.price, 0) + COALESCE(e.tax, 0)), 0)
+        FROM expenses e
+        WHERE e.date >= b.month_start
+          AND e.date < b.day_end::date
+          AND COALESCE(e.is_capitalized, false) = false
+      ) AS month_to_date_expenses,
       COALESCE(SUM(CASE
         WHEN t.trip_start >= b.day_end AND t.trip_start < b.month_end
         THEN COALESCE(tf.host_payout, t.amount, 0)
@@ -699,7 +984,121 @@ async function collectDailyBriefContext(options = {}) {
     WHERE t.deleted_at IS NULL
       AND COALESCE(t.workflow_stage, '') <> 'canceled'
       AND COALESCE(t.status, '') <> 'canceled'
-    GROUP BY b.month_start, b.month_end, b.day_start
+    GROUP BY b.month_start, b.month_end, b.day_start, b.day_end
+  `;
+
+  const vehicleStatusSql = `
+    WITH fleet AS (
+      SELECT
+        v.id,
+        v.vin,
+        COALESCE(v.nickname, v.turo_vehicle_name, v.vin) AS vehicle_name,
+        v.turo_vehicle_id,
+        v.current_odometer_miles,
+        v.registration_month,
+        v.registration_year,
+        v.in_service,
+        v.is_active,
+        v.dimo_token_id,
+        v.bouncie_vehicle_id,
+        v.external_vehicle_key
+      FROM vehicles v
+      WHERE COALESCE(v.is_active, true) = true
+    )
+    SELECT
+      f.id AS vehicle_id,
+      f.vin,
+      f.vehicle_name,
+      f.current_odometer_miles,
+      f.registration_month,
+      f.registration_year,
+      f.in_service,
+      fp.loan_balance,
+      fp.monthly_payment,
+      fp.insurance_monthly,
+      fp.registration_annual,
+      latest.service_name,
+      latest.address,
+      latest.latitude,
+      latest.longitude,
+      latest.fuel_level,
+      latest.battery_voltage,
+      latest.mil_on,
+      latest.dtc_count,
+      latest.vehicle_last_updated,
+      latest.captured_at,
+      COALESCE(
+        latest.vehicle_last_updated,
+        latest.ignition_last_updated,
+        latest.location_last_updated,
+        latest.speed_last_updated,
+        latest.odometer_last_updated,
+        latest.fuel_level_last_updated,
+        latest.captured_at
+      ) AS last_comm_at,
+      next_trip.id AS next_trip_id,
+      next_trip.guest_name AS next_guest_name,
+      next_trip.trip_start AS next_trip_start,
+      next_trip.trip_end AS next_trip_end,
+      next_trip.amount AS next_amount,
+      COALESCE(maintenance.open_maintenance_items, 0) AS open_maintenance_items,
+      COALESCE(maintenance.blocker_maintenance_items, 0) AS blocker_maintenance_items,
+      COALESCE(maintenance.high_priority_maintenance_items, 0) AS high_priority_maintenance_items,
+      maintenance.estimated_maintenance_labor_hours,
+      COALESCE(maintenance.maintenance_titles, '[]'::jsonb) AS maintenance_titles
+    FROM fleet f
+    LEFT JOIN vehicle_financial_profiles fp
+      ON fp.vehicle_id = f.id
+    LEFT JOIN LATERAL (
+      SELECT s.*
+      FROM vehicle_telemetry_snapshots s
+      WHERE (
+        (f.vin IS NOT NULL AND s.vin IS NOT NULL AND LOWER(s.vin) = LOWER(f.vin))
+        OR (f.dimo_token_id IS NOT NULL AND s.dimo_token_id = f.dimo_token_id)
+        OR (COALESCE(f.bouncie_vehicle_id, '') <> '' AND s.external_vehicle_key = f.bouncie_vehicle_id)
+        OR (COALESCE(f.external_vehicle_key, '') <> '' AND s.external_vehicle_key = f.external_vehicle_key)
+      )
+      ORDER BY COALESCE(
+        s.vehicle_last_updated,
+        s.ignition_last_updated,
+        s.location_last_updated,
+        s.speed_last_updated,
+        s.odometer_last_updated,
+        s.fuel_level_last_updated,
+        s.captured_at
+      ) DESC NULLS LAST,
+      s.id DESC
+      LIMIT 1
+    ) latest ON true
+    LEFT JOIN LATERAL (
+      SELECT t.id, t.guest_name, t.trip_start, t.trip_end, t.amount
+      FROM trips t
+      WHERE t.deleted_at IS NULL
+        AND COALESCE(t.workflow_stage, '') <> 'canceled'
+        AND COALESCE(t.status, '') <> 'canceled'
+        AND t.trip_start >= $1::date
+        AND (
+          (t.turo_vehicle_id IS NOT NULL AND f.turo_vehicle_id IS NOT NULL AND t.turo_vehicle_id = f.turo_vehicle_id)
+          OR (COALESCE(t.vehicle_name, '') <> '' AND LOWER(t.vehicle_name) = LOWER(f.vehicle_name))
+        )
+      ORDER BY t.trip_start ASC NULLS LAST, t.id ASC
+      LIMIT 1
+    ) next_trip ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*)::int AS open_maintenance_items,
+        COUNT(*) FILTER (WHERE mt.blocks_rental = true OR mt.blocks_guest_export = true OR mt.needs_review = true)::int AS blocker_maintenance_items,
+        COUNT(*) FILTER (WHERE mt.priority IN ('urgent', 'high'))::int AS high_priority_maintenance_items,
+        SUM(COALESCE(mt.actual_labor_hours, mt.estimated_labor_hours, 0)) AS estimated_maintenance_labor_hours,
+        jsonb_agg(mt.title ORDER BY
+          CASE mt.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+          mt.updated_at DESC
+        ) FILTER (WHERE mt.title IS NOT NULL) AS maintenance_titles
+      FROM maintenance_tasks mt
+      WHERE mt.vehicle_vin = f.vin
+        AND mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
+    ) maintenance ON true
+    ORDER BY f.vehicle_name ASC
   `;
 
   const tripsResult = await client.query(tripsSql, params);
@@ -709,6 +1108,7 @@ async function collectDailyBriefContext(options = {}) {
   const operationsResult = await client.query(operationsSql, params);
   const fleetStatusResult = await client.query(fleetStatusSql, params);
   const financeResult = await client.query(financeSql, params);
+  const vehicleStatusResult = await client.query(vehicleStatusSql, params);
 
   const trips = tripsResult.rows.map(mapTrip);
   const dayStartMs = new Date(`${date}T00:00:00`).getTime();
@@ -752,6 +1152,27 @@ async function collectDailyBriefContext(options = {}) {
   const fleetStatus = selectFleetStatus(
     fleetStatusResult.rows.map(mapFleetStatusCandidate)
   );
+  const vehicleStatus = vehicleStatusResult.rows.map(mapVehicleOperationsRow);
+  const operationsWithOccupancy = {
+    ...operations,
+    occupancyPercent,
+  };
+  const executive = buildExecutiveOperationsContext({
+    activeTrips,
+    closingTrips,
+    finance,
+    fleetStatus,
+    messages: {
+      unreadGuestCount: Number(messages.actionable_guest_thread_count || 0),
+    },
+    monthlyProjection,
+    openingTrips,
+    operations: operationsWithOccupancy,
+    pendingCloseouts,
+    tasks,
+    tripChanges,
+    vehicleStatus,
+  });
 
   return {
     date,
@@ -803,10 +1224,16 @@ async function collectDailyBriefContext(options = {}) {
       },
     },
     fleetStatus,
+    vehicleStatus,
+    executive,
     finance: {
       openingTripRevenue: roundMoney(finance.opening_trip_revenue),
       closingTripRevenue: roundMoney(finance.closing_trip_revenue),
       monthToDateRevenue: roundMoney(finance.month_to_date_revenue),
+      monthToDateExpenses: roundMoney(finance.month_to_date_expenses),
+      monthToDateProfit: roundMoney(
+        toNumber(finance.month_to_date_revenue) - toNumber(finance.month_to_date_expenses)
+      ),
       monthlyProjection,
       openCloseoutTolls: roundMoney(finance.open_closeout_tolls),
       openCloseoutCount: Number(finance.open_closeout_count || 0),
@@ -814,31 +1241,21 @@ async function collectDailyBriefContext(options = {}) {
   };
 }
 
-function buildBriefPrompt(context) {
+function normalizePromptInstructions(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => cleanText(item, 4000)).filter(Boolean);
+  }
+
+  const text = cleanText(value, 24000);
+  return text ? [text] : [];
+}
+
+function buildBriefPrompt(context, promptSettings = {}) {
   return JSON.stringify(
     {
       context,
-      instructions: [
-        "Write a concise AM daily brief for the fleet operator.",
-        "Use only the supplied JSON. Do not invent amounts, guests, vehicles, or tasks.",
-        "Near the top, note the last time a new trip was booked using context.operations.latestBookedTrip. Include the vehicle and guest if supplied.",
-        "Near the top, note today's fleet occupancy using context.operations.occupancy: occupiedVehicleCount / activeFleetCount and occupancyPercent.",
-        "Use these exact trip section labels when relevant: New Trips Starting, Trips Ending Today, Trip Changes.",
-        "Trip Changes can include new trips and changes to existing trips that occurred today; use context.trips.changesToday for that section.",
-        "Avoid the labels Openings and Closings.",
-        "Include a Chad Status section using context.fleetStatus.chad: the best recent performer over the lookback window.",
-        "Include a Princess Status section using context.fleetStatus.princess: the vehicle creating the most cost, downtime, or maintenance drag over the lookback window.",
-        "For Chad and Princess, cite the useful metrics supplied: netRevenue, revenue, costs, bookingCount, avgDailyRate, blockerTasks, blockerDays, issueTrips, and lookbackDays.",
-        "Include a Monthly Projection section using context.finance.monthlyProjection. Explain month-to-date revenue, booked remaining revenue, run-rate projection, and blendedProjectedRevenue.",
-        "Prioritize New Trips Starting, Trips Ending Today, Trip Changes, closeout blockers, maintenance blockers, guest-message workload, and financial watchouts.",
-        "For guest messages, lead with messages.actionableGuestThreadCount as the queue workload; mention messages.unreadGuestMessageCount only as raw message volume if useful.",
-        "Do not mention messages.rawUnreadCount unless you also include the messages.unreadByType breakdown explaining what makes up that raw total.",
-        "Do not say there are no urgent guest messages or that urgent guest messages were flagged; this context does not include an urgency classifier.",
-        "Keep it paste-ready for an internal morning post.",
-        "Use short sections with bullets. Start with a one-line headline.",
-        "Include exact money values where supplied.",
-        "If there is nothing in a section, say so briefly.",
-      ],
+      promptVersion: promptSettings.version || "daily-brief",
+      instructions: normalizePromptInstructions(promptSettings.instructions),
     },
     null,
     2
@@ -854,6 +1271,8 @@ async function generateDailyBrief(options = {}) {
   }
 
   const context = await collectDailyBriefContext(options);
+  const promptSettings = await getAiPromptSettings();
+  const dailyBriefPrompt = promptSettings.dailyBrief || {};
   const model = options.model || DEFAULT_OPENAI_MODEL;
   const payload = {
     model,
@@ -863,19 +1282,20 @@ async function generateDailyBrief(options = {}) {
         content: [
           {
             type: "input_text",
-            text:
-              "You turn fleet operations JSON into a crisp morning brief. " +
-              "Return only the brief text. No markdown table.",
+            text: cleanText(
+              dailyBriefPrompt.systemPrompt,
+              12000
+            ) || "Return only the brief text.",
           },
         ],
       },
       {
         role: "user",
-        content: [{ type: "input_text", text: buildBriefPrompt(context) }],
+        content: [{ type: "input_text", text: buildBriefPrompt(context, dailyBriefPrompt) }],
       },
     ],
     temperature: 0.25,
-    max_output_tokens: 900,
+    max_output_tokens: 2600,
   };
 
   const response = await fetch(OPENAI_RESPONSES_URL, {
@@ -908,6 +1328,7 @@ async function generateDailyBrief(options = {}) {
     timeZone: context.timeZone,
     generatedAt: context.generatedAt,
     model,
+    promptVersion: dailyBriefPrompt.version || null,
     brief,
     context,
   };

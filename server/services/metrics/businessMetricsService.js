@@ -15,6 +15,7 @@ const { getVehicleMetrics } = require("./vehicleMetricsService");
 const {
   ensureMaintenanceRuntimeSchema,
 } = require("../maintenance/maintenanceRuntimeSchema");
+const { getAiPromptSettings } = require("../aiPromptSettings");
 
 let ensureBusinessMetricsTablesPromise = null;
 
@@ -2466,15 +2467,11 @@ async function buildQuarterlyAnalysisPayload(client = pool) {
   const snapshot = await createBusinessMetricSnapshot("quarterly", client);
   const previousSnapshots = await listBusinessMetricSnapshots(client);
   const previous = previousSnapshots.find((item) => item.period_key !== snapshot.period_key) || null;
-
-  const prompt = [
-    "You are reviewing a Turo fleet business.",
-    "Use only the supplied JSON snapshot.",
-    "Do not treat gross revenue as success by itself.",
-    "Separate operating profit, cash flow after debt service, profit after owner labor, and equity.",
-    "Explain weak confidence where source data is incomplete.",
-    "Classify each vehicle as SCALE TYPE, KEEP, OPTIMIZE, WATCH, SELL / EXIT, or INSUFFICIENT DATA.",
-  ].join(" ");
+  const promptSettings = await getAiPromptSettings(client);
+  const valuationPrompt = promptSettings.weeklyFleetValuation || {};
+  const prompt =
+    String(valuationPrompt.prompt || "").trim() ||
+    "Use only the supplied JSON snapshot.";
 
   const inputPayload = {
     current_period: snapshot.period_key,
@@ -2490,7 +2487,7 @@ async function buildQuarterlyAnalysisPayload(client = pool) {
 
   return {
     period_key: snapshot.period_key,
-    prompt_version: "business-metrics-v1",
+    prompt_version: valuationPrompt.version || "business-metrics-v1",
     prompt,
     json_schema: buildAnalysisSchema(),
     input_payload: inputPayload,

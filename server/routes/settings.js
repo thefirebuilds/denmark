@@ -73,6 +73,11 @@ const {
   saveTollSettings,
   hasCompleteTollCredentials,
 } = require("../services/integrations/tollSettings");
+const {
+  AI_PROMPT_SETTINGS_KEY,
+  DEFAULT_AI_PROMPTS,
+  mergePromptDefaults,
+} = require("../services/aiPromptSettings");
 const { fetchTollTransactions } = require("../services/tolls/client");
 
 const router = express.Router();
@@ -134,6 +139,7 @@ const DEFAULT_SETTINGS = {
   [GOOGLE_CALLBACK_PATH_KEY]: {
     googleCallbackPath: DEFAULT_GOOGLE_CALLBACK_PATH,
   },
+  [AI_PROMPT_SETTINGS_KEY]: DEFAULT_AI_PROMPTS,
 };
 
 function normalizeKey(value) {
@@ -240,6 +246,10 @@ function mergeSettings(key, value) {
               DEFAULT_GOOGLE_CALLBACK_PATH
       ),
     };
+  }
+
+  if (key === AI_PROMPT_SETTINGS_KEY) {
+    return mergePromptDefaults(value);
   }
 
   return merged;

@@ -177,6 +177,101 @@ function normalizeAccount(account) {
   };
 }
 
+function getAccountBalanceAmount(account, keys) {
+  for (const key of keys) {
+    const value = key
+      .split(".")
+      .reduce((current, part) => (current == null ? null : current[part]), account);
+    if (value == null || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+
+  return null;
+}
+
+function accountMatchesCiti4483(account) {
+  const normalized = normalizeAccount(account);
+  const lastFour = String(normalized?.last_four || "").trim();
+  if (lastFour !== "4483") return false;
+
+  const institution = String(normalized?.institution?.name || "").toLowerCase();
+  const name = String(normalized?.name || "").toLowerCase();
+  const type = String(normalized?.type || "").toLowerCase();
+  const subtype = String(normalized?.subtype || "").toLowerCase();
+
+  return (
+    institution.includes("citi") ||
+    name.includes("citi") ||
+    type === "credit" ||
+    subtype === "credit_card"
+  );
+}
+
+async function getCiti4483BalanceSummary() {
+  const tokens = await getAccessTokens();
+
+  if (!tokens.length) {
+    return {
+      configured: false,
+      found: false,
+      lastFour: "4483",
+      currentBalance: null,
+      availableBalance: null,
+      debtBalance: null,
+      account: null,
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  for (const tokenRow of tokens) {
+    const accounts = await getAccounts(tokenRow.access_token);
+    const account = accounts.find(accountMatchesCiti4483);
+    if (!account) continue;
+
+    const currentBalance = getAccountBalanceAmount(account, [
+      "balances.current",
+      "balances.ledger",
+      "balances.available",
+      "balance.current",
+      "balance.ledger",
+      "current_balance",
+      "ledger_balance",
+      "balance",
+    ]);
+    const availableBalance = getAccountBalanceAmount(account, [
+      "balances.available",
+      "balance.available",
+      "available_balance",
+      "credit.available",
+    ]);
+    const debtBalance =
+      currentBalance == null ? null : Math.abs(Number(currentBalance));
+
+    return {
+      configured: true,
+      found: true,
+      lastFour: "4483",
+      currentBalance,
+      availableBalance,
+      debtBalance,
+      account: normalizeAccount(account),
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    configured: true,
+    found: false,
+    lastFour: "4483",
+    currentBalance: null,
+    availableBalance: null,
+    debtBalance: null,
+    account: null,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
 function getNormalizedAmount(tx, account = null) {
   const amount = Number(tx.amount);
   if (!Number.isFinite(amount)) return amount;
@@ -355,3 +450,4 @@ async function syncTellerTransactions() {
 module.exports = syncTellerTransactions;
 module.exports.saveAccessToken = saveAccessToken;
 module.exports.getTokenSummary = getTokenSummary;
+module.exports.getCiti4483BalanceSummary = getCiti4483BalanceSummary;
