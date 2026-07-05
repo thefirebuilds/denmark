@@ -443,6 +443,7 @@ function extractGuestName(text) {
   const patterns = [
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+has returned your\b/i,
     /^Your trip with\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+starts soon\b/i,
+    /\b([A-Z][A-Za-z.'-]+)['’]s trip with your\b/i,
     /\bfrom\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s*:/i,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+paid\b/i,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+rated\b/i,
@@ -745,6 +746,119 @@ async function findTripForReturnedNotification(event) {
   return result.rows[0] || null;
 }
 
+async function autoCancelTripFromNotification(event, notificationId) {
+  const classification = String(event?.classification || "");
+  if (!["trip_cancelled", "trip_canceled"].includes(classification)) return null;
+  if (!notificationId) return null;
+
+  const guestName = cleanString(event.guestName, {
+    maxLength: 120,
+    allowEmpty: false,
+  });
+  const vehicleName = cleanString(event.vehicleName, {
+    maxLength: 120,
+    allowEmpty: false,
+  });
+
+  if (!guestName && !vehicleName && !event.reservationId) return null;
+
+  const eventAt = event.postedAt || new Date().toISOString();
+  const result = await pool.query(
+    `
+      WITH matched_trip AS (
+        SELECT t.id
+        FROM trips t
+        LEFT JOIN vehicles v
+          ON (
+            t.turo_vehicle_id IS NOT NULL
+            AND v.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
+          )
+        WHERE COALESCE(t.workflow_stage, '') <> 'canceled'
+          AND COALESCE(t.status, '') <> 'canceled'
+          AND (
+            (
+              $1::bigint IS NOT NULL
+              AND t.reservation_id = $1::bigint
+            )
+            OR (
+              $2::text <> ''
+              AND (
+                LOWER(COALESCE(t.guest_name, '')) = LOWER($2::text)
+                OR LOWER(COALESCE(t.guest_name, '')) LIKE LOWER($2::text) || ' %'
+              )
+              AND COALESCE(t.trip_start, t.trip_end, $4::timestamptz)
+                BETWEEN $4::timestamptz - INTERVAL '14 days'
+                  AND $4::timestamptz + INTERVAL '180 days'
+              AND (
+                $3::text = ''
+                OR LOWER($3::text) LIKE '%' || LOWER(COALESCE(t.vehicle_name, '')) || '%'
+                OR LOWER(COALESCE(t.vehicle_name, '')) LIKE '%' || LOWER(regexp_replace($3::text, '\\s+\\d{4}$', '')) || '%'
+                OR LOWER($3::text) LIKE '%' || LOWER(COALESCE(v.nickname, '')) || '%'
+                OR LOWER(COALESCE(v.nickname, '')) LIKE '%' || LOWER(regexp_replace($3::text, '\\s+\\d{4}$', '')) || '%'
+              )
+            )
+          )
+        ORDER BY
+          CASE WHEN $1::bigint IS NOT NULL AND t.reservation_id = $1::bigint THEN 0 ELSE 1 END,
+          ABS(EXTRACT(EPOCH FROM (COALESCE(t.trip_start, t.trip_end, $4::timestamptz) - $4::timestamptz))),
+          t.id DESC
+        LIMIT 1
+      ),
+      updated_trip AS (
+        UPDATE trips t
+        SET
+          status = 'canceled',
+          workflow_stage = 'canceled',
+          canceled_at = COALESCE(t.canceled_at, $4::timestamptz),
+          needs_review = TRUE,
+          closed_out = FALSE,
+          closed_out_at = NULL,
+          expense_status = CASE
+            WHEN COALESCE(t.expense_status, '') IN ('', 'resolved')
+              THEN 'pending'
+            ELSE t.expense_status
+          END,
+          stage_updated_at = CASE
+            WHEN COALESCE(t.workflow_stage, '') <> 'canceled' THEN NOW()
+            ELSE t.stage_updated_at
+          END,
+          updated_at = NOW()
+        FROM matched_trip mt
+        WHERE t.id = mt.id
+        RETURNING t.id
+      )
+      UPDATE notification_events ne
+      SET
+        processed_at = NOW(),
+        reservation_id = COALESCE(ne.reservation_id, (
+          SELECT reservation_id FROM trips WHERE id = (SELECT id FROM updated_trip LIMIT 1)
+        ))
+      WHERE ne.id = $5
+        AND EXISTS (SELECT 1 FROM updated_trip)
+      RETURNING (SELECT id FROM updated_trip LIMIT 1) AS trip_id
+    `,
+    [event.reservationId, guestName || "", vehicleName || "", eventAt, notificationId]
+  );
+
+  const tripId = result.rows[0]?.trip_id || null;
+  if (!tripId) return null;
+
+  void syncTripToSelectedGoogleCalendars(tripId, {
+    retryDeletedEvents: true,
+  }).catch((err) => {
+    console.warn(
+      `[notifications/turo] canceled trip ${tripId} calendar sync failed:`,
+      err.message || err
+    );
+  });
+
+  return { tripId };
+}
+
 function syncReturnedTripCalendarNotice(event, notificationId) {
   void findTripForReturnedNotification(event)
     .then(async (trip) => {
@@ -839,6 +953,19 @@ router.post("/turo", async (req, res) => {
       void autoVerifyReturnedNotificationByGps(event, result.id).catch((err) => {
         console.warn(
           "[notifications/turo] returned trip GPS auto-check failed:",
+          err.message || err
+        );
+      });
+    }
+
+    if (
+      result.inserted &&
+      result.id &&
+      ["trip_cancelled", "trip_canceled"].includes(result.classification)
+    ) {
+      void autoCancelTripFromNotification(event, result.id).catch((err) => {
+        console.warn(
+          "[notifications/turo] canceled trip auto-sync failed:",
           err.message || err
         );
       });

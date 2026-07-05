@@ -80,6 +80,22 @@ function classifyMessageType(subject, normalizedTextBody = "") {
     return "trip_canceled";
   }
 
+  if (/^.+(?:'|\u2019|`)s trip with your .+ was canceled$/i.test(s)) {
+    return "trip_canceled";
+  }
+
+  if (/^.+(?:'|\u2019|`)s trip with your .+ was cancelled$/i.test(s)) {
+    return "trip_canceled";
+  }
+
+  if (/^.+['â€™]s trip with your .+ was canceled$/i.test(s)) {
+    return "trip_canceled";
+  }
+
+  if (/^.+['â€™]s trip with your .+ was cancelled$/i.test(s)) {
+    return "trip_canceled";
+  }
+
   if (/^.+ has changed their trip with your .+ \(\d+\)$/i.test(s)) {
     return "trip_changed";
   }
@@ -730,10 +746,52 @@ function extractTripBookedFields(normalizedTextBody, subject = "", htmlBody = ""
   return baseExtractFields(normalizedTextBody, subject, htmlBody);
 }
 
+function extractCancellationPayoutAmount(text) {
+  const source = String(text || "");
+  const patterns = [
+    /you(?:'|\u2019|`)?ll receive payment of \$([0-9,]+(?:\.\d{2})?)/i,
+    /you(?:'|\u2019|`)?ll receive \$([0-9,]+(?:\.\d{2})?)/i,
+    /you(?:'|\u2019|`)?ll get \$([0-9,]+(?:\.\d{2})?)/i,
+    /you(?:'|\u2019|`)?ve earned \$([0-9,]+(?:\.\d{2})?)/i,
+    /you['â€™`]?ll receive payment of \$([0-9,]+(?:\.\d{2})?)/i,
+    /you['â€™`]?ll receive \$([0-9,]+(?:\.\d{2})?)/i,
+    /you will receive payment of \$([0-9,]+(?:\.\d{2})?)/i,
+    /you will receive \$([0-9,]+(?:\.\d{2})?)/i,
+    /you['â€™`]?ll get \$([0-9,]+(?:\.\d{2})?)/i,
+    /you will get \$([0-9,]+(?:\.\d{2})?)/i,
+    /you earned \$([0-9,]+(?:\.\d{2})?)/i,
+    /you['â€™`]?ve earned \$([0-9,]+(?:\.\d{2})?)/i,
+    /host earnings[:\s]+\$([0-9,]+(?:\.\d{2})?)/i,
+    /your earnings[:\s]+\$([0-9,]+(?:\.\d{2})?)/i,
+    /cancell?ation (?:payout|payment|earnings|fee)[:\s]+\$([0-9,]+(?:\.\d{2})?)/i,
+    /(?:payout|payment|earnings) (?:of|for) \$([0-9,]+(?:\.\d{2})?)/i,
+    /updated earnings[:\s]+\$([0-9,]+(?:\.\d{2})?)/i,
+    /new earnings[:\s]+\$([0-9,]+(?:\.\d{2})?)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const amount = parseMoney(source.match(pattern)?.[1]);
+    if (amount != null) return roundMoney(amount);
+  }
+
+  const positiveAmount = Array.from(
+    source.matchAll(/\$([0-9,]+(?:\.\d{2})?)/g)
+  )
+    .map((match) => parseMoney(match[1]))
+    .filter((amount) => amount != null && amount > 0)
+    .pop();
+
+  if (positiveAmount != null) return roundMoney(positiveAmount);
+
+  return null;
+}
+
 function extractTripCanceledFields(normalizedTextBody, subject = "", htmlBody = "") {
   const base = baseExtractFields(normalizedTextBody, subject, htmlBody);
   const text = String(normalizedTextBody || "");
-  const subjectText = String(subject || "");
+  const noPaymentCancellation =
+    /\bwon(?:'|\u2019|`)?t\b/i.test(text) &&
+    /\breceive any payment\b/i.test(text);
 
   const cancellationReason =
     extractMatch(
@@ -750,6 +808,20 @@ function extractTripCanceledFields(normalizedTextBody, subject = "", htmlBody = 
 
   let cancellationPayoutAmount;
 
+  cancellationPayoutAmount =
+    noPaymentCancellation ||
+    /you won['â€™`]?t receive any payment/i.test(text) ||
+    /won['â€™`]?t be charged,\s*and you won['â€™`]?t receive any payment/i.test(text)
+      ? 0
+      : extractCancellationPayoutAmount(text);
+
+  return {
+    ...base,
+    cancellationReason: cancellationReason ? cancellationReason.trim() : null,
+    cancellationPayoutAmount,
+  };
+
+  /*
   if (
     /you won['’`]?t receive any payment/i.test(text) ||
     /won['’`]?t be charged,\s*and you won['’`]?t receive any payment/i.test(text)
@@ -777,6 +849,7 @@ function extractTripCanceledFields(normalizedTextBody, subject = "", htmlBody = 
     cancellationReason: cancellationReason ? cancellationReason.trim() : null,
     cancellationPayoutAmount,
   };
+  */
 }
 
 function extractPaymentFields(normalizedTextBody, subject = "", htmlBody = "") {
@@ -894,7 +967,7 @@ async function saveMessage(message) {
   );
 
   const effectiveAmount =
-    extracted?.cancellationPayoutAmount !== undefined
+    extracted?.cancellationPayoutAmount != null
       ? extracted.cancellationPayoutAmount
       : amount;
 

@@ -192,20 +192,20 @@ async function upsertTripFromMessage(savedMessage) {
       $11, $12,
       $13, $14, $15, $16, $17, NOW(), NOW(), NOW(),
       CASE WHEN $18 THEN NOW() ELSE NULL END,
-      CASE WHEN $18 THEN TRUE ELSE FALSE END,
-      CASE WHEN $18 THEN NOW() ELSE NULL END
+      FALSE,
+      NULL
     )
     ON CONFLICT (reservation_id)
     DO UPDATE SET
       vehicle_name = COALESCE(EXCLUDED.vehicle_name, trips.vehicle_name),
       guest_name = COALESCE(EXCLUDED.guest_name, trips.guest_name),
       trip_start = CASE
-        WHEN EXCLUDED.status = 'canceled' THEN NOW()
+        WHEN EXCLUDED.status = 'canceled' THEN COALESCE(trips.trip_start, EXCLUDED.trip_start)
         WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.trip_start
         ELSE COALESCE(EXCLUDED.trip_start, trips.trip_start)
       END,
       trip_end = CASE
-        WHEN EXCLUDED.status = 'canceled' THEN NOW()
+        WHEN EXCLUDED.status = 'canceled' THEN COALESCE(trips.trip_end, EXCLUDED.trip_end)
         WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.trip_end
         ELSE COALESCE(EXCLUDED.trip_end, trips.trip_end)
       END,
@@ -272,9 +272,9 @@ async function upsertTripFromMessage(savedMessage) {
       END,
 
       needs_review = CASE
-        WHEN trips.status = 'canceled' THEN FALSE
-        WHEN trips.canceled_at IS NOT NULL THEN FALSE
-        WHEN EXCLUDED.status = 'canceled' THEN FALSE
+        WHEN trips.status = 'canceled' THEN trips.needs_review
+        WHEN trips.canceled_at IS NOT NULL THEN trips.needs_review
+        WHEN EXCLUDED.status = 'canceled' THEN TRUE
         WHEN EXCLUDED.status IN ('booked_unconfirmed', 'updated_unconfirmed')
           AND COALESCE(trips.workflow_stage, '') IN (
             'confirmed',
@@ -295,12 +295,16 @@ async function upsertTripFromMessage(savedMessage) {
       END,
 
       closed_out = CASE
-        WHEN EXCLUDED.status = 'canceled' THEN TRUE
+        WHEN trips.status = 'canceled' THEN trips.closed_out
+        WHEN trips.canceled_at IS NOT NULL THEN trips.closed_out
+        WHEN EXCLUDED.status = 'canceled' THEN FALSE
         ELSE trips.closed_out
       END,
 
       closed_out_at = CASE
-        WHEN EXCLUDED.status = 'canceled' AND trips.closed_out_at IS NULL THEN NOW()
+        WHEN trips.status = 'canceled' THEN trips.closed_out_at
+        WHEN trips.canceled_at IS NOT NULL THEN trips.closed_out_at
+        WHEN EXCLUDED.status = 'canceled' THEN NULL
         ELSE trips.closed_out_at
       END,
 

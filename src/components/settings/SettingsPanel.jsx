@@ -134,6 +134,22 @@ const DEFAULT_AUTH_PUBLIC_URL_SETTINGS = {
 };
 const GOOGLE_CALENDAR_CALLBACK_PATH = "/api/integrations/google-calendar/callback";
 
+const EMPTY_AI_PROMPT_FORM = {
+  dailyBrief: {
+    version: "",
+    systemPrompt: "",
+    instructionsText: "",
+  },
+  vehiclePurchaseReview: {
+    version: "",
+    systemPrompt: "",
+  },
+  weeklyFleetValuation: {
+    version: "",
+    prompt: "",
+  },
+};
+
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority queue" },
   { value: "trip_start_asc", label: "Trip start, soonest first" },
@@ -494,6 +510,7 @@ function SectionList({ activeSection, onChange }) {
     { key: "locations", title: "Locations", sub: "Geofences and entry alerts" },
     { key: "alerts", title: "Alerts", sub: "Bridge and SMS" },
     { key: "integrations", title: "Integrations", sub: "External systems" },
+    { key: "ai", title: "AI Prompts", sub: "Briefs and reviews" },
     { key: "backup", title: "Backup & Restore", sub: "Tenant data safety" },
     { key: "auth", title: "Authentication", sub: "Public URL and OAuth" },
     { key: "expenses", title: "Expenses", sub: "Categories and imports" },
@@ -3270,6 +3287,258 @@ function DimoShareCard({ config, status = [], loading }) {
   );
 }
 
+function instructionsToText(instructions) {
+  if (Array.isArray(instructions)) {
+    return instructions.map((line) => String(line || "").trim()).filter(Boolean).join("\n");
+  }
+
+  return String(instructions || "").trim();
+}
+
+function textToInstructions(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function promptSettingsToForm(settings) {
+  const value = settings && typeof settings === "object" ? settings : {};
+
+  return {
+    dailyBrief: {
+      version: String(value.dailyBrief?.version || ""),
+      systemPrompt: String(value.dailyBrief?.systemPrompt || ""),
+      instructionsText: instructionsToText(value.dailyBrief?.instructions),
+    },
+    vehiclePurchaseReview: {
+      version: String(value.vehiclePurchaseReview?.version || ""),
+      systemPrompt: String(value.vehiclePurchaseReview?.systemPrompt || ""),
+    },
+    weeklyFleetValuation: {
+      version: String(value.weeklyFleetValuation?.version || ""),
+      prompt: String(value.weeklyFleetValuation?.prompt || ""),
+    },
+  };
+}
+
+function promptFormToSettings(form) {
+  return {
+    dailyBrief: {
+      version: form.dailyBrief.version.trim(),
+      systemPrompt: form.dailyBrief.systemPrompt.trim(),
+      instructions: textToInstructions(form.dailyBrief.instructionsText),
+    },
+    vehiclePurchaseReview: {
+      version: form.vehiclePurchaseReview.version.trim(),
+      systemPrompt: form.vehiclePurchaseReview.systemPrompt.trim(),
+    },
+    weeklyFleetValuation: {
+      version: form.weeklyFleetValuation.version.trim(),
+      prompt: form.weeklyFleetValuation.prompt.trim(),
+    },
+  };
+}
+
+function AiPromptSettingsPanel() {
+  const [form, setForm] = useState(EMPTY_AI_PROMPT_FORM);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function loadPrompts() {
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const res = await fetch(`${API_BASE}/api/settings/ai.prompts`);
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load AI prompts");
+      }
+
+      setForm(promptSettingsToForm(json.value));
+    } catch (err) {
+      setMessage(err.message || "Failed to load AI prompts");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPrompts();
+  }, []);
+
+  function updatePrompt(section, field, value) {
+    setForm((current) => ({
+      ...current,
+      [section]: {
+        ...current[section],
+        [field]: value,
+      },
+    }));
+  }
+
+  async function savePrompts(event) {
+    event.preventDefault();
+
+    try {
+      setSaving(true);
+      setMessage("Saving...");
+
+      const res = await fetch(`${API_BASE}/api/settings/ai.prompts`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: promptFormToSettings(form) }),
+      });
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save AI prompts");
+      }
+
+      setForm(promptSettingsToForm(json.value));
+      setMessage("Saved");
+    } catch (err) {
+      setMessage(err.message || "Failed to save AI prompts");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel settings-main-panel">
+      <div className="panel-header">
+        <div>
+          <h2>AI Prompts</h2>
+          <span>daily brief, purchase review, and fleet valuation</span>
+        </div>
+      </div>
+
+      <form className="settings-form" onSubmit={savePrompts}>
+        {loading ? (
+          <div className="settings-empty-state">Loading AI prompts...</div>
+        ) : (
+          <>
+            <div className="settings-group">
+              <div className="settings-group-title">Daily briefing</div>
+              <div className="settings-form-grid">
+                <label className="settings-field">
+                  <span>Version</span>
+                  <input
+                    value={form.dailyBrief.version}
+                    onChange={(event) =>
+                      updatePrompt("dailyBrief", "version", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="settings-field settings-field-wide">
+                  <span>System prompt</span>
+                  <textarea
+                    className="settings-textarea"
+                    rows={4}
+                    value={form.dailyBrief.systemPrompt}
+                    onChange={(event) =>
+                      updatePrompt("dailyBrief", "systemPrompt", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="settings-field settings-field-wide">
+                  <span>Brief instructions</span>
+                  <textarea
+                    className="settings-textarea"
+                    rows={14}
+                    value={form.dailyBrief.instructionsText}
+                    onChange={(event) =>
+                      updatePrompt("dailyBrief", "instructionsText", event.target.value)
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="settings-group">
+              <div className="settings-group-title">Vehicle purchase review</div>
+              <div className="settings-form-grid">
+                <label className="settings-field">
+                  <span>Version</span>
+                  <input
+                    value={form.vehiclePurchaseReview.version}
+                    onChange={(event) =>
+                      updatePrompt(
+                        "vehiclePurchaseReview",
+                        "version",
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+                <label className="settings-field settings-field-wide">
+                  <span>System prompt</span>
+                  <textarea
+                    className="settings-textarea"
+                    rows={10}
+                    value={form.vehiclePurchaseReview.systemPrompt}
+                    onChange={(event) =>
+                      updatePrompt(
+                        "vehiclePurchaseReview",
+                        "systemPrompt",
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="settings-group">
+              <div className="settings-group-title">Weekly fleet valuation</div>
+              <div className="settings-form-grid">
+                <label className="settings-field">
+                  <span>Version</span>
+                  <input
+                    value={form.weeklyFleetValuation.version}
+                    onChange={(event) =>
+                      updatePrompt("weeklyFleetValuation", "version", event.target.value)
+                    }
+                  />
+                </label>
+                <label className="settings-field settings-field-wide">
+                  <span>Prompt</span>
+                  <textarea
+                    className="settings-textarea"
+                    rows={8}
+                    value={form.weeklyFleetValuation.prompt}
+                    onChange={(event) =>
+                      updatePrompt("weeklyFleetValuation", "prompt", event.target.value)
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="settings-form-actions">
+          <button type="submit" className="settings-action-btn" disabled={saving || loading}>
+            {saving ? "Saving..." : "Save prompts"}
+          </button>
+          <button
+            type="button"
+            className="settings-action-btn secondary"
+            disabled={saving || loading}
+            onClick={loadPrompts}
+          >
+            Reload
+          </button>
+          {message ? <span className="settings-message">{message}</span> : null}
+        </div>
+      </form>
+    </section>
+  );
+}
+
 function MarketplaceSettingsPanel() {
   const [overview, setOverview] = useState(null);
   const [filters, setFilters] = useState(DEFAULT_MARKETPLACE_FILTERS);
@@ -5550,6 +5819,14 @@ function SettingsHelpPanel({ activeSection }) {
       };
     }
 
+    if (activeSection === "ai") {
+      return {
+        title: "Prompt control",
+        body:
+          "These prompts are stored in app settings and are read by the daily briefing, AI vehicle purchase review, and weekly fleet valuation jobs when they run.",
+      };
+    }
+
     if (activeSection === "maintenance") {
       return {
         title: "Maintenance ops",
@@ -5625,6 +5902,8 @@ export default function SettingsPanel({
         <PublicExportSettingsPanel />
       ) : activeSection === "integrations" ? (
         <IntegrationsSettingsPanel />
+      ) : activeSection === "ai" ? (
+        <AiPromptSettingsPanel />
       ) : activeSection === "maintenance" ? (
         <MaintenanceSettingsPanel />
       ) : activeSection === "logs" ? (

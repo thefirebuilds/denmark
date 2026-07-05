@@ -172,6 +172,14 @@ function isBucketVisible(trip, settings) {
   return settings.visibleBuckets?.[bucket] !== false;
 }
 
+function isCancellationReviewTrip(trip) {
+  return (
+    isCanceledTrip(trip) &&
+    trip?.needs_review === true &&
+    trip?.closed_out !== true
+  );
+}
+
 function getPriorityBucketRank(trip) {
   if (trip.queue_bucket === "unconfirmed") {
     return -1;
@@ -341,8 +349,10 @@ export default function TripsPanel({
       if (ignore) return;
 
       const rawTrips = Array.isArray(tripsData) ? tripsData : [];
-      const nextTrips = rawTrips.filter((trip) =>
-        isBucketVisible(trip, normalizedDispatchSettings)
+      const nextTrips = rawTrips.filter(
+        (trip) =>
+          isBucketVisible(trip, normalizedDispatchSettings) ||
+          isCancellationReviewTrip(trip)
       );
       const nextVehicles = Array.isArray(vehiclesData) ? vehiclesData : [];
 
@@ -473,9 +483,10 @@ if (urgency.dependencyNote) {
   const activeTrips = sortTripsWithSettings(
     mappedTrips.filter(
       (trip) =>
-        !trip.canceled &&
+        (!trip.canceled || isCancellationReviewTrip(trip)) &&
         !isClosedTrip(trip) &&
-        isBucketVisible(trip, normalizedDispatchSettings)
+        (isBucketVisible(trip, normalizedDispatchSettings) ||
+          isCancellationReviewTrip(trip))
     ),
     normalizedDispatchSettings
   );
