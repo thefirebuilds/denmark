@@ -236,6 +236,99 @@ function buildReimbursementInvoiceSummary(row) {
   };
 }
 
+async function reconcileReadReimbursementInvoices(messageIds = []) {
+  const ids = Array.from(
+    new Set(
+      (messageIds || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  );
+
+  if (!ids.length) return { updatedTrips: 0 };
+
+  const { rows } = await db.query(
+    `
+      SELECT
+        m.id,
+        m.trip_id,
+        m.reservation_id,
+        m.normalized_text_body,
+        t.id AS matched_trip_id
+      FROM messages m
+      LEFT JOIN trips t
+        ON t.id = m.trip_id
+        OR (
+          m.reservation_id IS NOT NULL
+          AND t.reservation_id IS NOT NULL
+          AND m.reservation_id = t.reservation_id
+        )
+      WHERE m.id = ANY($1::int[])
+        AND m.message_type = 'reimbursement_invoice'
+        AND t.id IS NOT NULL
+    `,
+    [ids]
+  );
+
+  let updatedTrips = 0;
+
+  for (const row of rows) {
+    const tolls = extractInvoiceAmount(row.normalized_text_body, "Tolls");
+    const refueling = extractInvoiceAmount(row.normalized_text_body, "Refueling");
+    const refuelingFee = extractInvoiceAmount(
+      row.normalized_text_body,
+      "Refueling convenience fee"
+    );
+    const fuelTotal =
+      refueling != null || refuelingFee != null
+        ? roundMoney((refueling || 0) + (refuelingFee || 0))
+        : null;
+
+    if (tolls == null && fuelTotal == null) continue;
+
+    const result = await db.query(
+      `
+        UPDATE trips
+        SET
+          toll_charged_total = CASE
+            WHEN $2::numeric IS NOT NULL THEN $2::numeric
+            ELSE toll_charged_total
+          END,
+          toll_total = CASE
+            WHEN $2::numeric IS NOT NULL THEN $2::numeric
+            ELSE toll_total
+          END,
+          has_tolls = CASE
+            WHEN $2::numeric IS NOT NULL AND $2::numeric > 0 THEN TRUE
+            ELSE has_tolls
+          END,
+          toll_review_status = CASE
+            WHEN $2::numeric IS NOT NULL AND $2::numeric > 0
+              AND COALESCE(toll_review_status, '') IN ('', 'none', 'pending', 'reviewed')
+            THEN 'billed'
+            ELSE toll_review_status
+          END,
+          fuel_reimbursement_total = CASE
+            WHEN $3::numeric IS NOT NULL THEN $3::numeric
+            ELSE fuel_reimbursement_total
+          END,
+          expense_status = CASE
+            WHEN COALESCE(expense_status, '') IN ('', 'pending', 'needs_review')
+            THEN 'resolved'
+            ELSE expense_status
+          END,
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [row.matched_trip_id, tolls, fuelTotal]
+    );
+
+    updatedTrips += result.rowCount || 0;
+  }
+
+  return { updatedTrips };
+}
+
 const OPEN_MAINTENANCE_TASK_STATUSES = [
   "open",
   "scheduled",
@@ -4452,11 +4545,14 @@ router.patch("/:id/read", async (req, res) => {
       return res.status(404).json({ error: "message not found" });
     }
 
+    const reconciliation = await reconcileReadReimbursementInvoices([id]);
+
     invalidateMessageCaches();
     res.json({
       success: true,
       id: result.rows[0].id,
       status: result.rows[0].status,
+      reimbursement_reconciliation: reconciliation,
     });
   } catch (err) {
     console.error("mark as read failed:", err);
@@ -4518,11 +4614,16 @@ router.patch("/read", async (req, res) => {
         ]
       );
 
+      const reconciliation = await reconcileReadReimbursementInvoices(
+        result.rows.map((row) => row.id)
+      );
+
       invalidateMessageCaches();
       return res.json({
         success: true,
         resolved_count: result.rowCount,
         resolved: result.rows,
+        reimbursement_reconciliation: reconciliation,
       });
     }
 
@@ -4540,11 +4641,16 @@ router.patch("/read", async (req, res) => {
       [uniqueIds]
     );
 
+    const reconciliation = await reconcileReadReimbursementInvoices(
+      result.rows.map((row) => row.id)
+    );
+
     invalidateMessageCaches();
     res.json({
       success: true,
       resolved_count: result.rowCount,
       resolved: result.rows,
+      reimbursement_reconciliation: reconciliation,
     });
   } catch (err) {
     console.error("mark messages as read failed:", err);

@@ -51,7 +51,14 @@ const DEFAULT_MARKETPLACE_INVALID_LISTING_TERMS = [
 let ensureMarketplacePreferencesTablePromise = null;
 
 function marketplaceTextSource(item) {
-  return String(item?.title || item?.raw_text_sample || "")
+  return [
+    item?.title,
+    item?.raw_text_sample,
+    item?.text,
+    item?.seller_description,
+  ]
+    .filter(Boolean)
+    .join(" ")
     .replace(/^\s*notifications?\b/i, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -117,6 +124,8 @@ function hasMarketplaceSoldMarker(item) {
   const samples = [
     item?.title,
     item?.raw_text_sample,
+    item?.text,
+    item?.seller_description,
   ]
     .filter(Boolean)
     .map((value) => String(value).replace(/\s+/g, " ").trim());
@@ -126,6 +135,10 @@ function hasMarketplaceSoldMarker(item) {
 
     return (
       /^sold\b/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+\$?\d/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+(?:just listed|listed\b)/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+(?:19\d{2}|20\d{2})\b/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+[a-z0-9][^$]{2,120}/i.test(text) ||
       /^sold\b[\s:|·•\-–—]+\$?\d/i.test(text) ||
       /^sold\b[\s:|·•\-–—]+(?:just listed|listed\b)/i.test(text) ||
       /^sold\b[\s:|·•\-–—]+(?:19\d{2}|20\d{2})\b/i.test(text)
@@ -137,9 +150,17 @@ function hasMarketplaceUnavailableMarker(item) {
   const text = [
     item?.title,
     item?.raw_text_sample,
+    item?.text,
+    item?.seller_description,
   ]
     .filter(Boolean)
-    .map((value) => String(value).replace(/\s+/g, " ").trim().toLowerCase())
+    .map((value) =>
+      String(value)
+        .replace(/[\u2018\u2019`]/g, "'")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase()
+    )
     .join(" ");
 
   if (!text) return false;
@@ -1197,6 +1218,17 @@ router.post("/ingest", async (req, res) => {
       if (!url) continue;
 
       const normalizedTitle = normalizeMarketplaceTitle(item?.title);
+      const autoIgnore =
+        hasMarketplaceSoldMarker({
+          title: normalizedTitle || item?.title,
+          raw_text_sample: item?.text,
+          text: item?.text,
+        }) ||
+        hasMarketplaceUnavailableMarker({
+          title: normalizedTitle || item?.title,
+          raw_text_sample: item?.text,
+          text: item?.text,
+        });
 
       await client.query(
         `
@@ -1208,13 +1240,15 @@ router.post("/ingest", async (req, res) => {
           listed_location,
           driven_miles,
           raw_text_sample,
+          hidden,
+          ignored_at,
           scraped_at,
           first_seen_at,
           last_seen_at,
           created_at,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), NOW(), NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $8 THEN NOW() ELSE NULL END, NOW(), NOW(), NOW(), NOW(), NOW())
         ON CONFLICT (url)
         DO UPDATE SET
           title = COALESCE(EXCLUDED.title, marketplace_listings.title),
@@ -1223,6 +1257,8 @@ router.post("/ingest", async (req, res) => {
           listed_location = COALESCE(EXCLUDED.listed_location, marketplace_listings.listed_location),
           driven_miles = COALESCE(EXCLUDED.driven_miles, marketplace_listings.driven_miles),
           raw_text_sample = COALESCE(EXCLUDED.raw_text_sample, marketplace_listings.raw_text_sample),
+          hidden = CASE WHEN EXCLUDED.hidden THEN TRUE ELSE marketplace_listings.hidden END,
+          ignored_at = CASE WHEN EXCLUDED.hidden THEN NOW() ELSE marketplace_listings.ignored_at END,
           last_seen_at = NOW(),
           updated_at = NOW()
         `,
@@ -1234,6 +1270,7 @@ router.post("/ingest", async (req, res) => {
           item?.listed_location || null,
           parseDrivenMiles(item?.mileage),
           item?.text || null,
+          autoIgnore,
         ]
       );
 

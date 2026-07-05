@@ -30,6 +30,9 @@ const {
   hasCompleteTollCredentials,
 } = require("../integrations/tollSettings");
 
+const TOLL_TRIP_MATCH_EARLY_HOURS = 2;
+const TOLL_TRIP_MATCH_LATE_HOURS = 72;
+
 async function createSyncRun(client) {
   const result = await client.query(
     `
@@ -255,18 +258,28 @@ async function matchTrip(client, tollChargeId) {
         t.turo_vehicle_id
       FROM trips t
       WHERE t.turo_vehicle_id = $1
-        AND t.workflow_stage <> 'canceled'
+        AND COALESCE(LOWER(t.workflow_stage), '') <> 'canceled'
         AND t.trip_start IS NOT NULL
         AND t.trip_end IS NOT NULL
-        AND $2::timestamptz >= (t.trip_start - INTERVAL '2 hours')
-        AND $2::timestamptz <= (t.trip_end + INTERVAL '12 hours')
+        AND $2::timestamptz >= (t.trip_start - ($3::numeric * INTERVAL '1 hour'))
+        AND $2::timestamptz <= (t.trip_end + ($4::numeric * INTERVAL '1 hour'))
       ORDER BY
-        ABS(EXTRACT(EPOCH FROM (t.trip_end - $2::timestamptz))) ASC,
+        CASE
+          WHEN $2::timestamptz >= t.trip_start
+            AND $2::timestamptz <= t.trip_end
+          THEN 0
+          ELSE 1
+        END ASC,
         ABS(EXTRACT(EPOCH FROM ($2::timestamptz - t.trip_start))) ASC,
         t.trip_start DESC
       LIMIT 1
     `,
-    [toll.turo_vehicle_id, toll.trxn_at]
+    [
+      toll.turo_vehicle_id,
+      toll.trxn_at,
+      TOLL_TRIP_MATCH_EARLY_HOURS,
+      TOLL_TRIP_MATCH_LATE_HOURS,
+    ]
   );
 
   return tripResult.rows[0] || null;
@@ -293,6 +306,7 @@ async function backfillUnmatchedTripMatches(client) {
       FROM toll_charges
       WHERE matched_vehicle_id IS NOT NULL
         AND matched_trip_id IS NULL
+        AND COALESCE(review_status, '') <> 'dismissed'
       ORDER BY trxn_at DESC
     `
   );
@@ -332,16 +346,38 @@ async function refreshTripTollCaches(client) {
       )
       UPDATE trips t
       SET
-        has_tolls = COALESCE(agg.toll_count, 0) > 0,
+        has_tolls = COALESCE(agg.toll_count, 0) > 0
+          OR (
+            COALESCE(t.toll_review_status, '') = 'billed'
+            AND COALESCE(t.toll_charged_total, 0) > 0
+          ),
         toll_count = COALESCE(agg.toll_count, 0),
-        toll_total = COALESCE(agg.toll_total, 0)::numeric(10,2),
+        toll_total = CASE
+          WHEN COALESCE(t.toll_review_status, '') = 'billed'
+            AND t.toll_charged_total IS NOT NULL
+          THEN t.toll_charged_total::numeric(10,2)
+          ELSE COALESCE(agg.toll_total, 0)::numeric(10,2)
+        END,
         updated_at = NOW()
       FROM agg
       WHERE t.id = agg.trip_id
         AND (
-          COALESCE(t.has_tolls, false) IS DISTINCT FROM (COALESCE(agg.toll_count, 0) > 0)
+          COALESCE(t.has_tolls, false) IS DISTINCT FROM (
+            COALESCE(agg.toll_count, 0) > 0
+            OR (
+              COALESCE(t.toll_review_status, '') = 'billed'
+              AND COALESCE(t.toll_charged_total, 0) > 0
+            )
+          )
           OR COALESCE(t.toll_count, 0) IS DISTINCT FROM COALESCE(agg.toll_count, 0)
-          OR COALESCE(t.toll_total, 0)::numeric(10,2) IS DISTINCT FROM COALESCE(agg.toll_total, 0)::numeric(10,2)
+          OR COALESCE(t.toll_total, 0)::numeric(10,2) IS DISTINCT FROM (
+            CASE
+              WHEN COALESCE(t.toll_review_status, '') = 'billed'
+                AND t.toll_charged_total IS NOT NULL
+              THEN t.toll_charged_total::numeric(10,2)
+              ELSE COALESCE(agg.toll_total, 0)::numeric(10,2)
+            END
+          )
         )
     `
   );
@@ -359,6 +395,10 @@ async function refreshTripTollCaches(client) {
         FROM toll_charges tc
         WHERE tc.matched_trip_id = t.id
       )
+        AND NOT (
+          COALESCE(t.toll_review_status, '') = 'billed'
+          AND COALESCE(t.toll_charged_total, 0) > 0
+        )
         AND (
           COALESCE(t.has_tolls, false) = true
           OR COALESCE(t.toll_count, 0) <> 0

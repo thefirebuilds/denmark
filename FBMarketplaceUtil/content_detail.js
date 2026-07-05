@@ -1,8 +1,24 @@
 // denmark/FBCarScraper/content_detail.js
 
 (() => {
+  function isMarketplaceDetailPage() {
+    return (
+      /\/marketplace\/item\/\d+\/?/.test(location.pathname) ||
+      /\/marketplace\/\d+\/?$/.test(location.pathname)
+    );
+  }
+
+  function isUnavailableProductRedirect() {
+    try {
+      return new URLSearchParams(location.search).get("unavailable_product") === "1";
+    } catch {
+      return location.search.includes("unavailable_product=1");
+    }
+  }
+
   if (
-    !location.pathname.includes("/marketplace/item/") &&
+    !isMarketplaceDetailPage() &&
+    !isUnavailableProductRedirect() &&
     !location.hash.includes("fcg_enrich=1") &&
     !location.hash.includes("fcg_check_available=1")
   ) {
@@ -33,11 +49,18 @@
     /\$\s?\d[\d,]*/,
   ];
   const UNAVAILABLE_PAGE_PATTERNS = [
+    /This listing isn(?:'|\u2019|`)?t available anymore/i,
     /This Listing Isn['’]?t Available Anymore/i,
     /Listing Isn['’]?t Available/i,
     /Listing Is No Longer Available/i,
     /This listing is no longer available/i,
     /It may have been sold or expired/i,
+  ];
+
+  const SOLD_PAGE_PATTERNS = [
+    /^Sold\s*(?:\u00b7|\u2022|-|:|\|)\s*(?:19\d{2}|20\d{2})\b/i,
+    /^Sold\s*(?:\u00b7|\u2022|-|:|\|)\s*[^$]{2,120}/i,
+    /\bSold\s*(?:\u00b7|\u2022|-|:|\|)\s*(?:19\d{2}|20\d{2})\b/i,
   ];
 
   function normalizeUrl(u) {
@@ -148,8 +171,15 @@
 
   function isUnavailableListingPage(text = "") {
     const normalized = clean(text || document.body?.innerText || "");
+    if (isUnavailableProductRedirect()) return true;
     if (!normalized) return false;
     return UNAVAILABLE_PAGE_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
+
+  function isSoldListingPage(text = "") {
+    const normalized = clean(text || document.body?.innerText || "");
+    if (!normalized) return false;
+    return SOLD_PAGE_PATTERNS.some((pattern) => pattern.test(normalized));
   }
 
   function logAutoEnrichDiagnostics(stage, extra = {}) {
@@ -164,6 +194,7 @@
       hash: location.hash,
       title: document.title,
       unavailableDetected: isUnavailableListingPage(bodyText),
+      soldDetected: isSoldListingPage(bodyText),
       headingSample: headings,
       bodySample: bodyText.slice(0, 600),
       ...extra,
@@ -506,10 +537,10 @@
 
   async function enrichListing() {
     try {
-      if (isUnavailableListingPage()) {
-        logAutoEnrichDiagnostics("unavailable-page-before-ignore");
+      if (isUnavailableListingPage() || isSoldListingPage()) {
+        logAutoEnrichDiagnostics("unavailable-or-sold-page-before-ignore");
         const ignored = await ignoreListing();
-        logAutoEnrichDiagnostics("unavailable-page-ignore-result", { ignored });
+        logAutoEnrichDiagnostics("unavailable-or-sold-page-ignore-result", { ignored });
         if (!ignored) return false;
         toast("âœ… Unavailable listing ignored");
         return true;
@@ -588,8 +619,8 @@
     await sleep(500);
 
     let ok = true;
-    if (isUnavailableListingPage()) {
-      logAutoEnrichDiagnostics("availability-check-unavailable");
+    if (isUnavailableListingPage() || isSoldListingPage()) {
+      logAutoEnrichDiagnostics("availability-check-unavailable-or-sold");
       ok = await ignoreListing();
     } else {
       logAutoEnrichDiagnostics("availability-check-still-available");

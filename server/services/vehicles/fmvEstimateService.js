@@ -279,7 +279,12 @@ function looksLikeNonComparablePricingText(item) {
 }
 
 function hasMarketplaceSoldMarker(item) {
-  const samples = [item?.title, item?.raw_text_sample]
+  const samples = [
+    item?.title,
+    item?.raw_text_sample,
+    item?.text,
+    item?.seller_description,
+  ]
     .filter(Boolean)
     .map((value) => String(value).replace(/\s+/g, " ").trim());
 
@@ -288,6 +293,10 @@ function hasMarketplaceSoldMarker(item) {
 
     return (
       /^sold\b/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+\$?\d/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+(?:just listed|listed\b)/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+(?:19\d{2}|20\d{2})\b/i.test(text) ||
+      /^sold\b[\s:|\u00b7\u2022\-–—]+[a-z0-9][^$]{2,120}/i.test(text) ||
       /^sold\b[\s:|-]+\$?\d/i.test(text) ||
       /^sold\b[\s:|-]+(?:just listed|listed\b)/i.test(text)
     );
@@ -295,9 +304,20 @@ function hasMarketplaceSoldMarker(item) {
 }
 
 function hasMarketplaceUnavailableMarker(item) {
-  const text = [item?.title, item?.raw_text_sample]
+  const text = [
+    item?.title,
+    item?.raw_text_sample,
+    item?.text,
+    item?.seller_description,
+  ]
     .filter(Boolean)
-    .map((value) => String(value).replace(/\s+/g, " ").trim().toLowerCase())
+    .map((value) =>
+      String(value)
+        .replace(/[\u2018\u2019`]/g, "'")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase()
+    )
     .join(" ");
 
   if (!text) return false;
