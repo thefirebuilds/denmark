@@ -329,6 +329,49 @@ async function reconcileReadReimbursementInvoices(messageIds = []) {
   return { updatedTrips };
 }
 
+async function markRelatedRenterActivityRead(messageIds = []) {
+  const ids = Array.from(
+    new Set(
+      (messageIds || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  );
+
+  if (!ids.length) return { rowCount: 0, rows: [] };
+
+  return db.query(
+    `
+      WITH anchors AS (
+        SELECT DISTINCT trip_id, reservation_id
+        FROM messages
+        WHERE id = ANY($1::int[])
+          AND (
+            trip_id IS NOT NULL
+            OR reservation_id IS NOT NULL
+          )
+      )
+      UPDATE messages m
+      SET status = 'read'
+      FROM anchors a
+      WHERE m.status = 'unread'
+        AND m.message_type = 'renter_activity'
+        AND (
+          (
+            a.trip_id IS NOT NULL
+            AND m.trip_id = a.trip_id
+          )
+          OR (
+            a.reservation_id IS NOT NULL
+            AND m.reservation_id = a.reservation_id
+          )
+        )
+      RETURNING m.id, m.status
+    `,
+    [ids]
+  );
+}
+
 const OPEN_MAINTENANCE_TASK_STATUSES = [
   "open",
   "scheduled",
@@ -4545,13 +4588,24 @@ router.patch("/:id/read", async (req, res) => {
       return res.status(404).json({ error: "message not found" });
     }
 
-    const reconciliation = await reconcileReadReimbursementInvoices([id]);
+    const relatedRenterActivity = await markRelatedRenterActivityRead([id]);
+    const resolvedRows = [
+      result.rows[0],
+      ...(Array.isArray(relatedRenterActivity.rows)
+        ? relatedRenterActivity.rows
+        : []),
+    ];
+    const reconciliation = await reconcileReadReimbursementInvoices(
+      resolvedRows.map((row) => row.id)
+    );
 
     invalidateMessageCaches();
     res.json({
       success: true,
       id: result.rows[0].id,
       status: result.rows[0].status,
+      resolved_count: resolvedRows.length,
+      resolved: resolvedRows,
       reimbursement_reconciliation: reconciliation,
     });
   } catch (err) {
@@ -4614,15 +4668,24 @@ router.patch("/read", async (req, res) => {
         ]
       );
 
-      const reconciliation = await reconcileReadReimbursementInvoices(
+      const relatedRenterActivity = await markRelatedRenterActivityRead(
         result.rows.map((row) => row.id)
+      );
+      const resolvedRows = [
+        ...result.rows,
+        ...(Array.isArray(relatedRenterActivity.rows)
+          ? relatedRenterActivity.rows
+          : []),
+      ];
+      const reconciliation = await reconcileReadReimbursementInvoices(
+        resolvedRows.map((row) => row.id)
       );
 
       invalidateMessageCaches();
       return res.json({
         success: true,
-        resolved_count: result.rowCount,
-        resolved: result.rows,
+        resolved_count: resolvedRows.length,
+        resolved: resolvedRows,
         reimbursement_reconciliation: reconciliation,
       });
     }
@@ -4641,15 +4704,24 @@ router.patch("/read", async (req, res) => {
       [uniqueIds]
     );
 
-    const reconciliation = await reconcileReadReimbursementInvoices(
+    const relatedRenterActivity = await markRelatedRenterActivityRead(
       result.rows.map((row) => row.id)
+    );
+    const resolvedRows = [
+      ...result.rows,
+      ...(Array.isArray(relatedRenterActivity.rows)
+        ? relatedRenterActivity.rows
+        : []),
+    ];
+    const reconciliation = await reconcileReadReimbursementInvoices(
+      resolvedRows.map((row) => row.id)
     );
 
     invalidateMessageCaches();
     res.json({
       success: true,
-      resolved_count: result.rowCount,
-      resolved: result.rows,
+      resolved_count: resolvedRows.length,
+      resolved: resolvedRows,
       reimbursement_reconciliation: reconciliation,
     });
   } catch (err) {

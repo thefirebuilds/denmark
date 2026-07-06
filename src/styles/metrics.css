@@ -298,6 +298,26 @@
   padding: 9px 10px;
 }
 
+.heartbeat-metric--clickable {
+  cursor: pointer;
+  text-align: left;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.heartbeat-metric--clickable:hover {
+  transform: translateY(-1px);
+  border-color: rgba(96, 165, 250, 0.5);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+}
+
+.heartbeat-metric--clickable:focus-visible {
+  outline: 2px solid rgba(148, 163, 184, 0.9);
+  outline-offset: 2px;
+}
+
 .heartbeat-metric span,
 .ledger-line span {
   min-width: 0;
@@ -1025,6 +1045,10 @@
 
 .metrics-financial-drawer {
   width: min(680px, 100%);
+}
+
+.metrics-expense-drawer {
+  width: min(720px, 100%);
 }
 
 .metrics-financial-drawer-body {

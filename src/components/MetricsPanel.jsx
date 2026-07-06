@@ -551,9 +551,35 @@ function getMoneyTone(value, favorable = "higher") {
   return good ? "positive" : "warning";
 }
 
-function HeartbeatMetric({ label, value, comp, tone = "neutral", size = "normal" }) {
+function HeartbeatMetric({
+  label,
+  value,
+  comp,
+  tone = "neutral",
+  size = "normal",
+  onClick = null,
+}) {
+  const clickable = typeof onClick === "function";
+
   return (
-    <div className={`heartbeat-metric heartbeat-metric--${tone} heartbeat-metric--${size}`}>
+    <div
+      className={`heartbeat-metric heartbeat-metric--${tone} heartbeat-metric--${size} ${
+        clickable ? "heartbeat-metric--clickable" : ""
+      }`}
+      onClick={clickable ? onClick : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={
+        clickable
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+    >
       <span>{label}</span>
       <strong>{value}</strong>
       {comp ? <em>{comp}</em> : null}
@@ -570,7 +596,12 @@ function HeartbeatRow({ label, children }) {
   );
 }
 
-function BusinessHeartbeat({ summary, businessSummary, parkingSummary }) {
+function BusinessHeartbeat({
+  summary,
+  businessSummary,
+  parkingSummary,
+  onOpenExpenseBreakdown,
+}) {
   const margin = safeDivide(summary?.net_profit, summary?.revenue);
   const tollLeakage =
     Number(summary?.tolls_unattributed ?? 0) +
@@ -617,6 +648,7 @@ function BusinessHeartbeat({ summary, businessSummary, parkingSummary }) {
           comp={formatCurrencyTrend(summary?.expenses_delta)}
           tone={getMoneyTone(summary?.expenses_delta, "lower")}
           size="large"
+          onClick={onOpenExpenseBreakdown}
         />
         <HeartbeatMetric
           label="Margin"
@@ -719,6 +751,143 @@ function BusinessHeartbeat({ summary, businessSummary, parkingSummary }) {
         />
       </HeartbeatRow>
     </section>
+  );
+}
+
+function FleetExpenseBreakdownDrawer({
+  open,
+  summary,
+  selectedRange,
+  onClose,
+  onReviewExpense,
+  loadingExpenseId,
+}) {
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const items = [...(summary?.expense_line_items || [])].sort(
+    (a, b) => Number(b.total_amount ?? 0) - Number(a.total_amount ?? 0)
+  );
+  const total = Number(summary?.expenses ?? 0);
+  const shownTotal = items.reduce(
+    (sum, item) => sum + Number(item.total_amount ?? 0),
+    0
+  );
+  const remaining = Math.max(0, total - shownTotal);
+
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onClose} />
+      <aside className="app-drawer app-drawer--right metrics-expense-drawer">
+        <div className="app-drawer-header">
+          <div>
+            <div className="app-drawer-title">Expense Breakdown</div>
+            <div className="app-drawer-subtitle">
+              {String(selectedRange || "range").toUpperCase()} expenses sorted by cost
+              for review.
+            </div>
+          </div>
+
+          <button type="button" className="app-drawer-close" onClick={onClose}>
+            x
+          </button>
+        </div>
+
+        <div className="app-drawer-body metrics-financial-drawer-body">
+          <section className="metrics-financial-summary">
+            <div className="metrics-financial-summary-card">
+              <div className="metrics-financial-label">Total</div>
+              <div className="metrics-financial-value">{formatCurrency(total)}</div>
+            </div>
+            <div className="metrics-financial-summary-card">
+              <div className="metrics-financial-label">Items</div>
+              <div className="metrics-financial-value">{formatNumber(items.length)}</div>
+            </div>
+            <div className="metrics-financial-summary-card">
+              <div className="metrics-financial-label">Top item</div>
+              <div className="metrics-financial-value">
+                {items[0] ? formatCurrencyCompact(items[0].total_amount) : "--"}
+              </div>
+            </div>
+          </section>
+
+          {!items.length ? (
+            <div className="metrics-financial-empty">
+              No expenses were recorded for this range.
+            </div>
+          ) : (
+            <section className="metrics-financial-section is-focused">
+              <div className="metrics-financial-section-title">
+                Specific expenses, highest cost first
+              </div>
+              <div className="metrics-financial-list">
+                {items.map((item) => {
+                  const isLoading = loadingExpenseId === Number(item.expense_id);
+                  const vehicleLabel = item.vehicle_nickname || "Fleet";
+                  const tripLabel = item.reservation_id
+                    ? `Reservation #${item.reservation_id}`
+                    : item.guest_name || null;
+
+                  return (
+                    <article
+                      key={item.expense_id}
+                      className="metrics-financial-line-item"
+                    >
+                      <div className="metrics-financial-line-top">
+                        <div>
+                          <div className="metrics-financial-line-title">
+                            {item.vendor || item.category || "Expense"}
+                          </div>
+                          <div className="metrics-financial-line-meta">
+                            {formatShortDate(item.date)} - {vehicleLabel} -{" "}
+                            {item.category || "Uncategorized"} -{" "}
+                            {item.expense_scope || "direct"}
+                            {tripLabel ? ` - ${tripLabel}` : ""}
+                          </div>
+                        </div>
+                        <div className="metrics-financial-line-amount">
+                          {formatCurrencyCompact(item.total_amount)}
+                        </div>
+                      </div>
+                      <div className="metrics-financial-line-split">
+                        <span>Price {formatCurrencyCompact(item.price)}</span>
+                        <span>Tax {formatCurrencyCompact(item.tax)}</span>
+                      </div>
+                      <div className="metrics-financial-line-actions">
+                        <button
+                          type="button"
+                          className="metrics-inline-button"
+                          onClick={() => onReviewExpense?.(item)}
+                          disabled={isLoading}
+                        >
+                          {isLoading ? "Opening..." : "Review"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              {remaining > 0.01 ? (
+                <div className="metrics-financial-empty">
+                  {formatCurrencyCompact(remaining)} remains outside the displayed top
+                  100 rows.
+                </div>
+              ) : null}
+            </section>
+          )}
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -976,6 +1145,7 @@ export default function MetricsPanel() {
   const [financialDetailError, setFinancialDetailError] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
   const [expenseModalOpen, setExpenseModalOpen] = useState(false);
+  const [expenseBreakdownOpen, setExpenseBreakdownOpen] = useState(false);
   const [loadingExpenseId, setLoadingExpenseId] = useState(null);
   const [businessSettings, setBusinessSettings] = useState(null);
   const [vehicleProfiles, setVehicleProfiles] = useState([]);
@@ -2187,6 +2357,7 @@ const mileageStats = useMemo(() => {
             summary={summary}
             businessSummary={businessMetrics?.fleet_summary}
             parkingSummary={parkingMetrics?.summary}
+            onOpenExpenseBreakdown={() => setExpenseBreakdownOpen(true)}
           />
 
           <div className="metrics-ledger-grid">
@@ -2395,6 +2566,7 @@ const mileageStats = useMemo(() => {
                 label="Expenses"
                 value={formatCurrency(summary.expenses)}
                 subtitle={formatCurrencyTrend(summary.expenses_delta)}
+                onClick={() => setExpenseBreakdownOpen(true)}
                 tone={
                   Number(summary.expenses_delta ?? 0) > 0
                     ? "warning"
@@ -4448,6 +4620,15 @@ const mileageStats = useMemo(() => {
             detail={financialDetail}
             focus={financialDetailFocus}
             onClose={closeFinancialDetail}
+          />
+
+          <FleetExpenseBreakdownDrawer
+            open={expenseBreakdownOpen}
+            summary={summary}
+            selectedRange={selectedRange}
+            loadingExpenseId={loadingExpenseId}
+            onClose={() => setExpenseBreakdownOpen(false)}
+            onReviewExpense={handleOpenExpenseFlag}
           />
 
           {laborRemediationOpen ? (

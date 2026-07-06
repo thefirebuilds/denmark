@@ -970,6 +970,7 @@ async function saveMessage(message) {
     extracted?.cancellationPayoutAmount != null
       ? extracted.cancellationPayoutAmount
       : amount;
+  const initialStatus = messageType === "renter_activity" ? "read" : "unread";
 
   const query = `
     INSERT INTO messages (
@@ -1056,7 +1057,7 @@ async function saveMessage(message) {
     normalizedTextBody,
     cleanedRawHeaders,
     message.rawSource || null,
-    "unread",
+    initialStatus,
     effectiveAmount,
     messageType,
     extracted.guestName,
@@ -1088,7 +1089,7 @@ async function saveMessage(message) {
   const isRenterActivity = messageType === "renter_activity";
   let trip = isRenterActivity ? null : await upsertTripFromMessage(savedMessage);
 
-  if (!isRenterActivity && !trip?.id && savedMessage.reservation_id) {
+  if (!trip?.id && savedMessage.reservation_id) {
     const existingTrip = await pool.query(
       `
         SELECT id

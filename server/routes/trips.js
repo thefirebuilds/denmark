@@ -1297,11 +1297,13 @@ router.get("/:id/messages", async (req, res) => {
       ORDER BY
         CASE
           WHEN m.status = 'unread'
-            AND COALESCE(m.message_type, '') <> 'payment_notice'
+            AND COALESCE(m.message_type, '') NOT IN ('payment_notice', 'renter_activity')
             AND m.trip_id IS NULL
             AND m.reservation_id IS NULL
             THEN -1
-          WHEN m.status = 'unread' THEN 0
+          WHEN m.status = 'unread'
+            AND COALESCE(m.message_type, '') NOT IN ('payment_notice', 'renter_activity')
+            THEN 0
           WHEN m.message_type = 'trip_booked'
             AND t.id IS NOT NULL
             AND COALESCE(t.workflow_stage, '') <> 'canceled'

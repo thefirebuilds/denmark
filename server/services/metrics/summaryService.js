@@ -186,17 +186,22 @@ async function fetchExpensesInRange(client, startDate, endDate) {
     const { rows } = await client.query(
       `
         SELECT
-          id,
-          vehicle_id,
-          vendor,
-          price,
-          tax,
-          category,
-          expense_scope,
-          trip_id,
-          date
-        FROM expenses
-        WHERE date <= $1::date
+          e.id,
+          e.vehicle_id,
+          e.vendor,
+          e.price,
+          e.tax,
+          e.category,
+          e.expense_scope,
+          e.trip_id,
+          e.date,
+          v.nickname AS vehicle_nickname,
+          t.reservation_id,
+          t.guest_name
+        FROM expenses e
+        LEFT JOIN vehicles v ON v.id = e.vehicle_id
+        LEFT JOIN trips t ON t.id = e.trip_id
+        WHERE e.date <= $1::date
       `,
       [endDate]
     );
@@ -207,18 +212,23 @@ async function fetchExpensesInRange(client, startDate, endDate) {
   const { rows } = await client.query(
     `
       SELECT
-        id,
-        vehicle_id,
-        vendor,
-        price,
-        tax,
-        category,
-        expense_scope,
-        trip_id,
-        date
-      FROM expenses
-      WHERE date >= $1::date
-        AND date <= $2::date
+        e.id,
+        e.vehicle_id,
+        e.vendor,
+        e.price,
+        e.tax,
+        e.category,
+        e.expense_scope,
+        e.trip_id,
+        e.date,
+        v.nickname AS vehicle_nickname,
+        t.reservation_id,
+        t.guest_name
+      FROM expenses e
+      LEFT JOIN vehicles v ON v.id = e.vehicle_id
+      LEFT JOIN trips t ON t.id = e.trip_id
+      WHERE e.date >= $1::date
+        AND e.date <= $2::date
     `,
     [startDate, endDate]
   );
@@ -1231,6 +1241,24 @@ async function getSummaryMetrics(rangeKey = "30d") {
       (sum, expense) => sum + getExpenseTotal(expense),
       0
     );
+    const expenseLineItems = expenses
+      .map((expense) => ({
+        expense_id: expense.id,
+        date: expense.date || null,
+        vendor: expense.vendor || null,
+        category: expense.category || null,
+        expense_scope: expense.expense_scope || "direct",
+        vehicle_id: expense.vehicle_id || null,
+        vehicle_nickname: expense.vehicle_nickname || null,
+        trip_id: expense.trip_id || null,
+        reservation_id: expense.reservation_id || null,
+        guest_name: expense.guest_name || null,
+        price: roundMoney(expense.price),
+        tax: roundMoney(expense.tax),
+        total_amount: roundMoney(getExpenseTotal(expense)),
+      }))
+      .sort((a, b) => Number(b.total_amount ?? 0) - Number(a.total_amount ?? 0))
+      .slice(0, 100);
     const previousExpensesTotal = previousExpenses.reduce(
       (sum, expense) => sum + getExpenseTotal(expense),
       0
@@ -1420,6 +1448,7 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       expenses: roundMoney(expensesTotal),
       previous_expenses: roundMoney(previousExpensesTotal),
       expenses_delta: roundMoney(expensesTotal - previousExpensesTotal),
+      expense_line_items: expenseLineItems,
       net_profit: roundMoney(netProfit),
       previous_net_profit: roundMoney(previousNetProfit),
       net_profit_delta: roundMoney(netProfit - previousNetProfit),
