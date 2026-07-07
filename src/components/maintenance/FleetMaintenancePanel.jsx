@@ -1610,6 +1610,7 @@ export default function FleetMaintenancePanel({
   const title = `${vehicle.nickname} • ${vehicle.year} ${vehicle.make} ${vehicle.model}`;
 
   const maintenanceModeEnabled = selectedFleetVehicle?.in_service === false;
+  const supportVehicleEnabled = selectedFleetVehicle?.trip_eligible === false;
 
   async function openTelemetryHistory(signal) {
     const selector =
@@ -2254,6 +2255,54 @@ export default function FleetMaintenancePanel({
     }
   }
 
+  async function handleToggleTripEligibility() {
+    try {
+      if (!selectedFleetVehicle?.vin) {
+        throw new Error("No selected vehicle VIN available.");
+      }
+
+      const nextTripEligible = selectedFleetVehicle.trip_eligible === false;
+
+      setSavingMaintenanceMode(true);
+      setMaintenanceModeError("");
+
+      const res = await fetch(
+        `/api/vehicles/${encodeURIComponent(selectedFleetVehicle.vin)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            trip_eligible: nextTripEligible,
+          }),
+        }
+      );
+
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      setFleetVehicles((prev) =>
+        prev.map((item) =>
+          String(item.vin || "") === String(selectedFleetVehicle.vin || "")
+            ? {
+                ...item,
+                trip_eligible: body.trip_eligible !== false,
+              }
+            : item
+        )
+      );
+    } catch (err) {
+      console.error("Failed to update trip eligibility:", err);
+      setMaintenanceModeError(err.message || "Could not update trip eligibility.");
+    } finally {
+      setSavingMaintenanceMode(false);
+    }
+  }
+
   async function handleSaveOdometerReading() {
     try {
       if (!selectedFleetVehicle?.vin) {
@@ -2730,6 +2779,18 @@ export default function FleetMaintenancePanel({
                         ? "End maintenance mode"
                         : "Start maintenance mode"}
                     </button>
+                    <button
+                      type="button"
+                      className="message-action"
+                      disabled={!selectedFleetVehicle?.vin || savingMaintenanceMode}
+                      onClick={handleToggleTripEligibility}
+                    >
+                      {savingMaintenanceMode
+                        ? "Saving..."
+                        : supportVehicleEnabled
+                        ? "Mark trip eligible"
+                        : "Mark support vehicle"}
+                    </button>
                   </div>
 
                   {maintenanceModeError ? (
@@ -2746,6 +2807,8 @@ export default function FleetMaintenancePanel({
                     ? "Loading…"
                     : maintenanceModeEnabled
                     ? "Maintenance mode"
+                    : supportVehicleEnabled
+                    ? "Support vehicle"
                     : vehicle.overall_status === "pass"
                     ? "Guest-ready"
                     : "Needs review"}

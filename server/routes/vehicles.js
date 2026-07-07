@@ -26,6 +26,9 @@ const {
   getVehicleFmvEstimateHistory,
 } = require("../services/vehicles/fmvEstimateService");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
+const {
+  ensureVehicleRuntimeSchema,
+} = require("../services/vehicles/vehicleRuntimeSchema");
 
 const router = express.Router();
 
@@ -62,6 +65,25 @@ function toNullableBoolean(value, fallback = null) {
   if (typeof value === "boolean") return value;
   if (value === "true" || value === "1" || value === 1) return true;
   if (value === "false" || value === "0" || value === 0) return false;
+  return fallback;
+}
+
+function normalizeTripEligible(input, fallback = true) {
+  if (input.trip_eligible !== undefined || input.tripEligible !== undefined) {
+    return toNullableBoolean(input.trip_eligible ?? input.tripEligible, fallback);
+  }
+
+  const role = toNullableText(input.vehicle_role ?? input.vehicleRole ?? input.fleet_role);
+  if (role) {
+    const normalized = role.toLowerCase();
+    if (["support", "business_support", "non_trip", "non-rental"].includes(normalized)) {
+      return false;
+    }
+    if (["rental", "trip", "turo", "guest"].includes(normalized)) {
+      return true;
+    }
+  }
+
   return fallback;
 }
 
@@ -356,6 +378,7 @@ router.get("/parking-spot-usage", async (req, res) => {
 
 router.get("/", async (req, res) => {
   try {
+    await ensureVehicleRuntimeSchema();
     await ensureVehicleAliasesTable();
 
     const includeInactive =
@@ -401,6 +424,7 @@ router.get("/", async (req, res) => {
         v.acquisition_cost,
         v.retired_at,
         v.in_service,
+        COALESCE(v.trip_eligible, true) AS trip_eligible,
         v.is_active
       FROM vehicles v
       LEFT JOIN LATERAL (
@@ -481,6 +505,7 @@ router.post("/fmv-estimates/run", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
+    await ensureVehicleRuntimeSchema();
     await ensureVehicleAliasesTable();
 
     const nickname = toNullableText(req.body.nickname);
@@ -523,6 +548,7 @@ router.post("/", async (req, res) => {
       acquisition_cost: toNullableNumber(req.body.acquisition_cost),
       retired_at: toNullableDate(req.body.retired_at),
       in_service: toNullableBoolean(req.body.in_service, true),
+      trip_eligible: normalizeTripEligible(req.body, true),
       is_active: toNullableBoolean(req.body.is_active, true),
     };
 
@@ -860,6 +886,7 @@ router.patch("/:selector", async (req, res) => {
   }
 
   try {
+    await ensureVehicleRuntimeSchema();
     await client.query("BEGIN");
     await ensureVehicleAliasesTable(client);
 
@@ -1018,6 +1045,15 @@ router.patch("/:selector", async (req, res) => {
         ? toNullableBoolean(req.body.in_service, existing.in_service)
         : existing.in_service;
 
+    const trip_eligible =
+      req.body.trip_eligible !== undefined ||
+      req.body.tripEligible !== undefined ||
+      req.body.vehicle_role !== undefined ||
+      req.body.vehicleRole !== undefined ||
+      req.body.fleet_role !== undefined
+        ? normalizeTripEligible(req.body, existing.trip_eligible !== false)
+        : existing.trip_eligible !== false;
+
     const is_active =
       req.body.is_active !== undefined
         ? toNullableBoolean(req.body.is_active, existing.is_active)
@@ -1075,9 +1111,10 @@ router.patch("/:selector", async (req, res) => {
         acquisition_cost = $25,
         retired_at = $26,
         in_service = $27,
-        is_active = $28,
+        trip_eligible = $28,
+        is_active = $29,
         updated_at = NOW()
-      WHERE id = $29
+      WHERE id = $30
       RETURNING *
     `;
 
@@ -1109,6 +1146,7 @@ router.patch("/:selector", async (req, res) => {
       acquisition_cost,
       retired_at,
       in_service,
+      trip_eligible,
       is_active,
       existing.id,
     ];

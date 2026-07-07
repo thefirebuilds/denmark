@@ -52,7 +52,8 @@ async function fetchActiveVehicles(client) {
         acquisition_cost,
         COALESCE(alias_list.aliases, ARRAY[]::text[]) AS aliases,
         is_active,
-        in_service
+        in_service,
+        COALESCE(trip_eligible, true) AS trip_eligible
       FROM vehicles
       LEFT JOIN LATERAL (
         SELECT va.alias

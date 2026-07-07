@@ -2,6 +2,9 @@ const pool = require("../db");
 const {
   ensureVehicleAliasesTable,
 } = require("./vehicles/vehicleAliases");
+const {
+  ensureVehicleRuntimeSchema,
+} = require("./vehicles/vehicleRuntimeSchema");
 
 const LONG_TERM_DAYS = 28;
 const AVAILABILITY_WINDOW_DAYS = 90;
@@ -553,6 +556,10 @@ function buildVehicleStatus(vehicle, trips, now) {
   const window = getDateWindow();
   const fullWindowUnavailableDates = getDateKeysBetweenInclusive(window.start, window.end);
 
+  if (vehicle.trip_eligible === false) {
+    return null;
+  }
+
   if (vehicle.in_service === false) {
     return {
       ...buildVehiclePublicMetadata(vehicle),
@@ -671,6 +678,8 @@ function buildVehicleStatus(vehicle, trips, now) {
 }
 
 async function getVehicles() {
+  await ensureVehicleRuntimeSchema();
+
   const sql = `
     SELECT
       id,
@@ -681,8 +690,10 @@ async function getVehicles() {
       year,
       make,
       model,
-      in_service
+      in_service,
+      COALESCE(trip_eligible, true) AS trip_eligible
     FROM vehicles
+    WHERE COALESCE(trip_eligible, true) = true
     ORDER BY nickname NULLS LAST, id
   `;
 
@@ -780,16 +791,18 @@ async function getPublicAvailability() {
     }
   }
 
-  return vehicles.map((vehicle) => {
-    const vehicleTripsById = new Map();
-    for (const key of getVehicleLookupKeys(vehicle)) {
-      for (const trip of tripsByVehicle.get(key) || []) {
-        vehicleTripsById.set(trip.id, trip);
+  return vehicles
+    .map((vehicle) => {
+      const vehicleTripsById = new Map();
+      for (const key of getVehicleLookupKeys(vehicle)) {
+        for (const trip of tripsByVehicle.get(key) || []) {
+          vehicleTripsById.set(trip.id, trip);
+        }
       }
-    }
 
-    return buildVehicleStatus(vehicle, [...vehicleTripsById.values()], now);
-  });
+      return buildVehicleStatus(vehicle, [...vehicleTripsById.values()], now);
+    })
+    .filter(Boolean);
 }
 
 module.exports = {

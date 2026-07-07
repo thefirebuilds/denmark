@@ -1700,7 +1700,8 @@ CREATE TABLE public.vehicles (
     provider_vehicle_id text,
     rockauto_url text,
     lockbox_pin text,
-    lockbox_pin_public boolean DEFAULT true NOT NULL
+    lockbox_pin_public boolean DEFAULT true NOT NULL,
+    trip_eligible boolean DEFAULT true NOT NULL
 );
 
 

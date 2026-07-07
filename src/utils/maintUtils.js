@@ -1419,6 +1419,9 @@ export function mapMaintenanceSummaryToGuestInspectionVehicle(
       true,
     rentable: !summary?.blocksRental,
     in_service: fleetVehicle?.in_service !== false,
+    trip_eligible: fleetVehicle?.trip_eligible !== false,
+    tripEligible:
+      fleetVehicle?.tripEligible ?? (fleetVehicle?.trip_eligible !== false),
     map_vehicle_id: fleetVehicle?.id ?? sourceVehicle.id ?? fallbackId,
     overall_status: overallStatus,
     export_ready: !summary?.blocksGuestExport,

@@ -80,6 +80,7 @@ async function fetchActiveVehicleCount(client) {
     FROM vehicles
     WHERE COALESCE(is_active, true) = true
       AND COALESCE(in_service, true) = true
+      AND COALESCE(trip_eligible, true) = true
   `);
 
   return Number(rows[0]?.count ?? 0);
@@ -114,6 +115,7 @@ async function fetchFleetCalendarDaysAvailable(client, rangeStart, rangeEnd) {
     ) first_trip ON true
     WHERE COALESCE(v.is_active, true) = true
       AND COALESCE(v.in_service, true) = true
+      AND COALESCE(v.trip_eligible, true) = true
   `);
 
   return rows.reduce((sum, vehicle) => {

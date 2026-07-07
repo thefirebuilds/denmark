@@ -10,6 +10,11 @@ async function ensureVehicleRuntimeSchema(client = pool) {
     ALTER TABLE public.vehicles
       ADD COLUMN IF NOT EXISTS lockbox_pin_public boolean DEFAULT true NOT NULL
   `);
+
+  await client.query(`
+    ALTER TABLE public.vehicles
+      ADD COLUMN IF NOT EXISTS trip_eligible boolean DEFAULT true NOT NULL
+  `);
 }
 
 module.exports = {
