@@ -24,6 +24,7 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
 const LIVE_MESSAGE_CACHE_STORAGE_KEY = "denmark.liveMessageQueue";
+const RECENTLY_RESOLVED_MESSAGES_STORAGE_KEY = "denmark.recentlyResolvedMessages";
 const DAILY_BRIEF_DISPLAY_STORAGE_KEY = "denmark.dailyBriefDisplay";
 const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
 const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 180 * 1000;
@@ -60,7 +61,7 @@ function readLiveMessageQueueCache() {
 
     return {
       createdAt,
-      items,
+      items: filterRecentlyResolvedMessagesFromStorage(items),
     };
   } catch {
     return null;
@@ -70,11 +71,12 @@ function readLiveMessageQueueCache() {
 function writeLiveMessageQueueCache(items) {
   try {
     if (!Array.isArray(items)) return;
+    const cacheItems = filterRecentlyResolvedMessagesFromStorage(items);
     window.sessionStorage?.setItem(
       LIVE_MESSAGE_CACHE_STORAGE_KEY,
       JSON.stringify({
         createdAt: Date.now(),
-        items: items.slice(0, 8),
+        items: cacheItems.slice(0, 8),
       })
     );
   } catch {
@@ -88,6 +90,81 @@ function clearLiveMessageQueueCache() {
   } catch {
     // Ignore storage failures in private or restricted browser contexts.
   }
+}
+
+function readRecentlyResolvedMessageEntries() {
+  try {
+    const raw = window.sessionStorage?.getItem(RECENTLY_RESOLVED_MESSAGES_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    const now = Date.now();
+    const activeEntries = parsed
+      .map((entry) => ({
+        id: String(entry?.id || "").trim(),
+        expiresAt: Number(entry?.expiresAt || 0),
+      }))
+      .filter((entry) => entry.id && entry.expiresAt > now);
+
+    if (activeEntries.length !== parsed.length) {
+      writeRecentlyResolvedMessageEntries(activeEntries);
+    }
+
+    return activeEntries;
+  } catch {
+    return [];
+  }
+}
+
+function writeRecentlyResolvedMessageEntries(entries) {
+  try {
+    const activeEntries = Array.isArray(entries)
+      ? entries
+          .map((entry) => ({
+            id: String(entry?.id || "").trim(),
+            expiresAt: Number(entry?.expiresAt || 0),
+          }))
+          .filter((entry) => entry.id && entry.expiresAt > Date.now())
+      : [];
+
+    if (!activeEntries.length) {
+      window.sessionStorage?.removeItem(RECENTLY_RESOLVED_MESSAGES_STORAGE_KEY);
+      return;
+    }
+
+    window.sessionStorage?.setItem(
+      RECENTLY_RESOLVED_MESSAGES_STORAGE_KEY,
+      JSON.stringify(activeEntries.slice(-200))
+    );
+  } catch {
+    // Ignore storage failures in private or restricted browser contexts.
+  }
+}
+
+function getMessageIdentityKeys(message) {
+  return [
+    message?.id,
+    message?.messageId,
+    message?.latest_message_id,
+    ...(Array.isArray(message?.message_ids) ? message.message_ids : []),
+  ]
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+}
+
+function filterRecentlyResolvedMessagesFromStorage(items) {
+  if (!Array.isArray(items) || !items.length) return [];
+
+  const resolvedIds = new Set(
+    readRecentlyResolvedMessageEntries().map((entry) => entry.id)
+  );
+  if (!resolvedIds.size) return items;
+
+  return items.filter(
+    (message) => !getMessageIdentityKeys(message).some((id) => resolvedIds.has(id))
+  );
 }
 
 async function copyTextToClipboard(text) {
@@ -1695,7 +1772,9 @@ export default function MessagesPanel({
   initialLoadComplete = false,
 }) {
   const [messages, setMessages] = useState(() =>
-    Array.isArray(initialMessages) ? initialMessages : []
+    filterRecentlyResolvedMessagesFromStorage(
+      Array.isArray(initialMessages) ? initialMessages : []
+    )
   );
   const [loading, setLoading] = useState(!initialLoadComplete);
   const [queueStatus, setQueueStatus] = useState("");
@@ -1756,7 +1835,14 @@ export default function MessagesPanel({
   const knownQueueItemIdsRef = useRef(new Set());
   const queueChimeWatermarkRef = useRef(Date.now());
   const messagesRef = useRef([]);
-  const recentlyResolvedMessageIdsRef = useRef(new Map());
+  const recentlyResolvedMessageIdsRef = useRef(
+    new Map(
+      readRecentlyResolvedMessageEntries().map((entry) => [
+        entry.id,
+        entry.expiresAt,
+      ])
+    )
+  );
   const audioRef = useRef(null);
   const highlightTimeoutRef = useRef(null);
   const prepExportRef = useRef(null);
@@ -1800,33 +1886,45 @@ export default function MessagesPanel({
 
   function pruneRecentlyResolvedMessages() {
     const now = Date.now();
+    let changed = false;
     for (const [id, expiresAt] of recentlyResolvedMessageIdsRef.current.entries()) {
       if (expiresAt <= now) {
         recentlyResolvedMessageIdsRef.current.delete(id);
+        changed = true;
       }
+    }
+    if (changed) {
+      writeRecentlyResolvedMessageEntries(
+        Array.from(recentlyResolvedMessageIdsRef.current.entries()).map(
+          ([id, expiresAt]) => ({ id, expiresAt })
+        )
+      );
     }
   }
 
   function rememberResolvedMessages(ids) {
     const expiresAt = Date.now() + RECENTLY_RESOLVED_MESSAGE_TTL_MS;
+    let changed = false;
     Array.from(ids || [])
       .map((id) => String(id || "").trim())
       .filter(Boolean)
       .forEach((id) => {
         recentlyResolvedMessageIdsRef.current.set(id, expiresAt);
+        changed = true;
       });
+    if (changed) {
+      writeRecentlyResolvedMessageEntries(
+        Array.from(recentlyResolvedMessageIdsRef.current.entries()).map(
+          ([id, entryExpiresAt]) => ({ id, expiresAt: entryExpiresAt })
+        )
+      );
+      clearLiveMessageQueueCache();
+    }
   }
 
   function wasRecentlyResolved(message) {
     pruneRecentlyResolvedMessages();
-    const ids = [
-      message?.id,
-      message?.messageId,
-      message?.latest_message_id,
-      ...(Array.isArray(message?.message_ids) ? message.message_ids : []),
-    ]
-      .map((id) => String(id || "").trim())
-      .filter(Boolean);
+    const ids = getMessageIdentityKeys(message);
 
     return ids.some((id) => recentlyResolvedMessageIdsRef.current.has(id));
   }
@@ -2894,8 +2992,9 @@ async function handleExportGuestInspectionSheet(message) {
       : cachedLiveMessages || [];
     const visibleSeededMessages = seededMessages.filter(
       (message) =>
-        !isCompletableSyntheticTask(message) ||
-        !completedSyntheticTaskIdsRef.current.has(message.id)
+        !wasRecentlyResolved(message) &&
+        (!isCompletableSyntheticTask(message) ||
+          !completedSyntheticTaskIdsRef.current.has(message.id))
     );
 
     setMessages(visibleSeededMessages);
