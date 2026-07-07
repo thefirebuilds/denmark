@@ -5,6 +5,7 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const { ensureVehicleRuntimeSchema } = require("../vehicles/vehicleRuntimeSchema");
 
 const ALLOWED_SCOPES = new Set(["direct", "general", "shared", "apportioned"]);
 const ALLOWED_SORT_FIELDS = new Set([
@@ -865,6 +866,8 @@ async function getAllocatedSharedExpenseSummary(filters) {
     return null;
   }
 
+  await ensureVehicleRuntimeSchema(pool);
+
   const allocationFilters = {
     ...filters,
     vehicle_id: null,
@@ -889,6 +892,7 @@ async function getAllocatedSharedExpenseSummary(filters) {
           FROM vehicles
           WHERE COALESCE(is_active, true) = true
             AND COALESCE(in_service, true) = true
+            AND COALESCE(trip_eligible, true) = true
         )
         SELECT
           COUNT(*)::int AS source_row_count,
@@ -911,6 +915,7 @@ async function getAllocatedSharedExpenseSummary(filters) {
           FROM vehicles
           WHERE COALESCE(is_active, true) = true
             AND COALESCE(in_service, true) = true
+            AND COALESCE(trip_eligible, true) = true
         )
         SELECT
           COALESCE(NULLIF(TRIM(e.category), ''), 'Uncategorized') AS category,
@@ -932,6 +937,7 @@ async function getAllocatedSharedExpenseSummary(filters) {
           FROM vehicles
           WHERE COALESCE(is_active, true) = true
             AND COALESCE(in_service, true) = true
+            AND COALESCE(trip_eligible, true) = true
         )
         SELECT
           e.expense_scope,

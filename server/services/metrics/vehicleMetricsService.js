@@ -4,6 +4,7 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const { ensureVehicleRuntimeSchema } = require("../vehicles/vehicleRuntimeSchema");
 const {
   clampNonNegative,
   getCalendarDaysInRange,
@@ -34,6 +35,7 @@ const {
 const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
 
 async function fetchActiveVehicles(client) {
+  await ensureVehicleRuntimeSchema(client);
   await ensureVehicleAliasesTable(client);
 
   const { rows } = await client.query(
@@ -1245,6 +1247,8 @@ async function getVehicleMetrics(rangeKey = "30d") {
         nickname: vehicle.nickname,
         vin: vehicle.vin,
         turo_vehicle_id: vehicle.turo_vehicle_id,
+        trip_eligible: vehicle.trip_eligible !== false,
+        tripEligible: vehicle.trip_eligible !== false,
         current_odometer: vehicle.current_odometer_miles,
 
         onboarding_date: onboardingDate,
@@ -1509,12 +1513,15 @@ async function getVehicleMetrics(rangeKey = "30d") {
       }
     }
 
-    const activeVehicleCount = vehicles.length || 1;
+    const sharedAllocationMetrics = Array.from(vehicleMetrics.values()).filter(
+      (metrics) => metrics?.trip_eligible !== false && metrics?.tripEligible !== false
+    );
+    const activeVehicleCount = sharedAllocationMetrics.length || 1;
 
     let totalFleetMiles = 0;
     let totalFleetTripMiles = 0;
 
-    for (const metrics of vehicleMetrics.values()) {
+    for (const metrics of sharedAllocationMetrics) {
       totalFleetMiles += toNumber(metrics.total_miles);
       totalFleetTripMiles += toNumber(metrics.trip_miles);
     }
@@ -1561,7 +1568,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
       if (scope === "general" || scope === "shared") {
         const evenShare = total / activeVehicleCount;
 
-        for (const metrics of vehicleMetrics.values()) {
+        for (const metrics of sharedAllocationMetrics) {
           if (scope === "shared") {
             metrics.shared_expenses += evenShare;
           } else {
@@ -1584,7 +1591,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
       if (scope === "apportioned") {
         const useMiles = apportionedBase > 0;
 
-        for (const metrics of vehicleMetrics.values()) {
+        for (const metrics of sharedAllocationMetrics) {
           const basisMiles =
             totalFleetMiles > 0
               ? metrics.mileage_confidence === "high" ||
@@ -2095,12 +2102,17 @@ async function getVehicleFinancialDetail(vehicleIdInput, rangeKey = "30d") {
       }
     }
 
-    const activeVehicleCount = Math.max(1, vehicles.length);
-    const totalFleetMiles = vehicleMetrics.reduce(
+    const sharedAllocationMetrics = vehicleMetrics.filter(
+      (item) => item?.trip_eligible !== false && item?.tripEligible !== false
+    );
+    const targetParticipatesInSharedAllocation =
+      metric?.trip_eligible !== false && metric?.tripEligible !== false;
+    const activeVehicleCount = Math.max(1, sharedAllocationMetrics.length);
+    const totalFleetMiles = sharedAllocationMetrics.reduce(
       (sum, item) => sum + toNumber(item?.total_miles),
       0
     );
-    const totalFleetTripMiles = vehicleMetrics.reduce(
+    const totalFleetTripMiles = sharedAllocationMetrics.reduce(
       (sum, item) => sum + toNumber(item?.trip_miles),
       0
     );
@@ -2168,8 +2180,10 @@ async function getVehicleFinancialDetail(vehicleIdInput, rangeKey = "30d") {
           if (resolvedVehicleId !== targetVehicleId) return null;
           allocatedAmount = totalAmount;
         } else if (scope === "general" || scope === "shared") {
+          if (!targetParticipatesInSharedAllocation) return null;
           allocatedAmount = totalAmount / activeVehicleCount;
         } else if (scope === "apportioned") {
+          if (!targetParticipatesInSharedAllocation) return null;
           const share =
             apportionedBase > 0
               ? safeDivide(targetBasisMiles, apportionedBase, 0)

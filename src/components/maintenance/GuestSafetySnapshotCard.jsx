@@ -26,6 +26,7 @@ function getDocumentedCheckRank(item) {
 
 export default function GuestSafetySnapshotCard({ vehicle, cardRef, guestName }) {
   if (!vehicle) return null;
+  if (vehicle.trip_eligible === false || vehicle.tripEligible === false) return null;
 
   const passItems = vehicle.inspection_items.filter((item) => item.status === "pass");
   const documentedItems = [...passItems]

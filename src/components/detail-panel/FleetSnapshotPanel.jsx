@@ -168,6 +168,10 @@ function getTripBookedDayKeys(trip, windowStartMs, windowEndMs) {
   return keys;
 }
 
+function isTripEligibleVehicle(vehicle) {
+  return vehicle?.trip_eligible !== false && vehicle?.tripEligible !== false;
+}
+
 /**
  * Fleet-only view shown when no trip is selected.
  * This keeps the general fleet health screen separate from selected-trip UI.
@@ -462,8 +466,9 @@ export default function FleetSnapshotPanel({
     const windowEndMs =
       windowStartMs + UTILIZATION_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     const bookedVehicleDays = new Set();
+    const rentalVehicles = vehicles.filter(isTripEligibleVehicle);
 
-    for (const vehicle of vehicles) {
+    for (const vehicle of rentalVehicles) {
       const vehicleKey = getVehicleKey(vehicle);
       if (!vehicleKey) continue;
 
@@ -482,7 +487,7 @@ export default function FleetSnapshotPanel({
       }
     }
 
-    const capacityDays = vehicles.length * UTILIZATION_WINDOW_DAYS;
+    const capacityDays = rentalVehicles.length * UTILIZATION_WINDOW_DAYS;
     const bookedDays = bookedVehicleDays.size;
     const percent = capacityDays > 0 ? bookedDays / capacityDays : 0;
 

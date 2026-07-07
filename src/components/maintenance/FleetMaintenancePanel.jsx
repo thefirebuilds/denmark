@@ -1611,6 +1611,7 @@ export default function FleetMaintenancePanel({
 
   const maintenanceModeEnabled = selectedFleetVehicle?.in_service === false;
   const supportVehicleEnabled = selectedFleetVehicle?.trip_eligible === false;
+  const showGuestFacingPresentment = !supportVehicleEnabled;
 
   async function openTelemetryHistory(signal) {
     const selector =
@@ -3067,23 +3068,24 @@ export default function FleetMaintenancePanel({
                   ) : null}
                 </div>
 
-                <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
-                  <div className="fleet-maintenance-meta-row">
-                    <span className="fleet-maintenance-meta-label">
-                      Lockbox PIN
-                    </span>
+                {showGuestFacingPresentment ? (
+                  <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
+                    <div className="fleet-maintenance-meta-row">
+                      <span className="fleet-maintenance-meta-label">
+                        Lockbox PIN
+                      </span>
 
-                    {!editingLockboxPin ? (
-                      <button
-                        type="button"
-                        className="fleet-maintenance-inline-action fleet-maintenance-action-button"
-                        onClick={() => setEditingLockboxPin(true)}
-                        disabled={!selectedFleetVehicle?.vin}
-                      >
-                        Edit
-                      </button>
-                    ) : null}
-                  </div>
+                      {!editingLockboxPin ? (
+                        <button
+                          type="button"
+                          className="fleet-maintenance-inline-action fleet-maintenance-action-button"
+                          onClick={() => setEditingLockboxPin(true)}
+                          disabled={!selectedFleetVehicle?.vin}
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                    </div>
 
                   {!editingLockboxPin ? (
                     <div className="fleet-maintenance-registration-readonly">
@@ -3158,7 +3160,8 @@ export default function FleetMaintenancePanel({
                       </div>
                     </div>
                   )}
-                </div>
+                  </div>
+                ) : null}
 
                 <div className="fleet-maintenance-meta-item">
                   <span className="fleet-maintenance-meta-label">
@@ -3964,7 +3967,7 @@ export default function FleetMaintenancePanel({
                 )}
               </div>
 
-              {!isFleetPlanningMode ? (
+              {!isFleetPlanningMode && showGuestFacingPresentment ? (
                 <div className="message-actions fleet-maintenance-actions">
                   <button
                     type="button"
@@ -4005,7 +4008,7 @@ export default function FleetMaintenancePanel({
               ) : null}
             </article>
 
-            {!isFleetPlanningMode ? (
+            {!isFleetPlanningMode && showGuestFacingPresentment ? (
               <div className="fleet-export-preview">
                 <div className="fleet-maintenance-section-title">
                   Guest snapshot preview
@@ -4018,14 +4021,16 @@ export default function FleetMaintenancePanel({
               </div>
             ) : null}
 
-            <div className="fleet-export-hidden">
-              <PreflightCard
-                vehicle={vehicle}
-                windowLabel={preflightData.windowLabel}
-                dueItems={preflightData.dueItems}
-                cardRef={preflightRef}
-              />
-            </div>
+            {showGuestFacingPresentment ? (
+              <div className="fleet-export-hidden">
+                <PreflightCard
+                  vehicle={vehicle}
+                  windowLabel={preflightData.windowLabel}
+                  dueItems={preflightData.dueItems}
+                  cardRef={preflightRef}
+                />
+              </div>
+            ) : null}
           </>
         )}
       </div>

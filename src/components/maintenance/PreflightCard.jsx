@@ -75,7 +75,10 @@ export default function PreflightCard({
   const checklistSections = buildChecklistSections();
   const dueList = Array.isArray(dueItems) ? dueItems.slice(0, 12) : [];
   const showLockboxPin =
-    vehicle?.lockbox_pin_public !== false && vehicle?.lockboxPinPublic !== false;
+    vehicle?.trip_eligible !== false &&
+    vehicle?.tripEligible !== false &&
+    vehicle?.lockbox_pin_public !== false &&
+    vehicle?.lockboxPinPublic !== false;
 
   useLayoutEffect(() => {
     function measureAndScale() {

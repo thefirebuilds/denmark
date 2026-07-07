@@ -278,6 +278,7 @@ function mapVehicleOperationsRow(row) {
     vin: row.vin,
     vehicleName: row.vehicle_name,
     inService: row.in_service !== false,
+    tripEligible: row.trip_eligible !== false,
     mileage: row.current_odometer_miles == null ? null : Number(row.current_odometer_miles),
     currentLocation: row.address || (row.latitude != null && row.longitude != null
       ? `${Number(row.latitude).toFixed(3)}, ${Number(row.longitude).toFixed(3)}`
@@ -706,6 +707,7 @@ async function collectDailyBriefContext(options = {}) {
       FROM vehicles v
       WHERE COALESCE(v.is_active, true) = true
         AND COALESCE(v.in_service, true) = true
+        AND COALESCE(v.trip_eligible, true) = true
     ),
     active_today AS (
       SELECT DISTINCT f.id AS vehicle_id
@@ -798,6 +800,7 @@ async function collectDailyBriefContext(options = {}) {
       FROM vehicles v
       WHERE COALESCE(v.is_active, true) = true
         AND COALESCE(v.in_service, true) = true
+        AND COALESCE(v.trip_eligible, true) = true
     ),
     trip_vehicle AS (
       SELECT
@@ -998,6 +1001,7 @@ async function collectDailyBriefContext(options = {}) {
         v.registration_month,
         v.registration_year,
         v.in_service,
+        COALESCE(v.trip_eligible, true) AS trip_eligible,
         v.is_active,
         v.dimo_token_id,
         v.bouncie_vehicle_id,
@@ -1013,6 +1017,7 @@ async function collectDailyBriefContext(options = {}) {
       f.registration_month,
       f.registration_year,
       f.in_service,
+      f.trip_eligible,
       fp.loan_balance,
       fp.monthly_payment,
       fp.insurance_monthly,

@@ -15,6 +15,7 @@ const { getVehicleMetrics } = require("./vehicleMetricsService");
 const {
   ensureMaintenanceRuntimeSchema,
 } = require("../maintenance/maintenanceRuntimeSchema");
+const { ensureVehicleRuntimeSchema } = require("../vehicles/vehicleRuntimeSchema");
 const { getAiPromptSettings } = require("../aiPromptSettings");
 
 let ensureBusinessMetricsTablesPromise = null;
@@ -196,6 +197,7 @@ function buildVehicleRecommendation(vehicle, settings) {
 async function ensureBusinessMetricsTables(client = pool) {
   if (!ensureBusinessMetricsTablesPromise) {
     ensureBusinessMetricsTablesPromise = (async () => {
+      await ensureVehicleRuntimeSchema(client);
       await client.query(`
         CREATE TABLE IF NOT EXISTS public.vehicle_financial_profiles (
           id BIGSERIAL PRIMARY KEY,
@@ -574,6 +576,7 @@ async function listVehicleFinancialProfiles(client = pool) {
       v.model,
       v.is_active,
       v.in_service,
+      COALESCE(v.trip_eligible, true) AS trip_eligible,
       v.retired_at,
       v.current_odometer_miles,
       v.onboarding_date,
@@ -814,6 +817,7 @@ async function fetchVehiclesWithProfiles(client = pool, startDate = null, endDat
       v.turo_vehicle_id,
       v.is_active,
       v.in_service,
+      COALESCE(v.trip_eligible, true) AS trip_eligible,
       v.retired_at,
       v.current_odometer_miles,
       v.onboarding_date,
@@ -1314,7 +1318,8 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     const ops = vehicleOpsById.get(vehicleId) || {};
     const isActive = vehicle.is_active !== false;
     const isRetired = Boolean(vehicle.retired_at);
-    const includeInSharedAllocations = isActive && !isRetired;
+    const tripEligible = vehicle.trip_eligible !== false && vehicle.tripEligible !== false;
+    const includeInSharedAllocations = isActive && !isRetired && tripEligible;
     const placedInServiceDate =
       vehicle.placed_in_service_date ||
       vehicle.onboarding_date ||
@@ -1349,6 +1354,8 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       turo_vehicle_id: vehicle.turo_vehicle_id || null,
       is_active: isActive,
       in_service: vehicle.in_service !== false,
+      trip_eligible: tripEligible,
+      tripEligible,
       retired_at: vehicle.retired_at || null,
       include_in_shared_allocations: includeInSharedAllocations,
       year_make_model: [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" "),

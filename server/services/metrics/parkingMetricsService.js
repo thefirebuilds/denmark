@@ -1,5 +1,6 @@
 const pool = require("../../db");
 const { getParkingSpotUsage } = require("../vehicles/parkingSpotUsage");
+const { ensureVehicleRuntimeSchema } = require("../vehicles/vehicleRuntimeSchema");
 const {
   getCalendarDaysInRange,
   getDateRange,
@@ -143,6 +144,8 @@ function getActualMonthlyCost(plan, vehicle, config, monthEquivalent, parkingVal
 }
 
 async function getActiveVehicles() {
+  await ensureVehicleRuntimeSchema(pool);
+
   const { rows } = await pool.query(
     `
       SELECT
@@ -150,7 +153,8 @@ async function getActiveVehicles() {
         COALESCE(NULLIF(trim(nickname), ''), vin, 'Vehicle ' || id::text) AS vehicle_name,
         vin,
         dimo_token_id,
-        turo_vehicle_id
+        turo_vehicle_id,
+        COALESCE(trip_eligible, true) AS trip_eligible
       FROM vehicles
       WHERE COALESCE(is_active, true) = true
       ORDER BY vehicle_name
@@ -163,6 +167,8 @@ async function getActiveVehicles() {
     vin: row.vin,
     dimoTokenId: row.dimo_token_id,
     turoVehicleId: row.turo_vehicle_id,
+    trip_eligible: row.trip_eligible !== false,
+    tripEligible: row.trip_eligible !== false,
     parkingDays: 0,
     days: [],
   }));
@@ -249,7 +255,10 @@ async function fetchParkingExpenses(period, config, activeVehicles) {
   );
 
   const activeVehicleIds = activeVehicles.map((vehicle) => String(vehicle.vehicleId));
-  const activeVehicleCount = Math.max(1, activeVehicleIds.length);
+  const sharedAllocationVehicleIds = activeVehicles
+    .filter((vehicle) => vehicle?.trip_eligible !== false && vehicle?.tripEligible !== false)
+    .map((vehicle) => String(vehicle.vehicleId));
+  const activeVehicleCount = Math.max(1, sharedAllocationVehicleIds.length);
   const byVehicle = new Map(activeVehicleIds.map((vehicleId) => [vehicleId, []]));
   const lineItems = [];
 
@@ -269,7 +278,7 @@ async function fetchParkingExpenses(period, config, activeVehicles) {
     if (scope === "direct" && resolvedVehicleId) {
       allocations.push({ vehicleId: resolvedVehicleId, amount: total });
     } else if (scope === "shared" || scope === "general" || scope === "apportioned") {
-      for (const vehicleId of activeVehicleIds) {
+      for (const vehicleId of sharedAllocationVehicleIds) {
         allocations.push({ vehicleId, amount: total / activeVehicleCount });
       }
     }
