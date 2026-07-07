@@ -704,6 +704,10 @@ CREATE TABLE public.maintenance_events (
     source text DEFAULT 'manual'::text NOT NULL,
     estimated_labor_hours numeric(8,3),
     actual_labor_hours numeric(8,3),
+    vendor text,
+    cost numeric(10,2),
+    expense_id bigint,
+    status text DEFAULT 'completed'::text,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT maintenance_events_odometer_miles_check CHECK (((odometer_miles IS NULL) OR (odometer_miles >= 0))),
@@ -1483,7 +1487,13 @@ CREATE TABLE public.vehicle_odometer_history (
     vehicle_id bigint NOT NULL,
     odometer_miles integer NOT NULL,
     recorded_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    source text DEFAULT 'system'::text NOT NULL
+    source text DEFAULT 'system'::text NOT NULL,
+    trip_id bigint,
+    reservation_id bigint,
+    note text,
+    is_correction boolean DEFAULT false NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -2275,6 +2285,13 @@ CREATE INDEX idx_maintenance_events_result ON public.maintenance_events USING bt
 
 
 --
+-- Name: idx_maintenance_events_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_maintenance_events_status ON public.maintenance_events USING btree (status, performed_at DESC);
+
+
+--
 -- Name: idx_maintenance_events_rule_id_performed_at_desc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2598,6 +2615,20 @@ CREATE INDEX idx_vehicle_fmv_estimates_vehicle_vin_estimated_at ON public.vehicl
 --
 
 CREATE INDEX idx_vehicle_odometer_history_vehicle_time ON public.vehicle_odometer_history USING btree (vehicle_id, recorded_at DESC);
+
+
+--
+-- Name: idx_vehicle_odometer_history_trip; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_odometer_history_trip ON public.vehicle_odometer_history USING btree (trip_id) WHERE (trip_id IS NOT NULL);
+
+
+--
+-- Name: idx_vehicle_odometer_history_vehicle_recorded; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicle_odometer_history_vehicle_recorded ON public.vehicle_odometer_history USING btree (vehicle_id, recorded_at DESC, id DESC);
 
 
 --

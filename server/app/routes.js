@@ -79,6 +79,8 @@ function registerApiRoutes(app) {
     requireMethodPermissions({
       GET: "maintenance.read",
       POST: "maintenance.write",
+      PUT: "maintenance.write",
+      PATCH: "maintenance.write",
       DELETE: "maintenance.write",
     }),
     maintenanceRoutes

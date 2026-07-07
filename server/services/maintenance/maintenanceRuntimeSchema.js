@@ -4,32 +4,63 @@ let ensureMaintenanceRuntimeSchemaPromise = null;
 
 async function ensureMaintenanceRuntimeSchema(client = pool) {
   if (!ensureMaintenanceRuntimeSchemaPromise) {
+    const schemaClient = client === pool ? client : pool;
     ensureMaintenanceRuntimeSchemaPromise = (async () => {
-      await client.query(`
+      await schemaClient.query(`
         ALTER TABLE public.maintenance_tasks
           ADD COLUMN IF NOT EXISTS estimated_labor_hours NUMERIC(8,3),
           ADD COLUMN IF NOT EXISTS actual_labor_hours NUMERIC(8,3);
       `);
 
-      await client.query(`
+      await schemaClient.query(`
         ALTER TABLE public.maintenance_events
           ADD COLUMN IF NOT EXISTS estimated_labor_hours NUMERIC(8,3),
-          ADD COLUMN IF NOT EXISTS actual_labor_hours NUMERIC(8,3);
+          ADD COLUMN IF NOT EXISTS actual_labor_hours NUMERIC(8,3),
+          ADD COLUMN IF NOT EXISTS vendor TEXT,
+          ADD COLUMN IF NOT EXISTS cost NUMERIC(10,2),
+          ADD COLUMN IF NOT EXISTS expense_id BIGINT,
+          ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'completed';
       `);
 
-      await client.query(`
+      await schemaClient.query(`
+        ALTER TABLE public.vehicle_odometer_history
+          ADD COLUMN IF NOT EXISTS trip_id BIGINT,
+          ADD COLUMN IF NOT EXISTS reservation_id BIGINT,
+          ADD COLUMN IF NOT EXISTS note TEXT,
+          ADD COLUMN IF NOT EXISTS is_correction BOOLEAN NOT NULL DEFAULT false,
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+      `);
+
+      await schemaClient.query(`
         CREATE INDEX IF NOT EXISTS idx_maintenance_tasks_labor_missing
           ON public.maintenance_tasks (status, updated_at DESC)
           WHERE estimated_labor_hours IS NULL AND actual_labor_hours IS NULL;
       `);
 
-      await client.query(`
+      await schemaClient.query(`
         CREATE INDEX IF NOT EXISTS idx_maintenance_events_labor_missing
           ON public.maintenance_events (performed_at DESC)
           WHERE estimated_labor_hours IS NULL AND actual_labor_hours IS NULL;
       `);
 
-      await client.query(`
+      await schemaClient.query(`
+        CREATE INDEX IF NOT EXISTS idx_vehicle_odometer_history_vehicle_recorded
+          ON public.vehicle_odometer_history (vehicle_id, recorded_at DESC, id DESC);
+      `);
+
+      await schemaClient.query(`
+        CREATE INDEX IF NOT EXISTS idx_vehicle_odometer_history_trip
+          ON public.vehicle_odometer_history (trip_id)
+          WHERE trip_id IS NOT NULL;
+      `);
+
+      await schemaClient.query(`
+        CREATE INDEX IF NOT EXISTS idx_maintenance_events_status
+          ON public.maintenance_events (status, performed_at DESC);
+      `);
+
+      await schemaClient.query(`
         UPDATE public.maintenance_tasks
         SET estimated_labor_hours = CASE
           WHEN title ~* '(check\\s+oil|oil\\s+level)' THEN 0.083
@@ -43,7 +74,7 @@ async function ensureMaintenanceRuntimeSchema(client = pool) {
         WHERE estimated_labor_hours IS NULL;
       `);
 
-      await client.query(`
+      await schemaClient.query(`
         UPDATE public.maintenance_events me
         SET estimated_labor_hours = CASE
           WHEN COALESCE(mr.rule_code, me.event_type, '') = 'cleaning' THEN 1
@@ -64,7 +95,7 @@ async function ensureMaintenanceRuntimeSchema(client = pool) {
           AND me.estimated_labor_hours IS NULL;
       `);
 
-      await client.query(`
+      await schemaClient.query(`
         UPDATE public.maintenance_events
         SET estimated_labor_hours = CASE
           WHEN event_type = 'cleaning' THEN 1

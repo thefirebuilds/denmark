@@ -30,8 +30,270 @@ const {
   estimateLaborHours,
   normalizeLaborHours,
 } = require("../services/maintenance/laborEstimates");
+const {
+  ensureMaintenanceRuntimeSchema,
+} = require("../services/maintenance/maintenanceRuntimeSchema");
 
 const router = express.Router();
+
+function toNullableText(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function toPositiveInt(value, fieldName) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num <= 0) {
+    const err = new Error(`Invalid ${fieldName}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return num;
+}
+
+function toOptionalPositiveInt(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  return toPositiveInt(value, fieldName);
+}
+
+function toOptionalNonNegativeMoney(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    const err = new Error(`Invalid ${fieldName}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return Math.round(num * 100) / 100;
+}
+
+function toOdometerMiles(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    const err = new Error("Invalid odometerMiles");
+    err.statusCode = 400;
+    throw err;
+  }
+  return Math.round(num);
+}
+
+function toTimestamp(value, fieldName, { defaultNow = false } = {}) {
+  if (value === undefined || value === null || value === "") {
+    if (defaultNow) return new Date().toISOString();
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const err = new Error(`Invalid ${fieldName}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return date.toISOString();
+}
+
+function isTruthy(value) {
+  if (typeof value === "boolean") return value;
+  if (value == null) return false;
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
+function normalizeEventStatus(value) {
+  if (value == null || String(value).trim() === "") return "completed";
+  const status = String(value).trim().toLowerCase();
+  if (!["completed", "scheduled", "void", "needs_review"].includes(status)) {
+    const err = new Error("Maintenance event status must be completed, scheduled, void, or needs_review");
+    err.statusCode = 400;
+    throw err;
+  }
+  return status;
+}
+
+async function resolveVehicleSelector(client, selector) {
+  const raw = String(selector || "").trim();
+  if (!raw) {
+    const err = new Error("Vehicle id, VIN, nickname, or plate is required");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const normalized = raw.toLowerCase();
+  const numericId = Number(raw);
+  const result = await client.query(
+    `
+      SELECT id, vin, nickname, make, model, year, license_plate, current_odometer_miles
+      FROM vehicles
+      WHERE ($1::bigint IS NOT NULL AND id = $1::bigint)
+         OR lower(trim(vin)) = $2
+         OR lower(trim(COALESCE(nickname, ''))) = $2
+         OR lower(trim(COALESCE(license_plate, ''))) = $2
+      LIMIT 1
+    `,
+    [Number.isInteger(numericId) && numericId > 0 ? numericId : null, normalized]
+  );
+
+  const vehicle = result.rows[0];
+  if (!vehicle) {
+    const err = new Error(`Vehicle not found: ${raw}`);
+    err.statusCode = 404;
+    throw err;
+  }
+  return vehicle;
+}
+
+function mapOdometerReading(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    vehicleId: row.vehicle_id,
+    odometerMiles: row.odometer_miles,
+    recordedAt: row.recorded_at,
+    source: row.source,
+    tripId: row.trip_id,
+    reservationId: row.reservation_id,
+    note: row.note,
+    isCorrection: Boolean(row.is_correction),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    trip: row.trip_id
+      ? {
+          id: row.trip_id,
+          reservationId: row.trip_reservation_id,
+          guestName: row.guest_name,
+          tripStart: row.trip_start,
+          tripEnd: row.trip_end,
+        }
+      : null,
+  };
+}
+
+async function listVehicleOdometerReadings(client, vehicleId, limit = 50) {
+  await ensureMaintenanceRuntimeSchema(client);
+  const result = await client.query(
+    `
+      SELECT
+        h.*,
+        t.reservation_id AS trip_reservation_id,
+        t.guest_name,
+        t.trip_start,
+        t.trip_end
+      FROM vehicle_odometer_history h
+      LEFT JOIN trips t
+        ON t.id = h.trip_id
+      WHERE h.vehicle_id = $1
+      ORDER BY h.recorded_at DESC, h.id DESC
+      LIMIT $2
+    `,
+    [vehicleId, Math.min(Math.max(Number(limit) || 50, 1), 200)]
+  );
+  return result.rows.map(mapOdometerReading);
+}
+
+async function createVehicleOdometerReading(client, vehicle, input = {}) {
+  await ensureMaintenanceRuntimeSchema(client);
+  const odometerMiles = toOdometerMiles(
+    input.odometerMiles ?? input.odometer_miles ?? input.odometer
+  );
+  const recordedAt = toTimestamp(
+    input.recordedAt ?? input.recorded_at ?? input.readingDate,
+    "recordedAt",
+    { defaultNow: true }
+  );
+  const source = toNullableText(input.source) || "manual";
+  const tripId = toOptionalPositiveInt(input.tripId ?? input.trip_id, "tripId");
+  const reservationId = toOptionalPositiveInt(
+    input.reservationId ?? input.reservation_id,
+    "reservationId"
+  );
+  const note = toNullableText(input.note ?? input.notes);
+  const isCorrection = isTruthy(input.isCorrection ?? input.is_correction ?? input.correction);
+
+  if (isCorrection && !note) {
+    const err = new Error("Correction odometer readings require a note");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const priorResult = await client.query(
+    `
+      SELECT MAX(odometer_miles)::int AS max_odometer
+      FROM vehicle_odometer_history
+      WHERE vehicle_id = $1
+    `,
+    [vehicle.id]
+  );
+  const priorMax = Number(priorResult.rows[0]?.max_odometer);
+  const currentOdometer = Number(vehicle.current_odometer_miles);
+  const floor = Math.max(
+    Number.isFinite(priorMax) ? priorMax : 0,
+    Number.isFinite(currentOdometer) ? currentOdometer : 0
+  );
+
+  if (odometerMiles < floor && !isCorrection) {
+    const err = new Error(
+      `Odometer reading ${odometerMiles} is lower than existing mileage ${floor}; mark it as a correction with a note to save it.`
+    );
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const duplicateResult = await client.query(
+    `
+      SELECT id
+      FROM vehicle_odometer_history
+      WHERE vehicle_id = $1
+        AND source = $2
+        AND COALESCE(trip_id, 0) = COALESCE($3::bigint, 0)
+        AND recorded_at::date = ($4::timestamp)::date
+      LIMIT 1
+    `,
+    [vehicle.id, source, tripId, recordedAt]
+  );
+
+  if (duplicateResult.rows[0]) {
+    const err = new Error("An odometer reading already exists for that vehicle/source/trip/date");
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const insert = await client.query(
+    `
+      INSERT INTO vehicle_odometer_history (
+        vehicle_id,
+        odometer_miles,
+        recorded_at,
+        source,
+        trip_id,
+        reservation_id,
+        note,
+        is_correction,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3::timestamp, $4, $5, $6, $7, $8, NOW(), NOW())
+      RETURNING *
+    `,
+    [vehicle.id, odometerMiles, recordedAt, source, tripId, reservationId, note, isCorrection]
+  );
+
+  await client.query(
+    `
+      UPDATE vehicles
+      SET
+        current_odometer_miles = CASE
+          WHEN current_odometer_miles IS NULL THEN $2
+          WHEN $3::boolean THEN $2
+          WHEN $2 >= current_odometer_miles THEN $2
+          ELSE current_odometer_miles
+        END,
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+    [vehicle.id, odometerMiles, isCorrection]
+  );
+
+  return mapOdometerReading(insert.rows[0]);
+}
 
 function normalizeManualTaskText(value, fieldName) {
   const text = String(value || "").trim();
@@ -719,6 +981,421 @@ router.post("/vehicles/:vin/maintenance-events", async (req, res) => {
     res.status(err.statusCode || 500).json({
       error: err.message || "Failed to create maintenance event",
     });
+  }
+});
+
+// ------------------------------------------------------------
+// Internal admin maintenance and odometer API aliases.
+// Mounted under /api with maintenance.read/maintenance.write permissions.
+// ------------------------------------------------------------
+
+router.get("/admin/vehicles/:vehicleId/odometer", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const vehicle = await resolveVehicleSelector(client, req.params.vehicleId);
+    const readings = await listVehicleOdometerReadings(
+      client,
+      vehicle.id,
+      req.query.limit
+    );
+    res.json({ ok: true, vehicle, readings });
+  } catch (err) {
+    console.error(`GET /admin/vehicles/${req.params.vehicleId}/odometer failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to load odometer readings",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.post("/admin/vehicles/:vehicleId/odometer", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const vehicle = await resolveVehicleSelector(client, req.params.vehicleId);
+    const reading = await createVehicleOdometerReading(client, vehicle, req.body || {});
+    await client.query("COMMIT");
+    res.json({ ok: true, vehicle, reading });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => null);
+    console.error(`POST /admin/vehicles/${req.params.vehicleId}/odometer failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to save odometer reading",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.get("/admin/vehicles/:vehicleId/maintenance", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const vehicle = await resolveVehicleSelector(client, req.params.vehicleId);
+    const summary = await getVehicleMaintenanceSummary(client, vehicle.vin, {
+      refreshOdometerRollup:
+        String(req.query.refreshOdometer || req.query.refresh_odometer || "true")
+          .toLowerCase() !== "false" &&
+        String(req.query.refreshOdometer || req.query.refresh_odometer || "true") !==
+          "0",
+    });
+    const odometerReadings = await listVehicleOdometerReadings(client, vehicle.id, 25);
+    res.json({ ok: true, ...summary, odometerReadings });
+  } catch (err) {
+    console.error(`GET /admin/vehicles/${req.params.vehicleId}/maintenance failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to load maintenance summary",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.get("/admin/vehicles/:vehicleId/maintenance/due", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const vehicle = await resolveVehicleSelector(client, req.params.vehicleId);
+    const summary = await getVehicleMaintenanceSummary(client, vehicle.vin);
+    const due = (Array.isArray(summary.ruleStatuses) ? summary.ruleStatuses : []).filter(
+      (rule) => ["overdue", "due", "due_soon", "no_history"].includes(rule.status)
+    );
+    res.json({ ok: true, vehicle: summary.vehicle, due, blocksRental: summary.blocksRental });
+  } catch (err) {
+    console.error(`GET /admin/vehicles/${req.params.vehicleId}/maintenance/due failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to load due maintenance",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.get("/admin/maintenance/due", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const vehicleResult = await client.query(
+      `
+        SELECT id, vin, nickname, make, model, year
+        FROM vehicles
+        WHERE COALESCE(is_active, true) = true
+          AND COALESCE(in_service, true) = true
+        ORDER BY COALESCE(nickname, vin)
+        LIMIT 250
+      `
+    );
+    const vehicles = [];
+    for (const vehicle of vehicleResult.rows) {
+      const summary = await getVehicleMaintenanceSummary(client, vehicle.vin, {
+        refreshOdometerRollup: false,
+      });
+      const due = (Array.isArray(summary.ruleStatuses) ? summary.ruleStatuses : []).filter(
+        (rule) => ["overdue", "due", "due_soon", "no_history"].includes(rule.status)
+      );
+      if (due.length || summary.blocksRental) {
+        vehicles.push({
+          vehicle: summary.vehicle,
+          due,
+          blocksRental: summary.blocksRental,
+          currentOdometerMiles: summary.currentOdometerMiles,
+        });
+      }
+    }
+    res.json({ ok: true, vehicles });
+  } catch (err) {
+    console.error("GET /admin/maintenance/due failed:", err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to load fleet maintenance due",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.get("/admin/maintenance/events", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await ensureMaintenanceRuntimeSchema(client);
+    let vehicle = null;
+    if (req.query.vehicleId || req.query.vehicle_id || req.query.vin) {
+      vehicle = await resolveVehicleSelector(
+        client,
+        req.query.vehicleId || req.query.vehicle_id || req.query.vin
+      );
+    }
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    const result = await client.query(
+      `
+        SELECT
+          me.*,
+          v.id AS vehicle_id,
+          v.nickname AS vehicle_nickname,
+          v.make,
+          v.model,
+          v.year,
+          mr.rule_code,
+          mr.category
+        FROM maintenance_events me
+        LEFT JOIN vehicles v
+          ON v.vin = me.vehicle_vin
+        LEFT JOIN maintenance_rules mr
+          ON mr.id = me.rule_id
+        WHERE ($1::text IS NULL OR me.vehicle_vin = $1)
+          AND ($2::text IS NULL OR COALESCE(me.status, 'completed') = $2)
+          AND ($3::text IS NULL OR COALESCE(mr.category, 'other') = $3)
+        ORDER BY me.performed_at DESC, me.id DESC
+        LIMIT $4
+      `,
+      [
+        vehicle?.vin || null,
+        toNullableText(req.query.status),
+        toNullableText(req.query.category),
+        limit,
+      ]
+    );
+    res.json({ ok: true, events: result.rows });
+  } catch (err) {
+    console.error("GET /admin/maintenance/events failed:", err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to load maintenance events",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.post("/admin/maintenance/events", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const selector = body.vehicleId || body.vehicle_id || body.vin || body.vehicleVin;
+    if (!selector) {
+      return res.status(400).json({ error: "vehicleId or vin is required" });
+    }
+    const client = await pool.connect();
+    let vehicle;
+    try {
+      vehicle = await resolveVehicleSelector(client, selector);
+    } finally {
+      client.release();
+    }
+
+    const event = await createMaintenanceEvent({
+      vin: vehicle.vin,
+      ruleId: body.ruleId ?? body.rule_id,
+      ruleCode: body.ruleCode ?? body.rule_code ?? body.maintenanceType,
+      performedAt: body.performedAt ?? body.performed_at ?? body.serviceDate,
+      odometerMiles:
+        body.odometerMiles ?? body.odometer_miles ?? body.odometerAtService,
+      result: body.result || "performed",
+      notes: body.notes ?? body.description,
+      data: {
+        ...(body.data && typeof body.data === "object" ? body.data : {}),
+        maintenanceType: body.maintenanceType ?? body.maintenance_type ?? null,
+      },
+      performedBy: body.performedBy ?? body.performed_by ?? body.vendor,
+      source: body.source || "manual",
+      estimatedLaborHours: body.estimatedLaborHours ?? body.estimated_labor_hours,
+      actualLaborHours: body.actualLaborHours ?? body.actual_labor_hours,
+      vendor: body.vendor,
+      cost: body.cost,
+      expenseId: body.expenseId ?? body.expense_id,
+      tripId: body.tripId ?? body.trip_id,
+      reservationId: body.reservationId ?? body.reservation_id,
+      status: body.status,
+    });
+
+    res.json({ ok: true, event });
+  } catch (err) {
+    console.error("POST /admin/maintenance/events failed:", err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to create maintenance event",
+    });
+  }
+});
+
+router.put("/admin/maintenance/events/:eventId", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await ensureMaintenanceRuntimeSchema(client);
+    const eventId = toPositiveInt(req.params.eventId, "eventId");
+    const body = req.body || {};
+    const result = await client.query(
+      `
+        UPDATE maintenance_events
+        SET
+          performed_at = COALESCE($2::timestamp, performed_at),
+          odometer_miles = COALESCE($3::int, odometer_miles),
+          result = COALESCE($4::text, result),
+          notes = COALESCE($5::text, notes),
+          performed_by = COALESCE($6::text, performed_by),
+          vendor = COALESCE($7::text, vendor),
+          cost = COALESCE($8::numeric, cost),
+          expense_id = COALESCE($9::bigint, expense_id),
+          status = COALESCE($10::text, status),
+          data = COALESCE(data, '{}'::jsonb) || COALESCE($11::jsonb, '{}'::jsonb),
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [
+        eventId,
+        toTimestamp(body.performedAt ?? body.performed_at, "performedAt"),
+        body.odometerMiles === undefined && body.odometer_miles === undefined
+          ? null
+          : toOdometerMiles(body.odometerMiles ?? body.odometer_miles),
+        toNullableText(body.result),
+        body.notes === undefined ? null : toNullableText(body.notes),
+        toNullableText(body.performedBy ?? body.performed_by),
+        toNullableText(body.vendor),
+        toOptionalNonNegativeMoney(body.cost, "cost"),
+        toOptionalPositiveInt(body.expenseId ?? body.expense_id, "expenseId"),
+        body.status == null ? null : normalizeEventStatus(body.status),
+        body.data && typeof body.data === "object" ? JSON.stringify(body.data) : null,
+      ]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Maintenance event not found" });
+    }
+    res.json({ ok: true, event: result.rows[0] });
+  } catch (err) {
+    console.error(`PUT /admin/maintenance/events/${req.params.eventId} failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to update maintenance event",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete("/admin/maintenance/events/:eventId", async (req, res) => {
+  try {
+    const eventId = toPositiveInt(req.params.eventId, "eventId");
+    const result = await pool.query(
+      "DELETE FROM maintenance_events WHERE id = $1 RETURNING *",
+      [eventId]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Maintenance event not found" });
+    }
+    res.json({ ok: true, event: result.rows[0] });
+  } catch (err) {
+    console.error(`DELETE /admin/maintenance/events/${req.params.eventId} failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to delete maintenance event",
+    });
+  }
+});
+
+router.get("/admin/maintenance/rules", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    let vehicle = null;
+    if (req.query.vehicleId || req.query.vehicle_id || req.query.vin) {
+      vehicle = await resolveVehicleSelector(
+        client,
+        req.query.vehicleId || req.query.vehicle_id || req.query.vin
+      );
+    }
+    const result = await client.query(
+      `
+        SELECT
+          r.*,
+          v.id AS vehicle_id,
+          v.nickname AS vehicle_nickname
+        FROM maintenance_rules r
+        LEFT JOIN vehicles v
+          ON v.vin = r.vehicle_vin
+        WHERE ($1::text IS NULL OR r.vehicle_vin = $1)
+          AND ($2::boolean = true OR r.is_active = true)
+        ORDER BY COALESCE(v.nickname, r.vehicle_vin), r.category, r.title
+      `,
+      [vehicle?.vin || null, isTruthy(req.query.includeInactive)]
+    );
+    res.json({ ok: true, rules: result.rows });
+  } catch (err) {
+    console.error("GET /admin/maintenance/rules failed:", err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to load maintenance rules",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.post("/admin/maintenance/rules", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const selector = req.body?.vehicleId || req.body?.vehicle_id || req.body?.vin;
+    const vehicle = await resolveVehicleSelector(client, selector);
+    const rule = await createCustomMaintenanceRule(client, vehicle.vin, req.body || {});
+    res.json({ ok: true, rule });
+  } catch (err) {
+    console.error("POST /admin/maintenance/rules failed:", err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to create maintenance rule",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.put("/admin/maintenance/rules/:ruleId", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const ruleId = toPositiveInt(req.params.ruleId, "ruleId");
+    const body = req.body || {};
+    const result = await client.query(
+      `
+        UPDATE maintenance_rules
+        SET
+          title = COALESCE($2::text, title),
+          description = COALESCE($3::text, description),
+          category = COALESCE($4::text, category),
+          interval_miles = COALESCE($5::int, interval_miles),
+          interval_days = COALESCE($6::int, interval_days),
+          due_soon_miles = COALESCE($7::int, due_soon_miles),
+          due_soon_days = COALESCE($8::int, due_soon_days),
+          blocks_rental_when_overdue = COALESCE($9::boolean, blocks_rental_when_overdue),
+          blocks_guest_export_when_overdue = COALESCE($10::boolean, blocks_guest_export_when_overdue),
+          requires_pass_result = COALESCE($11::boolean, requires_pass_result),
+          is_active = COALESCE($12::boolean, is_active),
+          rule_config = COALESCE(rule_config, '{}'::jsonb) || COALESCE($13::jsonb, '{}'::jsonb),
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [
+        ruleId,
+        toNullableText(body.title),
+        body.description === undefined ? null : toNullableText(body.description),
+        toNullableText(body.category),
+        body.intervalMiles ?? body.interval_miles ?? null,
+        body.intervalDays ?? body.interval_days ?? null,
+        body.dueSoonMiles ?? body.due_soon_miles ?? null,
+        body.dueSoonDays ?? body.due_soon_days ?? null,
+        body.blocksRentalWhenOverdue ?? body.blocks_rental_when_overdue ?? null,
+        body.blocksGuestExportWhenOverdue ??
+          body.blocks_guest_export_when_overdue ??
+          null,
+        body.requiresPassResult ?? body.requires_pass_result ?? null,
+        body.isActive ?? body.is_active ?? null,
+        body.ruleConfig && typeof body.ruleConfig === "object"
+          ? JSON.stringify(body.ruleConfig)
+          : body.rule_config && typeof body.rule_config === "object"
+          ? JSON.stringify(body.rule_config)
+          : null,
+      ]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Maintenance rule not found" });
+    }
+    res.json({ ok: true, rule: result.rows[0] });
+  } catch (err) {
+    console.error(`PUT /admin/maintenance/rules/${req.params.ruleId} failed:`, err);
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Failed to update maintenance rule",
+    });
+  } finally {
+    client.release();
   }
 });
 

@@ -8,6 +8,12 @@ const {
   closeSatisfiedMaintenanceTasks,
 } = require("./syncMaintenanceTasks");
 const { estimateLaborHours, normalizeLaborHours } = require("./laborEstimates");
+const {
+  ensureMaintenanceRuntimeSchema,
+} = require("./maintenanceRuntimeSchema");
+const {
+  ensureDefaultMaintenanceRulesForVehicle,
+} = require("./ruleTemplates");
 
 function getResolvableTaskTypesForRuleCode(ruleCode) {
   const normalized = String(ruleCode || "").trim().toLowerCase();
@@ -30,7 +36,7 @@ function getResolvableTaskTypesForRuleCode(ruleCode) {
   return [];
 }
 
-async function resolveRule(client, { ruleId, ruleCode }) {
+async function resolveRule(client, { ruleId, ruleCode, vin }) {
   if (ruleId) {
     const byId = await client.query(
       `
@@ -62,9 +68,10 @@ async function resolveRule(client, { ruleId, ruleCode }) {
     SELECT id, rule_code, title
     FROM maintenance_rules
     WHERE rule_code = $1
+      AND vehicle_vin = $2
     LIMIT 1
     `,
-    [ruleCode]
+    [ruleCode, vin]
   );
 
   if (!result.rows.length) {
@@ -162,7 +169,41 @@ function normalizeData(value) {
   return value;
 }
 
-async function recordVehicleOdometer(client, vehicle, odometerMiles, recordedAt) {
+function normalizeOptionalMoney(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    const err = new Error(`Invalid ${fieldName} value`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return Math.round(num * 100) / 100;
+}
+
+function normalizeOptionalId(value, fieldName) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  if (!Number.isInteger(num) || num <= 0) {
+    const err = new Error(`Invalid ${fieldName} value`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return num;
+}
+
+function normalizeEventStatus(value) {
+  if (value == null || String(value).trim() === "") return "completed";
+  const normalized = String(value).trim().toLowerCase();
+  const allowed = new Set(["completed", "scheduled", "void", "needs_review"]);
+  if (!allowed.has(normalized)) {
+    const err = new Error(`Invalid maintenance event status: ${normalized}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return normalized;
+}
+
+async function recordVehicleOdometer(client, vehicle, odometerMiles, recordedAt, context = {}) {
   if (odometerMiles == null) return;
 
   await client.query(
@@ -186,11 +227,22 @@ async function recordVehicleOdometer(client, vehicle, odometerMiles, recordedAt)
         vehicle_id,
         odometer_miles,
         recorded_at,
-        source
+        source,
+        trip_id,
+        reservation_id,
+        note,
+        is_correction
       )
-      VALUES ($1, $2, $3::timestamp, 'maintenance_event')
+      VALUES ($1, $2, $3::timestamp, 'maintenance_event', $4, $5, $6, false)
     `,
-    [vehicle.id, odometerMiles, recordedAt]
+    [
+      vehicle.id,
+      odometerMiles,
+      recordedAt,
+      context.tripId ?? null,
+      context.reservationId ?? null,
+      context.note ?? null,
+    ]
   );
 }
 
@@ -207,6 +259,12 @@ async function createMaintenanceEvent({
   source,
   estimatedLaborHours,
   actualLaborHours,
+  vendor,
+  cost,
+  expenseId,
+  tripId,
+  reservationId,
+  status,
   allowMissingOdometer = false,
 }) {
   if (!vin) {
@@ -219,9 +277,11 @@ async function createMaintenanceEvent({
 
   try {
     await client.query("BEGIN");
+    await ensureMaintenanceRuntimeSchema(client);
 
     const vehicle = await ensureVehicleExists(client, vin);
-    const rule = await resolveRule(client, { ruleId, ruleCode });
+    await ensureDefaultMaintenanceRulesForVehicle(client, vin);
+    const rule = await resolveRule(client, { ruleId, ruleCode, vin });
     const performedTimestamp = normalizePerformedAt(performedAt);
     const odo = normalizeOdometerMiles(odometerMiles, {
       allowMissing: allowMissingOdometer,
@@ -244,6 +304,18 @@ async function createMaintenanceEvent({
       performedBy == null || String(performedBy).trim() === ""
         ? null
         : String(performedBy).trim();
+    const finalVendor =
+      vendor == null || String(vendor).trim() === "" ? null : String(vendor).trim();
+    const finalCost = normalizeOptionalMoney(cost, "cost");
+    const finalExpenseId = normalizeOptionalId(expenseId, "expenseId");
+    const finalTripId = normalizeOptionalId(tripId, "tripId");
+    const finalReservationId = normalizeOptionalId(reservationId, "reservationId");
+    const finalStatus = normalizeEventStatus(status);
+    const dataWithLinks = {
+      ...normalizedData,
+      ...(finalTripId != null ? { tripId: finalTripId } : {}),
+      ...(finalReservationId != null ? { reservationId: finalReservationId } : {}),
+    };
 
     const insert = await client.query(
       `
@@ -261,6 +333,10 @@ async function createMaintenanceEvent({
         source,
         estimated_labor_hours,
         actual_labor_hours,
+        vendor,
+        cost,
+        expense_id,
+        status,
         created_at,
         updated_at
       )
@@ -278,6 +354,10 @@ async function createMaintenanceEvent({
         $11,
         $12,
         $13,
+        $14,
+        $15,
+        $16,
+        $17,
         NOW(),
         NOW()
       )
@@ -296,6 +376,10 @@ async function createMaintenanceEvent({
         source,
         estimated_labor_hours,
         actual_labor_hours,
+        vendor,
+        cost,
+        expense_id,
+        status,
         created_at,
         updated_at
       `,
@@ -308,15 +392,23 @@ async function createMaintenanceEvent({
         odo,
         normalizedResult,
         notes ?? null,
-        normalizedData,
+        dataWithLinks,
         finalPerformedBy,
         finalSource,
         estimatedLabor,
         actualLabor,
+        finalVendor,
+        finalCost,
+        finalExpenseId,
+        finalStatus,
       ]
     );
 
-    await recordVehicleOdometer(client, vehicle, odo, performedTimestamp);
+    await recordVehicleOdometer(client, vehicle, odo, performedTimestamp, {
+      tripId: finalTripId,
+      reservationId: finalReservationId,
+      note: notes ?? null,
+    });
 
     const resolvableTaskTypes = getResolvableTaskTypesForRuleCode(rule.rule_code);
 

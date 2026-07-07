@@ -21,6 +21,9 @@ const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
 const {
   refreshVehicleOdometerRollups,
 } = require("../vehicles/odometerRollupService");
+const {
+  ensureMaintenanceRuntimeSchema,
+} = require("./maintenanceRuntimeSchema");
 
 function toIntOrNull(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -612,6 +615,7 @@ async function getVehicleMaintenanceSummary(
   const refreshOdometerRollup = options.refreshOdometerRollup !== false;
 
   await ensureVehicleAliasesTable(client);
+  await ensureMaintenanceRuntimeSchema(client);
 
   const vehicleResult = await client.query(
     `
@@ -876,7 +880,13 @@ async function getVehicleMaintenanceSummary(
   await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
   await cancelDuplicateRuleTasks(client, vin);
 
-  const [tasksResult, taskHistoryResult, notesResult, historyResult] = await Promise.all([
+  const [
+    tasksResult,
+    taskHistoryResult,
+    notesResult,
+    historyResult,
+    odometerHistoryResult,
+  ] = await Promise.all([
     client.query(
       `
         SELECT
@@ -1005,11 +1015,60 @@ async function getVehicleMaintenanceSummary(
       `,
       [vin]
     ),
+    client.query(
+      `
+        SELECT
+          h.id,
+          h.vehicle_id,
+          h.odometer_miles,
+          h.recorded_at,
+          h.source,
+          h.trip_id,
+          h.reservation_id,
+          h.note,
+          h.is_correction,
+          h.created_at,
+          h.updated_at,
+          t.guest_name,
+          t.trip_start,
+          t.trip_end
+        FROM vehicle_odometer_history h
+        LEFT JOIN trips t
+          ON t.id = h.trip_id
+        WHERE h.vehicle_id = $1
+        ORDER BY h.recorded_at DESC, h.id DESC
+        LIMIT 25
+      `,
+      [vehicle.id]
+    ),
   ]);
 
   const tasks = tasksResult.rows;
   const taskHistory = taskHistoryResult.rows;
   const guestVisibleConditionNotes = notesResult.rows;
+  const odometerReadings = odometerHistoryResult.rows.map((row) => ({
+    id: row.id,
+    vehicleId: row.vehicle_id,
+    odometerMiles: toIntOrNull(row.odometer_miles),
+    recordedAt: row.recorded_at,
+    source: row.source,
+    tripId: row.trip_id,
+    reservationId: row.reservation_id,
+    note: row.note || null,
+    isCorrection: Boolean(row.is_correction),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    trip:
+      row.trip_id == null
+        ? null
+        : {
+            id: row.trip_id,
+            reservationId: row.reservation_id,
+            guestName: row.guest_name || null,
+            tripStart: row.trip_start,
+            tripEnd: row.trip_end,
+          },
+  }));
 
   const ruleHistory = historyResult.rows.reduce((acc, row) => {
   const ruleCode = row.rule_code;
@@ -1108,6 +1167,7 @@ async function getVehicleMaintenanceSummary(
     taskHistory,
     ruleStatuses,
     ruleHistory,
+    odometerReadings,
     guestVisibleConditionNotes,
   };
 }

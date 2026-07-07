@@ -44,6 +44,17 @@ function pickFirstFilled(...values) {
   return null;
 }
 
+function formatOdometerRecordedAt(value) {
+  if (!value) return "unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown date";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function formatRuleCountdown(item, currentOdometerMiles) {
   const currentMiles = Number(currentOdometerMiles);
   const nextDueMiles =
@@ -1029,6 +1040,13 @@ export default function FleetMaintenancePanel({
     blocksRental: false,
     blocksGuestExport: false,
   });
+  const [savingOdometer, setSavingOdometer] = useState(false);
+  const [odometerError, setOdometerError] = useState("");
+  const [odometerForm, setOdometerForm] = useState({
+    odometerMiles: "",
+    note: "",
+    isCorrection: false,
+  });
   const [maintenanceTemplates, setMaintenanceTemplates] = useState([]);
   const [templateLoadError, setTemplateLoadError] = useState("");
 
@@ -1204,6 +1222,18 @@ export default function FleetMaintenancePanel({
   useEffect(() => {
     loadMaintenanceTemplates();
   }, [loadMaintenanceTemplates]);
+
+  useEffect(() => {
+    setOdometerError("");
+    setOdometerForm({
+      odometerMiles:
+        maintenanceSummary?.currentOdometerMiles != null
+          ? String(maintenanceSummary.currentOdometerMiles)
+          : "",
+      note: "",
+      isCorrection: false,
+    });
+  }, [maintenanceSummary?.currentOdometerMiles, selectedFleetVehicle?.vin]);
 
   const loadSelectedVehicleMaintenance = useCallback(async () => {
     if (!selectedFleetVehicle?.vin) {
@@ -2224,6 +2254,56 @@ export default function FleetMaintenancePanel({
     }
   }
 
+  async function handleSaveOdometerReading() {
+    try {
+      if (!selectedFleetVehicle?.vin) {
+        throw new Error("No selected vehicle VIN available.");
+      }
+
+      const odometerMiles = Number(odometerForm.odometerMiles);
+      if (!Number.isFinite(odometerMiles) || odometerMiles < 0) {
+        throw new Error("Enter a valid odometer reading.");
+      }
+
+      if (odometerForm.isCorrection && !odometerForm.note.trim()) {
+        throw new Error("Corrections require a note.");
+      }
+
+      setSavingOdometer(true);
+      setOdometerError("");
+
+      const res = await fetch(
+        `/api/admin/vehicles/${encodeURIComponent(
+          selectedFleetVehicle.vin
+        )}/odometer`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            odometerMiles,
+            note: odometerForm.note.trim() || null,
+            isCorrection: odometerForm.isCorrection,
+            source: "manual",
+          }),
+        }
+      );
+
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+
+      await loadSelectedVehicleMaintenance();
+    } catch (err) {
+      console.error("Failed to save odometer reading:", err);
+      setOdometerError(err.message || "Could not save odometer reading.");
+    } finally {
+      setSavingOdometer(false);
+    }
+  }
+
   function handleOpenInspectionItem(item) {
     setSelectedInspectionItem(item);
     setInspectionVehicle({
@@ -2839,6 +2919,89 @@ export default function FleetMaintenancePanel({
                       )}
                     </span>
                   </div>
+
+                  <div className="fleet-maintenance-registration-editor">
+                    <div className="fleet-maintenance-registration-grid">
+                      <label>
+                        <span>Current odometer</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={odometerForm.odometerMiles}
+                          onChange={(e) =>
+                            setOdometerForm((prev) => ({
+                              ...prev,
+                              odometerMiles: e.target.value,
+                            }))
+                          }
+                          placeholder="Miles"
+                        />
+                      </label>
+
+                      <label>
+                        <span>Note</span>
+                        <input
+                          value={odometerForm.note}
+                          onChange={(e) =>
+                            setOdometerForm((prev) => ({
+                              ...prev,
+                              note: e.target.value,
+                            }))
+                          }
+                          placeholder="Optional unless correction"
+                        />
+                      </label>
+                    </div>
+
+                    <label className="fleet-maintenance-checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={odometerForm.isCorrection}
+                        onChange={(e) =>
+                          setOdometerForm((prev) => ({
+                            ...prev,
+                            isCorrection: e.target.checked,
+                          }))
+                        }
+                      />
+                      <span>Correction</span>
+                    </label>
+
+                    {odometerError ? (
+                      <div className="fleet-maintenance-note fleet-maintenance-note--error">
+                        {odometerError}
+                      </div>
+                    ) : null}
+
+                    <div className="fleet-maintenance-registration-actions">
+                      <button
+                        type="button"
+                        className="fleet-maintenance-action-button fleet-maintenance-action-button--primary"
+                        onClick={handleSaveOdometerReading}
+                        disabled={!selectedFleetVehicle?.vin || savingOdometer}
+                      >
+                        {savingOdometer ? "Saving..." : "Save odometer"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {Array.isArray(maintenanceSummary?.odometerReadings) &&
+                  maintenanceSummary.odometerReadings.length ? (
+                    <div className="fleet-maintenance-registration-readonly">
+                      {maintenanceSummary.odometerReadings.slice(0, 5).map((reading) => (
+                        <span
+                          key={reading.id}
+                          className="fleet-maintenance-registration-subvalue"
+                        >
+                          {formatMiles(reading.odometerMiles)} on{" "}
+                          {formatOdometerRecordedAt(reading.recordedAt)} •{" "}
+                          {reading.source || "manual"}
+                          {reading.isCorrection ? " • correction" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
