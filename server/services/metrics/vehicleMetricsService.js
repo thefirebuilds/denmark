@@ -1721,9 +1721,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
           : "missing";
 
       const unaccountedMiles = clampNonNegative(
-        toNumber(metrics.total_miles) -
-          toNumber(metrics.trip_miles) -
-          toNumber(metrics.accounted_off_trip_miles)
+        auditedOffTripMileage.unaccountedOffTripMiles
       );
 
       metrics.unaccounted_miles = roundNumber(unaccountedMiles, 1);

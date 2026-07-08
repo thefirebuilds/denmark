@@ -1683,7 +1683,11 @@ export default function MetricsPanel() {
                       ? Number(item.off_trip_miles ?? 0)
                       : item.raw_off_trip_miles
                     : Number(review.reconciled_off_trip_miles),
-                is_reviewed: Boolean(review?.review_status),
+                is_reviewed: Boolean(
+                  review?.review_status ||
+                    review?.review_reason ||
+                    review?.reconciled_off_trip_miles != null
+                ),
               }
             : item
         );
@@ -1732,6 +1736,12 @@ export default function MetricsPanel() {
             (sum, item) => sum + Number(item.off_trip_miles ?? 0),
             0
           ),
+          accounted_off_trip_miles: segments
+            .filter((item) => item.is_reviewed)
+            .reduce((sum, item) => sum + Number(item.off_trip_miles ?? 0), 0),
+          unaccounted_off_trip_miles: segments
+            .filter((item) => !item.is_reviewed)
+            .reduce((sum, item) => sum + Number(item.off_trip_miles ?? 0), 0),
         },
         vehicles: (prev.vehicles || []).map((vehicle) => ({
           ...vehicle,
@@ -1740,6 +1750,11 @@ export default function MetricsPanel() {
         segments,
         skipped_trips: skippedTrips,
       };
+    });
+
+    await loadMetrics(selectedRange, {
+      resetExpanded: false,
+      showPageLoading: false,
     });
 
     return data;
