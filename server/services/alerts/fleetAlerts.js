@@ -988,7 +988,11 @@ async function collectDeviceConnectivityAlerts() {
               AND delivery.sent_at > stale_delivery.sent_at
           )
       )
-      SELECT 'stale' AS alert_kind, stale.*
+      SELECT
+        'stale' AS alert_kind,
+        stale.*,
+        NULL::bigint AS recovered_from_alert_id,
+        NULL::timestamptz AS recovered_from_alert_sent_at
       FROM stale
       WHERE NOT EXISTS (
         SELECT 1

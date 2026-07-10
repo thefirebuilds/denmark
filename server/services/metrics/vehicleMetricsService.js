@@ -33,6 +33,21 @@ const {
   getLatestVehicleFmvEstimates,
 } = require("../vehicles/fmvEstimateService");
 const { ensureVehicleAliasesTable } = require("../vehicles/vehicleAliases");
+const { getEnabledLocations } = require("../locations/locationSettings");
+
+function haversineMiles(lat1, lon1, lat2, lon2) {
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+  const earthRadiusMiles = 3958.8;
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return earthRadiusMiles * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 async function fetchActiveVehicles(client) {
   await ensureVehicleRuntimeSchema(client);
@@ -830,6 +845,11 @@ function normalizeAuditReview(value) {
 function applyAuditReview(row, reviewMap, keyBuilder) {
   const auditKey = keyBuilder(row);
   const review = normalizeAuditReview(reviewMap?.[auditKey]);
+  const hasManualReview = Boolean(
+    review.review_status ||
+      review.review_reason ||
+      review.reconciled_off_trip_miles != null
+  );
   const rawOffTripMiles =
     row?.off_trip_miles == null ? null : Number(row.off_trip_miles);
   const effectiveOffTripMiles =
@@ -843,7 +863,8 @@ function applyAuditReview(row, reviewMap, keyBuilder) {
     raw_off_trip_miles: rawOffTripMiles,
     off_trip_miles: effectiveOffTripMiles,
     ...review,
-    is_reviewed: Boolean(review.review_status),
+    is_manual_reviewed: hasManualReview,
+    is_reviewed: hasManualReview,
   };
 }
 
@@ -851,20 +872,245 @@ function isAccountedOffTripReview(row) {
   return Boolean(
     row?.review_status ||
       row?.review_reason ||
-      row?.reconciled_off_trip_miles != null
+      row?.reconciled_off_trip_miles != null ||
+      row?.auto_accounted === true
   );
 }
 
-function calculateAccountedOffTripMiles(trips, endDate, reviewMap, vehicleId) {
-  const audit = calculateTripOffTripAudit(trips, endDate);
-  const segments = audit.segments.map((segment) =>
-    applyAuditReview(
-      {
+function applyAutomaticOffTripReview(row, autoReviewMap) {
+  if (isAccountedOffTripReview(row)) return row;
+  const autoReview = row?.audit_key ? autoReviewMap?.[row.audit_key] : null;
+  if (!autoReview) return row;
+
+  return {
+    ...row,
+    auto_accounted: true,
+    auto_accounting_code: autoReview.code || "known_geo_transfer",
+    auto_accounting_reason:
+      autoReview.reason || "Known geo transfer between configured locations",
+    auto_accounting_route: autoReview.route || null,
+    auto_accounting_locations: autoReview.locations || [],
+    auto_accounting_observed_at: autoReview.observedAt || null,
+    review_status: row.review_status || "validated",
+    review_reason:
+      row.review_reason ||
+      autoReview.reason ||
+      "Known geo transfer between configured locations",
+    is_reviewed: true,
+  };
+}
+
+function collapseLocationRuns(rows) {
+  const runs = [];
+  for (const row of rows || []) {
+    if (!row?.location) continue;
+    const previous = runs[runs.length - 1];
+    if (previous && previous.location.id === row.location.id) {
+      previous.lastSeenAt = row.seenAt;
+      previous.count += 1;
+      continue;
+    }
+
+    runs.push({
+      location: row.location,
+      firstSeenAt: row.seenAt,
+      lastSeenAt: row.seenAt,
+      count: 1,
+    });
+  }
+  return runs;
+}
+
+function getMatchingKnownLocation(row, locations) {
+  const lat = toNumber(row?.latitude, null);
+  const lon = toNumber(row?.longitude, null);
+  if (lat == null || lon == null) return null;
+
+  let best = null;
+  for (const location of locations || []) {
+    const locationLat = toNumber(location.latitude, null);
+    const locationLon = toNumber(location.longitude, null);
+    const radiusMiles = toNumber(location.radiusMiles, 0.15);
+    if (locationLat == null || locationLon == null || !(radiusMiles > 0)) {
+      continue;
+    }
+
+    const distance = haversineMiles(lat, lon, locationLat, locationLon);
+    if (distance <= radiusMiles && (!best || distance < best.distanceMiles)) {
+      best = {
+        id: String(location.id || location.label),
+        label: location.label || location.id || "Known location",
+        kind: location.kind || "custom",
+        distanceMiles: roundNumber(distance, 3),
+      };
+    }
+  }
+  return best;
+}
+
+function getSegmentAutoAccounting(segment, telemetryRows) {
+  const startMs = segment?.previous_trip_end
+    ? new Date(segment.previous_trip_end).getTime()
+    : NaN;
+  const endMs = segment?.next_trip_start
+    ? new Date(segment.next_trip_start).getTime()
+    : NaN;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return null;
+  }
+
+  const segmentRows = (telemetryRows || []).filter((row) => {
+    const seenMs = row?.seenAt ? new Date(row.seenAt).getTime() : NaN;
+    return Number.isFinite(seenMs) && seenMs >= startMs && seenMs <= endMs;
+  });
+  const runs = collapseLocationRuns(segmentRows);
+  if (runs.length < 2) return null;
+
+  const locationIds = runs.map((run) => run.location.id);
+  const changedLocations = locationIds.some(
+    (id, index) => index > 0 && id !== locationIds[index - 1]
+  );
+  if (!changedLocations) return null;
+
+  const routeLocations = runs.map((run) => ({
+    id: run.location.id,
+    label: run.location.label,
+    kind: run.location.kind,
+    firstSeenAt: run.firstSeenAt,
+    lastSeenAt: run.lastSeenAt,
+    samples: run.count,
+  }));
+  const route = routeLocations.map((location) => location.label).join(" -> ");
+
+  return {
+    code: "known_geo_transfer",
+    reason: `Known geo transfer: ${route}`,
+    route,
+    locations: routeLocations,
+    observedAt: routeLocations[routeLocations.length - 1]?.lastSeenAt || null,
+  };
+}
+
+async function fetchAutomaticOffTripReviewMap(client, vehicles, trips, endDate) {
+  const locations = await getEnabledLocations();
+  if (!locations.length || !vehicles?.length || !trips?.length) return {};
+
+  const vehicleTrips = new Map();
+  const maps = buildTripVehicleKeyMaps(vehicles);
+  for (const trip of trips || []) {
+    const vehicleId = resolveTripVehicleId(trip, maps);
+    if (!vehicleId) continue;
+    if (!vehicleTrips.has(vehicleId)) vehicleTrips.set(vehicleId, []);
+    vehicleTrips.get(vehicleId).push(trip);
+  }
+
+  const segments = [];
+  for (const [vehicleId, tripsForVehicle] of vehicleTrips.entries()) {
+    const audit = calculateTripOffTripAudit(tripsForVehicle, endDate);
+    for (const segment of audit.segments) {
+      segments.push({
         vehicle_id: vehicleId,
         ...segment,
-      },
-      reviewMap,
-      buildSegmentAuditKey
+      });
+    }
+  }
+  if (!segments.length) return {};
+
+  const vehicleIds = Array.from(
+    new Set(segments.map((segment) => Number(segment.vehicle_id)))
+  ).filter(Number.isFinite);
+  const windowStarts = segments
+    .map((segment) => (segment.previous_trip_end ? new Date(segment.previous_trip_end) : null))
+    .filter((date) => date && !Number.isNaN(date.getTime()));
+  const windowEnds = segments
+    .map((segment) => (segment.next_trip_start ? new Date(segment.next_trip_start) : null))
+    .filter((date) => date && !Number.isNaN(date.getTime()));
+  if (!vehicleIds.length || !windowStarts.length || !windowEnds.length) return {};
+
+  const rangeStart = new Date(Math.min(...windowStarts.map((date) => date.getTime())));
+  const rangeEnd = new Date(Math.max(...windowEnds.map((date) => date.getTime())));
+
+  const { rows } = await client.query(
+    `
+      SELECT
+        v.id AS vehicle_id,
+        s.latitude,
+        s.longitude,
+        COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
+      FROM vehicle_telemetry_snapshots s
+      JOIN vehicles v
+        ON (
+          s.vin IS NOT NULL
+          AND s.vin <> ''
+          AND v.vin IS NOT NULL
+          AND LOWER(s.vin) = LOWER(v.vin)
+        )
+        OR (
+          s.dimo_token_id IS NOT NULL
+          AND v.dimo_token_id IS NOT NULL
+          AND s.dimo_token_id = v.dimo_token_id
+        )
+        OR (
+          s.external_vehicle_key IS NOT NULL
+          AND v.external_vehicle_key IS NOT NULL
+          AND s.external_vehicle_key = v.external_vehicle_key
+        )
+      WHERE v.id = ANY($1::int[])
+        AND s.latitude IS NOT NULL
+        AND s.longitude IS NOT NULL
+        AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) >= $2::timestamptz
+        AND COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) <= $3::timestamptz
+      ORDER BY v.id, COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at), s.id
+    `,
+    [vehicleIds, rangeStart.toISOString(), rangeEnd.toISOString()]
+  );
+
+  const telemetryByVehicle = new Map();
+  for (const row of rows) {
+    const location = getMatchingKnownLocation(row, locations);
+    if (!location) continue;
+    const vehicleId = String(row.vehicle_id);
+    if (!telemetryByVehicle.has(vehicleId)) telemetryByVehicle.set(vehicleId, []);
+    telemetryByVehicle.get(vehicleId).push({
+      seenAt: row.seen_at,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      location,
+    });
+  }
+
+  const autoReviewMap = {};
+  for (const segment of segments) {
+    const autoReview = getSegmentAutoAccounting(
+      segment,
+      telemetryByVehicle.get(String(segment.vehicle_id)) || []
+    );
+    if (!autoReview) continue;
+    autoReviewMap[buildSegmentAuditKey(segment)] = autoReview;
+  }
+
+  return autoReviewMap;
+}
+
+function calculateAccountedOffTripMiles(
+  trips,
+  endDate,
+  reviewMap,
+  vehicleId,
+  autoReviewMap = {}
+) {
+  const audit = calculateTripOffTripAudit(trips, endDate);
+  const segments = audit.segments.map((segment) =>
+    applyAutomaticOffTripReview(
+      applyAuditReview(
+        {
+          vehicle_id: vehicleId,
+          ...segment,
+        },
+        reviewMap,
+        buildSegmentAuditKey
+      ),
+      autoReviewMap
     )
   );
   const skippedTrips = audit.skippedTrips.map((trip) =>
@@ -1178,6 +1424,12 @@ async function getVehicleMetrics(rangeKey = "30d") {
     const capitalMetricsRows = await getCapitalMetricsByVehicle(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const offTripAuditReviews = await fetchOffTripAuditReviews(client);
+    const automaticOffTripReviewMap = await fetchAutomaticOffTripReviewMap(
+      client,
+      vehicles,
+      trips,
+      endDate
+    );
     const allRangeStart =
       startDate ||
       [
@@ -1367,7 +1619,8 @@ async function getVehicleMetrics(rangeKey = "30d") {
         tripsForVehicle,
         endDate,
         offTripAuditReviews,
-        vehicleId
+        vehicleId,
+        automaticOffTripReviewMap
       );
 
       metrics.toll_charge_count = Number(tollExposure.toll_charge_count || 0);
@@ -1880,6 +2133,12 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
       }),
     ]);
     const reviewMap = await fetchOffTripAuditReviews(client);
+    const automaticOffTripReviewMap = await fetchAutomaticOffTripReviewMap(
+      client,
+      vehicles,
+      trips,
+      endDate
+    );
 
     const maps = buildTripVehicleKeyMaps(vehicles);
     const vehicleTrips = new Map();
@@ -1948,7 +2207,10 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
     }
 
     const reviewedRows = rows.map((row) =>
-      applyAuditReview(row, reviewMap, buildSegmentAuditKey)
+      applyAutomaticOffTripReview(
+        applyAuditReview(row, reviewMap, buildSegmentAuditKey),
+        automaticOffTripReviewMap
+      )
     );
     const reviewedSkippedRows = rowsSkipped.map((row) =>
       applyAuditReview(row, reviewMap, buildSkippedTripAuditKey)
