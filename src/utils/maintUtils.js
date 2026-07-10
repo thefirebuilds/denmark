@@ -222,7 +222,8 @@ export function isRuleActionableForQueue(rule, now = new Date()) {
   if (
     status === "failed" ||
     status === "overdue" ||
-    status === "due_soon"
+    status === "due_soon" ||
+    status === "unknown"
   ) {
     return true;
   }
@@ -1005,7 +1006,9 @@ export function buildQueueItemsFromSummary(summary, historyMap = {}) {
           ? "high"
           : "medium",
       notes:
-        String(rule.status || "").toLowerCase() === "failed"
+        String(rule.status || "").toLowerCase() === "unknown"
+          ? "No maintenance record exists yet; establish the service baseline."
+          : String(rule.status || "").toLowerCase() === "failed"
           ? "Inspection result failed and needs attention."
           : "Inspection item is due now or overdue.",
       source: "rule",
