@@ -1148,6 +1148,10 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
         changedBy: "system:return-geo-location",
         reason: `return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}`,
       });
+      await transitionTripStage(row.id, "awaiting_expenses", {
+        changedBy: "system:return-geo-location",
+        reason: `trip ended and return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}`,
+      });
       advanced += 1;
     } catch (err) {
       console.warn(

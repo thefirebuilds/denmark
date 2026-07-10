@@ -449,6 +449,8 @@ const TRIP_SELECT = `
     t.max_engine_rpm,
     t.max_speed_mph,
     t.speed_over_80_count,
+    t.guest_rating_received,
+    t.guest_rating_received_at,
     ti.updated_at,
     ti.message_count,
     ti.unread_messages,
@@ -911,6 +913,7 @@ router.patch("/:id", async (req, res) => {
     fuel_reimbursement_total,
     ticket_reimbursed,
     expense_status,
+    guest_rating_received,
     closed_out,
     closed_out_at,
   } = req.body || {};
@@ -941,6 +944,7 @@ router.patch("/:id", async (req, res) => {
       : normalizeTollReviewStatus(toll_review_status, effectiveHasTolls);
 
   const normalizedClosedOut = toNullableBoolean(closed_out);
+  const normalizedGuestRatingReceived = toNullableBoolean(guest_rating_received);
   const normalizedTicketReimbursed = toNullableNumber(ticket_reimbursed);
   const ticketFieldWasProvided = Object.prototype.hasOwnProperty.call(
     req.body || {},
@@ -966,6 +970,7 @@ router.patch("/:id", async (req, res) => {
           expense_status,
           has_tolls,
           toll_review_status,
+          guest_rating_received,
           closed_out
         FROM trips
         WHERE id = $1
@@ -1069,8 +1074,14 @@ router.patch("/:id", async (req, res) => {
             ELSE closed_out_at
           END,
           expense_status = COALESCE($19, expense_status),
+          guest_rating_received = COALESCE($20, guest_rating_received),
+          guest_rating_received_at = CASE
+            WHEN $20::boolean = TRUE THEN COALESCE(guest_rating_received_at, NOW())
+            WHEN $20::boolean = FALSE THEN NULL
+            ELSE guest_rating_received_at
+          END,
           updated_at = NOW()
-        WHERE id = $20
+        WHERE id = $21
         RETURNING id
       `,
       [
@@ -1101,6 +1112,7 @@ router.patch("/:id", async (req, res) => {
         normalizedClosedOut,
         closed_out_at || null,
         normalizedExpenseStatus,
+        normalizedGuestRatingReceived,
         tripId,
       ]
     );
@@ -1170,6 +1182,10 @@ router.patch("/:id", async (req, res) => {
         effectiveTollReviewStatus == null
           ? existingTrip.toll_review_status
           : effectiveTollReviewStatus,
+      guest_rating_received:
+        normalizedGuestRatingReceived == null
+          ? existingTrip.guest_rating_received
+          : normalizedGuestRatingReceived,
       closed_out:
         normalizedClosedOut == null ? existingTrip.closed_out : normalizedClosedOut,
     };

@@ -11,10 +11,32 @@ async function ensureTripRuntimeSchema(client = pool) {
           ADD COLUMN IF NOT EXISTS pickup_location text,
           ADD COLUMN IF NOT EXISTS return_location text,
           ADD COLUMN IF NOT EXISTS max_speed_mph numeric,
-          ADD COLUMN IF NOT EXISTS speed_over_80_count integer DEFAULT 0 NOT NULL;
+          ADD COLUMN IF NOT EXISTS speed_over_80_count integer DEFAULT 0 NOT NULL,
+          ADD COLUMN IF NOT EXISTS guest_rating_received boolean DEFAULT false NOT NULL,
+          ADD COLUMN IF NOT EXISTS guest_rating_received_at timestamptz;
 
         CREATE INDEX IF NOT EXISTS idx_trips_deleted_at
           ON public.trips (deleted_at);
+      `);
+
+      await client.query(`
+        UPDATE public.trips t
+        SET guest_rating_received = TRUE,
+            guest_rating_received_at = COALESCE(
+              t.guest_rating_received_at,
+              rated.rated_at
+            )
+        FROM (
+          SELECT
+            reservation_id,
+            MAX(COALESCE(message_timestamp, created_at)) AS rated_at
+          FROM public.messages
+          WHERE message_type = 'trip_rated'
+            AND reservation_id IS NOT NULL
+          GROUP BY reservation_id
+        ) rated
+        WHERE t.reservation_id = rated.reservation_id
+          AND t.guest_rating_received = FALSE
       `);
 
       await ensureDimoSpeedStoredAsMph(client);

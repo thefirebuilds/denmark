@@ -140,6 +140,7 @@ export default function SelectedTripPanel({
     toll_count: "",
     toll_total: "",
     toll_review_status: "none",
+    guest_rating_received: false,
     closed_out: false,
   });
   const [closeoutSavedNotice, setCloseoutSavedNotice] = useState("");
@@ -163,6 +164,7 @@ export default function SelectedTripPanel({
       toll_count: toFieldValue(selectedTrip?.toll_count),
       toll_total: toFieldValue(selectedTrip?.toll_total),
       toll_review_status: selectedTrip?.toll_review_status || "none",
+      guest_rating_received: Boolean(selectedTrip?.guest_rating_received),
       closed_out: Boolean(selectedTrip?.closed_out),
     });
     setCloseoutSavedNotice("");
@@ -260,6 +262,11 @@ export default function SelectedTripPanel({
           ["billed", "waived", "none"].includes(tollReview),
       },
       {
+        key: "rating",
+        label: "Guest rating checked",
+        done: Boolean(closeoutForm.guest_rating_received),
+      },
+      {
         key: "closed",
         label: "Closeout flag set",
         done: Boolean(closeoutForm.closed_out),
@@ -327,6 +334,7 @@ export default function SelectedTripPanel({
       toll_review_status: hasTollsPayload
         ? merged.toll_review_status || "pending"
         : "none",
+      guest_rating_received: Boolean(merged.guest_rating_received),
       closed_out: closedOut,
       closed_out_at: closedOut ? selectedTrip?.closed_out_at || getNowIso() : null,
       needs_review: false,
@@ -370,6 +378,9 @@ export default function SelectedTripPanel({
           savedTrip.toll_review_status ||
           optimisticPayload.toll_review_status ||
           "none",
+        guest_rating_received: Boolean(
+          savedTrip.guest_rating_received ?? optimisticPayload.guest_rating_received
+        ),
         closed_out: Boolean(savedTrip.closed_out ?? optimisticPayload.closed_out),
       });
       setCloseoutSavedNotice("Saved to trip record");
@@ -717,6 +728,17 @@ function renderLocationLink(vehicle) {
                     </option>
                   ))}
                 </select>
+              </label>
+
+              <label className="detail-closeout-field detail-closeout-checkfield">
+                <span>Guest left a rating</span>
+                <input
+                  type="checkbox"
+                  checked={closeoutForm.guest_rating_received}
+                  onChange={(event) =>
+                    updateCloseoutField("guest_rating_received", event.target.checked)
+                  }
+                />
               </label>
             </div>
 

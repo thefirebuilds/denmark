@@ -1208,6 +1208,19 @@ body {
   gap: 12px;
 }
 
+.message-maintenance-brief--collapsed {
+  gap: 0;
+}
+
+.message-maintenance-brief-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #dbeafe;
+}
+
 .message-maintenance-brief-section {
   display: grid;
   gap: 8px;

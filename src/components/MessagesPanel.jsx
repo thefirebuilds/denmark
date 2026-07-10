@@ -26,6 +26,7 @@ const COMPLETED_SYNTHETIC_TASKS_STORAGE_KEY = "denmark.completedSyntheticTasks";
 const LIVE_MESSAGE_CACHE_STORAGE_KEY = "denmark.liveMessageQueue";
 const RECENTLY_RESOLVED_MESSAGES_STORAGE_KEY = "denmark.recentlyResolvedMessages";
 const DAILY_BRIEF_DISPLAY_STORAGE_KEY = "denmark.dailyBriefDisplay";
+const MAINTENANCE_BRIEF_DISPLAY_STORAGE_KEY = "denmark.maintenanceBriefDisplay";
 const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
 const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 180 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
@@ -242,6 +243,38 @@ function saveDailyBriefDisplayState(state) {
   try {
     window.localStorage.setItem(
       DAILY_BRIEF_DISPLAY_STORAGE_KEY,
+      JSON.stringify(state || {})
+    );
+  } catch {
+    // localStorage may be unavailable in privacy modes.
+  }
+}
+
+function getLocalDateKey(value = new Date()) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "today";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function loadMaintenanceBriefDisplayState() {
+  try {
+    const raw = window.localStorage.getItem(MAINTENANCE_BRIEF_DISPLAY_STORAGE_KEY);
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMaintenanceBriefDisplayState(state) {
+  try {
+    window.localStorage.setItem(
+      MAINTENANCE_BRIEF_DISPLAY_STORAGE_KEY,
       JSON.stringify(state || {})
     );
   } catch {
@@ -1199,6 +1232,10 @@ function isMaintenanceBriefNotice(message) {
   return type === "maintenance_brief";
 }
 
+function getMaintenanceBriefDisplayKey() {
+  return `maintenance-brief:${getLocalDateKey(new Date())}`;
+}
+
 function isHandoffReadyTask(message) {
   const type = message?.type || message?.message_type;
   return type === "handoff_ready_required" && message?.trip_id;
@@ -1825,6 +1862,9 @@ export default function MessagesPanel({
   const [ackingRefuelId, setAckingRefuelId] = useState(null);
   const [dailyBriefDisplay, setDailyBriefDisplay] = useState(() =>
     loadDailyBriefDisplayState()
+  );
+  const [maintenanceBriefDisplay, setMaintenanceBriefDisplay] = useState(() =>
+    loadMaintenanceBriefDisplayState()
   );
   const [expandedMaintenanceIds, setExpandedMaintenanceIds] = useState(() => new Set());
   const [completedSyntheticTaskIds, setCompletedSyntheticTaskIds] = useState(() =>
@@ -2730,6 +2770,15 @@ async function handleExportGuestInspectionSheet(message) {
     });
   }
 
+  function setMaintenanceBriefDisplayMode(message, mode) {
+    const key = getMaintenanceBriefDisplayKey(message);
+    setMaintenanceBriefDisplay((prev) => {
+      const next = { ...prev, [key]: mode };
+      saveMaintenanceBriefDisplayState(next);
+      return next;
+    });
+  }
+
   async function handleRefreshDailyBrief(message) {
     const key = getDailyBriefDisplayKey(message);
     if (refreshingDailyBriefId) return;
@@ -3364,6 +3413,13 @@ async function handleExportGuestInspectionSheet(message) {
               isOperationalTripNotice(message) && !canConfirmBooking;
             const canShowMaintenance = isMaintenanceNotice(message);
             const canShowMaintenanceBrief = isMaintenanceBriefNotice(message);
+            const maintenanceBriefDisplayKey = getMaintenanceBriefDisplayKey(message);
+            const maintenanceBriefMode =
+              maintenanceBriefDisplay[maintenanceBriefDisplayKey] || "open";
+            const isMaintenanceBriefCollapsed =
+              canShowMaintenanceBrief && maintenanceBriefMode === "collapsed";
+            const isMaintenanceBriefDismissed =
+              canShowMaintenanceBrief && maintenanceBriefMode === "dismissed";
             const maintenanceVehicleKey = getMaintenanceVehicleKey(message);
             const hasMaintenanceDetails =
               Number(message.maintenance_task_count || 0) > 0 &&
@@ -3436,7 +3492,7 @@ async function handleExportGuestInspectionSheet(message) {
             ).length;
             const canShowInvoiceSummary = isReimbursementInvoiceMessage(message);
 
-            if (isDailyBriefDismissed) {
+            if (isDailyBriefDismissed || isMaintenanceBriefDismissed) {
               return null;
             }
 
@@ -3558,9 +3614,43 @@ async function handleExportGuestInspectionSheet(message) {
 
                 {canShowMaintenanceBrief && (
                   <div
-                    className="message-maintenance-brief"
+                    className={`message-maintenance-brief ${
+                      isMaintenanceBriefCollapsed
+                        ? "message-maintenance-brief--collapsed"
+                        : ""
+                    }`}
                     onClick={(event) => event.stopPropagation()}
                   >
+                    <div className="message-maintenance-brief-controls">
+                      <strong>Maintenance brief</strong>
+                      <div className="message-guest-reply-actions">
+                        <button
+                          type="button"
+                          className="message-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMaintenanceBriefDisplayMode(
+                              message,
+                              isMaintenanceBriefCollapsed ? "open" : "collapsed"
+                            );
+                          }}
+                        >
+                          {isMaintenanceBriefCollapsed ? "Expand" : "Collapse"}
+                        </button>
+                        <button
+                          type="button"
+                          className="message-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMaintenanceBriefDisplayMode(message, "dismissed");
+                          }}
+                        >
+                          Close for today
+                        </button>
+                      </div>
+                    </div>
+                    {!isMaintenanceBriefCollapsed ? (
+                      <>
                     {[
                       {
                         key: "today",
@@ -3637,6 +3727,8 @@ async function handleExportGuestInspectionSheet(message) {
                         ) : null}
                       </div>
                     ))}
+                      </>
+                    ) : null}
                   </div>
                 )}
 

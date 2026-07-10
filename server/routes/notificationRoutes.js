@@ -168,6 +168,19 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
   const match = result.rows[0];
   if (!match) return null;
 
+  if (event.classification === "trip_rated") {
+    await pool.query(
+      `
+        UPDATE trips
+        SET guest_rating_received = TRUE,
+            guest_rating_received_at = COALESCE(guest_rating_received_at, $2::timestamptz),
+            updated_at = NOW()
+        WHERE id = $1
+      `,
+      [trip.id, eventAt]
+    );
+  }
+
   await pool.query(
     `
       UPDATE notification_events
@@ -182,7 +195,7 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
             ' mi of ',
             $3::text
           )
-          ELSE 'Turo returned notification matched to trip'
+          ELSE $5::text
         END
       WHERE id = $1
     `,
@@ -191,6 +204,9 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
       match.miles_from_return_location,
       location?.label || "configured return location",
       location?.radiusMiles ?? 0,
+      event.classification === "trip_rated"
+        ? "Turo rating notification matched to completed trip"
+        : "Turo returned notification matched to trip",
     ]
   );
 
@@ -199,7 +215,9 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
     match.miles_from_return_location == null
       ? null
       : Number(match.miles_from_return_location);
-  const reason = Number.isFinite(gpsMiles)
+  const reason = event.classification === "trip_rated"
+    ? "Turo rating notification confirms the guest completed the trip"
+    : Number.isFinite(gpsMiles)
     ? `Turo return notification matched; GPS ${gpsMiles.toFixed(2)} mi from ${
         location?.label || "configured return location"
       }`
@@ -684,7 +702,7 @@ async function upsertTuroNotificationEvent(event) {
 }
 
 async function findTripForReturnedNotification(event) {
-  if (event.classification !== "trip_returned") return null;
+  if (!["trip_returned", "trip_rated"].includes(event.classification)) return null;
 
   const guestName = cleanString(event.guestName, {
     maxLength: 120,
@@ -948,11 +966,17 @@ router.post("/turo", async (req, res) => {
       );
     }
 
-    if (result.inserted && result.id && result.classification === "trip_returned") {
-      syncReturnedTripCalendarNotice(event, result.id);
+    if (
+      result.inserted &&
+      result.id &&
+      ["trip_returned", "trip_rated"].includes(result.classification)
+    ) {
+      if (result.classification === "trip_returned") {
+        syncReturnedTripCalendarNotice(event, result.id);
+      }
       void autoVerifyReturnedNotificationByGps(event, result.id).catch((err) => {
         console.warn(
-          "[notifications/turo] returned trip GPS auto-check failed:",
+          "[notifications/turo] completed trip auto-stage failed:",
           err.message || err
         );
       });

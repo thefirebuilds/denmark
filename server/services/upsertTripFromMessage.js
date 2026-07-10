@@ -14,6 +14,7 @@ const {
 const {
   ensureVehicleAliasesTable,
 } = require("./vehicles/vehicleAliases");
+const { transitionTripStage } = require("./trips/transitionTripStage");
 
 function normalizeTripStatus(messageType) {
   switch (messageType) {
@@ -114,12 +115,25 @@ async function upsertTripFromMessage(savedMessage) {
           pickup_location = COALESCE(pickup_location, $5),
           return_location = COALESCE(return_location, $6),
           last_message_id = COALESCE($7, last_message_id),
+          guest_rating_received = CASE
+            WHEN $8::boolean THEN TRUE
+            ELSE guest_rating_received
+          END,
+          guest_rating_received_at = CASE
+            WHEN $8::boolean THEN COALESCE(
+              guest_rating_received_at,
+              $9::timestamptz,
+              NOW()
+            )
+            ELSE guest_rating_received_at
+          END,
           updated_at = CASE
             WHEN turo_vehicle_id IS NULL AND $2 IS NOT NULL THEN NOW()
             WHEN vehicle_name IS NULL AND $3 IS NOT NULL THEN NOW()
             WHEN guest_name IS NULL AND $4 IS NOT NULL THEN NOW()
             WHEN pickup_location IS NULL AND $5 IS NOT NULL THEN NOW()
             WHEN return_location IS NULL AND $6 IS NOT NULL THEN NOW()
+            WHEN $8::boolean THEN NOW()
             ELSE updated_at
           END
         WHERE reservation_id = $1
@@ -139,10 +153,36 @@ async function upsertTripFromMessage(savedMessage) {
         savedMessage.pickup_location || null,
         savedMessage.return_location || null,
         savedMessage.message_id || null,
+        savedMessage.message_type === "trip_rated",
+        savedMessage.message_timestamp || savedMessage.created_at || null,
       ]
     );
 
-    return existing.rows[0] || null;
+    let existingTrip = existing.rows[0] || null;
+
+    if (
+      existingTrip?.id &&
+      savedMessage.message_type === "trip_rated" &&
+      ["in_progress", "turnaround"].includes(existingTrip.workflow_stage)
+    ) {
+      const reason = "Turo rating confirms the guest completed the trip";
+
+      if (existingTrip.workflow_stage === "in_progress") {
+        existingTrip = await transitionTripStage(existingTrip.id, "turnaround", {
+          changedBy: "system:trip-rated-message",
+          reason,
+          changedAt: savedMessage.message_timestamp || savedMessage.created_at,
+        });
+      }
+
+      existingTrip = await transitionTripStage(existingTrip.id, "awaiting_expenses", {
+        changedBy: "system:trip-rated-message",
+        reason,
+        changedAt: savedMessage.message_timestamp || savedMessage.created_at,
+      });
+    }
+
+    return existingTrip;
   }
 
   const isCanceledMessage = tripStatus === "canceled";

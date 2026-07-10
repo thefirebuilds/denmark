@@ -1369,6 +1369,8 @@ CREATE TABLE public.trips (
     max_engine_rpm numeric,
     max_speed_mph numeric,
     speed_over_80_count integer DEFAULT 0 NOT NULL,
+    guest_rating_received boolean DEFAULT false NOT NULL,
+    guest_rating_received_at timestamp with time zone,
     notes text,
     deleted_at timestamp with time zone,
     CONSTRAINT trips_expense_status_check CHECK (((expense_status IS NULL) OR (expense_status = ANY (ARRAY['none'::text, 'pending'::text, 'submitted'::text, 'resolved'::text, 'waived'::text])))),
