@@ -227,7 +227,23 @@ export default function FleetSnapshotPanel({
   }
 
   function isActiveTrip(trip) {
+    const workflowStage = String(trip?.workflow_stage || "").toLowerCase();
     const displayStatus = String(trip?.display_status || "").toLowerCase();
+
+    if (
+      [
+        "turnaround",
+        "awaiting_expenses",
+        "complete",
+        "completed",
+        "closed",
+        "canceled",
+        "cancelled",
+      ].includes(workflowStage)
+    ) {
+      return false;
+    }
+
     return (
       isTripInProgress(trip) ||
       displayStatus === "active" ||
@@ -405,6 +421,21 @@ export default function FleetSnapshotPanel({
     );
   }
 
+  function getPostTripForVehicle(vehicle) {
+    return trips
+      .filter((trip) => {
+        if (!tripMatchesVehicle(vehicle, trip) || isCanceledTrip(trip)) return false;
+        const workflowStage = String(trip?.workflow_stage || "").toLowerCase();
+        return workflowStage === "awaiting_expenses" || workflowStage === "turnaround";
+      })
+      .sort((a, b) => getTripEndMs(b) - getTripEndMs(a))[0];
+  }
+
+  function getPostTripLabel(trip) {
+    const workflowStage = String(trip?.workflow_stage || "").toLowerCase();
+    return workflowStage === "turnaround" ? "Turnaround" : "Awaiting expenses";
+  }
+
   function getVehicleDisplayOdometer(vehicle) {
     const liveOdometer = Number(vehicle?.telemetry?.odometer);
     if (Number.isFinite(liveOdometer) && liveOdometer > 0) {
@@ -435,9 +466,12 @@ export default function FleetSnapshotPanel({
     return vehicles
       .map((vehicle) => {
         const currentTrip = getCurrentTripForVehicle(vehicle);
+        const postTrip = currentTrip ? null : getPostTripForVehicle(vehicle);
         const nextTrip = currentTrip ? null : getNextTripForVehicle(vehicle);
         const nextActionMs = currentTrip
           ? getTripEndMs(currentTrip)
+          : postTrip
+          ? getTripEndMs(postTrip)
           : nextTrip
           ? getTripStartMs(nextTrip)
           : Number.POSITIVE_INFINITY;
@@ -448,6 +482,7 @@ export default function FleetSnapshotPanel({
         return {
           vehicle,
           currentTrip,
+          postTrip,
           nextTrip,
           sortGroup: Number.isFinite(nextActionMs) ? 0 : 1,
           sortTime: nextActionMs,
@@ -579,7 +614,7 @@ export default function FleetSnapshotPanel({
         </section>
 
         <div className="fleet-list">
-          {sortedVehicleRows.map(({ vehicle, currentTrip, nextTrip }) => {
+          {sortedVehicleRows.map(({ vehicle, currentTrip, postTrip, nextTrip }) => {
             const nameTitle = vehicle.nickname || "Unknown vehicle";
             const subtitle = [vehicle.year, vehicle.make, vehicle.model]
               .filter(Boolean)
@@ -591,6 +626,10 @@ export default function FleetSnapshotPanel({
             const statusTone = getVehicleEmergencyTone(vehicle);
             const tripStateLabel = currentTrip
               ? `On trip • ${getReturnLabel(currentTrip)}`
+              : postTrip
+              ? `${getPostTripLabel(postTrip)} • Trip #${
+                  postTrip.reservation_id || postTrip.id
+                }`
               : nextTrip
               ? `Booked • ${formatDateShort(nextTrip.trip_start)}`
               : "Available";
@@ -713,26 +752,19 @@ export default function FleetSnapshotPanel({
                       ) : null}
 
                       <div className="fleet-meta-item fleet-meta-item--full">
-                        <div className="detail-label">Current trip</div>
+                        <div className="detail-label">Trip status</div>
                         <div className="detail-value detail-value--compact">
                           {(() => {
-                            const currentTrip = trips.find(
-                              (trip) => tripMatchesVehicle(vehicle, trip) && isActiveTrip(trip)
-                            );
-                            const nextTrip = trips
-                              .filter(
-                                (trip) =>
-                                  tripMatchesVehicle(vehicle, trip) &&
-                                  !isActiveTrip(trip) &&
-                                  !isCanceledTrip(trip) &&
-                                  getTripStartMs(trip) > Date.now()
-                              )
-                              .sort((a, b) => getTripStartMs(a) - getTripStartMs(b))[0];
-
                             if (currentTrip) {
                               return `On trip #${currentTrip.reservation_id || currentTrip.id} • ${
                                 currentTrip.guest_name || "Unknown guest"
                               }`;
+                            }
+
+                            if (postTrip) {
+                              return `${getPostTripLabel(postTrip)} for trip #${
+                                postTrip.reservation_id || postTrip.id
+                              } • ${postTrip.guest_name || "Unknown guest"}`;
                             }
 
                             if (nextTrip) {
