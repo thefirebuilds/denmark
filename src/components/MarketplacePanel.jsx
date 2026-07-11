@@ -581,6 +581,15 @@ function buildEnrichUrl(url) {
     : `${normalized}#${ENRICH_URL_FLAG}`;
 }
 
+function getMarketplaceAdNumber(item) {
+  const url = String(item?.url || "");
+  return (
+    url.match(/\/marketplace\/item\/(\d{8,20})/i)?.[1] ||
+    url.match(/[?&](?:item_id|listing_id)=(\d{8,20})/i)?.[1] ||
+    null
+  );
+}
+
 function statusTone(status) {
   switch (status) {
     case "candidate":
@@ -613,6 +622,8 @@ function buildIgnoreHaystack(item) {
 
 function buildSearchHaystack(item) {
   return [
+    item.id,
+    item.url,
     item.title,
     item.listed_location,
     item.vin,
@@ -1088,8 +1099,15 @@ async function loadListings({ preserveSelection = true } = {}) {
 
   const filteredListings = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const isAdNumberSearch = /^\d{10,20}$/.test(needle);
 
     const next = listings.filter((item) => {
+      const haystack = buildSearchHaystack(item);
+
+      if (isAdNumberSearch) {
+        return haystack.includes(needle);
+      }
+
       if (!includeHidden && item.hidden) return false;
       if (shouldHideForMileage(item)) return false;
       if (shouldHideForYear(item)) return false;
@@ -1100,7 +1118,6 @@ async function loadListings({ preserveSelection = true } = {}) {
       const fresh = isFresh(item);
       const lastSeenAgeDays = getLastSeenAgeDays(item);
       const ignoreHaystack = buildIgnoreHaystack(item);
-      const haystack = buildSearchHaystack(item);
       const outlierLabel = item?.cohort_meta?.outlierLabel || null;
 
       if (statusFilter === "outlier") {
@@ -2463,6 +2480,10 @@ async function loadListings({ preserveSelection = true } = {}) {
                 </div>
 
                 <div className="marketplace-keyvals">
+                  <div><span>Ad number</span><strong>{getMarketplaceAdNumber(selected) || "—"}</strong></div>
+                  <div><span>Denmark record</span><strong>{selected.id || "—"}</strong></div>
+                  <div><span>Visibility</span><strong>{selected.hidden ? "Ignored" : "Visible"}</strong></div>
+                  <div><span>Ignored at</span><strong>{selected.ignored_at ? new Date(selected.ignored_at).toLocaleString() : "—"}</strong></div>
                   <div><span>Year</span><strong>{inferYear(selected) || "—"}</strong></div>
                   <div><span>Make</span><strong>{inferMake(selected) || "—"}</strong></div>
                   <div><span>Model</span><strong>{inferModel(selected) || "—"}</strong></div>

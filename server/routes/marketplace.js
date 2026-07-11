@@ -676,6 +676,7 @@ router.get("/listings", async (req, res) => {
     const unviewedOnly = String(req.query.unviewed || "false") === "true";
     const status = req.query.status ? String(req.query.status).trim().toLowerCase() : null;
     const search = req.query.search ? String(req.query.search).trim() : null;
+    const isAdNumberSearch = /^\d{10,20}$/.test(search || "");
     const freshOnly = String(req.query.freshOnly || "false") === "true";
     const minPrice = req.query.minPrice != null ? Number(req.query.minPrice) : null;
     const maxPrice = req.query.maxPrice != null ? Number(req.query.maxPrice) : null;
@@ -712,48 +713,48 @@ router.get("/listings", async (req, res) => {
     const params = [];
     let i = 1;
 
-    if (!includeHidden) {
+    if (!includeHidden && !isAdNumberSearch) {
       where.push(`hidden = FALSE`);
     }
 
-    if (status === "uncontacted") {
+    if (!isAdNumberSearch && status === "uncontacted") {
       where.push(`COALESCE(decision_status, 'new') NOT IN ('candidate', 'contacted')`);
-    } else if (status && status !== "all") {
+    } else if (!isAdNumberSearch && status && status !== "all") {
       where.push(`COALESCE(decision_status, 'new') = $${i++}`);
       params.push(status);
     }
 
-    if (freshOnly) {
+    if (!isAdNumberSearch && freshOnly) {
       where.push(`COALESCE(last_seen_at, created_at) > COALESCE(reviewed_at, TIMESTAMP 'epoch')`);
       where.push(`COALESCE(decision_status, 'new') NOT IN ('candidate', 'contacted')`);
       where.push(`COALESCE(open_count, 0) = 0`);
     }
 
-    if (unviewedOnly) {
+    if (!isAdNumberSearch && unviewedOnly) {
       where.push(`COALESCE(open_count, 0) = 0`);
     }
 
-    if (Number.isFinite(effectiveMinPrice)) {
+    if (!isAdNumberSearch && Number.isFinite(effectiveMinPrice)) {
       where.push(`(price_numeric IS NULL OR price_numeric >= $${i++})`);
       params.push(effectiveMinPrice);
     }
 
-    if (Number.isFinite(effectiveMaxPrice)) {
+    if (!isAdNumberSearch && Number.isFinite(effectiveMaxPrice)) {
       where.push(`(price_numeric IS NULL OR price_numeric <= $${i++})`);
       params.push(effectiveMaxPrice);
     }
 
-    if (Number.isFinite(effectiveMinMiles)) {
+    if (!isAdNumberSearch && Number.isFinite(effectiveMinMiles)) {
       where.push(`(driven_miles IS NULL OR driven_miles >= $${i++})`);
       params.push(effectiveMinMiles);
     }
 
-    if (Number.isFinite(effectiveMaxMiles)) {
+    if (!isAdNumberSearch && Number.isFinite(effectiveMaxMiles)) {
       where.push(`(driven_miles IS NULL OR driven_miles < $${i++})`);
       params.push(effectiveMaxMiles);
     }
 
-    if (Number.isFinite(effectiveMinYear)) {
+    if (!isAdNumberSearch && Number.isFinite(effectiveMinYear)) {
       where.push(`(
         COALESCE(
           (substring(COALESCE(title, raw_text_sample, '') from '(19[0-9]{2}|20[0-9]{2})'))::int,
@@ -763,7 +764,11 @@ router.get("/listings", async (req, res) => {
       params.push(effectiveMinYear);
     }
 
-    if (!includeHidden && DEFAULT_MARKETPLACE_SCREENING_RULES.excludedFuelTypes.length > 0) {
+    if (
+      !isAdNumberSearch &&
+      !includeHidden &&
+      DEFAULT_MARKETPLACE_SCREENING_RULES.excludedFuelTypes.length > 0
+    ) {
       where.push(`(
         fuel_type IS NULL
         OR LOWER(TRIM(fuel_type)) <> ALL($${i++}::text[])
@@ -775,7 +780,7 @@ router.get("/listings", async (req, res) => {
       );
     }
 
-    if (!includeHidden && invalidListingTerms.length > 0) {
+    if (!isAdNumberSearch && !includeHidden && invalidListingTerms.length > 0) {
       where.push(`NOT EXISTS (
         SELECT 1
         FROM unnest($${i++}::text[]) AS invalid(term)
@@ -784,7 +789,7 @@ router.get("/listings", async (req, res) => {
       params.push(invalidListingTerms);
     }
 
-    if (!includeHidden && ignoreKeywords.length > 0) {
+    if (!isAdNumberSearch && !includeHidden && ignoreKeywords.length > 0) {
       where.push(`NOT EXISTS (
         SELECT 1
         FROM unnest($${i++}::text[]) AS ignored(keyword)
@@ -797,6 +802,8 @@ router.get("/listings", async (req, res) => {
       where.push(`
         (
           title ILIKE $${i}
+          OR CAST(id AS text) ILIKE $${i}
+          OR url ILIKE $${i}
           OR seller_name ILIKE $${i}
           OR vin ILIKE $${i}
           OR listed_location ILIKE $${i}
