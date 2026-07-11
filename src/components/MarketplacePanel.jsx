@@ -581,6 +581,19 @@ function buildEnrichUrl(url) {
     : `${normalized}#${ENRICH_URL_FLAG}`;
 }
 
+function getMarketplaceListingId(value) {
+  const match = String(value || "").match(/\/marketplace\/(?:item\/)?(\d{8,})/);
+  return match?.[1] || null;
+}
+
+function isSameMarketplaceListing(item, payload) {
+  const payloadListingId = payload?.listingId || getMarketplaceListingId(payload?.url);
+  const itemListingId = getMarketplaceListingId(item?.url);
+  return payloadListingId && itemListingId
+    ? payloadListingId === itemListingId
+    : item?.url === payload?.url;
+}
+
 function getMarketplaceAdNumber(item) {
   const url = String(item?.url || "");
   return (
@@ -1065,7 +1078,7 @@ async function loadListings({ preserveSelection = true } = {}) {
             setListings((prev) =>
               includeHiddenRef.current
                 ? prev.map((item) =>
-                    item.url === payload.url
+                    isSameMarketplaceListing(item, payload)
                       ? {
                           ...item,
                           hidden: true,
@@ -1073,7 +1086,7 @@ async function loadListings({ preserveSelection = true } = {}) {
                         }
                       : item
                   )
-                : prev.filter((item) => item.url !== payload.url)
+                : prev.filter((item) => !isSameMarketplaceListing(item, payload))
             );
             return;
           }

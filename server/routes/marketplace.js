@@ -474,14 +474,24 @@ function normalizeDecisionStatus(value) {
   return allowed.has(v) ? v : "new";
 }
 
+function getMarketplaceListingId(u) {
+  if (!u) return null;
+  try {
+    const url = new URL(u);
+    const pathMatch = url.pathname.match(/\/marketplace\/(?:item\/)?(\d{8,})\/?(?:$|\/)/);
+    return pathMatch?.[1] || url.searchParams.get("item_id") || null;
+  } catch {
+    const match = String(u).match(/\/marketplace\/(?:item\/)?(\d{8,})/);
+    return match?.[1] || null;
+  }
+}
+
 function normalizeMarketplaceUrl(u) {
   if (!u) return null;
   try {
     const url = new URL(u);
-    const m =
-      url.pathname.match(/\/marketplace\/item\/(\d+)\//) ||
-      url.pathname.match(/\/marketplace\/(\d+)\/?$/);
-    if (m) return `${url.origin}/marketplace/item/${m[1]}/`;
+    const listingId = getMarketplaceListingId(u);
+    if (listingId) return `${url.origin}/marketplace/item/${listingId}/`;
     return `${url.origin}${url.pathname}`;
   } catch {
     return u;
@@ -1445,6 +1455,7 @@ router.post("/enrich", async (req, res) => {
 router.post("/listings/ignoreByUrl", async (req, res) => {
   try {
     const url = normalizeMarketplaceUrl(req.body?.url);
+    const listingId = getMarketplaceListingId(req.body?.url);
     if (!url) {
       return res.status(400).json({ ok: false, error: "missing url" });
     }
@@ -1456,9 +1467,14 @@ router.post("/listings/ignoreByUrl", async (req, res) => {
           ignored_at = NOW(),
           updated_at = NOW()
       WHERE url = $1
+         OR ($2::text IS NOT NULL AND (
+              url LIKE ('%/marketplace/item/' || $2 || '%')
+              OR url LIKE ('%/marketplace/' || $2 || '%')
+              OR url LIKE ('%item_id=' || $2 || '%')
+            ))
       RETURNING id, url, hidden, ignored_at
       `,
-      [url]
+      [url, listingId]
     );
 
     if (result.rowCount === 0) {
@@ -1487,9 +1503,10 @@ router.post("/listings/ignoreByUrl", async (req, res) => {
     broadcastMarketplaceUpdate({
       source: "ignoreByUrl",
       url,
+      listingId,
     });
 
-    return res.json({ ok: true, url, hidden: true });
+    return res.json({ ok: true, url, listingId, hidden: true, matched: result.rowCount });
   } catch (err) {
     console.error("[marketplace.ignoreByUrl] failed:", err);
     return res.status(500).json({

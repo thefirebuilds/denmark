@@ -65,11 +65,9 @@
 
   function normalizeUrl(u) {
     if (!u) return null;
-  try {
-    const url = new URL(u);
-      const m =
-        url.pathname.match(/\/marketplace\/item\/(\d+)\//) ||
-        url.pathname.match(/\/marketplace\/(\d+)\/?$/);
+    try {
+      const url = new URL(u);
+      const m = url.pathname.match(/\/marketplace\/(?:item\/)?(\d{8,})\/?(?:$|\/)/);
       if (m) return `${url.origin}/marketplace/item/${m[1]}/`;
       return `${url.origin}${url.pathname}`;
     } catch {
