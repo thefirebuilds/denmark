@@ -113,6 +113,35 @@ function getNowIso() {
   return new Date().toISOString();
 }
 
+function getTelemetryPoint(vehicle) {
+  const location = vehicle?.telemetry?.location;
+  const lat = Number(location?.lat ?? location?.latitude);
+  const lon = Number(location?.lon ?? location?.lng ?? location?.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+}
+
+function distanceMiles(from, to) {
+  if (!from || !to) return null;
+  const radians = (degrees) => (degrees * Math.PI) / 180;
+  const dLat = radians(to.lat - from.lat);
+  const dLon = radians(to.lon - from.lon);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(radians(from.lat)) *
+      Math.cos(radians(to.lat)) *
+      Math.sin(dLon / 2) ** 2;
+  return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatDriveEstimate(miles) {
+  if (!Number.isFinite(miles)) return "Awaiting GPS";
+  const minutes = Math.max(1, Math.round((miles / 50) * 60));
+  if (minutes < 60) return `~${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return `~${hours} hr${remainder ? ` ${remainder} min` : ""}`;
+}
+
 export default function SelectedTripPanel({
   selectedTrip,
   selectedVehicleInfo,
@@ -133,6 +162,7 @@ export default function SelectedTripPanel({
   const [closeoutForm, setCloseoutForm] = useState({
     starting_odometer: "",
     ending_odometer: "",
+    mileage_verified: false,
     expense_status: "pending",
     fuel_reimbursement_total: "",
     ticket_reimbursed: "",
@@ -144,6 +174,34 @@ export default function SelectedTripPanel({
     closed_out: false,
   });
   const [closeoutSavedNotice, setCloseoutSavedNotice] = useState("");
+  const [homeLocation, setHomeLocation] = useState({
+    lat: 30.0852,
+    lon: -97.8431,
+    label: "Buda, TX 78610",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/settings/locations.tracking")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((json) => {
+        const locations = Array.isArray(json?.value?.locations)
+          ? json.value.locations
+          : [];
+        const home =
+          locations.find((item) => String(item?.kind || "").toLowerCase() === "home") ||
+          locations.find((item) => /home|buda|78610/i.test(String(item?.label || "")));
+        const lat = Number(home?.latitude ?? home?.lat);
+        const lon = Number(home?.longitude ?? home?.lon ?? home?.lng);
+        if (!cancelled && Number.isFinite(lat) && Number.isFinite(lon)) {
+          setHomeLocation({ lat, lon, label: home?.label || "Buda, TX 78610" });
+        }
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setCloseoutForm({
@@ -157,6 +215,7 @@ export default function SelectedTripPanel({
           selectedTrip?.end_odometer ??
           selectedTrip?.odometer_end
       ),
+      mileage_verified: Boolean(selectedTrip?.mileage_verified),
       expense_status: selectedTrip?.expense_status || "pending",
       fuel_reimbursement_total: toFieldValue(selectedTrip?.fuel_reimbursement_total),
       ticket_reimbursed: toFieldValue(selectedTrip?.ticket_reimbursed),
@@ -203,6 +262,34 @@ export default function SelectedTripPanel({
     ? new Date(selectedTrip.trip_end).getTime()
     : NaN;
   const tripHasEnded = Number.isFinite(tripEndMs) && tripEndMs <= Date.now();
+  const workflowStage = String(selectedTrip?.workflow_stage || "").toLowerCase();
+  const isOverdue =
+    tripHasEnded &&
+    workflowStage === "in_progress" &&
+    !selectedTrip?.closed_out &&
+    !isCanceledTrip;
+  const telemetryPoint = getTelemetryPoint(selectedVehicle);
+  const milesFromHome = distanceMiles(homeLocation, telemetryPoint);
+  const mileageOver =
+    mileageStats.allowed != null && mileageStats.used != null
+      ? Math.max(0, mileageStats.used - mileageStats.allowed)
+      : null;
+  const currentSpeed = Number(selectedVehicle?.telemetry?.speed);
+  const vehicleBehavior = selectedVehicle
+    ? selectedVehicle?.telemetry?.engine_running
+      ? Number.isFinite(currentSpeed) && currentSpeed > 0
+        ? `Driving at ${Math.round(currentSpeed)} mph`
+        : "Engine running, currently stopped"
+      : Number.isFinite(currentSpeed) && currentSpeed > 0
+      ? `Moving at ${Math.round(currentSpeed)} mph`
+      : "Parked / engine off"
+    : "Awaiting telemetry";
+  const directionsUrl = telemetryPoint
+    ? `https://www.google.com/maps/dir/?api=1&origin=78610&destination=${telemetryPoint.lat},${telemetryPoint.lon}`
+    : "";
+  const mapUrl = telemetryPoint
+    ? `https://www.openstreetmap.org/export/embed.html?bbox=${telemetryPoint.lon - 0.08}%2C${telemetryPoint.lat - 0.06}%2C${telemetryPoint.lon + 0.08}%2C${telemetryPoint.lat + 0.06}&layer=mapnik&marker=${telemetryPoint.lat}%2C${telemetryPoint.lon}`
+    : "";
   const closeoutStages = new Set(["turnaround", "awaiting_expenses", "complete"]);
   const isCloseoutStage = closeoutStages.has(selectedTrip?.workflow_stage);
   const hasTollExposure =
@@ -233,21 +320,9 @@ export default function SelectedTripPanel({
 
     return [
       {
-        key: "stage",
-        label: "Workflow is ready",
-        done: ["complete", "canceled"].includes(
-          String(selectedTrip?.workflow_stage || "").toLowerCase()
-        ),
-      },
-      {
-        key: "start_odo",
-        label: "Starting odometer recorded",
-        done: toNullableNumber(closeoutForm.starting_odometer) != null,
-      },
-      {
-        key: "end_odo",
-        label: "Ending odometer recorded",
-        done: toNullableNumber(closeoutForm.ending_odometer) != null,
+        key: "trip_mileage",
+        label: "Verify trip start and end mileage",
+        done: Boolean(closeoutForm.mileage_verified),
       },
       {
         key: "expenses",
@@ -272,7 +347,7 @@ export default function SelectedTripPanel({
         done: Boolean(closeoutForm.closed_out),
       },
     ];
-  }, [closeoutForm, selectedTrip?.workflow_stage]);
+  }, [closeoutForm]);
 
   const closeoutRemaining = closeoutChecks.filter((item) => !item.done).length;
   const closeoutBlockers = closeoutChecks.filter(
@@ -325,6 +400,7 @@ export default function SelectedTripPanel({
     return {
       starting_odometer: toNullableNumber(merged.starting_odometer),
       ending_odometer: toNullableNumber(merged.ending_odometer),
+      mileage_verified: Boolean(merged.mileage_verified),
       expense_status: merged.expense_status || "pending",
       fuel_reimbursement_total: toNullableNumber(merged.fuel_reimbursement_total),
       ticket_reimbursed: toNullableNumber(merged.ticket_reimbursed),
@@ -380,6 +456,9 @@ export default function SelectedTripPanel({
           "none",
         guest_rating_received: Boolean(
           savedTrip.guest_rating_received ?? optimisticPayload.guest_rating_received
+        ),
+        mileage_verified: Boolean(
+          savedTrip.mileage_verified ?? optimisticForm.mileage_verified
         ),
         closed_out: Boolean(savedTrip.closed_out ?? optimisticPayload.closed_out),
       });
@@ -564,7 +643,37 @@ function renderLocationLink(vehicle) {
       </div>
 
       <div className="detail-body">
-        {canShowCloseoutOps ? (
+        {isOverdue ? (
+          <section className="detail-overdue-triage" aria-label="Overdue vehicle triage">
+            <div className="detail-overdue-heading">
+              <div>
+                <div className="detail-overdue-kicker">Overdue vehicle triage</div>
+                <div className="detail-overdue-title">Vehicle has not been returned</div>
+              </div>
+              <strong>{deriveReturnEta(selectedTrip)}</strong>
+            </div>
+
+            <div className="detail-overdue-facts">
+              <div><span>Current behavior</span><strong>{vehicleBehavior}</strong></div>
+              <div><span>Current location</span><strong>{selectedVehicle ? renderLocationLink(selectedVehicle) : "Awaiting telemetry"}</strong></div>
+              <div><span>From Buda / 78610</span><strong>{Number.isFinite(milesFromHome) ? `${Math.round(milesFromHome)} mi straight-line / ${formatDriveEstimate(milesFromHome)} drive` : "Awaiting home/GPS coordinates"}</strong></div>
+              <div><span>Mileage position</span><strong>{mileageOver == null ? "Awaiting odometer" : mileageOver > 0 ? `${Math.round(mileageOver).toLocaleString("en-US")} mi over allowance` : `${Math.round(mileageStats.remaining || 0).toLocaleString("en-US")} mi remaining`}</strong></div>
+              <div><span>Last GPS update</span><strong>{selectedVehicle ? formatRelativeComm(selectedVehicle?.telemetry?.last_comm) : "Awaiting telemetry"}</strong></div>
+              <div><span>Telemetry status</span><strong>{selectedVehicleCommAlert?.label || `${getTelemetrySourceLabel(selectedVehicle)} reporting`}</strong></div>
+            </div>
+
+            {mapUrl ? (
+              <iframe className="detail-overdue-map" src={mapUrl} title={`Current location of ${vehicleLabel}`} loading="lazy" />
+            ) : null}
+
+            <div className="detail-overdue-actions">
+              <button type="button" className="detail-action-button" onClick={() => onOpenVehicleMap?.(selectedVehicle?.id)} disabled={!selectedVehicle?.id}>Open Fleet Map</button>
+              <button type="button" className="detail-action-button secondary" onClick={() => openUrl(directionsUrl)} disabled={!directionsUrl}>Directions from 78610</button>
+            </div>
+          </section>
+        ) : null}
+
+        {canShowCloseoutOps && !isOverdue ? (
           <div className="detail-closeout-panel">
             <div className="detail-closeout-head">
               <div>
@@ -728,6 +837,17 @@ function renderLocationLink(vehicle) {
                     </option>
                   ))}
                 </select>
+              </label>
+
+              <label className="detail-closeout-field detail-closeout-checkfield">
+                <span>Admin verified start and end mileage</span>
+                <input
+                  type="checkbox"
+                  checked={closeoutForm.mileage_verified}
+                  onChange={(event) =>
+                    updateCloseoutField("mileage_verified", event.target.checked)
+                  }
+                />
               </label>
 
               <label className="detail-closeout-field detail-closeout-checkfield">

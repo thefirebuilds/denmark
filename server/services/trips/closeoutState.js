@@ -20,6 +20,7 @@ function hasPendingTollReview(hasTolls, tollReviewStatus) {
 function evaluateCloseoutCompleteness(trip) {
   const missingStartingOdometer = trip?.starting_odometer == null;
   const missingEndingOdometer = trip?.ending_odometer == null;
+  const mileageUnverified = trip?.mileage_verified !== true;
   const expensesPending = hasPendingExpenseStatus(trip?.expense_status);
   const tollsPending = hasPendingTollReview(
     Boolean(trip?.has_tolls),
@@ -30,12 +31,14 @@ function evaluateCloseoutCompleteness(trip) {
 
   if (missingStartingOdometer) reasons.push("starting odometer");
   if (missingEndingOdometer) reasons.push("ending odometer");
+  if (mileageUnverified) reasons.push("mileage verification");
   if (expensesPending) reasons.push("expense review");
   if (tollsPending) reasons.push("toll review");
 
   return {
     missingStartingOdometer,
     missingEndingOdometer,
+    mileageUnverified,
     expensesPending,
     tollsPending,
     reasons,

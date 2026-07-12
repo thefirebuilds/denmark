@@ -12,6 +12,7 @@ async function ensureTripRuntimeSchema(client = pool) {
           ADD COLUMN IF NOT EXISTS return_location text,
           ADD COLUMN IF NOT EXISTS max_speed_mph numeric,
           ADD COLUMN IF NOT EXISTS speed_over_80_count integer DEFAULT 0 NOT NULL,
+          ADD COLUMN IF NOT EXISTS mileage_verified boolean DEFAULT false NOT NULL,
           ADD COLUMN IF NOT EXISTS guest_rating_received boolean DEFAULT false NOT NULL,
           ADD COLUMN IF NOT EXISTS guest_rating_received_at timestamptz;
 

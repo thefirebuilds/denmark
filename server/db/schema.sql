@@ -1365,6 +1365,7 @@ CREATE TABLE public.trips (
     toll_charged_total numeric(10,2),
     toll_review_status text DEFAULT 'none'::text NOT NULL,
     ending_odometer integer,
+    mileage_verified boolean DEFAULT false NOT NULL,
     fuel_reimbursement_total numeric(10,2),
     max_engine_rpm numeric,
     max_speed_mph numeric,

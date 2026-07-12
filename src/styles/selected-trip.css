@@ -155,6 +155,80 @@
   gap: 10px;
 }
 
+.detail-overdue-triage {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(127, 29, 29, 0.34), rgba(31, 41, 55, 0.92));
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.08) inset;
+}
+
+.detail-overdue-heading,
+.detail-overdue-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.detail-overdue-kicker {
+  color: #fca5a5;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.detail-overdue-title {
+  margin-top: 3px;
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.detail-overdue-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.detail-overdue-facts > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px;
+  border-radius: 9px;
+  background: rgba(8, 13, 24, 0.48);
+}
+
+.detail-overdue-facts span {
+  color: #fca5a5;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.detail-overdue-facts strong {
+  color: #f8fafc;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.detail-overdue-map {
+  width: 100%;
+  min-height: 250px;
+  border: 0;
+  border-radius: 10px;
+  background: #0b1120;
+}
+
+@media (max-width: 700px) {
+  .detail-overdue-facts { grid-template-columns: 1fr; }
+}
+
 .detail-closeout-panel {
   border: 1px solid rgba(125, 211, 252, 0.26);
   background: rgba(13, 22, 34, 0.82);

@@ -439,6 +439,7 @@ const TRIP_SELECT = `
     t.mileage_included,
     t.starting_odometer,
     t.ending_odometer,
+    t.mileage_verified,
     t.has_tolls,
     t.toll_count,
     t.toll_total,
@@ -906,6 +907,7 @@ router.patch("/:id", async (req, res) => {
     mileage_included,
     starting_odometer,
     ending_odometer,
+    mileage_verified,
     has_tolls,
     toll_count,
     toll_total,
@@ -945,6 +947,7 @@ router.patch("/:id", async (req, res) => {
 
   const normalizedClosedOut = toNullableBoolean(closed_out);
   const normalizedGuestRatingReceived = toNullableBoolean(guest_rating_received);
+  const normalizedMileageVerified = toNullableBoolean(mileage_verified);
   const normalizedTicketReimbursed = toNullableNumber(ticket_reimbursed);
   const ticketFieldWasProvided = Object.prototype.hasOwnProperty.call(
     req.body || {},
@@ -967,6 +970,7 @@ router.patch("/:id", async (req, res) => {
           id,
           starting_odometer,
           ending_odometer,
+          mileage_verified,
           expense_status,
           has_tolls,
           toll_review_status,
@@ -1080,8 +1084,9 @@ router.patch("/:id", async (req, res) => {
             WHEN $20::boolean = FALSE THEN NULL
             ELSE guest_rating_received_at
           END,
+          mileage_verified = COALESCE($21, mileage_verified),
           updated_at = NOW()
-        WHERE id = $21
+        WHERE id = $22
         RETURNING id
       `,
       [
@@ -1113,6 +1118,7 @@ router.patch("/:id", async (req, res) => {
         closed_out_at || null,
         normalizedExpenseStatus,
         normalizedGuestRatingReceived,
+        normalizedMileageVerified,
         tripId,
       ]
     );
@@ -1172,6 +1178,10 @@ router.patch("/:id", async (req, res) => {
         ending_odometer === "" || ending_odometer == null
           ? existingTrip.ending_odometer
           : Number(ending_odometer),
+      mileage_verified:
+        normalizedMileageVerified == null
+          ? existingTrip.mileage_verified
+          : normalizedMileageVerified,
       expense_status:
         normalizedExpenseStatus == null
           ? existingTrip.expense_status
