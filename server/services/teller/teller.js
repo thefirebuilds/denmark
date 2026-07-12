@@ -523,6 +523,24 @@ async function syncTellerTransactions() {
   console.log(
     `[teller] sync done | tokens=${tokens.length} accounts=${totalAccounts} processed=${totalProcessed}`
   );
+  await pool.query(
+    `
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (
+        'integrations.teller.sync_status',
+        jsonb_build_object(
+          'lastCheckedAt', NOW(),
+          'accountsChecked', $1::integer,
+          'transactionsProcessed', $2::integer,
+          'status', 'ok'
+        ),
+        NOW()
+      )
+      ON CONFLICT (key)
+      DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `,
+    [totalAccounts, totalProcessed]
+  );
   return { processed: totalProcessed, tokens: tokens.length, accounts: totalAccounts };
 }
 

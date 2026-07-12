@@ -28,6 +28,36 @@ function formatDate(value) {
   });
 }
 
+function formatSyncTime(value) {
+  if (!value) return "No successful check recorded";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+  const relative =
+    minutes < 1
+      ? "just now"
+      : minutes < 60
+      ? `${minutes} min ago`
+      : minutes < 1440
+      ? `${Math.floor(minutes / 60)} hr ago`
+      : `${Math.floor(minutes / 1440)} days ago`;
+  return `${relative} · ${date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })}`;
+}
+
+function isRecentSuccessfulSync(summary) {
+  const checkedAt = new Date(summary?.last_checked_at || "").getTime();
+  return (
+    summary?.sync_status === "ok" &&
+    Number.isFinite(checkedAt) &&
+    Date.now() - checkedAt <= 5 * 60 * 60 * 1000
+  );
+}
+
 function bucketLabel(key) {
   switch (key) {
     case "pending":
@@ -202,8 +232,10 @@ function ExpenseProcessingListPanel({
   total,
   onPreviousPage,
   onNextPage,
+  syncSummary,
 }) {
   const rowRefs = useRef({});
+  const syncHealthy = isRecentSuccessfulSync(syncSummary);
 
   useEffect(() => {
     if (activeBucket === "ignored") return;
@@ -223,6 +255,22 @@ function ExpenseProcessingListPanel({
       <div className="panel-header">
         <h2>{activeBucket === "ignored" ? "Ignored Vendors" : "Imported Transactions"}</h2>
       </div>
+
+      {activeBucket !== "ignored" ? (
+        <div className="inbox-sync-status">
+          <div>
+            <span>Last checked</span>
+            <strong>{formatSyncTime(syncSummary?.last_checked_at)}</strong>
+          </div>
+          <div>
+            <span>Last new transaction</span>
+            <strong>{formatSyncTime(syncSummary?.last_new_transaction_at)}</strong>
+          </div>
+          <div className={`inbox-sync-indicator ${syncHealthy ? "is-ok" : ""}`}>
+            {syncHealthy ? "Connected" : "Sync check is stale"}
+          </div>
+        </div>
+      ) : null}
 
       <div className="list inbox-transaction-list">
         {loading ? (
@@ -1795,6 +1843,7 @@ export default function InboxPanel() {
         onNextPage={() =>
           setPage((p) => Math.min(pagination.total_pages || 1, p + 1))
         }
+        syncSummary={summary}
       />
 
       <ExpenseProcessingDetailPanel

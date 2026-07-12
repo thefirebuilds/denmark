@@ -467,20 +467,31 @@ async function getTellerSummary() {
       COUNT(*) FILTER (WHERE review_status = 'matched')::int AS matched,
       COUNT(*) FILTER (WHERE review_status = 'created')::int AS created,
       COUNT(*) FILTER (WHERE review_status = 'dismissed')::int AS dismissed,
-      COUNT(*) FILTER (WHERE review_status = 'ignored' OR ignored = TRUE)::int AS ignored
+      COUNT(*) FILTER (WHERE review_status = 'ignored' OR ignored = TRUE)::int AS ignored,
+      MAX(created_at) AS last_new_transaction_at
     FROM teller_transactions
   `);
 
-  return (
-    result.rows[0] || {
+  const syncResult = await pool.query(`
+    SELECT value
+    FROM app_settings
+    WHERE key = 'integrations.teller.sync_status'
+    LIMIT 1
+  `);
+
+  return {
+    ...(result.rows[0] || {
       total: 0,
       pending: 0,
       matched: 0,
       created: 0,
       dismissed: 0,
       ignored: 0,
-    }
-  );
+    }),
+    last_checked_at: syncResult.rows[0]?.value?.lastCheckedAt || null,
+    sync_status: syncResult.rows[0]?.value?.status || "unknown",
+    accounts_checked: syncResult.rows[0]?.value?.accountsChecked ?? null,
+  };
 }
 
 module.exports = {
