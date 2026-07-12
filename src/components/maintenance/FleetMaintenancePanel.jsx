@@ -424,7 +424,7 @@ function formatTelemetryReadingDate(value) {
 }
 
 function formatTelemetryLag(ms) {
-  const minutes = Math.round(Math.abs(ms) / 60000);
+  const minutes = Math.round(ms / 60000);
   if (!Number.isFinite(minutes) || minutes < 1) return "";
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
@@ -458,13 +458,27 @@ function formatTelemetryCaptureDetail(reading) {
     return "";
   }
 
-  const lag = formatTelemetryLag(captured.getTime() - recorded.getTime());
+  const ageAtCollectionMs = captured.getTime() - recorded.getTime();
+  if (ageAtCollectionMs < -60000) {
+    return [
+      `provider time ${formatTelemetryReadingTime(reading.recordedAt)}`,
+      "provider timestamp is after collection (clock mismatch)",
+    ].join(" / ");
+  }
+
+  const lag = formatTelemetryLag(ageAtCollectionMs);
   return [
-    `captured ${formatTelemetryReadingTime(reading.capturedAt)}`,
-    lag ? `DIMO value ${lag} stale` : "",
+    `provider time ${formatTelemetryReadingTime(reading.recordedAt)}`,
+    lag ? `signal age at collection ${lag}` : "",
   ]
     .filter(Boolean)
     .join(" / ");
+}
+
+function getTelemetryReadingDisplayTime(reading) {
+  return reading?.source === "dimo"
+    ? reading?.capturedAt || reading?.recordedAt
+    : reading?.recordedAt || reading?.capturedAt;
 }
 
 function formatEngineOnContext(reading) {
@@ -4123,7 +4137,9 @@ export default function FleetMaintenancePanel({
                                 </strong>
                               </div>
                               <span>
-                                {formatTelemetryReadingTime(reading.recordedAt)}
+                                {formatTelemetryReadingTime(
+                                  getTelemetryReadingDisplayTime(reading)
+                                )}
                               </span>
                               <em>
                                 {[
@@ -4166,7 +4182,9 @@ export default function FleetMaintenancePanel({
                             ) : null}
                           </div>
                           <span>
-                            {formatTelemetryReadingTime(reading.recordedAt)}
+                            {formatTelemetryReadingTime(
+                              getTelemetryReadingDisplayTime(reading)
+                            )}
                           </span>
                           <em>
                             {[

@@ -799,7 +799,12 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
           ${engineOnSelectSql}
         FROM deduped d
         ${engineOnJoinSql}
-        ORDER BY d.recorded_at DESC NULLS LAST, d.snapshot_id DESC
+        ORDER BY
+          CASE
+            WHEN d.service_name = 'dimo' THEN d.captured_at
+            ELSE d.recorded_at::timestamp
+          END DESC NULLS LAST,
+          d.snapshot_id DESC
         LIMIT $4
       `,
       [
