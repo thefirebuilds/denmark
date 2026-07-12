@@ -2153,6 +2153,12 @@ async function handleAckNotification(message) {
       throw new Error(`Failed to acknowledge notification (${res.status})`);
     }
 
+    rememberResolvedMessages([
+      message.id,
+      message.messageId,
+      message.notification_event_id,
+      `notification-gap:${notificationId}`,
+    ]);
     setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
     setNewMessageIds((prev) => prev.filter((id) => id !== message.id));
     seenIdsRef.current.delete(message.id);
@@ -2160,15 +2166,9 @@ async function handleAckNotification(message) {
 
     invalidateLiveQueueCache();
     notifyMessageStatsUpdated();
-    
-    // Force immediate refresh to ensure consistency
-    try {
-      setTimeout(() => {
-        loadMessages(false);
-      }, 250);
-    } catch (err) {
-      console.warn("Failed to schedule follow-up message refresh:", err);
-    }
+
+    // Reconcile against the persisted acknowledgement before this action finishes.
+    await loadMessages(false);
   } catch (err) {
     setError(err.message || "Failed to acknowledge notification");
   } finally {

@@ -233,11 +233,9 @@ export function isOverdueTrip(trip) {
   if (isClosedTrip(trip)) return false;
 
   const stage = String(trip?.workflow_stage || "").toLowerCase();
-  const queueBucket = String(trip?.queue_bucket || "").toLowerCase();
   const status = String(trip?.display_status || "").toLowerCase();
 
   if (
-    queueBucket === "needs_closeout" ||
     stage === "turnaround" ||
     stage === "awaiting_expenses"
   ) {

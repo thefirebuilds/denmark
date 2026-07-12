@@ -34,11 +34,9 @@ const router = express.Router();
 
 function isOverdueTrip(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
-  const queueBucket = String(trip?.queue_bucket || "").toLowerCase();
   const end = trip?.trip_end ? new Date(trip.trip_end) : null;
 
   if (
-    queueBucket === "needs_closeout" ||
     stage === "turnaround" ||
     stage === "awaiting_expenses" ||
     stage === "complete" ||
@@ -266,6 +264,12 @@ function computeQueueBucket(trip) {
 
   const closeoutState = evaluateCloseoutCompleteness(trip);
 
+  // Workflow state is the return signal. A trip that is still explicitly in
+  // progress after its scheduled end is overdue, not ready for closeout.
+  if (workflowStage === "in_progress" && (!start || start <= now)) {
+    return "in_progress";
+  }
+
   if (closeoutState.isIncomplete && end && end < now) {
     return "needs_closeout";
   }
@@ -280,10 +284,6 @@ function computeQueueBucket(trip) {
 
   if (workflowStage === "turnaround") {
     return "needs_closeout";
-  }
-
-  if (workflowStage === "in_progress" && (!start || start <= now)) {
-    return "in_progress";
   }
 
   if (isUnconfirmed && start && start > now) {
