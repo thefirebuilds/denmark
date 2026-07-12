@@ -107,7 +107,7 @@ const TELEMETRY_READING_DEFINITIONS = {
     valueSql: "s.battery_voltage::numeric",
     rawValueSql: "s.battery_voltage::numeric",
     recordedAtSql:
-      "COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at)::timestamptz",
+      "COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at)",
     whereSql:
       "s.battery_voltage IS NOT NULL AND s.battery_voltage::numeric BETWEEN 5 AND 16",
     unit: "v",
@@ -117,7 +117,7 @@ const TELEMETRY_READING_DEFINITIONS = {
     valueSql:
       "CASE WHEN s.coolant_temp::numeric <= 130 THEN s.coolant_temp::numeric * 9 / 5 + 32 ELSE s.coolant_temp::numeric END",
     rawValueSql: "s.coolant_temp::numeric",
-    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)::timestamptz",
+    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)",
     whereSql: "s.coolant_temp IS NOT NULL",
     unit: "F",
   },
@@ -125,7 +125,7 @@ const TELEMETRY_READING_DEFINITIONS = {
     label: "Tachometer",
     valueSql: "s.engine_rpm::numeric",
     rawValueSql: "s.engine_rpm::numeric",
-    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)::timestamptz",
+    recordedAtSql: "COALESCE(s.vehicle_last_updated, s.captured_at)",
     whereSql: "s.engine_rpm IS NOT NULL AND s.engine_rpm::numeric >= 0",
     unit: "RPM",
   },
@@ -133,7 +133,7 @@ const TELEMETRY_READING_DEFINITIONS = {
     label: "Recorded speeds",
     valueSql: "s.speed::numeric",
     rawValueSql: "s.speed::numeric",
-    recordedAtSql: "COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at)::timestamptz",
+    recordedAtSql: "COALESCE(s.speed_last_updated, s.vehicle_last_updated, s.captured_at)",
     whereSql: "s.speed IS NOT NULL AND s.speed::numeric >= 0",
     unit: "mph",
   },
@@ -786,7 +786,13 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
           d.service_name,
           d.value,
           d.raw_value,
-          d.recorded_at,
+          CASE
+            WHEN d.service_name = 'dimo' AND d.recorded_at = d.captured_at
+              THEN d.recorded_at AT TIME ZONE 'UTC'
+            WHEN d.service_name = 'dimo'
+              THEN d.recorded_at AT TIME ZONE 'America/Chicago'
+            ELSE d.recorded_at::timestamptz
+          END AS recorded_at,
           CASE
             WHEN d.service_name = 'dimo'
               THEN d.captured_at AT TIME ZONE 'UTC'
