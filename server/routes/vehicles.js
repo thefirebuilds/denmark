@@ -787,7 +787,11 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
           d.value,
           d.raw_value,
           d.recorded_at,
-          d.captured_at,
+          CASE
+            WHEN d.service_name = 'dimo'
+              THEN d.captured_at AT TIME ZONE 'UTC'
+            ELSE d.captured_at::timestamptz
+          END AS captured_at,
           d.vehicle_last_updated,
           d.vin,
           d.dimo_token_id,
