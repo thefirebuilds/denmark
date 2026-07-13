@@ -1129,11 +1129,29 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       LIMIT 1
     ) latest ON true
     WHERE t.trip_end < NOW()
-      AND t.trip_end >= NOW() - INTERVAL '24 hours'
       AND COALESCE(t.closed_out, false) = false
       AND COALESCE(t.workflow_stage, '') = 'in_progress'
       AND COALESCE(t.status, '') <> 'canceled'
       AND COALESCE(t.return_location, '') <> ''
+      AND NOT EXISTS (
+        SELECT 1
+        FROM trips newer
+        WHERE newer.id <> t.id
+          AND COALESCE(newer.closed_out, false) = false
+          AND COALESCE(newer.workflow_stage, '') = 'in_progress'
+          AND COALESCE(newer.status, '') <> 'canceled'
+          AND newer.trip_end > t.trip_end
+          AND (
+            (
+              t.turo_vehicle_id IS NOT NULL
+              AND newer.turo_vehicle_id = t.turo_vehicle_id
+            )
+            OR (
+              COALESCE(t.vehicle_name, '') <> ''
+              AND LOWER(COALESCE(newer.vehicle_name, '')) = LOWER(t.vehicle_name)
+            )
+          )
+      )
     ORDER BY t.trip_end ASC
     LIMIT 20
   `);
