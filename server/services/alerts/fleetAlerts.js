@@ -210,13 +210,34 @@ function tripReturnLocationMatchesNamedLocation(tripReturnLocation, location) {
     );
 }
 
+function tripReturnLocationMatchesTelemetryAddress(tripReturnLocation, address) {
+  const tripTokens = new Set(
+    normalizeLocationText(tripReturnLocation)
+      .split(" ")
+      .filter((token) => token.length >= 3 || /^\d{5}$/.test(token))
+  );
+  const addressTokens = new Set(
+    normalizeLocationText(address)
+      .split(" ")
+      .filter((token) => token.length >= 3 || /^\d{5}$/.test(token))
+  );
+  if (!tripTokens.size || !addressTokens.size) return false;
+
+  const shared = [...tripTokens].filter((token) => addressTokens.has(token));
+  if (shared.some((token) => /^\d{5}$/.test(token))) return true;
+  return shared.length >= 2;
+}
+
 function getMatchedTripReturnGeoLocation(row, locations) {
   const lat = toNumber(row.latitude);
   const lon = toNumber(row.longitude);
   if (lat == null || lon == null) return null;
 
   for (const location of locations) {
-    if (!tripReturnLocationMatchesNamedLocation(row.return_location, location)) {
+    const matchesExpectedLocation =
+      tripReturnLocationMatchesNamedLocation(row.return_location, location) ||
+      tripReturnLocationMatchesTelemetryAddress(row.return_location, row.address);
+    if (!matchesExpectedLocation) {
       continue;
     }
 
@@ -1085,6 +1106,7 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       latest.service_name,
       latest.latitude,
       latest.longitude,
+      latest.address,
       latest.vehicle_last_updated,
       latest.location_last_updated,
       latest.captured_at
@@ -1097,6 +1119,7 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
         s.service_name,
         s.latitude,
         s.longitude,
+        s.address,
         s.vehicle_last_updated,
         s.location_last_updated,
         s.captured_at
