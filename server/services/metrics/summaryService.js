@@ -8,7 +8,6 @@ const {
   getCalendarDaysInRange,
   getDateRange,
   getExpenseTotal,
-  getOverlapDays,
   getTripFuelReimbursementValue,
   getTripProratedAmount,
   getTripProratedCount,
@@ -38,8 +37,12 @@ async function fetchTripsInRange(client, startDate, endDate) {
         t.guest_name,
         t.turo_vehicle_id,
         t.vehicle_name,
+        v.id AS fleet_vehicle_id,
         v.nickname AS vehicle_nickname,
         v.license_plate AS vehicle_plate,
+        v.is_active AS vehicle_is_active,
+        v.in_service AS vehicle_in_service,
+        v.trip_eligible AS vehicle_trip_eligible,
         t.trip_start,
         t.trip_end,
         t.amount,
@@ -56,9 +59,22 @@ async function fetchTripsInRange(client, startDate, endDate) {
         tf.cleaning_reimbursed,
         tf.ticket_reimbursed
       FROM trips t
-      LEFT JOIN vehicles v
-        ON t.turo_vehicle_id IS NOT NULL
-        AND v.turo_vehicle_id = t.turo_vehicle_id
+      LEFT JOIN LATERAL (
+        SELECT matched_vehicle.*
+        FROM vehicles matched_vehicle
+        WHERE (
+            t.turo_vehicle_id IS NOT NULL
+            AND matched_vehicle.turo_vehicle_id = t.turo_vehicle_id
+          )
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(COALESCE(matched_vehicle.nickname, '')) = LOWER(t.vehicle_name)
+          )
+        ORDER BY
+          (t.turo_vehicle_id IS NOT NULL AND matched_vehicle.turo_vehicle_id = t.turo_vehicle_id) DESC,
+          matched_vehicle.id ASC
+        LIMIT 1
+      ) v ON true
       LEFT JOIN trip_financial_facts tf
         ON tf.trip_id = t.id
       WHERE t.trip_start <= $2
@@ -74,16 +90,55 @@ async function fetchTripsInRange(client, startDate, endDate) {
   return rows.filter((trip) => tripOverlapsRange(trip, startDate, endDate));
 }
 
-async function fetchActiveVehicleCount(client) {
-  const { rows } = await client.query(`
-    SELECT COUNT(*)::integer AS count
-    FROM vehicles
-    WHERE COALESCE(is_active, true) = true
-      AND COALESCE(in_service, true) = true
-      AND COALESCE(trip_eligible, true) = true
-  `);
+function getOccupancyVehicleKey(trip) {
+  if (trip?.fleet_vehicle_id != null) return `vehicle:${trip.fleet_vehicle_id}`;
+  if (trip?.turo_vehicle_id != null) return `turo:${trip.turo_vehicle_id}`;
+  const name = String(trip?.vehicle_name || trip?.vehicle_nickname || "")
+    .trim()
+    .toLowerCase();
+  return name ? `name:${name}` : null;
+}
 
-  return Number(rows[0]?.count ?? 0);
+function isRentableOccupancyTrip(trip) {
+  return (
+    trip?.fleet_vehicle_id != null &&
+    trip?.vehicle_is_active !== false &&
+    trip?.vehicle_in_service !== false &&
+    trip?.vehicle_trip_eligible !== false
+  );
+}
+
+function getBookedVehicleDays(trips, rangeStart, rangeEnd) {
+  const bookedDays = new Set();
+
+  for (const trip of trips) {
+    if (!isRentableOccupancyTrip(trip)) continue;
+    const vehicleKey = getOccupancyVehicleKey(trip);
+    if (!vehicleKey || !trip?.trip_start || !trip?.trip_end) continue;
+
+    const tripStart = new Date(trip.trip_start);
+    const tripEnd = new Date(trip.trip_end);
+    if (Number.isNaN(tripStart.getTime()) || Number.isNaN(tripEnd.getTime())) continue;
+
+    const start = new Date(
+      Math.max(tripStart.getTime(), rangeStart?.getTime?.() ?? tripStart.getTime())
+    );
+    const end = new Date(
+      Math.min(tripEnd.getTime(), rangeEnd?.getTime?.() ?? tripEnd.getTime())
+    );
+    if (end < start) continue;
+
+    const day = new Date(start);
+    day.setHours(0, 0, 0, 0);
+    const lastDay = new Date(end);
+    lastDay.setHours(0, 0, 0, 0);
+    while (day <= lastDay) {
+      bookedDays.add(`${vehicleKey}:${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`);
+      day.setDate(day.getDate() + 1);
+    }
+  }
+
+  return bookedDays.size;
 }
 
 async function fetchFleetCalendarDaysAvailable(client, rangeStart, rangeEnd) {
@@ -1034,7 +1089,6 @@ async function getSummaryMetrics(rangeKey = "30d") {
           yearOverYearRange.endDate
         )
       : [];
-    const activeVehicleCount = await fetchActiveVehicleCount(client);
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
 
@@ -1190,21 +1244,11 @@ async function getSummaryMetrics(rangeKey = "30d") {
       0
     );
 
-    const bookedVehicleDays = trips.reduce(
-      (sum, trip) =>
-        sum + getOverlapDays(trip.trip_start, trip.trip_end, startDate, endDate),
-      0
-    );
-    const previousBookedVehicleDays = previousTrips.reduce(
-      (sum, trip) =>
-        sum +
-        getOverlapDays(
-          trip.trip_start,
-          trip.trip_end,
-          previousRange.startDate,
-          previousRange.endDate
-        ),
-      0
+    const bookedVehicleDays = getBookedVehicleDays(trips, startDate, endDate);
+    const previousBookedVehicleDays = getBookedVehicleDays(
+      previousTrips,
+      previousRange.startDate,
+      previousRange.endDate
     );
 
     const earliestTripStartForAll =
@@ -1229,13 +1273,20 @@ async function getSummaryMetrics(rangeKey = "30d") {
       key === "all" ? earliestTripStartForAll : startDate,
       endDate
     );
+    const previousFleetCalendarDaysAvailable = previousRange.startDate
+      ? await fetchFleetCalendarDaysAvailable(
+          client,
+          previousRange.startDate,
+          previousRange.endDate
+        )
+      : 0;
     const previousCalendarDays = previousRange.startDate
       ? getCalendarDaysInRange(previousRange.startDate, previousRange.endDate)
       : 0;
     const occupancyRate = safeDivide(bookedVehicleDays, fleetCalendarDaysAvailable);
     const previousOccupancyRate = safeDivide(
       previousBookedVehicleDays,
-      activeVehicleCount * previousCalendarDays
+      previousFleetCalendarDaysAvailable
     );
     const occupancyRateDelta = occupancyRate - previousOccupancyRate;
 
@@ -1476,6 +1527,7 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
             end_date: previousRange.endDate.toISOString(),
             booked_vehicle_days: roundNumber(previousBookedVehicleDays, 2),
             calendar_days: previousCalendarDays,
+            fleet_calendar_days_available: previousFleetCalendarDaysAvailable,
           }
         : null,
 
