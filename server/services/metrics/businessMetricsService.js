@@ -1318,8 +1318,10 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     const ops = vehicleOpsById.get(vehicleId) || {};
     const isActive = vehicle.is_active !== false;
     const isRetired = Boolean(vehicle.retired_at);
+    const inService = vehicle.in_service !== false;
     const tripEligible = vehicle.trip_eligible !== false && vehicle.tripEligible !== false;
-    const includeInSharedAllocations = isActive && !isRetired && tripEligible;
+    const includeInSharedAllocations =
+      isActive && inService && !isRetired && tripEligible;
     const placedInServiceDate =
       vehicle.placed_in_service_date ||
       vehicle.onboarding_date ||
@@ -1353,7 +1355,7 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       vehicle_name: vehicle.nickname || vehicle.vin,
       turo_vehicle_id: vehicle.turo_vehicle_id || null,
       is_active: isActive,
-      in_service: vehicle.in_service !== false,
+      in_service: inService,
       trip_eligible: tripEligible,
       tripEligible,
       retired_at: vehicle.retired_at || null,
@@ -2061,6 +2063,10 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
 
   fleetMetrics.sort((a, b) => toNumber(b.net_profit_after_labor) - toNumber(a.net_profit_after_labor));
 
+  const rentableFleetMetrics = fleetMetrics.filter(
+    (item) => item.include_in_shared_allocations !== false
+  );
+
   const fleetSummary = {
     owner_cash_invested: roundMoney(settings.owner_cash_invested),
     total_host_payout: roundMoney(fleetMetrics.reduce((sum, item) => sum + toNumber(item.host_payout_total), 0)),
@@ -2196,16 +2202,22 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
         : null,
     avg_utilization_rate: roundNumber(
       safeDivide(
-        fleetMetrics.reduce((sum, item) => sum + toNumber(item.utilization_rate), 0),
-        fleetMetrics.length,
+        rentableFleetMetrics.reduce(
+          (sum, item) => sum + toNumber(item.utilization_rate),
+          0
+        ),
+        rentableFleetMetrics.length,
         0
       ),
       4
     ),
     avg_revenue_per_available_day: roundMoney(
       safeDivide(
-        fleetMetrics.reduce((sum, item) => sum + toNumber(item.revenue_per_available_day), 0),
-        fleetMetrics.length,
+        rentableFleetMetrics.reduce(
+          (sum, item) => sum + toNumber(item.revenue_per_available_day),
+          0
+        ),
+        rentableFleetMetrics.length,
         0
       )
     ),

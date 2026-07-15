@@ -169,7 +169,14 @@ function getTripBookedDayKeys(trip, windowStartMs, windowEndMs) {
 }
 
 function isTripEligibleVehicle(vehicle) {
-  return vehicle?.trip_eligible !== false && vehicle?.tripEligible !== false;
+  return (
+    vehicle?.is_active !== false &&
+    vehicle?.isActive !== false &&
+    vehicle?.in_service !== false &&
+    vehicle?.inService !== false &&
+    vehicle?.trip_eligible !== false &&
+    vehicle?.tripEligible !== false
+  );
 }
 
 /**
