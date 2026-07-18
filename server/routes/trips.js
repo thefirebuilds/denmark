@@ -24,6 +24,9 @@ const {
 const {
   ensureMessageRuntimeSchema,
 } = require("../services/messageRuntimeSchema");
+const {
+  syncTripToSelectedGoogleCalendars,
+} = require("../services/googleCalendar/googleTripSync");
 
 const {
   transitionTripStage,
@@ -1222,6 +1225,26 @@ router.patch("/:id", async (req, res) => {
 
     if (status != null) {
       void pushPublicAvailabilitySnapshotSafe("trip status changed");
+    }
+
+    if (normalizedClosedOut === true) {
+      void syncTripToSelectedGoogleCalendars(tripId, {
+        retryDeletedEvents: true,
+      })
+        .then((result) => {
+          if (!result.ok) {
+            console.warn(
+              `[google-calendar] closed trip ${tripId} reminder cleanup completed with failures`,
+              result.results
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn(
+            `[google-calendar] closed trip ${tripId} reminder cleanup failed:`,
+            err.message || err
+          );
+        });
     }
 
     if (!refreshed.rows.length) {

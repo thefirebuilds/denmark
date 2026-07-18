@@ -227,7 +227,14 @@ function buildExpenseCloseoutEvent(trip) {
 }
 
 function isCanceledOrDeleted(trip) {
-  return Boolean(trip.deleted_at || trip.canceled_at);
+  const stage = getNormalizedStage(trip);
+  return Boolean(
+    trip.deleted_at ||
+      trip.canceled_at ||
+      trip.closed_out === true ||
+      stage === "complete" ||
+      stage === "closed"
+  );
 }
 
 function isUnconfirmedTrip(trip) {

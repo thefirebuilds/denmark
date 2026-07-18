@@ -73,6 +73,28 @@ function normalizeDisplayTimestamp(value, fallback = null) {
   return naiveWallTime;
 }
 
+function normalizeTelemetryTimestamp(value, serviceName, fallback = null) {
+  if (!value) return fallback;
+  const pad = (part, size = 2) => String(part).padStart(size, "0");
+  const text =
+    value instanceof Date && !Number.isNaN(value.getTime())
+      ? `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(
+          value.getDate()
+        )}T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(
+          value.getSeconds()
+        )}.${pad(value.getMilliseconds(), 3)}`
+      : String(value).trim();
+  if (/(?:z|[+-]\d{2}:?\d{2})$/i.test(text)) return value;
+
+  // Bouncie provider timestamps are UTC instants. PostgreSQL stores the
+  // telemetry columns without a zone, so restore UTC before display/math.
+  if (String(serviceName || "").toLowerCase() === "bouncie") {
+    return `${text.replace(" ", "T")}Z`;
+  }
+
+  return normalizeDisplayTimestamp(value, fallback);
+}
+
 function formatChicago(value) {
   if (!value) return "unknown time";
   const date = new Date(value);
@@ -783,9 +805,25 @@ async function collectOverdueReturnAlerts() {
       latest.location_last_updated,
       latest.captured_at
     FROM trips t
-    LEFT JOIN vehicles v
-      ON t.turo_vehicle_id IS NOT NULL
-      AND v.turo_vehicle_id = t.turo_vehicle_id
+    LEFT JOIN LATERAL (
+      SELECT candidate.*
+      FROM vehicles candidate
+      WHERE (
+          t.turo_vehicle_id IS NOT NULL
+          AND candidate.turo_vehicle_id = t.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(t.vehicle_name) IN (
+            LOWER(COALESCE(candidate.nickname, '')),
+            LOWER(COALESCE(candidate.turo_vehicle_name, ''))
+          )
+        )
+      ORDER BY
+        (t.turo_vehicle_id IS NOT NULL AND candidate.turo_vehicle_id = t.turo_vehicle_id) DESC,
+        candidate.id ASC
+      LIMIT 1
+    ) v ON true
     LEFT JOIN LATERAL (
       SELECT
         s.service_name,
@@ -816,6 +854,18 @@ async function collectOverdueReturnAlerts() {
             t.vehicle_name IS NOT NULL
             AND s.nickname IS NOT NULL
             AND LOWER(s.nickname) = LOWER(t.vehicle_name)
+          )
+          OR (
+            v.dimo_token_id IS NOT NULL
+            AND s.dimo_token_id = v.dimo_token_id
+          )
+          OR (
+            v.bouncie_vehicle_id IS NOT NULL
+            AND s.provider_vehicle_id = v.bouncie_vehicle_id
+          )
+          OR (
+            v.external_vehicle_key IS NOT NULL
+            AND s.external_vehicle_key = v.external_vehicle_key
           )
         )
       ORDER BY COALESCE(s.captured_at, s.location_last_updated, s.vehicle_last_updated) DESC NULLS LAST,
@@ -1111,9 +1161,25 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       latest.location_last_updated,
       latest.captured_at
     FROM trips t
-    LEFT JOIN vehicles v
-      ON t.turo_vehicle_id IS NOT NULL
-      AND v.turo_vehicle_id = t.turo_vehicle_id
+    LEFT JOIN LATERAL (
+      SELECT candidate.*
+      FROM vehicles candidate
+      WHERE (
+          t.turo_vehicle_id IS NOT NULL
+          AND candidate.turo_vehicle_id = t.turo_vehicle_id
+        )
+        OR (
+          COALESCE(t.vehicle_name, '') <> ''
+          AND LOWER(t.vehicle_name) IN (
+            LOWER(COALESCE(candidate.nickname, '')),
+            LOWER(COALESCE(candidate.turo_vehicle_name, ''))
+          )
+        )
+      ORDER BY
+        (t.turo_vehicle_id IS NOT NULL AND candidate.turo_vehicle_id = t.turo_vehicle_id) DESC,
+        candidate.id ASC
+      LIMIT 1
+    ) v ON true
     LEFT JOIN LATERAL (
       SELECT
         s.service_name,
@@ -1145,6 +1211,18 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
             t.vehicle_name IS NOT NULL
             AND s.nickname IS NOT NULL
             AND LOWER(s.nickname) = LOWER(t.vehicle_name)
+          )
+          OR (
+            v.dimo_token_id IS NOT NULL
+            AND s.dimo_token_id = v.dimo_token_id
+          )
+          OR (
+            v.bouncie_vehicle_id IS NOT NULL
+            AND s.provider_vehicle_id = v.bouncie_vehicle_id
+          )
+          OR (
+            v.external_vehicle_key IS NOT NULL
+            AND s.external_vehicle_key = v.external_vehicle_key
           )
         )
       ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
@@ -1441,7 +1519,11 @@ async function collectLocationEntryAlerts() {
 
       if (wasAlreadyInside) continue;
 
-      const seenAt = row.seen_at || new Date().toISOString();
+      const seenAt = normalizeTelemetryTimestamp(
+        row.seen_at,
+        row.service_name,
+        row.captured_at || new Date().toISOString()
+      );
       const seenHour = new Date(seenAt);
       if (!Number.isNaN(seenHour.getTime())) {
         seenHour.setMinutes(0, 0, 0);
@@ -1650,7 +1732,11 @@ async function sendLocationEntryAlertsForSnapshot(snapshotId) {
       continue;
     }
 
-    const seenAt = row.seen_at || new Date().toISOString();
+    const seenAt = normalizeTelemetryTimestamp(
+      row.seen_at,
+      row.service_name,
+      row.captured_at || new Date().toISOString()
+    );
     const seenHour = new Date(seenAt);
     if (!Number.isNaN(seenHour.getTime())) {
       seenHour.setMinutes(0, 0, 0);

@@ -242,11 +242,15 @@ async function upsertTripFromMessage(savedMessage) {
       trip_start = CASE
         WHEN EXCLUDED.status = 'canceled' THEN COALESCE(trips.trip_start, EXCLUDED.trip_start)
         WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.trip_start
+        WHEN EXCLUDED.status = 'booked_unconfirmed' AND trips.trip_start IS NOT NULL
+          THEN trips.trip_start
         ELSE COALESCE(EXCLUDED.trip_start, trips.trip_start)
       END,
       trip_end = CASE
         WHEN EXCLUDED.status = 'canceled' THEN COALESCE(trips.trip_end, EXCLUDED.trip_end)
         WHEN trips.status = 'canceled' OR trips.canceled_at IS NOT NULL THEN trips.trip_end
+        WHEN EXCLUDED.status = 'booked_unconfirmed' AND trips.trip_end IS NOT NULL
+          THEN trips.trip_end
         ELSE COALESCE(EXCLUDED.trip_end, trips.trip_end)
       END,
       pickup_location = COALESCE(EXCLUDED.pickup_location, trips.pickup_location),
