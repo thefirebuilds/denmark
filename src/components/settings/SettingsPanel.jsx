@@ -4527,6 +4527,9 @@ function IntegrationsSettingsPanel() {
         environment: activeConfig.environment || "development",
         products: activeConfig.products || ["transactions", "balance"],
         selectAccount: activeConfig.selectAccount || "multiple",
+        ...(!repair && repairTarget?.institution?.id
+          ? { institution: repairTarget.institution.id }
+          : {}),
         ...(repair &&
         connections?.sync_status?.status === "warning" &&
         repairEnrollmentId
