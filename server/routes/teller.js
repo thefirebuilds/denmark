@@ -179,7 +179,10 @@ router.get("/connections", async (req, res) => {
 router.post("/connections", async (req, res) => {
   try {
     const accessToken = req.body?.access_token || req.body?.accessToken;
-    const result = await syncTellerTransactions.saveAccessToken(accessToken);
+    const result = await syncTellerTransactions.saveAccessToken(accessToken, {
+      replaceExisting:
+        req.body?.replace_existing === true || req.body?.replaceExisting === true,
+    });
     res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
     console.error("Failed to save Teller connection:", err);

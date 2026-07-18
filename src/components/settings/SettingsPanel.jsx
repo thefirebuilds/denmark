@@ -509,6 +509,21 @@ function formatIntegrationDate(value, includeTime = false) {
   return includeTime ? parsed.toLocaleString() : parsed.toLocaleDateString();
 }
 
+function getTellerRepairTarget(connections) {
+  const liveAccounts = (connections?.sync_status?.accountDiagnostics || [])
+    .map((item) => item?.account)
+    .filter((account) => account?.enrollment_id);
+  const storedAccounts = (connections?.accounts || [])
+    .map((item) => item?.account)
+    .filter((account) => account?.enrollment_id);
+  const accounts = liveAccounts.length ? liveAccounts : storedAccounts;
+  const citiAccount = accounts.find((account) => {
+    const institution = String(account?.institution?.name || "").toLowerCase();
+    return institution.includes("citi") || String(account?.last_four) === "4483";
+  });
+  return citiAccount || accounts[0] || null;
+}
+
 function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "setup", title: "Setup Checklist", sub: "Tenant readiness" },
@@ -4426,7 +4441,7 @@ function IntegrationsSettingsPanel() {
     loadTellerState();
   }, []);
 
-  async function saveTellerEnrollment(enrollment) {
+  async function saveTellerEnrollment(enrollment, options = {}) {
     const accessToken = enrollment?.accessToken;
 
     if (!accessToken) {
@@ -4436,7 +4451,10 @@ function IntegrationsSettingsPanel() {
     const res = await fetch(`${API_BASE}/api/teller/connections`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ access_token: accessToken }),
+      body: JSON.stringify({
+        access_token: accessToken,
+        replace_existing: options.replaceExisting === true,
+      }),
     });
 
     const json = await res.json().catch(() => ({}));
@@ -4483,7 +4501,7 @@ function IntegrationsSettingsPanel() {
     }
   }
 
-  async function connectTeller() {
+  async function connectTeller({ repair = true } = {}) {
     try {
       setConnecting(true);
       setMessage("");
@@ -4502,30 +4520,27 @@ function IntegrationsSettingsPanel() {
         throw new Error("Teller Connect did not initialize");
       }
 
-      const repairEnrollmentId =
-        connections?.sync_status?.accountDiagnostics
-          ?.map((item) => item?.account?.enrollment_id)
-          .find(Boolean) ||
-        connections?.sync_status?.staleAccounts
-          ?.map((item) => item?.account?.enrollment_id)
-          .find(Boolean) ||
-        connections?.accounts
-          ?.map((item) => item?.account?.enrollment_id)
-          .find(Boolean) ||
-        null;
+      const repairTarget = getTellerRepairTarget(connections);
+      const repairEnrollmentId = repairTarget?.enrollment_id || null;
       const tellerConnect = TellerConnect.setup({
         applicationId: activeConfig.applicationId,
         environment: activeConfig.environment || "development",
         products: activeConfig.products || ["transactions", "balance"],
         selectAccount: activeConfig.selectAccount || "multiple",
-        ...(connections?.sync_status?.status === "warning" && repairEnrollmentId
+        ...(repair &&
+        connections?.sync_status?.status === "warning" &&
+        repairEnrollmentId
           ? { enrollmentId: repairEnrollmentId }
           : {}),
         onSuccess: async (enrollment) => {
           try {
-            const result = await saveTellerEnrollment(enrollment);
+            const result = await saveTellerEnrollment(enrollment, {
+              replaceExisting: !repair,
+            });
             setMessage(
-              result.created
+              result.replaced
+                ? "Stale Teller connection replaced. Syncing transactions..."
+                : result.created
                 ? "Teller connection saved. Syncing transactions..."
                 : "Teller connection already existed. Syncing transactions..."
             );
@@ -4917,17 +4932,8 @@ function IntegrationsSettingsPanel() {
   const latestConnected = connections?.latest_connected_at
     ? new Date(connections.latest_connected_at).toLocaleString()
     : "Never";
-  const repairEnrollmentId =
-    connections?.sync_status?.accountDiagnostics
-      ?.map((item) => item?.account?.enrollment_id)
-      .find(Boolean) ||
-    connections?.sync_status?.staleAccounts
-      ?.map((item) => item?.account?.enrollment_id)
-      .find(Boolean) ||
-    connections?.accounts
-      ?.map((item) => item?.account?.enrollment_id)
-      .find(Boolean) ||
-    null;
+  const repairTarget = getTellerRepairTarget(connections);
+  const repairEnrollmentId = repairTarget?.enrollment_id || null;
   const canRepairTeller =
     connections?.sync_status?.status === "warning" && Boolean(repairEnrollmentId);
 
@@ -5122,6 +5128,20 @@ function IntegrationsSettingsPanel() {
               </span>
             </div>
             <div className="settings-vehicle-row">
+              <strong>Repair target</strong>
+              <span>
+                {loading
+                  ? "Loading..."
+                  : repairEnrollmentId
+                  ? `${repairTarget?.institution?.name || "Teller"} ${
+                      repairTarget?.last_four
+                        ? `****${repairTarget.last_four} `
+                        : ""
+                    }(${repairEnrollmentId})`
+                  : "No live enrollment ID returned"}
+              </span>
+            </div>
+            <div className="settings-vehicle-row">
               <strong>Connect config</strong>
               <span>
                 {loading
@@ -5156,7 +5176,7 @@ function IntegrationsSettingsPanel() {
               type="button"
               className="settings-action-btn"
               disabled={loading || connecting || !config?.configured}
-              onClick={connectTeller}
+              onClick={() => connectTeller({ repair: true })}
             >
               {connecting
                 ? "Opening..."
@@ -5164,6 +5184,16 @@ function IntegrationsSettingsPanel() {
                 ? "Repair Teller Connection"
                 : "Connect Bank"}
             </button>
+            {canRepairTeller ? (
+              <button
+                type="button"
+                className="settings-action-btn secondary"
+                disabled={loading || connecting || !config?.configured}
+                onClick={() => connectTeller({ repair: false })}
+              >
+                Replace Teller Connection
+              </button>
+            ) : null}
             <button
               type="button"
               className="settings-action-btn secondary"

@@ -163,7 +163,7 @@ async function getTokenSummary() {
   };
 }
 
-async function saveAccessToken(accessToken) {
+async function saveAccessToken(accessToken, options = {}) {
   await ensureTellerTokenSecretColumns();
   const token = String(accessToken || "").trim();
 
@@ -182,16 +182,36 @@ async function saveAccessToken(accessToken) {
     };
   }
 
-  const result = await pool.query(
-    `
-      INSERT INTO teller_tokens (access_token, access_token_encrypted)
-      VALUES (NULL, $1)
-      RETURNING id, created_at
-    `,
-    [encrypt(token)]
-  );
+  const client = await pool.connect();
+  let result;
+  try {
+    await client.query("BEGIN");
+    result = await client.query(
+      `
+        INSERT INTO teller_tokens (access_token, access_token_encrypted)
+        VALUES (NULL, $1)
+        RETURNING id, created_at
+      `,
+      [encrypt(token)]
+    );
+    if (options.replaceExisting === true && result.rows[0]?.id) {
+      await client.query("DELETE FROM teller_tokens WHERE id <> $1", [
+        result.rows[0].id,
+      ]);
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => null);
+    throw err;
+  } finally {
+    client.release();
+  }
 
-  return { created: true, token: result.rows[0] || null };
+  return {
+    created: true,
+    replaced: options.replaceExisting === true,
+    token: result.rows[0] || null,
+  };
 }
 
 async function getAccounts(token) {
@@ -660,21 +680,12 @@ async function syncTellerTransactions() {
   };
 
   if (!errors.length) {
-    const accountSummary = await pool.query(`
-      SELECT
-        teller_account_id,
-        TO_CHAR(MAX(transaction_date), 'YYYY-MM-DD') AS latest_transaction_date,
-        (ARRAY_AGG(raw_json->'account' ORDER BY updated_at DESC))[1] AS account
-      FROM teller_transactions
-      WHERE raw_json->>'source' = 'teller'
-      GROUP BY teller_account_id
-    `);
     const staleBefore = new Date(
       Date.now() - staleTransactionDays * 24 * 60 * 60 * 1000
     );
-    const staleAccounts = accountSummary.rows.filter((row) => {
-      if (!row.latest_transaction_date) return true;
-      const latest = new Date(`${row.latest_transaction_date}T00:00:00Z`);
+    const staleAccounts = accountDiagnostics.filter((item) => {
+      if (!item.newestTransactionDate) return true;
+      const latest = new Date(`${item.newestTransactionDate}T00:00:00Z`);
       return Number.isNaN(latest.getTime()) || latest < staleBefore;
     });
 
