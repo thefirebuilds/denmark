@@ -110,8 +110,9 @@ SESSION_SECRET_FILE=/run/secrets/denmark_session_secret
 TOKEN_ENCRYPTION_KEY_FILE=/run/secrets/denmark_token_encryption_key
 DENMARK_BRIDGE_SECRET_FILE=/run/secrets/denmark_bridge_secret
 BOUNCIE_CLIENT_SECRET_FILE=/run/secrets/denmark_bouncie_client_secret
-TELLER_CERT_BASE64_FILE=/run/secrets/denmark_teller_cert_base64
-TELLER_KEY_BASE64_FILE=/run/secrets/denmark_teller_key_base64
+# Teller credentials are managed in Settings > Integrations. Legacy
+# TELLER_CERT_BASE64_FILE and TELLER_KEY_BASE64_FILE values are accepted as
+# migration fallbacks until settings are saved there.
 ```
 
 ## Install

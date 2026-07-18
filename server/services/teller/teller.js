@@ -4,7 +4,7 @@ const axios = require("axios");
 const https = require("https");
 const pool = require("../../db");
 const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
-const { getRuntimeSecret } = require("../../config/runtimeSecrets");
+const { getTellerSettings } = require("./tellerSettings");
 
 // ------------------------------------------------------------
 // /server/services/teller/teller.js
@@ -20,31 +20,33 @@ dotenv.config({
   path: path.resolve(__dirname, "../../../.env"),
 });
 
-const certBase64 = getRuntimeSecret("TELLER_CERT_BASE64");
-const keyBase64 = getRuntimeSecret("TELLER_KEY_BASE64");
-
-if (!certBase64) {
-  throw new Error("Missing TELLER_CERT_BASE64 in project .env");
-}
-
-if (!keyBase64) {
-  throw new Error("Missing TELLER_KEY_BASE64 in project .env");
-}
-
-const cert = Buffer.from(certBase64, "base64").toString("utf8");
-const key = Buffer.from(keyBase64, "base64").toString("utf8");
-
-const agent = new https.Agent({
-  cert,
-  key,
-});
-
 const API = "https://api.teller.io";
-const STALE_TRANSACTION_DAYS = Math.max(
-  1,
-  Number(process.env.TELLER_STALE_TRANSACTION_DAYS) || 7
-);
 let ensureTellerTokenSecretColumnsPromise = null;
+let cachedAgent = null;
+let cachedAgentKey = "";
+
+function decodePem(value, label) {
+  const text = String(value || "").trim();
+  if (!text) throw new Error(`Missing Teller ${label} in integration settings`);
+  if (text.includes("-----BEGIN")) return text;
+  const decoded = Buffer.from(text, "base64").toString("utf8");
+  if (!decoded.includes("-----BEGIN")) {
+    throw new Error(`Teller ${label} must be PEM text or base64-encoded PEM`);
+  }
+  return decoded;
+}
+
+async function getTellerAgent() {
+  const settings = await getTellerSettings();
+  const cacheKey = `${settings.certificate}\n${settings.privateKey}`;
+  if (cachedAgent && cacheKey === cachedAgentKey) return cachedAgent;
+  cachedAgent = new https.Agent({
+    cert: decodePem(settings.certificate, "client certificate"),
+    key: decodePem(settings.privateKey, "private key"),
+  });
+  cachedAgentKey = cacheKey;
+  return cachedAgent;
+}
 
 function describeTellerError(err) {
   const status = err?.response?.status || err?.status || null;
@@ -194,7 +196,7 @@ async function saveAccessToken(accessToken) {
 
 async function getAccounts(token) {
   const res = await axios.get(`${API}/accounts`, {
-    httpsAgent: agent,
+    httpsAgent: await getTellerAgent(),
     auth: { username: token, password: "" },
   });
 
@@ -203,7 +205,7 @@ async function getAccounts(token) {
 
 async function getTransactions(token, accountId) {
   const res = await axios.get(`${API}/accounts/${accountId}/transactions`, {
-    httpsAgent: agent,
+    httpsAgent: await getTellerAgent(),
     auth: { username: token, password: "" },
   });
 
@@ -212,7 +214,7 @@ async function getTransactions(token, accountId) {
 
 async function getAccountBalances(token, accountId) {
   const res = await axios.get(`${API}/accounts/${accountId}/balances`, {
-    httpsAgent: agent,
+    httpsAgent: await getTellerAgent(),
     auth: { username: token, password: "" },
   });
 
@@ -576,6 +578,8 @@ async function syncTellerTransactions() {
   }
 
   const ignoreRules = await getIgnoreRules();
+  const tellerSettings = await getTellerSettings();
+  const staleTransactionDays = tellerSettings.staleTransactionDays;
   let totalProcessed = 0;
   let totalInserted = 0;
   let totalAccounts = 0;
@@ -666,7 +670,7 @@ async function syncTellerTransactions() {
       GROUP BY teller_account_id
     `);
     const staleBefore = new Date(
-      Date.now() - STALE_TRANSACTION_DAYS * 24 * 60 * 60 * 1000
+      Date.now() - staleTransactionDays * 24 * 60 * 60 * 1000
     );
     const staleAccounts = accountSummary.rows.filter((row) => {
       if (!row.latest_transaction_date) return true;
@@ -678,8 +682,8 @@ async function syncTellerTransactions() {
       syncStatus.status = "warning";
       syncStatus.warning = `${staleAccounts.length} Teller account${
         staleAccounts.length === 1 ? " has" : "s have"
-      } no transactions in the last ${STALE_TRANSACTION_DAYS} days`;
-      syncStatus.staleTransactionDays = STALE_TRANSACTION_DAYS;
+      } no transactions in the last ${staleTransactionDays} days`;
+      syncStatus.staleTransactionDays = staleTransactionDays;
       syncStatus.staleAccounts = staleAccounts;
     } else {
       syncStatus.warning = null;

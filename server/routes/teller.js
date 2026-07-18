@@ -20,6 +20,11 @@ const {
 } = require("../services/teller/tellerMatchService");
 const syncTellerTransactions = require("../services/teller/teller");
 const syncMercuryTransactions = require("../services/mercury/mercury");
+const {
+  getTellerSettings,
+  sanitizeTellerSettings,
+  saveTellerSettings,
+} = require("../services/teller/tellerSettings");
 
 const router = express.Router();
 
@@ -94,15 +99,10 @@ router.get("/summary", async (req, res) => {
 
 router.get("/connect/config", async (req, res) => {
   try {
-    const applicationId = String(process.env.TELLER_APPLICATION_ID || "").trim();
-    const environment = String(
-      process.env.TELLER_CONNECT_ENVIRONMENT || "development"
-    ).trim();
+    const settings = await getTellerSettings();
 
     res.json({
-      configured: Boolean(applicationId),
-      applicationId: applicationId || null,
-      environment,
+      ...sanitizeTellerSettings(settings),
       products: ["transactions", "balance"],
       selectAccount: "multiple",
     });
@@ -128,6 +128,16 @@ router.get("/mercury/balance", async (req, res) => {
   } catch (err) {
     console.error("Failed to load Mercury balance:", err);
     sendRouteError(res, err, "Failed to load Mercury balance");
+  }
+});
+
+router.post("/connect/config", async (req, res) => {
+  try {
+    const settings = await saveTellerSettings(req.body || {});
+    res.json(sanitizeTellerSettings(settings));
+  } catch (err) {
+    console.error("Failed to save Teller config:", err);
+    sendRouteError(res, err, "Failed to save Teller config");
   }
 });
 

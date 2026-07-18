@@ -4275,6 +4275,13 @@ function TollSettingsCard({
 
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
+  const [tellerForm, setTellerForm] = useState({
+    applicationId: "",
+    environment: "development",
+    staleTransactionDays: 7,
+    certificate: "",
+    privateKey: "",
+  });
   const [connections, setConnections] = useState(null);
   const [mercuryConfig, setMercuryConfig] = useState(null);
   const [dimoConfig, setDimoConfig] = useState(null);
@@ -4287,6 +4294,7 @@ function IntegrationsSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [savingTellerConfig, setSavingTellerConfig] = useState(false);
   const [syncingMercury, setSyncingMercury] = useState(false);
   const [syncingGoogleCalendar, setSyncingGoogleCalendar] = useState(false);
   const [previewingGoogleCalendarCleanup, setPreviewingGoogleCalendarCleanup] =
@@ -4389,6 +4397,14 @@ function IntegrationsSettingsPanel() {
       }
 
       setConfig(configJson);
+      setTellerForm((current) => ({
+        ...current,
+        applicationId: configJson.applicationId || "",
+        environment: configJson.environment || "development",
+        staleTransactionDays: configJson.staleTransactionDays || 7,
+        certificate: "",
+        privateKey: "",
+      }));
       setConnections(connectionsJson);
       setMercuryConfig(mercuryConfigJson);
       setDimoConfig(dimoConfigJson);
@@ -4432,13 +4448,39 @@ function IntegrationsSettingsPanel() {
     return json;
   }
 
+  async function saveTellerConfig(event) {
+    event?.preventDefault();
+    try {
+      setSavingTellerConfig(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/teller/connect/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(tellerForm),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to save Teller settings");
+      setConfig((current) => ({ ...current, ...json }));
+      setTellerForm((current) => ({
+        ...current,
+        certificate: "",
+        privateKey: "",
+      }));
+      setMessage("Teller integration settings saved.");
+    } catch (err) {
+      setMessage(err.message || "Failed to save Teller settings");
+    } finally {
+      setSavingTellerConfig(false);
+    }
+  }
+
   async function connectTeller() {
     try {
       setConnecting(true);
       setMessage("");
 
       if (!config?.configured) {
-        throw new Error("Add TELLER_APPLICATION_ID to .env before connecting.");
+        throw new Error("Save the Teller application ID and credentials first.");
       }
 
       const TellerConnect = await loadTellerConnectScript();
@@ -4448,6 +4490,9 @@ function IntegrationsSettingsPanel() {
       }
 
       const repairEnrollmentId =
+        connections?.sync_status?.accountDiagnostics
+          ?.map((item) => item?.account?.enrollment_id)
+          .find(Boolean) ||
         connections?.sync_status?.staleAccounts
           ?.map((item) => item?.account?.enrollment_id)
           .find(Boolean) ||
@@ -4859,6 +4904,9 @@ function IntegrationsSettingsPanel() {
     ? new Date(connections.latest_connected_at).toLocaleString()
     : "Never";
   const repairEnrollmentId =
+    connections?.sync_status?.accountDiagnostics
+      ?.map((item) => item?.account?.enrollment_id)
+      .find(Boolean) ||
     connections?.sync_status?.staleAccounts
       ?.map((item) => item?.account?.enrollment_id)
       .find(Boolean) ||
@@ -4926,6 +4974,106 @@ function IntegrationsSettingsPanel() {
             to the sync pool; existing expense matching still happens in Inbox.
           </div>
 
+          <form onSubmit={saveTellerConfig}>
+            <div className="settings-form-grid">
+              <label className="settings-field">
+                <span>Application ID</span>
+                <input
+                  type="text"
+                  value={tellerForm.applicationId}
+                  onChange={(event) =>
+                    setTellerForm((current) => ({
+                      ...current,
+                      applicationId: event.target.value,
+                    }))
+                  }
+                  autoComplete="off"
+                />
+              </label>
+              <label className="settings-field">
+                <span>Environment</span>
+                <select
+                  value={tellerForm.environment}
+                  onChange={(event) =>
+                    setTellerForm((current) => ({
+                      ...current,
+                      environment: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="development">Development</option>
+                  <option value="production">Production</option>
+                  <option value="sandbox">Sandbox</option>
+                </select>
+              </label>
+              <label className="settings-field">
+                <span>Stale transaction warning (days)</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={tellerForm.staleTransactionDays}
+                  onChange={(event) =>
+                    setTellerForm((current) => ({
+                      ...current,
+                      staleTransactionDays: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="settings-field">
+                <span>Client certificate</span>
+                <textarea
+                  rows="3"
+                  value={tellerForm.certificate}
+                  placeholder={
+                    config?.certificateConfigured
+                      ? "Saved; leave blank to keep"
+                      : "Paste PEM or base64-encoded PEM"
+                  }
+                  onChange={(event) =>
+                    setTellerForm((current) => ({
+                      ...current,
+                      certificate: event.target.value,
+                    }))
+                  }
+                  autoComplete="off"
+                />
+              </label>
+              <label className="settings-field">
+                <span>Private key</span>
+                <textarea
+                  rows="3"
+                  value={tellerForm.privateKey}
+                  placeholder={
+                    config?.privateKeyConfigured
+                      ? "Saved; leave blank to keep"
+                      : "Paste PEM or base64-encoded PEM"
+                  }
+                  onChange={(event) =>
+                    setTellerForm((current) => ({
+                      ...current,
+                      privateKey: event.target.value,
+                    }))
+                  }
+                  autoComplete="new-password"
+                />
+              </label>
+            </div>
+            <small className="settings-field-note">
+              Certificate and private key values are encrypted before being stored.
+              Leave either secret blank to retain its saved value.
+            </small>
+            <div className="settings-form-actions">
+              <button
+                type="submit"
+                className="settings-action-btn"
+                disabled={loading || savingTellerConfig}
+              >
+                {savingTellerConfig ? "Saving..." : "Save Teller Settings"}
+              </button>
+            </div>
+          </form>
+
           <div className="settings-vehicle-list">
             <div className="settings-vehicle-row">
               <strong>Connections</strong>
@@ -4965,8 +5113,8 @@ function IntegrationsSettingsPanel() {
                 {loading
                   ? "Loading..."
                   : config?.configured
-                  ? `${config.environment || "development"}`
-                  : "Missing TELLER_APPLICATION_ID"}
+                  ? `${config.environment || "development"} (${config.source || "settings"})`
+                  : "Missing Teller credentials"}
               </span>
             </div>
           </div>
