@@ -4448,25 +4448,34 @@ function IntegrationsSettingsPanel() {
     return json;
   }
 
+  async function persistTellerConfig() {
+    const res = await fetch(`${API_BASE}/api/teller/connect/config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tellerForm),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || "Failed to save Teller settings");
+    setConfig((current) => ({ ...current, ...json }));
+    setTellerForm((current) => ({
+      ...current,
+      applicationId: json.applicationId || current.applicationId,
+      environment: json.environment || current.environment,
+      staleTransactionDays:
+        json.staleTransactionDays || current.staleTransactionDays,
+      certificate: "",
+      privateKey: "",
+    }));
+    return json;
+  }
+
   async function saveTellerConfig(event) {
     event?.preventDefault();
     try {
       setSavingTellerConfig(true);
       setMessage("");
-      const res = await fetch(`${API_BASE}/api/teller/connect/config`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(tellerForm),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Failed to save Teller settings");
-      setConfig((current) => ({ ...current, ...json }));
-      setTellerForm((current) => ({
-        ...current,
-        certificate: "",
-        privateKey: "",
-      }));
-      setMessage("Teller integration settings saved.");
+      await persistTellerConfig();
+      setMessage("Teller integration settings saved and active.");
     } catch (err) {
       setMessage(err.message || "Failed to save Teller settings");
     } finally {
@@ -4478,8 +4487,12 @@ function IntegrationsSettingsPanel() {
     try {
       setConnecting(true);
       setMessage("");
+      setSavingTellerConfig(true);
+      const savedConfig = await persistTellerConfig();
+      setSavingTellerConfig(false);
+      const activeConfig = { ...config, ...savedConfig };
 
-      if (!config?.configured) {
+      if (!activeConfig.configured) {
         throw new Error("Save the Teller application ID and credentials first.");
       }
 
@@ -4501,10 +4514,10 @@ function IntegrationsSettingsPanel() {
           .find(Boolean) ||
         null;
       const tellerConnect = TellerConnect.setup({
-        applicationId: config.applicationId,
-        environment: config.environment || "development",
-        products: config.products || ["transactions", "balance"],
-        selectAccount: config.selectAccount || "multiple",
+        applicationId: activeConfig.applicationId,
+        environment: activeConfig.environment || "development",
+        products: activeConfig.products || ["transactions", "balance"],
+        selectAccount: activeConfig.selectAccount || "multiple",
         ...(connections?.sync_status?.status === "warning" && repairEnrollmentId
           ? { enrollmentId: repairEnrollmentId }
           : {}),
@@ -4531,6 +4544,7 @@ function IntegrationsSettingsPanel() {
 
       tellerConnect.open();
     } catch (err) {
+      setSavingTellerConfig(false);
       setConnecting(false);
       setMessage(err.message || "Failed to open Teller Connect");
     }
