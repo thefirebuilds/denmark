@@ -499,6 +499,16 @@ function toPayloadVehicle(form) {
   };
 }
 
+function formatIntegrationDate(value, includeTime = false) {
+  if (!value) return null;
+  const text = String(value);
+  const parsed = new Date(
+    /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T00:00:00` : text
+  );
+  if (Number.isNaN(parsed.getTime())) return text;
+  return includeTime ? parsed.toLocaleString() : parsed.toLocaleDateString();
+}
+
 function SectionList({ activeSection, onChange }) {
   const sections = [
     { key: "setup", title: "Setup Checklist", sub: "Tenant readiness" },
@@ -4491,9 +4501,11 @@ function IntegrationsSettingsPanel() {
       }
 
       setMessage(
-        `Synced ${json.processed || 0} bank transaction${
+        `Teller returned ${json.processed || 0} transaction${
           Number(json.processed || 0) === 1 ? "" : "s"
-        }.`
+        }; ${json.inserted || 0} ${
+          Number(json.inserted || 0) === 1 ? "was" : "were"
+        } new.`
       );
       await loadTellerState();
     } catch (err) {
@@ -4920,9 +4932,9 @@ function IntegrationsSettingsPanel() {
                 {loading
                   ? "Loading..."
                   : connections?.accounts?.[0]?.latest_transaction_date
-                  ? new Date(
-                      `${connections.accounts[0].latest_transaction_date}T00:00:00`
-                    ).toLocaleDateString()
+                  ? formatIntegrationDate(
+                      connections.accounts[0].latest_transaction_date
+                    )
                   : "None imported"}
               </span>
             </div>
@@ -4945,6 +4957,14 @@ function IntegrationsSettingsPanel() {
               {connections.sync_status.errors?.some((item) => item.reconnectRequired)
                 ? " Reconnect the bank with Connect Bank to replace the expired authorization."
                 : " Try Sync Teller again and check the server log if the error continues."}
+            </div>
+          ) : null}
+
+          {connections?.sync_status?.status === "warning" ? (
+            <div className="settings-message warning">
+              Teller responded successfully, but the feed may be stale:{" "}
+              {connections.sync_status.warning}. Reconnect the affected bank if
+              recent posted transactions are missing.
             </div>
           ) : null}
 

@@ -440,6 +440,10 @@
   color: #fca5a5;
 }
 
+.settings-message.warning {
+  color: #fcd34d;
+}
+
 .settings-calendar-cleanup {
   border: 1px solid #2a395d;
   background: rgba(15, 23, 42, 0.48);

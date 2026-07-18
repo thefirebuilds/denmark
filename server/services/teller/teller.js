@@ -40,6 +40,10 @@ const agent = new https.Agent({
 });
 
 const API = "https://api.teller.io";
+const STALE_TRANSACTION_DAYS = Math.max(
+  1,
+  Number(process.env.TELLER_STALE_TRANSACTION_DAYS) || 7
+);
 let ensureTellerTokenSecretColumnsPromise = null;
 
 function describeTellerError(err) {
@@ -136,7 +140,7 @@ async function getTokenSummary() {
   const accountResult = await pool.query(`
     SELECT
       teller_account_id,
-      MAX(transaction_date) AS latest_transaction_date,
+      TO_CHAR(MAX(transaction_date), 'YYYY-MM-DD') AS latest_transaction_date,
       MAX(updated_at) AS latest_import_at,
       (ARRAY_AGG(raw_json->'account' ORDER BY updated_at DESC))[1] AS account
     FROM teller_transactions
@@ -530,12 +534,35 @@ async function saveTransaction(tx, ignoreRules, account = null) {
 async function syncTransactionsForAccount(account, token, ignoreRules) {
   const accountId = account?.id || account;
   const transactions = await getTransactions(token, accountId);
+  const transactionIds = transactions.map((tx) => tx.id).filter(Boolean);
+  const existingResult = transactionIds.length
+    ? await pool.query(
+        `
+          SELECT teller_transaction_id
+          FROM teller_transactions
+          WHERE teller_transaction_id = ANY($1::text[])
+        `,
+        [transactionIds]
+      )
+    : { rows: [] };
+  const existingIds = new Set(
+    existingResult.rows.map((row) => row.teller_transaction_id)
+  );
 
   for (const tx of transactions) {
     await saveTransaction(tx, ignoreRules, account);
   }
 
-  return transactions.length;
+  const newestTransactionDate = transactions.reduce((latest, tx) => {
+    const date = String(tx?.date || "");
+    return date && (!latest || date > latest) ? date : latest;
+  }, null);
+
+  return {
+    fetched: transactions.length,
+    inserted: transactionIds.filter((id) => !existingIds.has(id)).length,
+    newestTransactionDate,
+  };
 }
 
 async function syncTellerTransactions() {
@@ -548,8 +575,10 @@ async function syncTellerTransactions() {
 
   const ignoreRules = await getIgnoreRules();
   let totalProcessed = 0;
+  let totalInserted = 0;
   let totalAccounts = 0;
   const errors = [];
+  const accountDiagnostics = [];
 
   for (const tokenRow of tokens) {
     console.log(`[teller] fetching accounts token=${tokenRow.id}`);
@@ -575,12 +604,30 @@ async function syncTellerTransactions() {
     for (const account of accounts) {
       console.log(`[teller] syncing account=${account.id}`);
       try {
-        const count = await syncTransactionsForAccount(
+        const accountResult = await syncTransactionsForAccount(
           account,
           tokenRow.access_token,
           ignoreRules
         );
-        totalProcessed += count;
+        totalProcessed += accountResult.fetched;
+        totalInserted += accountResult.inserted;
+        const diagnostic = {
+          tokenId: tokenRow.id,
+          account: normalizeAccount(account),
+          fetched: accountResult.fetched,
+          inserted: accountResult.inserted,
+          newestTransactionDate: accountResult.newestTransactionDate,
+        };
+        accountDiagnostics.push(diagnostic);
+        console.log(
+          `[teller] account done | account=${account.id} institution=${
+            diagnostic.account?.institution?.name || "unknown"
+          } name=${diagnostic.account?.name || "unknown"} lastFour=${
+            diagnostic.account?.last_four || "unknown"
+          } fetched=${diagnostic.fetched} inserted=${diagnostic.inserted} newest=${
+            diagnostic.newestTransactionDate || "none"
+          }`
+        );
       } catch (err) {
         errors.push({
           tokenId: tokenRow.id,
@@ -593,16 +640,50 @@ async function syncTellerTransactions() {
   }
 
   console.log(
-    `[teller] sync done | tokens=${tokens.length} accounts=${totalAccounts} processed=${totalProcessed}`
+    `[teller] sync done | tokens=${tokens.length} accounts=${totalAccounts} fetched=${totalProcessed} inserted=${totalInserted}`
   );
   const syncStatus = {
     lastCheckedAt: new Date().toISOString(),
     lastSuccessfulAt: errors.length ? null : new Date().toISOString(),
     accountsChecked: totalAccounts,
     transactionsProcessed: totalProcessed,
+    transactionsInserted: totalInserted,
+    accountDiagnostics,
     status: errors.length ? "error" : "ok",
     errors,
   };
+
+  if (!errors.length) {
+    const accountSummary = await pool.query(`
+      SELECT
+        teller_account_id,
+        TO_CHAR(MAX(transaction_date), 'YYYY-MM-DD') AS latest_transaction_date,
+        (ARRAY_AGG(raw_json->'account' ORDER BY updated_at DESC))[1] AS account
+      FROM teller_transactions
+      WHERE raw_json->>'source' = 'teller'
+      GROUP BY teller_account_id
+    `);
+    const staleBefore = new Date(
+      Date.now() - STALE_TRANSACTION_DAYS * 24 * 60 * 60 * 1000
+    );
+    const staleAccounts = accountSummary.rows.filter((row) => {
+      if (!row.latest_transaction_date) return true;
+      const latest = new Date(`${row.latest_transaction_date}T00:00:00Z`);
+      return Number.isNaN(latest.getTime()) || latest < staleBefore;
+    });
+
+    if (staleAccounts.length) {
+      syncStatus.status = "warning";
+      syncStatus.warning = `${staleAccounts.length} Teller account${
+        staleAccounts.length === 1 ? " has" : "s have"
+      } no transactions in the last ${STALE_TRANSACTION_DAYS} days`;
+      syncStatus.staleTransactionDays = STALE_TRANSACTION_DAYS;
+      syncStatus.staleAccounts = staleAccounts;
+    } else {
+      syncStatus.warning = null;
+      syncStatus.staleAccounts = [];
+    }
+  }
   await saveSyncStatus(syncStatus);
 
   if (errors.length) {
@@ -613,7 +694,14 @@ async function syncTellerTransactions() {
     err.details = syncStatus;
     throw err;
   }
-  return { processed: totalProcessed, tokens: tokens.length, accounts: totalAccounts };
+  return {
+    processed: totalProcessed,
+    inserted: totalInserted,
+    tokens: tokens.length,
+    accounts: totalAccounts,
+    status: syncStatus.status,
+    warning: syncStatus.warning || null,
+  };
 }
 
 module.exports = syncTellerTransactions;
