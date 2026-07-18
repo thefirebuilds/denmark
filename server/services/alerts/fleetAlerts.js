@@ -1139,6 +1139,55 @@ async function collectDeviceConnectivityAlerts() {
   });
 }
 
+async function recordTripReturnGeoMessage(row, match) {
+  const observedAt = normalizeTelemetryTimestamp(
+    row.location_last_updated || row.vehicle_last_updated || row.captured_at,
+    row.service_name,
+    row.captured_at
+  );
+  const vehicle = row.vehicle_nickname || row.vehicle_name || "Vehicle";
+  const locationLabel =
+    match.location.label || match.location.address || "return location";
+  const distance = match.milesAway.toFixed(2);
+  const source = row.service_name || "vehicle telemetry";
+  const subject = `${vehicle} returned to ${locationLabel}`;
+  const body = `${vehicle} was observed within ${distance} mi of ${locationLabel} at ${formatChicago(
+    observedAt
+  )}. Source: ${source}.`;
+
+  await pool.query(
+    `
+      INSERT INTO messages (
+        message_id,
+        subject,
+        status,
+        mailbox,
+        from_header,
+        message_timestamp,
+        text_body,
+        normalized_text_body,
+        guest_name,
+        vehicle_name,
+        reservation_id,
+        message_type,
+        trip_id
+      )
+      VALUES ($1, $2, 'read', 'system', 'Denmark automation', $3, $4, $4, $5, $6, $7, 'return_geo_observed', $8)
+      ON CONFLICT (message_id) DO NOTHING
+    `,
+    [
+      `system:return-geo:${row.id}:${match.location.id || locationLabel}`,
+      subject,
+      observedAt,
+      body,
+      row.guest_name || null,
+      vehicle,
+      row.reservation_id || null,
+      row.id,
+    ]
+  );
+}
+
 async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
   const returnLocations = await getEnabledLocations();
   if (!returnLocations.length) return { advanced: 0 };
@@ -1263,6 +1312,7 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
     if (!match) continue;
 
     try {
+      await recordTripReturnGeoMessage(row, match);
       await transitionTripStage(row.id, "turnaround", {
         changedBy: "system:return-geo-location",
         reason: `return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}`,
