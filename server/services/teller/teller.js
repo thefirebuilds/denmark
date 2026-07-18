@@ -42,6 +42,37 @@ const agent = new https.Agent({
 const API = "https://api.teller.io";
 let ensureTellerTokenSecretColumnsPromise = null;
 
+function describeTellerError(err) {
+  const status = err?.response?.status || err?.status || null;
+  const apiError = err?.response?.data?.error;
+  const message =
+    (typeof apiError === "string" ? apiError : apiError?.message) ||
+    err?.response?.data?.message ||
+    err?.message ||
+    "Unknown Teller error";
+
+  return {
+    message: String(message),
+    status: status == null ? null : Number(status),
+    code: apiError?.code || err?.code || null,
+    reconnectRequired: status === 401 || status === 403,
+  };
+}
+
+async function saveSyncStatus(status) {
+  await pool.query(
+    `
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('integrations.teller.sync_status', $1::jsonb, NOW())
+      ON CONFLICT (key)
+      DO UPDATE SET
+        value = app_settings.value || jsonb_strip_nulls(EXCLUDED.value),
+        updated_at = NOW()
+    `,
+    [JSON.stringify(status)]
+  );
+}
+
 async function ensureTellerTokenSecretColumns() {
   if (!ensureTellerTokenSecretColumnsPromise) {
     ensureTellerTokenSecretColumnsPromise = pool.query(`
@@ -102,7 +133,28 @@ async function getTokenSummary() {
     FROM teller_tokens
   `);
 
-  return result.rows[0] || { token_count: 0, latest_connected_at: null };
+  const accountResult = await pool.query(`
+    SELECT
+      teller_account_id,
+      MAX(transaction_date) AS latest_transaction_date,
+      MAX(updated_at) AS latest_import_at,
+      (ARRAY_AGG(raw_json->'account' ORDER BY updated_at DESC))[1] AS account
+    FROM teller_transactions
+    WHERE raw_json->>'source' = 'teller'
+    GROUP BY teller_account_id
+    ORDER BY MAX(transaction_date) DESC NULLS LAST
+  `);
+  const statusResult = await pool.query(`
+    SELECT value FROM app_settings
+    WHERE key = 'integrations.teller.sync_status'
+    LIMIT 1
+  `);
+
+  return {
+    ...(result.rows[0] || { token_count: 0, latest_connected_at: null }),
+    sync_status: statusResult.rows[0]?.value || null,
+    accounts: accountResult.rows,
+  };
 }
 
 async function saveAccessToken(accessToken) {
@@ -497,10 +549,21 @@ async function syncTellerTransactions() {
   const ignoreRules = await getIgnoreRules();
   let totalProcessed = 0;
   let totalAccounts = 0;
+  const errors = [];
 
   for (const tokenRow of tokens) {
     console.log(`[teller] fetching accounts token=${tokenRow.id}`);
-    const accounts = await getAccounts(tokenRow.access_token);
+    let accounts;
+    try {
+      accounts = await getAccounts(tokenRow.access_token);
+    } catch (err) {
+      errors.push({
+        tokenId: tokenRow.id,
+        accountId: null,
+        ...describeTellerError(err),
+      });
+      continue;
+    }
 
     if (!accounts.length) {
       console.warn(`[teller] no accounts returned token=${tokenRow.id}`);
@@ -511,36 +574,45 @@ async function syncTellerTransactions() {
 
     for (const account of accounts) {
       console.log(`[teller] syncing account=${account.id}`);
-      const count = await syncTransactionsForAccount(
-        account,
-        tokenRow.access_token,
-        ignoreRules
-      );
-      totalProcessed += count;
+      try {
+        const count = await syncTransactionsForAccount(
+          account,
+          tokenRow.access_token,
+          ignoreRules
+        );
+        totalProcessed += count;
+      } catch (err) {
+        errors.push({
+          tokenId: tokenRow.id,
+          accountId: account.id,
+          account: normalizeAccount(account),
+          ...describeTellerError(err),
+        });
+      }
     }
   }
 
   console.log(
     `[teller] sync done | tokens=${tokens.length} accounts=${totalAccounts} processed=${totalProcessed}`
   );
-  await pool.query(
-    `
-      INSERT INTO app_settings (key, value, updated_at)
-      VALUES (
-        'integrations.teller.sync_status',
-        jsonb_build_object(
-          'lastCheckedAt', NOW(),
-          'accountsChecked', $1::integer,
-          'transactionsProcessed', $2::integer,
-          'status', 'ok'
-        ),
-        NOW()
-      )
-      ON CONFLICT (key)
-      DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-    `,
-    [totalAccounts, totalProcessed]
-  );
+  const syncStatus = {
+    lastCheckedAt: new Date().toISOString(),
+    lastSuccessfulAt: errors.length ? null : new Date().toISOString(),
+    accountsChecked: totalAccounts,
+    transactionsProcessed: totalProcessed,
+    status: errors.length ? "error" : "ok",
+    errors,
+  };
+  await saveSyncStatus(syncStatus);
+
+  if (errors.length) {
+    const err = new Error(
+      `Teller sync failed for ${errors.length} connection/account${errors.length === 1 ? "" : "s"}: ${errors[0].message}`
+    );
+    err.status = 502;
+    err.details = syncStatus;
+    throw err;
+  }
   return { processed: totalProcessed, tokens: tokens.length, accounts: totalAccounts };
 }
 

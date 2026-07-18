@@ -157,6 +157,8 @@ router.get("/connections", async (req, res) => {
     res.json({
       token_count: Number(summary.token_count || 0),
       latest_connected_at: summary.latest_connected_at || null,
+      sync_status: summary.sync_status || null,
+      accounts: summary.accounts || [],
     });
   } catch (err) {
     console.error("Failed to load Teller connections:", err);
@@ -193,6 +195,7 @@ router.post("/sync", async (req, res) => {
       result.errors.push({
         source: "teller",
         error: err.message || "Failed to sync Teller transactions",
+        details: err.details || null,
       });
     }
 

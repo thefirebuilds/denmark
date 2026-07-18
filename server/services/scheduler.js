@@ -438,6 +438,22 @@ async function runTellerSync(reason = "interval") {
       console.error(
         `[scheduler] teller source failed | reason=${reason} error=${err.message || err}`
       );
+      await logSystemActivity({
+        category: "automation",
+        eventType: "teller_sync_failed",
+        severity: "error",
+        actorType: "system",
+        outcome: "failure",
+        subjectType: "integration",
+        subjectId: "teller",
+        subjectLabel: "Teller",
+        source: "scheduler",
+        details: {
+          reason,
+          error: err.message || String(err),
+          syncStatus: err.details || null,
+        },
+      }).catch(() => null);
     }
 
     try {

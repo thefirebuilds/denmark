@@ -436,6 +436,10 @@
   font-size: 0.9rem;
 }
 
+.settings-message.error {
+  color: #fca5a5;
+}
+
 .settings-calendar-cleanup {
   border: 1px solid #2a395d;
   background: rgba(15, 23, 42, 0.48);

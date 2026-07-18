@@ -4480,7 +4480,14 @@ function IntegrationsSettingsPanel() {
       const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to sync Teller");
+        throw new Error(
+          json?.error || json?.errors?.[0]?.error || "Failed to sync Teller"
+        );
+      }
+      if (json?.errors?.length) {
+        throw new Error(
+          json.errors.map((item) => `${item.source}: ${item.error}`).join("; ")
+        );
       }
 
       setMessage(
@@ -4892,8 +4899,32 @@ function IntegrationsSettingsPanel() {
               <span>{loading ? "Loading..." : connections?.token_count || 0}</span>
             </div>
             <div className="settings-vehicle-row">
-              <strong>Latest connection</strong>
+              <strong>Connection added</strong>
               <span>{loading ? "Loading..." : latestConnected}</span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Last sync attempt</strong>
+              <span>
+                {loading
+                  ? "Loading..."
+                  : connections?.sync_status?.lastCheckedAt
+                  ? `${new Date(
+                      connections.sync_status.lastCheckedAt
+                    ).toLocaleString()} (${connections.sync_status.status})`
+                  : "Never recorded"}
+              </span>
+            </div>
+            <div className="settings-vehicle-row">
+              <strong>Latest Teller transaction</strong>
+              <span>
+                {loading
+                  ? "Loading..."
+                  : connections?.accounts?.[0]?.latest_transaction_date
+                  ? new Date(
+                      `${connections.accounts[0].latest_transaction_date}T00:00:00`
+                    ).toLocaleDateString()
+                  : "None imported"}
+              </span>
             </div>
             <div className="settings-vehicle-row">
               <strong>Connect config</strong>
@@ -4906,6 +4937,16 @@ function IntegrationsSettingsPanel() {
               </span>
             </div>
           </div>
+
+          {connections?.sync_status?.status === "error" ? (
+            <div className="settings-message error">
+              Teller sync is failing:{" "}
+              {connections.sync_status.errors?.[0]?.message || "Unknown error"}
+              {connections.sync_status.errors?.some((item) => item.reconnectRequired)
+                ? " Reconnect the bank with Connect Bank to replace the expired authorization."
+                : " Try Sync Teller again and check the server log if the error continues."}
+            </div>
+          ) : null}
 
           <div className="settings-form-actions">
             <button
