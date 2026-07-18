@@ -4447,11 +4447,22 @@ function IntegrationsSettingsPanel() {
         throw new Error("Teller Connect did not initialize");
       }
 
+      const repairEnrollmentId =
+        connections?.sync_status?.staleAccounts
+          ?.map((item) => item?.account?.enrollment_id)
+          .find(Boolean) ||
+        connections?.accounts
+          ?.map((item) => item?.account?.enrollment_id)
+          .find(Boolean) ||
+        null;
       const tellerConnect = TellerConnect.setup({
         applicationId: config.applicationId,
         environment: config.environment || "development",
         products: config.products || ["transactions", "balance"],
         selectAccount: config.selectAccount || "multiple",
+        ...(connections?.sync_status?.status === "warning" && repairEnrollmentId
+          ? { enrollmentId: repairEnrollmentId }
+          : {}),
         onSuccess: async (enrollment) => {
           try {
             const result = await saveTellerEnrollment(enrollment);
@@ -4847,6 +4858,16 @@ function IntegrationsSettingsPanel() {
   const latestConnected = connections?.latest_connected_at
     ? new Date(connections.latest_connected_at).toLocaleString()
     : "Never";
+  const repairEnrollmentId =
+    connections?.sync_status?.staleAccounts
+      ?.map((item) => item?.account?.enrollment_id)
+      .find(Boolean) ||
+    connections?.accounts
+      ?.map((item) => item?.account?.enrollment_id)
+      .find(Boolean) ||
+    null;
+  const canRepairTeller =
+    connections?.sync_status?.status === "warning" && Boolean(repairEnrollmentId);
 
   return (
     <section className="panel settings-main-panel">
@@ -4975,7 +4996,11 @@ function IntegrationsSettingsPanel() {
               disabled={loading || connecting || !config?.configured}
               onClick={connectTeller}
             >
-              {connecting ? "Opening..." : "Connect Bank"}
+              {connecting
+                ? "Opening..."
+                : canRepairTeller
+                ? "Repair Teller Connection"
+                : "Connect Bank"}
             </button>
             <button
               type="button"

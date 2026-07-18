@@ -224,6 +224,8 @@ function normalizeAccount(account) {
 
   return {
     id: account.id || null,
+    enrollment_id: account.enrollment_id || null,
+    status: account.status || null,
     name: account.name || null,
     type: account.type || null,
     subtype: account.subtype || null,
