@@ -35,6 +35,7 @@ const {
 const {
   ensureApplicationUniqueConstraints,
 } = require("../services/database/applicationUniqueConstraints");
+const { ensureBankingRuntimeSchema } = require("../services/banking/bankingRuntimeSchema");
 const {
   ensureSystemActivityLogTable,
 } = require("../services/systemActivityLog");
@@ -73,6 +74,8 @@ function withStartupEnsureTimeout(label, promise) {
 }
 
 async function initializeStartupTables() {
+  console.log("[server] ensuring banking runtime schema");
+  await withStartupEnsureTimeout("banking runtime schema", ensureBankingRuntimeSchema());
   console.log("[server] ensuring vehicle identity constraints");
   await withStartupEnsureTimeout(
     "vehicle identity constraints",

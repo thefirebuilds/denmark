@@ -93,10 +93,10 @@ async function upsertTransaction(tx, account, institutionName, ignoreRules=[]) {
   const ignoreReason=findIgnoreReason(description,ignoreRules);
   const raw = { ...tx, source: "plaid", institution: institutionName || null,
     account: account ? { id: account.account_id, name: account.name, official_name: account.official_name, mask: account.mask, type: account.type, subtype: account.subtype } : null };
-  const result = await pool.query(`INSERT INTO teller_transactions
-    (teller_transaction_id,teller_account_id,transaction_date,description,amount,transaction_type,status,counterparty_name,category,raw_json,ignored,ignore_reason,updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,NOW()) ON CONFLICT(teller_transaction_id) DO UPDATE SET
-    teller_account_id=EXCLUDED.teller_account_id,transaction_date=EXCLUDED.transaction_date,description=EXCLUDED.description,
+  const result = await pool.query(`INSERT INTO banking_transactions
+    (provider_transaction_id,provider_account_id,transaction_date,description,amount,transaction_type,status,counterparty_name,category,raw_json,ignored,ignore_reason,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,NOW()) ON CONFLICT(provider_transaction_id) DO UPDATE SET
+    provider_account_id=EXCLUDED.provider_account_id,transaction_date=EXCLUDED.transaction_date,description=EXCLUDED.description,
     amount=EXCLUDED.amount,transaction_type=EXCLUDED.transaction_type,status=EXCLUDED.status,counterparty_name=EXCLUDED.counterparty_name,
     category=EXCLUDED.category,raw_json=EXCLUDED.raw_json,ignored=EXCLUDED.ignored,ignore_reason=EXCLUDED.ignore_reason,updated_at=NOW() RETURNING (xmax=0) AS inserted`,
     [`plaid:${tx.transaction_id}`, `plaid:${tx.account_id}`, tx.authorized_date || tx.date,
@@ -113,7 +113,7 @@ async function syncTransactions({ reason = "manual" } = {}) {
   const gate = await claimGate("transactions", TRANSACTION_INTERVAL_HOURS, settings.environment);
   if (!gate.allowed) return { skipped: true, reason: "production_rate_guard", nextAllowedAt: gate.nextAllowedAt, fetched: 0, inserted: 0 };
   let fetched=0, inserted=0, modified=0, removed=0;
-  const ignoreRules=(await pool.query("SELECT match_type,match_value,reason FROM teller_ignore_rules WHERE is_active=TRUE")).rows;
+  const ignoreRules=(await pool.query("SELECT match_type,match_value,reason FROM banking_ignore_rules WHERE is_active=TRUE")).rows;
   for (const item of items) {
     await pool.query("UPDATE plaid_items SET transactions_last_attempt_at=NOW(),updated_at=NOW() WHERE item_id=$1", [item.item_id]);
     try {
@@ -128,7 +128,7 @@ async function syncTransactions({ reason = "manual" } = {}) {
       for(const page of pages) { for(const tx of [...(page.added||[]),...(page.modified||[])]) {
           const wasInserted=await upsertTransaction(tx,accountMap.get(tx.account_id),item.institution_name,ignoreRules); fetched++; if(wasInserted) inserted++;
         } modified += (page.modified||[]).length;
-        for(const tx of page.removed||[]) { const result=await pool.query("DELETE FROM teller_transactions WHERE teller_transaction_id=$1 AND review_status='pending'", [`plaid:${tx.transaction_id}`]); removed+=result.rowCount; }
+        for(const tx of page.removed||[]) { const result=await pool.query("DELETE FROM banking_transactions WHERE provider_transaction_id=$1 AND review_status='pending'", [`plaid:${tx.transaction_id}`]); removed+=result.rowCount; }
       }
       await pool.query("UPDATE plaid_items SET cursor=$2,transactions_last_success_at=NOW(),last_error=NULL,updated_at=NOW() WHERE item_id=$1", [item.item_id,cursor]);
     } catch(error) {
@@ -171,7 +171,7 @@ async function getCiti4483BalanceSummary(){
   const a=cached.accounts.find(x=>x.mask==="4483"&&x.type==="credit");
   if(!a)return {configured:Boolean(settings.clientId&&settings.secret),found:false,currentBalance:null,availableBalance:null,debtBalance:null,lastFour:"4483",balanceSource:"plaid_weekly_anchor",fetchedAt:null};
   const deltaResult=await pool.query(`SELECT COALESCE(SUM(amount),0)::numeric AS normalized_delta
-    FROM teller_transactions WHERE teller_account_id=$1 AND created_at > $2`,[`plaid:${a.account_id}`,a.balance_fetched_at]);
+    FROM banking_transactions WHERE provider_account_id=$1 AND created_at > $2`,[`plaid:${a.account_id}`,a.balance_fetched_at]);
   const normalizedDelta=Number(deltaResult.rows[0]?.normalized_delta||0);
   // Imported expenses are negative and payments/refunds are positive. Subtracting
   // that normalized activity advances Plaid's positive credit-card debt balance.
@@ -184,7 +184,7 @@ async function getCiti4483BalanceSummary(){
     debtBalance:Math.max(0,currentBalance),lastFour:"4483",balanceSource:"plaid_weekly_anchor_plus_transactions",
     fetchedAt:a.balance_fetched_at||null,calculatedAt:new Date().toISOString(),transactionDelta:normalizedDelta};
 }
-async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM teller_transactions WHERE raw_json->>'source'='plaid'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS};}
+async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM banking_transactions WHERE raw_json->>'source'='plaid'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS};}
 async function removeItem(itemId){await ensureSchema();const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);if(!rows[0])throw Object.assign(new Error("Plaid Item not found"),{status:404});await call("/item/remove",{access_token:decrypt(rows[0].access_token_encrypted)});await pool.query("DELETE FROM plaid_items WHERE item_id=$1",[itemId]);return {removed:true,itemId};}
 
 module.exports={createLinkToken,savePublicToken,createSandboxItem,syncTransactions,refreshBalances,getCachedBalances,getCiti4483BalanceSummary,getSummary,removeItem,ensureSchema};

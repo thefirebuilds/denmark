@@ -222,23 +222,23 @@ const EMPTY_VEHICLE = {
   is_active: true,
 };
 
-function loadTellerConnectScript() {
-  if (window.TellerConnect) return Promise.resolve(window.TellerConnect);
+function loadBankingConnectScript() {
+  if (window.BankingConnect) return Promise.resolve(window.BankingConnect);
 
   return new Promise((resolve, reject) => {
-    const existing = document.querySelector("script[data-teller-connect]");
+    const existing = document.querySelector("script[data-banking-connect]");
 
     if (existing) {
-      existing.addEventListener("load", () => resolve(window.TellerConnect));
+      existing.addEventListener("load", () => resolve(window.BankingConnect));
       existing.addEventListener("error", reject);
       return;
     }
 
     const script = document.createElement("script");
-    script.src = "https://cdn.teller.io/connect/connect.js";
-    script.dataset.tellerConnect = "true";
-    script.onload = () => resolve(window.TellerConnect);
-    script.onerror = () => reject(new Error("Failed to load Teller Connect"));
+    script.src = "https://cdn.banking.io/connect/connect.js";
+    script.dataset.bankingConnect = "true";
+    script.onload = () => resolve(window.BankingConnect);
+    script.onerror = () => reject(new Error("Failed to load Banking Connect"));
     document.body.appendChild(script);
   });
 }
@@ -527,7 +527,7 @@ function formatIntegrationDate(value, includeTime = false) {
   return includeTime ? parsed.toLocaleString() : parsed.toLocaleDateString();
 }
 
-function getTellerRepairTarget(connections) {
+function getBankingRepairTarget(connections) {
   const liveAccounts = (connections?.sync_status?.accountDiagnostics || [])
     .map((item) => item?.account)
     .filter((account) => account?.enrollment_id);
@@ -4308,7 +4308,7 @@ function TollSettingsCard({
 
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
-  const [tellerForm, setTellerForm] = useState({
+  const [bankingForm, setBankingForm] = useState({
     clientId: "",
     environment: "sandbox",
     secret: "",
@@ -4325,7 +4325,7 @@ function IntegrationsSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [savingTellerConfig, setSavingTellerConfig] = useState(false);
+  const [savingBankingConfig, setSavingBankingConfig] = useState(false);
   const [syncingMercury, setSyncingMercury] = useState(false);
   const [syncingGoogleCalendar, setSyncingGoogleCalendar] = useState(false);
   const [previewingGoogleCalendarCleanup, setPreviewingGoogleCalendarCleanup] =
@@ -4346,7 +4346,7 @@ function IntegrationsSettingsPanel() {
   const [tollMessage, setTollMessage] = useState("");
   const [message, setMessage] = useState("");
 
-  async function loadTellerState() {
+  async function loadBankingState() {
     try {
       setLoading(true);
       setMessage("");
@@ -4363,7 +4363,7 @@ function IntegrationsSettingsPanel() {
       ] = await Promise.all([
         fetch(`${API_BASE}/api/plaid/config`),
         fetch(`${API_BASE}/api/plaid/summary`),
-        fetch(`${API_BASE}/api/teller/mercury/config`),
+        fetch(`${API_BASE}/api/banking/mercury/config`),
         fetch(`${API_BASE}/api/dimo/config`),
         fetch(`${API_BASE}/api/dimo/status`),
         fetch(`${API_BASE}/api/integrations/google-calendar/status`),
@@ -4428,7 +4428,7 @@ function IntegrationsSettingsPanel() {
       }
 
       setConfig(configJson);
-      setTellerForm((current) => ({
+      setBankingForm((current) => ({
         ...current,
         clientId: configJson.clientId || "",
         environment: configJson.environment || "sandbox",
@@ -4452,17 +4452,17 @@ function IntegrationsSettingsPanel() {
   }
 
   useEffect(() => {
-    loadTellerState();
+    loadBankingState();
   }, []);
 
-  async function saveTellerEnrollment(enrollment, options = {}) {
+  async function saveBankingEnrollment(enrollment, options = {}) {
     const accessToken = enrollment?.accessToken;
 
     if (!accessToken) {
-      throw new Error("Teller did not return an access token");
+      throw new Error("Banking did not return an access token");
     }
 
-    const res = await fetch(`${API_BASE}/api/teller/connections`, {
+    const res = await fetch(`${API_BASE}/api/banking/connections`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -4474,7 +4474,7 @@ function IntegrationsSettingsPanel() {
     const json = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      throw new Error(json?.error || "Failed to save Teller connection");
+      throw new Error(json?.error || "Failed to save Banking connection");
     }
 
     return json;
@@ -4483,14 +4483,14 @@ function IntegrationsSettingsPanel() {
   async function savePlaidConfig(event) {
     event?.preventDefault();
     try {
-      setSavingTellerConfig(true); setMessage("");
-      const res = await fetch(`${API_BASE}/api/plaid/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(tellerForm) });
+      setSavingBankingConfig(true); setMessage("");
+      const res = await fetch(`${API_BASE}/api/plaid/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bankingForm) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to save Plaid settings");
-      setConfig(json); setTellerForm((current) => ({ ...current, clientId: json.clientId || current.clientId, environment: json.environment, secret: "" }));
+      setConfig(json); setBankingForm((current) => ({ ...current, clientId: json.clientId || current.clientId, environment: json.environment, secret: "" }));
       setMessage("Plaid settings saved.");
     } catch (err) { setMessage(err.message || "Failed to save Plaid settings"); }
-    finally { setSavingTellerConfig(false); }
+    finally { setSavingBankingConfig(false); }
   }
 
   async function connectPlaid(itemId = null) {
@@ -4502,7 +4502,7 @@ function IntegrationsSettingsPanel() {
       if (!tokenRes.ok) throw new Error(tokenJson?.error || "Failed to create Plaid Link token");
       const handler = Plaid.create({ token: tokenJson.link_token,
         onSuccess: async (publicToken, metadata) => {
-          try { if (itemId) { setMessage("Plaid connection repaired."); await loadTellerState(); return; }
+          try { if (itemId) { setMessage("Plaid connection repaired."); await loadBankingState(); return; }
             const res = await fetch(`${API_BASE}/api/plaid/exchange`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicToken, metadata }) });
             const json = await res.json().catch(() => ({})); if (!res.ok) throw new Error(json?.error || "Failed to save Plaid Item");
             setMessage("Plaid connection saved. Running initial transaction import…"); await syncPlaid();
@@ -4516,7 +4516,7 @@ function IntegrationsSettingsPanel() {
     try { setSyncing(true); const res = await fetch(`${API_BASE}/api/plaid/sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "settings" }) });
       const json = await res.json().catch(() => ({})); if (!res.ok) throw new Error(json?.error || "Failed to sync Plaid");
       setMessage(json.skipped ? `Plaid production guard active. Next transaction pull: ${new Date(json.nextAllowedAt).toLocaleString()}.` : `Plaid fetched ${json.fetched || 0} transactions; ${json.inserted || 0} were new.`);
-      await loadTellerState();
+      await loadBankingState();
     } catch (err) { setMessage(err.message || "Failed to sync Plaid"); } finally { setSyncing(false); }
   }
 
@@ -4527,20 +4527,20 @@ function IntegrationsSettingsPanel() {
 
   async function deletePlaidItem(itemId) {
     if (!window.confirm("Remove this Plaid connection? Imported transaction history will be retained.")) return;
-    try { const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}`,{method:"DELETE"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to remove Plaid connection"); setMessage("Plaid connection removed."); await loadTellerState(); }
+    try { const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}`,{method:"DELETE"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to remove Plaid connection"); setMessage("Plaid connection removed."); await loadBankingState(); }
     catch(err){setMessage(err.message||"Failed to remove Plaid connection");}
   }
 
-  async function persistTellerConfig() {
-    const res = await fetch(`${API_BASE}/api/teller/connect/config`, {
+  async function persistBankingConfig() {
+    const res = await fetch(`${API_BASE}/api/banking/connect/config`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(tellerForm),
+      body: JSON.stringify(bankingForm),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error || "Failed to save Teller settings");
+    if (!res.ok) throw new Error(json?.error || "Failed to save Banking settings");
     setConfig((current) => ({ ...current, ...json }));
-    setTellerForm((current) => ({
+    setBankingForm((current) => ({
       ...current,
       applicationId: json.applicationId || current.applicationId,
       environment: json.environment || current.environment,
@@ -4552,40 +4552,40 @@ function IntegrationsSettingsPanel() {
     return json;
   }
 
-  async function saveTellerConfig(event) {
+  async function saveBankingConfig(event) {
     event?.preventDefault();
     try {
-      setSavingTellerConfig(true);
+      setSavingBankingConfig(true);
       setMessage("");
-      await persistTellerConfig();
-      setMessage("Teller integration settings saved and active.");
+      await persistBankingConfig();
+      setMessage("Banking integration settings saved and active.");
     } catch (err) {
-      setMessage(err.message || "Failed to save Teller settings");
+      setMessage(err.message || "Failed to save Banking settings");
     } finally {
-      setSavingTellerConfig(false);
+      setSavingBankingConfig(false);
     }
   }
 
-  async function connectTeller({ repair = true } = {}) {
+  async function connectBanking({ repair = true } = {}) {
     try {
       setConnecting(true);
       setMessage("");
-      setSavingTellerConfig(true);
-      const savedConfig = await persistTellerConfig();
-      setSavingTellerConfig(false);
+      setSavingBankingConfig(true);
+      const savedConfig = await persistBankingConfig();
+      setSavingBankingConfig(false);
       const activeConfig = { ...config, ...savedConfig };
 
       if (!activeConfig.configured) {
-        throw new Error("Save the Teller application ID and credentials first.");
+        throw new Error("Save the Banking application ID and credentials first.");
       }
 
-      const TellerConnect = await loadTellerConnectScript();
+      const BankingConnect = await loadBankingConnectScript();
 
-      if (!TellerConnect?.setup) {
-        throw new Error("Teller Connect did not initialize");
+      if (!BankingConnect?.setup) {
+        throw new Error("Banking Connect did not initialize");
       }
 
-      const repairTarget = getTellerRepairTarget(connections);
+      const repairTarget = getBankingRepairTarget(connections);
       const repairEnrollmentId = repairTarget?.enrollment_id || null;
       const connectOptions = {
         applicationId: activeConfig.applicationId,
@@ -4606,20 +4606,20 @@ function IntegrationsSettingsPanel() {
           : {}),
         onSuccess: async (enrollment) => {
           try {
-            const result = await saveTellerEnrollment(enrollment, {
+            const result = await saveBankingEnrollment(enrollment, {
               replaceExisting: !repair,
             });
             setMessage(
               result.replaced
-                ? "Stale Teller connection replaced. Syncing transactions..."
+                ? "Stale Banking connection replaced. Syncing transactions..."
                 : result.created
-                ? "Teller connection saved. Syncing transactions..."
-                : "Teller connection already existed. Syncing transactions..."
+                ? "Banking connection saved. Syncing transactions..."
+                : "Banking connection already existed. Syncing transactions..."
             );
-            await syncTeller();
-            await loadTellerState();
+            await syncBanking();
+            await loadBankingState();
           } catch (err) {
-            setMessage(err.message || "Failed to save Teller connection");
+            setMessage(err.message || "Failed to save Banking connection");
           } finally {
             setConnecting(false);
           }
@@ -4629,13 +4629,13 @@ function IntegrationsSettingsPanel() {
         },
         onFailure: (failure) => {
           const failureMessage =
-            failure?.message || failure?.code || "Teller Connect failed";
-          console.error("[teller-connect] enrollment failed", failure);
-          setMessage(`Teller Connect failed: ${failureMessage}`);
+            failure?.message || failure?.code || "Banking Connect failed";
+          console.error("[banking-connect] enrollment failed", failure);
+          setMessage(`Banking Connect failed: ${failureMessage}`);
           setConnecting(false);
         },
       };
-      console.info("[teller-connect] opening", {
+      console.info("[banking-connect] opening", {
         applicationId: connectOptions.applicationId,
         environment: connectOptions.environment,
         products: connectOptions.products,
@@ -4643,28 +4643,28 @@ function IntegrationsSettingsPanel() {
         enrollmentId: connectOptions.enrollmentId || null,
         repair,
       });
-      const tellerConnect = TellerConnect.setup(connectOptions);
+      const bankingConnect = BankingConnect.setup(connectOptions);
 
-      tellerConnect.open();
+      bankingConnect.open();
     } catch (err) {
-      setSavingTellerConfig(false);
+      setSavingBankingConfig(false);
       setConnecting(false);
-      setMessage(err.message || "Failed to open Teller Connect");
+      setMessage(err.message || "Failed to open Banking Connect");
     }
   }
 
-  async function syncTeller() {
+  async function syncBanking() {
     try {
       setSyncing(true);
 
-      const res = await fetch(`${API_BASE}/api/teller/sync`, {
+      const res = await fetch(`${API_BASE}/api/banking/sync`, {
         method: "POST",
       });
       const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         throw new Error(
-          json?.error || json?.errors?.[0]?.error || "Failed to sync Teller"
+          json?.error || json?.errors?.[0]?.error || "Failed to sync Banking"
         );
       }
       if (json?.errors?.length) {
@@ -4674,15 +4674,15 @@ function IntegrationsSettingsPanel() {
       }
 
       setMessage(
-        `Teller returned ${json.processed || 0} transaction${
+        `Banking returned ${json.processed || 0} transaction${
           Number(json.processed || 0) === 1 ? "" : "s"
         }; ${json.inserted || 0} ${
           Number(json.inserted || 0) === 1 ? "was" : "were"
         } new.`
       );
-      await loadTellerState();
+      await loadBankingState();
     } catch (err) {
-      setMessage(err.message || "Failed to sync Teller");
+      setMessage(err.message || "Failed to sync Banking");
     } finally {
       setSyncing(false);
     }
@@ -4693,7 +4693,7 @@ function IntegrationsSettingsPanel() {
       setSyncingMercury(true);
       setMessage("");
 
-      const res = await fetch(`${API_BASE}/api/teller/mercury/sync`, {
+      const res = await fetch(`${API_BASE}/api/banking/mercury/sync`, {
         method: "POST",
       });
       const json = await res.json().catch(() => ({}));
@@ -4707,7 +4707,7 @@ function IntegrationsSettingsPanel() {
           Number(json.processed || 0) === 1 ? "" : "s"
         }.`
       );
-      await loadTellerState();
+      await loadBankingState();
     } catch (err) {
       setMessage(err.message || "Failed to sync Mercury");
     } finally {
@@ -4748,7 +4748,7 @@ function IntegrationsSettingsPanel() {
           firstFailure ? `: ${firstFailure}` : ""
         }.`
       );
-      await loadTellerState();
+      await loadBankingState();
     } catch (err) {
       setMessage(err.message || "Failed to sync Google Calendar");
     } finally {
@@ -4783,7 +4783,7 @@ function IntegrationsSettingsPanel() {
           ? "Google Calendar sync enabled for this tenant."
           : "Google Calendar sync disabled for this tenant."
       );
-      await loadTellerState();
+      await loadBankingState();
     } catch (err) {
       setMessage(err.message || "Failed to save Google Calendar setting");
     } finally {
@@ -4819,7 +4819,7 @@ function IntegrationsSettingsPanel() {
       setMessage(`${key} ${enabled ? "enabled" : "disabled"} for this tenant.`);
     } catch (err) {
       setMessage(err.message || "Failed to save integration switch");
-      await loadTellerState();
+      await loadBankingState();
     } finally {
       setSavingIntegrationSwitches(false);
     }
@@ -4975,7 +4975,7 @@ function IntegrationsSettingsPanel() {
           Number(json.removedEvents || 0) === 1 ? "" : "s"
         }${json.failedEvents ? ` with ${json.failedEvents} failure(s)` : ""}.`
       );
-      await loadTellerState();
+      await loadBankingState();
     } catch (err) {
       setMessage(err.message || "Failed to clean calendar duplicates");
     } finally {
@@ -5009,7 +5009,7 @@ function IntegrationsSettingsPanel() {
           Number(json.removedEvents || 0) === 1 ? "" : "s"
         }${json.failedEvents ? ` with ${json.failedEvents} failure(s)` : ""}.`
       );
-      await loadTellerState();
+      await loadBankingState();
     } catch (err) {
       setMessage(err.message || "Failed to remove maintenance calendar events");
     } finally {
@@ -5020,9 +5020,9 @@ function IntegrationsSettingsPanel() {
   const latestConnected = connections?.latest_connected_at
     ? new Date(connections.latest_connected_at).toLocaleString()
     : "Never";
-  const repairTarget = getTellerRepairTarget(connections);
+  const repairTarget = getBankingRepairTarget(connections);
   const repairEnrollmentId = repairTarget?.enrollment_id || null;
-  const canRepairTeller =
+  const canRepairBanking =
     connections?.sync_status?.status === "warning" && Boolean(repairEnrollmentId);
 
   return (
@@ -5082,12 +5082,12 @@ function IntegrationsSettingsPanel() {
           </div>
           <form onSubmit={savePlaidConfig}>
             <div className="settings-form-grid">
-              <label className="settings-field"><span>Client ID</span><input type="text" value={tellerForm.clientId || ""} onChange={(event)=>setTellerForm((current)=>({...current,clientId:event.target.value}))} autoComplete="off" /></label>
-              <label className="settings-field"><span>Environment</span><select value={tellerForm.environment || "sandbox"} onChange={(event)=>setTellerForm((current)=>({...current,environment:event.target.value}))}><option value="sandbox">Sandbox</option><option value="production">Production</option></select></label>
-              <label className="settings-field"><span>Secret</span><input type="password" value={tellerForm.secret || ""} placeholder={config?.secretConfigured ? "Saved; leave blank to keep" : "Plaid secret"} onChange={(event)=>setTellerForm((current)=>({...current,secret:event.target.value}))} autoComplete="new-password" /></label>
+              <label className="settings-field"><span>Client ID</span><input type="text" value={bankingForm.clientId || ""} onChange={(event)=>setBankingForm((current)=>({...current,clientId:event.target.value}))} autoComplete="off" /></label>
+              <label className="settings-field"><span>Environment</span><select value={bankingForm.environment || "sandbox"} onChange={(event)=>setBankingForm((current)=>({...current,environment:event.target.value}))}><option value="sandbox">Sandbox</option><option value="production">Production</option></select></label>
+              <label className="settings-field"><span>Secret</span><input type="password" value={bankingForm.secret || ""} placeholder={config?.secretConfigured ? "Saved; leave blank to keep" : "Plaid secret"} onChange={(event)=>setBankingForm((current)=>({...current,secret:event.target.value}))} autoComplete="new-password" /></label>
             </div>
             <small className="settings-field-note">The secret is encrypted before storage. Save Sandbox credentials and run the test Item before switching to Production.</small>
-            <div className="settings-form-actions"><button type="submit" className="settings-action-btn" disabled={loading||savingTellerConfig}>{savingTellerConfig?"Saving…":"Save Plaid Settings"}</button></div>
+            <div className="settings-form-actions"><button type="submit" className="settings-action-btn" disabled={loading||savingBankingConfig}>{savingBankingConfig?"Saving…":"Save Plaid Settings"}</button></div>
           </form>
           <div className="settings-vehicle-list">
             <div className="settings-vehicle-row"><strong>Items</strong><span>{loading?"Loading…":connections?.items?.length||0}</span></div>
@@ -5104,21 +5104,21 @@ function IntegrationsSettingsPanel() {
         </div>
 
         {false ? (<div className="settings-group">
-          <div className="settings-group-title">Teller</div>
+          <div className="settings-group-title">Banking</div>
           <div className="settings-empty-state">
-            Connect another bank or card through Teller. New connections are added
+            Connect another bank or card through Banking. New connections are added
             to the sync pool; existing expense matching still happens in Inbox.
           </div>
 
-          <form onSubmit={saveTellerConfig}>
+          <form onSubmit={saveBankingConfig}>
             <div className="settings-form-grid">
               <label className="settings-field">
                 <span>Application ID</span>
                 <input
                   type="text"
-                  value={tellerForm.applicationId}
+                  value={bankingForm.applicationId}
                   onChange={(event) =>
-                    setTellerForm((current) => ({
+                    setBankingForm((current) => ({
                       ...current,
                       applicationId: event.target.value,
                     }))
@@ -5129,9 +5129,9 @@ function IntegrationsSettingsPanel() {
               <label className="settings-field">
                 <span>Environment</span>
                 <select
-                  value={tellerForm.environment}
+                  value={bankingForm.environment}
                   onChange={(event) =>
-                    setTellerForm((current) => ({
+                    setBankingForm((current) => ({
                       ...current,
                       environment: event.target.value,
                     }))
@@ -5147,9 +5147,9 @@ function IntegrationsSettingsPanel() {
                 <input
                   type="number"
                   min="1"
-                  value={tellerForm.staleTransactionDays}
+                  value={bankingForm.staleTransactionDays}
                   onChange={(event) =>
-                    setTellerForm((current) => ({
+                    setBankingForm((current) => ({
                       ...current,
                       staleTransactionDays: event.target.value,
                     }))
@@ -5160,14 +5160,14 @@ function IntegrationsSettingsPanel() {
                 <span>Client certificate</span>
                 <textarea
                   rows="3"
-                  value={tellerForm.certificate}
+                  value={bankingForm.certificate}
                   placeholder={
                     config?.certificateConfigured
                       ? "Saved; leave blank to keep"
                       : "Paste PEM or base64-encoded PEM"
                   }
                   onChange={(event) =>
-                    setTellerForm((current) => ({
+                    setBankingForm((current) => ({
                       ...current,
                       certificate: event.target.value,
                     }))
@@ -5179,14 +5179,14 @@ function IntegrationsSettingsPanel() {
                 <span>Private key</span>
                 <textarea
                   rows="3"
-                  value={tellerForm.privateKey}
+                  value={bankingForm.privateKey}
                   placeholder={
                     config?.privateKeyConfigured
                       ? "Saved; leave blank to keep"
                       : "Paste PEM or base64-encoded PEM"
                   }
                   onChange={(event) =>
-                    setTellerForm((current) => ({
+                    setBankingForm((current) => ({
                       ...current,
                       privateKey: event.target.value,
                     }))
@@ -5203,9 +5203,9 @@ function IntegrationsSettingsPanel() {
               <button
                 type="submit"
                 className="settings-action-btn"
-                disabled={loading || savingTellerConfig}
+                disabled={loading || savingBankingConfig}
               >
-                {savingTellerConfig ? "Saving..." : "Save Teller Settings"}
+                {savingBankingConfig ? "Saving..." : "Save Banking Settings"}
               </button>
             </div>
           </form>
@@ -5232,7 +5232,7 @@ function IntegrationsSettingsPanel() {
               </span>
             </div>
             <div className="settings-vehicle-row">
-              <strong>Latest Teller transaction</strong>
+              <strong>Latest Banking transaction</strong>
               <span>
                 {loading
                   ? "Loading..."
@@ -5249,7 +5249,7 @@ function IntegrationsSettingsPanel() {
                 {loading
                   ? "Loading..."
                   : repairEnrollmentId
-                  ? `${repairTarget?.institution?.name || "Teller"} ${
+                  ? `${repairTarget?.institution?.name || "Banking"} ${
                       repairTarget?.last_four
                         ? `****${repairTarget.last_four} `
                         : ""
@@ -5264,24 +5264,24 @@ function IntegrationsSettingsPanel() {
                   ? "Loading..."
                   : config?.configured
                   ? `${config.environment || "development"} (${config.source || "settings"})`
-                  : "Missing Teller credentials"}
+                  : "Missing Banking credentials"}
               </span>
             </div>
           </div>
 
           {connections?.sync_status?.status === "error" ? (
             <div className="settings-message error">
-              Teller sync is failing:{" "}
+              Banking sync is failing:{" "}
               {connections.sync_status.errors?.[0]?.message || "Unknown error"}
               {connections.sync_status.errors?.some((item) => item.reconnectRequired)
                 ? " Reconnect the bank with Connect Bank to replace the expired authorization."
-                : " Try Sync Teller again and check the server log if the error continues."}
+                : " Try Sync Banking again and check the server log if the error continues."}
             </div>
           ) : null}
 
           {connections?.sync_status?.status === "warning" ? (
             <div className="settings-message warning">
-              Teller responded successfully, but the feed may be stale:{" "}
+              Banking responded successfully, but the feed may be stale:{" "}
               {connections.sync_status.warning}. Reconnect the affected bank if
               recent posted transactions are missing.
             </div>
@@ -5292,31 +5292,31 @@ function IntegrationsSettingsPanel() {
               type="button"
               className="settings-action-btn"
               disabled={loading || connecting || !config?.configured}
-              onClick={() => connectTeller({ repair: true })}
+              onClick={() => connectBanking({ repair: true })}
             >
               {connecting
                 ? "Opening..."
-                : canRepairTeller
-                ? "Repair Teller Connection"
+                : canRepairBanking
+                ? "Repair Banking Connection"
                 : "Connect Bank"}
             </button>
-            {canRepairTeller ? (
+            {canRepairBanking ? (
               <button
                 type="button"
                 className="settings-action-btn secondary"
                 disabled={loading || connecting || !config?.configured}
-                onClick={() => connectTeller({ repair: false })}
+                onClick={() => connectBanking({ repair: false })}
               >
-                Replace Teller Connection
+                Replace Banking Connection
               </button>
             ) : null}
             <button
               type="button"
               className="settings-action-btn secondary"
               disabled={loading || syncing || !connections?.token_count}
-              onClick={syncTeller}
+              onClick={syncBanking}
             >
-              {syncing ? "Syncing..." : "Sync Teller"}
+              {syncing ? "Syncing..." : "Sync Banking"}
             </button>
             {message ? <span className="settings-message">{message}</span> : null}
           </div>

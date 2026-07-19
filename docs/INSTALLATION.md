@@ -83,8 +83,7 @@ openssl rand -hex 32
 Do not rotate `TOKEN_ENCRYPTION_KEY` without re-saving encrypted tenant
 secrets. It protects database-stored integration secrets such as Google
 Calendar refresh tokens, IMAP passwords, and SMS/Twilio auth tokens.
-It also protects database-stored Bouncie and Teller access tokens as they are
-created or migrated.
+It also protects database-stored Bouncie credentials and Plaid access tokens.
 
 Keep these in `.env` for now because they are deployment/runtime secrets:
 
@@ -110,9 +109,7 @@ SESSION_SECRET_FILE=/run/secrets/denmark_session_secret
 TOKEN_ENCRYPTION_KEY_FILE=/run/secrets/denmark_token_encryption_key
 DENMARK_BRIDGE_SECRET_FILE=/run/secrets/denmark_bridge_secret
 BOUNCIE_CLIENT_SECRET_FILE=/run/secrets/denmark_bouncie_client_secret
-# Teller credentials are managed in Settings > Integrations. Legacy
-# TELLER_CERT_BASE64_FILE and TELLER_KEY_BASE64_FILE values are accepted as
-# migration fallbacks until settings are saved there.
+# Plaid and Mercury credentials are managed in Settings > Integrations.
 ```
 
 ## Install

@@ -44,8 +44,8 @@ const { logSystemActivity } = require("./systemActivityLog");
 const { isIntegrationEnabled } = require("./integrations/integrationSettings");
 const pool = require("../db");
 
-let tellerSyncInProgress = false;
-let tellerSyncIntervalHandle = null;
+let bankingSyncInProgress = false;
+let bankingSyncIntervalHandle = null;
 
 let tollSyncInProgress = false;
 let tollSyncIntervalHandle = null;
@@ -411,7 +411,7 @@ function getStartupStatus() {
   };
 }
 
-async function runTellerSync(reason = "interval") {
+async function runBankingSync(reason = "interval") {
   if (shouldDeferForDbPressure("plaid", reason)) return;
 
   if (!(await isIntegrationEnabled("plaid"))) {
@@ -419,12 +419,12 @@ async function runTellerSync(reason = "interval") {
     return;
   }
 
-  if (tellerSyncInProgress) {
-    console.log(`[scheduler] teller skipped | reason=${reason} alreadyRunning=true`);
+  if (bankingSyncInProgress) {
+    console.log(`[scheduler] banking skipped | reason=${reason} alreadyRunning=true`);
     return;
   }
 
-  tellerSyncInProgress = true;
+  bankingSyncInProgress = true;
   const startedAt = Date.now();
 
   try {
@@ -476,7 +476,7 @@ async function runTellerSync(reason = "interval") {
   } catch (err) {
     console.error(`[scheduler] plaid failed | reason=${reason} error=${err.message || err}`);
   } finally {
-    tellerSyncInProgress = false;
+    bankingSyncInProgress = false;
   }
 }
 
@@ -919,7 +919,7 @@ function startScheduler() {
       );
 
       await runStartupTaskSequence([
-        ["plaid", () => runTellerSync("startup")],
+        ["plaid", () => runBankingSync("startup")],
         ["tolls", () => runTollSync("startup")],
         ["imap", () => runPoll("startup")],
         ["bouncie", () => runBouncie("startup")],
@@ -939,11 +939,11 @@ function startScheduler() {
     }
   })();
 
-  tellerSyncIntervalHandle = scheduleIntervalTask(
+  bankingSyncIntervalHandle = scheduleIntervalTask(
     "plaid",
     everyEightHoursMs,
     SCHEDULER_INTERVAL_OFFSET_STEP_MS * 8,
-    () => runTellerSync("interval")
+    () => runBankingSync("interval")
   );
 
   tollSyncIntervalHandle = scheduleIntervalTask(
@@ -1025,9 +1025,9 @@ function startScheduler() {
 }
 
 function stopScheduler() {
-  if (tellerSyncIntervalHandle) {
-    stopScheduledInterval(tellerSyncIntervalHandle);
-    tellerSyncIntervalHandle = null;
+  if (bankingSyncIntervalHandle) {
+    stopScheduledInterval(bankingSyncIntervalHandle);
+    bankingSyncIntervalHandle = null;
   }
 
   if (tollSyncIntervalHandle) {

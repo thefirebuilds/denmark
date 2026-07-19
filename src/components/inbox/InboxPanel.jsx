@@ -1,6 +1,6 @@
 // ------------------------------------------------------------
 // /src/components/inbox/InboxPanel.jsx
-// Expense processing view for Teller transaction reconciliation.
+// Expense processing view for Banking transaction reconciliation.
 // Returns three sibling panels so it fits the app shell layout.
 // ------------------------------------------------------------
 
@@ -1060,7 +1060,7 @@ export default function InboxPanel() {
   const loadSummary = useCallback(async (signalCancelled = () => false) => {
     try {
       setSummaryError("");
-      const res = await fetch(`${API_BASE}/api/teller/summary`);
+      const res = await fetch(`${API_BASE}/api/banking/summary`);
       if (!res.ok) throw new Error(`Summary request failed: ${res.status}`);
       const data = await res.json();
       if (!signalCancelled()) setSummary(data);
@@ -1145,12 +1145,12 @@ export default function InboxPanel() {
 
         const endpoint =
           activeBucket === "pending"
-            ? `${API_BASE}/api/teller/pending?${params.toString()}`
+            ? `${API_BASE}/api/banking/pending?${params.toString()}`
             : activeBucket === "ignored"
-              ? `${API_BASE}/api/teller/ignored-groups?${params.toString()}`
+              ? `${API_BASE}/api/banking/ignored-groups?${params.toString()}`
               : activeBucket === "all"
-                ? `${API_BASE}/api/teller?${params.toString()}`
-                : `${API_BASE}/api/teller?review_status=${encodeURIComponent(activeBucket)}&${params.toString()}`;
+                ? `${API_BASE}/api/banking?${params.toString()}`
+                : `${API_BASE}/api/banking?review_status=${encodeURIComponent(activeBucket)}&${params.toString()}`;
 
         const res = await fetch(endpoint);
         if (!res.ok) throw new Error(`Transaction request failed: ${res.status}`);
@@ -1233,7 +1233,7 @@ export default function InboxPanel() {
         setDetailError("");
 
         const res = await fetch(
-          `${API_BASE}/api/teller/ignored-groups/${encodeURIComponent(vendorKey)}`
+          `${API_BASE}/api/banking/ignored-groups/${encodeURIComponent(vendorKey)}`
         );
 
         if (!res.ok) {
@@ -1274,8 +1274,8 @@ export default function InboxPanel() {
         setDetailError("");
 
         const [detailRes, suggestionsRes] = await Promise.all([
-          fetch(`${API_BASE}/api/teller/${transactionId}`),
-          fetch(`${API_BASE}/api/teller/${transactionId}/suggestions`),
+          fetch(`${API_BASE}/api/banking/${transactionId}`),
+          fetch(`${API_BASE}/api/banking/${transactionId}/suggestions`),
         ]);
 
         if (!detailRes.ok) {
@@ -1391,7 +1391,7 @@ export default function InboxPanel() {
       setDraftLoading(true);
       setDraftTransactionId(transactionId);
 
-      const res = await fetch(`${API_BASE}/api/teller/${transactionId}/expense-draft`);
+      const res = await fetch(`${API_BASE}/api/banking/${transactionId}/expense-draft`);
       if (!res.ok) {
         let message = `Expense draft request failed: ${res.status}`;
         try {
@@ -1493,7 +1493,7 @@ export default function InboxPanel() {
       setDraftLoading(true);
       setIncomeDraftTransactionId(transactionId);
 
-      const res = await fetch(`${API_BASE}/api/teller/${transactionId}/income-draft`);
+      const res = await fetch(`${API_BASE}/api/banking/${transactionId}/income-draft`);
       if (!res.ok) {
         let message = `Income draft request failed: ${res.status}`;
         try {
@@ -1529,7 +1529,7 @@ export default function InboxPanel() {
         throw new Error("Could not determine a vendor value to ignore.");
       }
 
-      const res = await fetch(`${API_BASE}/api/teller/ignore-rules`, {
+      const res = await fetch(`${API_BASE}/api/banking/ignore-rules`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1572,10 +1572,10 @@ export default function InboxPanel() {
 
     const endpoint =
       activeBucket === "pending"
-        ? `${API_BASE}/api/teller/pending?${params.toString()}`
+        ? `${API_BASE}/api/banking/pending?${params.toString()}`
         : activeBucket === "all"
-          ? `${API_BASE}/api/teller?${params.toString()}`
-          : `${API_BASE}/api/teller?review_status=${encodeURIComponent(activeBucket)}&${params.toString()}`;
+          ? `${API_BASE}/api/banking?${params.toString()}`
+          : `${API_BASE}/api/banking?review_status=${encodeURIComponent(activeBucket)}&${params.toString()}`;
 
     const listRes = await fetch(endpoint);
     if (!listRes.ok) {
@@ -1620,7 +1620,7 @@ export default function InboxPanel() {
       const indexHint = selectedIndex;
       const currentId = selectedTransaction.id;
 
-      const res = await fetch(`${API_BASE}/api/teller/${currentId}/match`, {
+      const res = await fetch(`${API_BASE}/api/banking/${currentId}/match`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1658,7 +1658,7 @@ export default function InboxPanel() {
 
       const indexHint = selectedIndex;
 
-      const res = await fetch(`${API_BASE}/api/teller/${transactionId}/dismiss`, {
+      const res = await fetch(`${API_BASE}/api/banking/${transactionId}/dismiss`, {
         method: "POST",
       });
 
@@ -1690,7 +1690,7 @@ export default function InboxPanel() {
 
       const indexHint = selectedIndex;
 
-      const res = await fetch(`${API_BASE}/api/teller/${transactionId}/ignore`, {
+      const res = await fetch(`${API_BASE}/api/banking/${transactionId}/ignore`, {
         method: "POST",
       });
 
@@ -1739,7 +1739,7 @@ export default function InboxPanel() {
             : Number(expenseDraft.tax),
       };
 
-      const res = await fetch(`${API_BASE}/api/teller/${draftTransactionId}/create-expense`, {
+      const res = await fetch(`${API_BASE}/api/banking/${draftTransactionId}/create-expense`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1787,7 +1787,7 @@ export default function InboxPanel() {
             : Number(incomeDraft.amount),
       };
 
-      const res = await fetch(`${API_BASE}/api/teller/${incomeDraftTransactionId}/create-income`, {
+      const res = await fetch(`${API_BASE}/api/banking/${incomeDraftTransactionId}/create-income`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

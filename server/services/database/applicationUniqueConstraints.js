@@ -21,7 +21,7 @@ const REQUIRED_UNIQUE_CONSTRAINTS = [
   { table: "metric_period_snapshots", name: "metric_period_snapshots_period_key_key", columns: ["period_key"] },
   { table: "notification_events", name: "notification_events_event_hash_key", columns: ["event_hash"] },
   { table: "service_tokens", name: "service_tokens_token_hash_unique", columns: ["token_hash"] },
-  { table: "teller_transactions", name: "teller_transactions_teller_transaction_id_key", columns: ["teller_transaction_id"] },
+  { table: "banking_transactions", name: "banking_transactions_provider_transaction_id_key", columns: ["provider_transaction_id"] },
   { table: "toll_charges", name: "toll_charges_source_fingerprint_key", columns: ["source", "external_fingerprint"] },
   { table: "trip_financial_facts", name: "trip_financial_facts_trip_id_key", columns: ["trip_id"] },
   { table: "trip_google_sync", name: "trip_google_sync_trip_calendar_event_key", columns: ["trip_id", "google_calendar_connection_id", "event_type"] },

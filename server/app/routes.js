@@ -8,7 +8,7 @@ const vehiclesRoutes = require("../routes/vehicles");
 const maintenanceRoutes = require("../routes/maintenance");
 const tollRoutes = require("../routes/tolls");
 const expensesRouter = require("../routes/expenses");
-const tellerRoutes = require("../routes/teller");
+const bankingRoutes = require("../routes/banking");
 const plaidRoutes = require("../routes/plaid");
 const metricsRouter = require("../routes/metrics");
 const businessMetricsRouter = require("../routes/businessMetrics");
@@ -105,10 +105,10 @@ function registerApiRoutes(app) {
     expensesRouter
   );
   app.use(
-    "/api/teller",
+    "/api/banking",
     defaultCors,
     requireMethodPermissions({ GET: "expenses.read", POST: "expenses.write" }),
-    tellerRoutes
+    bankingRoutes
   );
   app.use(
     "/api/plaid",

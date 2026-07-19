@@ -114,7 +114,7 @@ These likely provide the greatest "wow, this saves time" value:
 
 ### Should Be Optional At First
 
-- Teller/Mercury banking
+- Plaid and Mercury banking
 - HCTRA/EZ TAG sync
 - Marketplace utility
 - OpenAI FMV enrichment

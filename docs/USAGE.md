@@ -130,7 +130,7 @@ Current settings sections:
 - Website - public availability export
 - Maintenance - alerts, database backup/restore, telemetry debug
 - Logs - server log tail
-- Integrations - Google Calendar, Teller, Mercury, DIMO status
+- Integrations - Google Calendar, Plaid, Mercury, DIMO status
 
 Beta usability gap: these sections work, but they need a first-run checklist and clearer "required / optional / not configured" status.
 

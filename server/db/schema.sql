@@ -49,7 +49,7 @@ ALTER TABLE IF EXISTS ONLY public.maintenance_tasks DROP CONSTRAINT IF EXISTS ma
 ALTER TABLE IF EXISTS ONLY public.maintenance_rules DROP CONSTRAINT IF EXISTS maintenance_rules_vehicle_vin_fkey;
 ALTER TABLE IF EXISTS ONLY public.maintenance_events DROP CONSTRAINT IF EXISTS maintenance_events_vehicle_vin_fkey;
 ALTER TABLE IF EXISTS ONLY public.maintenance_events DROP CONSTRAINT IF EXISTS maintenance_events_rule_id_fkey;
-ALTER TABLE IF EXISTS ONLY public.teller_transactions DROP CONSTRAINT IF EXISTS fk_teller_transactions_matched_expense;
+ALTER TABLE IF EXISTS ONLY public.banking_transactions DROP CONSTRAINT IF EXISTS fk_banking_transactions_matched_expense;
 ALTER TABLE IF EXISTS ONLY public.messages DROP CONSTRAINT IF EXISTS fk_messages_trip;
 ALTER TABLE IF EXISTS ONLY public.expenses DROP CONSTRAINT IF EXISTS expenses_vehicle_id_fkey;
 DROP TRIGGER IF EXISTS trg_vehicles_updated_at ON public.vehicles;
@@ -114,10 +114,10 @@ DROP INDEX IF EXISTS public.idx_toll_charges_trxn_at;
 DROP INDEX IF EXISTS public.idx_toll_charges_matched_vehicle_id;
 DROP INDEX IF EXISTS public.idx_toll_charges_matched_trip_id;
 DROP INDEX IF EXISTS public.idx_toll_charges_license_plate_normalized;
-DROP INDEX IF EXISTS public.idx_teller_transactions_ignored;
-DROP INDEX IF EXISTS public.idx_teller_transactions_description;
-DROP INDEX IF EXISTS public.idx_teller_transactions_date;
-DROP INDEX IF EXISTS public.idx_teller_transactions_account_id;
+DROP INDEX IF EXISTS public.idx_banking_transactions_ignored;
+DROP INDEX IF EXISTS public.idx_banking_transactions_description;
+DROP INDEX IF EXISTS public.idx_banking_transactions_date;
+DROP INDEX IF EXISTS public.idx_banking_transactions_account_id;
 DROP INDEX IF EXISTS public.idx_messages_trip_id;
 DROP INDEX IF EXISTS public.idx_messages_status;
 DROP INDEX IF EXISTS public.idx_messages_reservation_id;
@@ -169,10 +169,10 @@ ALTER TABLE IF EXISTS ONLY public.trip_stage_history DROP CONSTRAINT IF EXISTS t
 ALTER TABLE IF EXISTS ONLY public.toll_sync_runs DROP CONSTRAINT IF EXISTS toll_sync_runs_pkey;
 ALTER TABLE IF EXISTS ONLY public.toll_charges DROP CONSTRAINT IF EXISTS toll_charges_source_fingerprint_key;
 ALTER TABLE IF EXISTS ONLY public.toll_charges DROP CONSTRAINT IF EXISTS toll_charges_pkey;
-ALTER TABLE IF EXISTS ONLY public.teller_transactions DROP CONSTRAINT IF EXISTS teller_transactions_teller_transaction_id_key;
-ALTER TABLE IF EXISTS ONLY public.teller_transactions DROP CONSTRAINT IF EXISTS teller_transactions_pkey;
-ALTER TABLE IF EXISTS ONLY public.teller_tokens DROP CONSTRAINT IF EXISTS teller_tokens_pkey;
-ALTER TABLE IF EXISTS ONLY public.teller_ignore_rules DROP CONSTRAINT IF EXISTS teller_ignore_rules_pkey;
+ALTER TABLE IF EXISTS ONLY public.banking_transactions DROP CONSTRAINT IF EXISTS banking_transactions_provider_transaction_id_key;
+ALTER TABLE IF EXISTS ONLY public.banking_transactions DROP CONSTRAINT IF EXISTS banking_transactions_pkey;
+ALTER TABLE IF EXISTS ONLY public.banking_tokens DROP CONSTRAINT IF EXISTS banking_tokens_pkey;
+ALTER TABLE IF EXISTS ONLY public.banking_ignore_rules DROP CONSTRAINT IF EXISTS banking_ignore_rules_pkey;
 ALTER TABLE IF EXISTS ONLY public.messages DROP CONSTRAINT IF EXISTS messages_pkey;
 ALTER TABLE IF EXISTS ONLY public.messages DROP CONSTRAINT IF EXISTS messages_message_id_key;
 ALTER TABLE IF EXISTS ONLY public.notification_events DROP CONSTRAINT IF EXISTS notification_events_pkey;
@@ -201,9 +201,9 @@ ALTER TABLE IF EXISTS public.trips ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.trip_stage_history ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.toll_sync_runs ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.toll_charges ALTER COLUMN id DROP DEFAULT;
-ALTER TABLE IF EXISTS public.teller_transactions ALTER COLUMN id DROP DEFAULT;
-ALTER TABLE IF EXISTS public.teller_tokens ALTER COLUMN id DROP DEFAULT;
-ALTER TABLE IF EXISTS public.teller_ignore_rules ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.banking_transactions ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.banking_tokens ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE IF EXISTS public.banking_ignore_rules ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.messages ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.marketplace_listings ALTER COLUMN id DROP DEFAULT;
 ALTER TABLE IF EXISTS public.maintenance_tasks ALTER COLUMN id DROP DEFAULT;
@@ -239,12 +239,12 @@ DROP SEQUENCE IF EXISTS public.toll_sync_runs_id_seq;
 DROP TABLE IF EXISTS public.toll_sync_runs;
 DROP SEQUENCE IF EXISTS public.toll_charges_id_seq;
 DROP TABLE IF EXISTS public.toll_charges;
-DROP SEQUENCE IF EXISTS public.teller_transactions_id_seq;
-DROP TABLE IF EXISTS public.teller_transactions;
-DROP SEQUENCE IF EXISTS public.teller_tokens_id_seq;
-DROP TABLE IF EXISTS public.teller_tokens;
-DROP SEQUENCE IF EXISTS public.teller_ignore_rules_id_seq;
-DROP TABLE IF EXISTS public.teller_ignore_rules;
+DROP SEQUENCE IF EXISTS public.banking_transactions_id_seq;
+DROP TABLE IF EXISTS public.banking_transactions;
+DROP SEQUENCE IF EXISTS public.banking_tokens_id_seq;
+DROP TABLE IF EXISTS public.banking_tokens;
+DROP SEQUENCE IF EXISTS public.banking_ignore_rules_id_seq;
+DROP TABLE IF EXISTS public.banking_ignore_rules;
 DROP SEQUENCE IF EXISTS public.messages_id_seq;
 DROP TABLE IF EXISTS public.messages;
 DROP SEQUENCE IF EXISTS public.notification_events_id_seq;
@@ -1063,25 +1063,25 @@ ALTER SEQUENCE public.messages_id_seq OWNED BY public.messages.id;
 
 
 --
--- Name: teller_ignore_rules; Type: TABLE; Schema: public; Owner: -
+-- Name: banking_ignore_rules; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.teller_ignore_rules (
+CREATE TABLE public.banking_ignore_rules (
     id bigint NOT NULL,
     match_type text NOT NULL,
     match_value text NOT NULL,
     reason text,
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
-    CONSTRAINT teller_ignore_rules_match_type_check CHECK ((match_type = ANY (ARRAY['exact'::text, 'contains'::text])))
+    CONSTRAINT banking_ignore_rules_match_type_check CHECK ((match_type = ANY (ARRAY['exact'::text, 'contains'::text])))
 );
 
 
 --
--- Name: teller_ignore_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: banking_ignore_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.teller_ignore_rules_id_seq
+CREATE SEQUENCE public.banking_ignore_rules_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -1090,17 +1090,17 @@ CREATE SEQUENCE public.teller_ignore_rules_id_seq
 
 
 --
--- Name: teller_ignore_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: banking_ignore_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.teller_ignore_rules_id_seq OWNED BY public.teller_ignore_rules.id;
+ALTER SEQUENCE public.banking_ignore_rules_id_seq OWNED BY public.banking_ignore_rules.id;
 
 
 --
--- Name: teller_tokens; Type: TABLE; Schema: public; Owner: -
+-- Name: banking_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.teller_tokens (
+CREATE TABLE public.banking_tokens (
     id integer NOT NULL,
     access_token text,
     access_token_encrypted text,
@@ -1109,10 +1109,10 @@ CREATE TABLE public.teller_tokens (
 
 
 --
--- Name: teller_tokens_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: banking_tokens_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.teller_tokens_id_seq
+CREATE SEQUENCE public.banking_tokens_id_seq
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1122,20 +1122,20 @@ CREATE SEQUENCE public.teller_tokens_id_seq
 
 
 --
--- Name: teller_tokens_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: banking_tokens_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.teller_tokens_id_seq OWNED BY public.teller_tokens.id;
+ALTER SEQUENCE public.banking_tokens_id_seq OWNED BY public.banking_tokens.id;
 
 
 --
--- Name: teller_transactions; Type: TABLE; Schema: public; Owner: -
+-- Name: banking_transactions; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.teller_transactions (
+CREATE TABLE public.banking_transactions (
     id bigint NOT NULL,
-    teller_transaction_id text NOT NULL,
-    teller_account_id text NOT NULL,
+    provider_transaction_id text NOT NULL,
+    provider_account_id text NOT NULL,
     transaction_date date NOT NULL,
     description text,
     amount numeric(12,2) NOT NULL,
@@ -1158,15 +1158,15 @@ CREATE TABLE public.teller_transactions (
     match_method text,
     reviewed_at timestamp without time zone,
     review_notes text,
-    CONSTRAINT teller_transactions_review_status_check CHECK ((review_status = ANY (ARRAY['pending'::text, 'matched'::text, 'created'::text, 'ignored'::text, 'dismissed'::text])))
+    CONSTRAINT banking_transactions_review_status_check CHECK ((review_status = ANY (ARRAY['pending'::text, 'matched'::text, 'created'::text, 'ignored'::text, 'dismissed'::text])))
 );
 
 
 --
--- Name: teller_transactions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: banking_transactions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.teller_transactions_id_seq
+CREATE SEQUENCE public.banking_transactions_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -1175,10 +1175,10 @@ CREATE SEQUENCE public.teller_transactions_id_seq
 
 
 --
--- Name: teller_transactions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: banking_transactions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
 --
 
-ALTER SEQUENCE public.teller_transactions_id_seq OWNED BY public.teller_transactions.id;
+ALTER SEQUENCE public.banking_transactions_id_seq OWNED BY public.banking_transactions.id;
 
 
 --
@@ -1820,24 +1820,24 @@ ALTER TABLE ONLY public.messages ALTER COLUMN id SET DEFAULT nextval('public.mes
 
 
 --
--- Name: teller_ignore_rules id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: banking_ignore_rules id; Type: DEFAULT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.teller_ignore_rules ALTER COLUMN id SET DEFAULT nextval('public.teller_ignore_rules_id_seq'::regclass);
-
-
---
--- Name: teller_tokens id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.teller_tokens ALTER COLUMN id SET DEFAULT nextval('public.teller_tokens_id_seq'::regclass);
+ALTER TABLE ONLY public.banking_ignore_rules ALTER COLUMN id SET DEFAULT nextval('public.banking_ignore_rules_id_seq'::regclass);
 
 
 --
--- Name: teller_transactions id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: banking_tokens id; Type: DEFAULT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.teller_transactions ALTER COLUMN id SET DEFAULT nextval('public.teller_transactions_id_seq'::regclass);
+ALTER TABLE ONLY public.banking_tokens ALTER COLUMN id SET DEFAULT nextval('public.banking_tokens_id_seq'::regclass);
+
+
+--
+-- Name: banking_transactions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.banking_transactions ALTER COLUMN id SET DEFAULT nextval('public.banking_transactions_id_seq'::regclass);
 
 
 --
@@ -2071,35 +2071,35 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- Name: teller_ignore_rules teller_ignore_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: banking_ignore_rules banking_ignore_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.teller_ignore_rules
-    ADD CONSTRAINT teller_ignore_rules_pkey PRIMARY KEY (id);
-
-
---
--- Name: teller_tokens teller_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.teller_tokens
-    ADD CONSTRAINT teller_tokens_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.banking_ignore_rules
+    ADD CONSTRAINT banking_ignore_rules_pkey PRIMARY KEY (id);
 
 
 --
--- Name: teller_transactions teller_transactions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: banking_tokens banking_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.teller_transactions
-    ADD CONSTRAINT teller_transactions_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.banking_tokens
+    ADD CONSTRAINT banking_tokens_pkey PRIMARY KEY (id);
 
 
 --
--- Name: teller_transactions teller_transactions_teller_transaction_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: banking_transactions banking_transactions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.teller_transactions
-    ADD CONSTRAINT teller_transactions_teller_transaction_id_key UNIQUE (teller_transaction_id);
+ALTER TABLE ONLY public.banking_transactions
+    ADD CONSTRAINT banking_transactions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: banking_transactions banking_transactions_provider_transaction_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.banking_transactions
+    ADD CONSTRAINT banking_transactions_provider_transaction_id_key UNIQUE (provider_transaction_id);
 
 
 --
@@ -2482,31 +2482,31 @@ CREATE INDEX idx_notification_events_reservation_id ON public.notification_event
 
 
 --
--- Name: idx_teller_transactions_account_id; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_banking_transactions_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_teller_transactions_account_id ON public.teller_transactions USING btree (teller_account_id);
-
-
---
--- Name: idx_teller_transactions_date; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_teller_transactions_date ON public.teller_transactions USING btree (transaction_date);
+CREATE INDEX idx_banking_transactions_account_id ON public.banking_transactions USING btree (provider_account_id);
 
 
 --
--- Name: idx_teller_transactions_description; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_banking_transactions_date; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_teller_transactions_description ON public.teller_transactions USING btree (description);
+CREATE INDEX idx_banking_transactions_date ON public.banking_transactions USING btree (transaction_date);
 
 
 --
--- Name: idx_teller_transactions_ignored; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_banking_transactions_description; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_teller_transactions_ignored ON public.teller_transactions USING btree (ignored);
+CREATE INDEX idx_banking_transactions_description ON public.banking_transactions USING btree (description);
+
+
+--
+-- Name: idx_banking_transactions_ignored; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_banking_transactions_ignored ON public.banking_transactions USING btree (ignored);
 
 
 --
@@ -3001,11 +3001,11 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- Name: teller_transactions fk_teller_transactions_matched_expense; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: banking_transactions fk_banking_transactions_matched_expense; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.teller_transactions
-    ADD CONSTRAINT fk_teller_transactions_matched_expense FOREIGN KEY (matched_expense_id) REFERENCES public.expenses(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.banking_transactions
+    ADD CONSTRAINT fk_banking_transactions_matched_expense FOREIGN KEY (matched_expense_id) REFERENCES public.expenses(id) ON DELETE SET NULL;
 
 
 --

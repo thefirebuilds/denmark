@@ -4,7 +4,7 @@ async function ensureIncomeTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.income_transactions (
       id bigserial PRIMARY KEY,
-      teller_transaction_row_id bigint UNIQUE REFERENCES public.teller_transactions(id) ON DELETE SET NULL,
+      banking_transaction_row_id bigint UNIQUE REFERENCES public.banking_transactions(id) ON DELETE SET NULL,
       trip_id integer REFERENCES public.trips(id) ON DELETE SET NULL,
       source text DEFAULT 'bank_import' NOT NULL,
       income_type text DEFAULT 'turo_payout' NOT NULL,

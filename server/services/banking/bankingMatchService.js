@@ -1,16 +1,16 @@
 // ------------------------------------------------------------
-// /server/services/teller/tellerMatchService.js
-// This service provides functions to generate matching suggestions between Teller transactions and existing expenses,
-// perform the matching action, create new expenses from Teller transactions, and manage the review status of Teller transactions.
-// It uses a heuristic scoring system to evaluate how well a Teller transaction matches an expense
+// /server/services/banking/bankingMatchService.js
+// This service provides functions to generate matching suggestions between Banking transactions and existing expenses,
+// perform the matching action, create new expenses from Banking transactions, and manage the review status of Banking transactions.
+// It uses a heuristic scoring system to evaluate how well a Banking transaction matches an expense
 // based on amount, date, and text similarity.
 //
 // The main functions include:
-// - getTellerSuggestions: Given a Teller transaction ID, returns a list of potential matching expenses with confidence scores.
-// - matchTellerTransaction: Manually matches a Teller transaction to an expense and updates the review status.
-// - createTellerIgnoreRule: Creates a rule to ignore Teller transactions based on certain criteria.
-// - ignoreTellerTransaction: Marks a Teller transaction as ignored, optionally creating an ignore rule.
-// - dismissTellerTransaction: Marks a Teller transaction as dismissed after review.
+// - getBankingSuggestions: Given a Banking transaction ID, returns a list of potential matching expenses with confidence scores.
+// - matchBankingTransaction: Manually matches a Banking transaction to an expense and updates the review status.
+// - createBankingIgnoreRule: Creates a rule to ignore Banking transactions based on certain criteria.
+// - ignoreBankingTransaction: Marks a Banking transaction as ignored, optionally creating an ignore rule.
+// - dismissBankingTransaction: Marks a Banking transaction as dismissed after review.
 // ------------------------------------------------------------
 
 const pool = require("../../db");
@@ -199,7 +199,7 @@ function scoreSuggestion(tx, expense) {
   };
 }
 
-async function createTellerIgnoreRule(payload = {}) {
+async function createBankingIgnoreRule(payload = {}) {
   const matchType = payload.match_type === "contains" ? "contains" : "exact";
   const matchValue = String(payload.match_value || "").trim();
   const reason = payload.reason || "Ignored manually";
@@ -217,7 +217,7 @@ async function createTellerIgnoreRule(payload = {}) {
 
     const ruleResult = await client.query(
       `
-      INSERT INTO teller_ignore_rules (match_type, match_value, reason, is_active)
+      INSERT INTO banking_ignore_rules (match_type, match_value, reason, is_active)
       VALUES ($1, $2, $3, TRUE)
       RETURNING *
       `,
@@ -226,7 +226,7 @@ async function createTellerIgnoreRule(payload = {}) {
 
     await client.query(
       `
-      UPDATE teller_transactions
+      UPDATE banking_transactions
       SET
         ignored = TRUE,
         ignore_reason = $3,
@@ -254,13 +254,13 @@ async function createTellerIgnoreRule(payload = {}) {
   }
 }
 
-async function getTellerTransactionRow(id) {
+async function getBankingTransactionRow(id) {
   const result = await pool.query(
     `
     SELECT
       tt.id,
-      tt.teller_transaction_id,
-      tt.teller_account_id,
+      tt.provider_transaction_id,
+      tt.provider_account_id,
       tt.transaction_date,
       tt.description,
       tt.amount,
@@ -283,7 +283,7 @@ async function getTellerTransactionRow(id) {
       tt.review_notes,
       tt.created_at,
       tt.updated_at
-    FROM teller_transactions tt
+    FROM banking_transactions tt
     WHERE tt.id = $1
     LIMIT 1
     `,
@@ -319,11 +319,11 @@ async function getExpenseRow(id) {
   return result.rows[0] || null;
 }
 
-async function getTellerSuggestions(id) {
-  const tx = await getTellerTransactionRow(id);
+async function getBankingSuggestions(id) {
+  const tx = await getBankingTransactionRow(id);
 
   if (!tx) {
-    const err = new Error("Teller transaction not found");
+    const err = new Error("Banking transaction not found");
     err.status = 404;
     throw err;
   }
@@ -378,10 +378,10 @@ async function getTellerSuggestions(id) {
   return suggestions;
 }
 
-async function matchTellerTransaction(id, expenseId, options = {}) {
-  const tx = await getTellerTransactionRow(id);
+async function matchBankingTransaction(id, expenseId, options = {}) {
+  const tx = await getBankingTransactionRow(id);
   if (!tx) {
-    const err = new Error("Teller transaction not found");
+    const err = new Error("Banking transaction not found");
     err.status = 404;
     throw err;
   }
@@ -397,7 +397,7 @@ async function matchTellerTransaction(id, expenseId, options = {}) {
 
   const result = await pool.query(
     `
-    UPDATE teller_transactions
+    UPDATE banking_transactions
     SET
       matched_expense_id = $2,
       review_status = 'matched',
@@ -421,17 +421,17 @@ async function matchTellerTransaction(id, expenseId, options = {}) {
   return result.rows[0];
 }
 
-async function dismissTellerTransaction(id, payload = {}) {
-  const tx = await getTellerTransactionRow(id);
+async function dismissBankingTransaction(id, payload = {}) {
+  const tx = await getBankingTransactionRow(id);
   if (!tx) {
-    const err = new Error("Teller transaction not found");
+    const err = new Error("Banking transaction not found");
     err.status = 404;
     throw err;
   }
 
   const result = await pool.query(
     `
-    UPDATE teller_transactions
+    UPDATE banking_transactions
     SET
       review_status = 'dismissed',
       reviewed_at = NOW(),
@@ -446,10 +446,10 @@ async function dismissTellerTransaction(id, payload = {}) {
   return result.rows[0];
 }
 
-async function ignoreTellerTransaction(id, payload = {}) {
-  const tx = await getTellerTransactionRow(id);
+async function ignoreBankingTransaction(id, payload = {}) {
+  const tx = await getBankingTransactionRow(id);
   if (!tx) {
-    const err = new Error("Teller transaction not found");
+    const err = new Error("Banking transaction not found");
     err.status = 404;
     throw err;
   }
@@ -475,7 +475,7 @@ async function ignoreTellerTransaction(id, payload = {}) {
 
       const ruleResult = await client.query(
         `
-        INSERT INTO teller_ignore_rules (match_type, match_value, reason, is_active)
+        INSERT INTO banking_ignore_rules (match_type, match_value, reason, is_active)
         VALUES ($1, $2, $3, TRUE)
         RETURNING *
         `,
@@ -486,7 +486,7 @@ async function ignoreTellerTransaction(id, payload = {}) {
 
       await client.query(
         `
-        UPDATE teller_transactions
+        UPDATE banking_transactions
         SET
           ignored = TRUE,
           ignore_reason = $2,
@@ -503,7 +503,7 @@ async function ignoreTellerTransaction(id, payload = {}) {
     } else {
       await client.query(
         `
-        UPDATE teller_transactions
+        UPDATE banking_transactions
         SET
           ignored = TRUE,
           ignore_reason = $2,
@@ -517,7 +517,7 @@ async function ignoreTellerTransaction(id, payload = {}) {
     }
 
     const finalResult = await client.query(
-      `SELECT * FROM teller_transactions WHERE id = $1 LIMIT 1`,
+      `SELECT * FROM banking_transactions WHERE id = $1 LIMIT 1`,
       [id]
     );
 
@@ -535,10 +535,10 @@ async function ignoreTellerTransaction(id, payload = {}) {
   }
 }
 
-async function createExpenseFromTeller(id, payload = {}) {
-  const tx = await getTellerTransactionRow(id);
+async function createExpenseFromBanking(id, payload = {}) {
+  const tx = await getBankingTransactionRow(id);
   if (!tx) {
-    const err = new Error("Teller transaction not found");
+    const err = new Error("Banking transaction not found");
     err.status = 404;
     throw err;
   }
@@ -583,7 +583,7 @@ async function createExpenseFromTeller(id, payload = {}) {
 
   const result = await pool.query(
     `
-    UPDATE teller_transactions
+    UPDATE banking_transactions
     SET
       matched_expense_id = $2,
       review_status = 'created',
@@ -599,21 +599,21 @@ async function createExpenseFromTeller(id, payload = {}) {
       id,
       createdExpense.id,
       100,
-      payload.match_method || "created_from_teller",
+      payload.match_method || "created_from_banking",
       payload.review_notes || null,
     ]
   );
 
   return {
-    teller_transaction: result.rows[0],
+    banking_transaction: result.rows[0],
     expense: createdExpense,
   };
 }
 
-async function getIncomeDraftForTeller(id) {
-  const tx = await getTellerTransactionRow(id);
+async function getIncomeDraftForBanking(id) {
+  const tx = await getBankingTransactionRow(id);
   if (!tx) {
-    const err = new Error("Teller transaction not found");
+    const err = new Error("Banking transaction not found");
     err.status = 404;
     throw err;
   }
@@ -630,10 +630,10 @@ async function getIncomeDraftForTeller(id) {
   };
 }
 
-async function createIncomeFromTeller(id, payload = {}) {
-  const tx = await getTellerTransactionRow(id);
+async function createIncomeFromBanking(id, payload = {}) {
+  const tx = await getBankingTransactionRow(id);
   if (!tx) {
-    const err = new Error("Teller transaction not found");
+    const err = new Error("Banking transaction not found");
     err.status = 404;
     throw err;
   }
@@ -688,7 +688,7 @@ async function createIncomeFromTeller(id, payload = {}) {
     const incomeResult = await client.query(
       `
       INSERT INTO income_transactions (
-        teller_transaction_row_id,
+        banking_transaction_row_id,
         trip_id,
         source,
         income_type,
@@ -704,7 +704,7 @@ async function createIncomeFromTeller(id, payload = {}) {
       VALUES (
         $1, $2, 'bank_import', $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW()
       )
-      ON CONFLICT (teller_transaction_row_id)
+      ON CONFLICT (banking_transaction_row_id)
       DO UPDATE SET
         trip_id = EXCLUDED.trip_id,
         income_type = EXCLUDED.income_type,
@@ -729,7 +729,7 @@ async function createIncomeFromTeller(id, payload = {}) {
         variance,
         cleanOptionalText(payload.notes) || tx.description || null,
         JSON.stringify({
-          teller_transaction: tx,
+          banking_transaction: tx,
           payload,
         }),
       ]
@@ -737,7 +737,7 @@ async function createIncomeFromTeller(id, payload = {}) {
 
     const txResult = await client.query(
       `
-      UPDATE teller_transactions
+      UPDATE banking_transactions
       SET
         review_status = 'created',
         matched_expense_id = NULL,
@@ -761,7 +761,7 @@ async function createIncomeFromTeller(id, payload = {}) {
 
     return {
       income: incomeResult.rows[0],
-      teller_transaction: txResult.rows[0],
+      banking_transaction: txResult.rows[0],
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -772,15 +772,15 @@ async function createIncomeFromTeller(id, payload = {}) {
 }
 
 module.exports = {
-  getTellerSuggestions,
-  matchTellerTransaction,
-  createExpenseFromTeller,
-  dismissTellerTransaction,
-  ignoreTellerTransaction,
-  createTellerIgnoreRule,
+  getBankingSuggestions,
+  matchBankingTransaction,
+  createExpenseFromBanking,
+  dismissBankingTransaction,
+  ignoreBankingTransaction,
+  createBankingIgnoreRule,
   getCategorySuggestionsForTransaction,
-  getIncomeDraftForTeller,
-  createIncomeFromTeller,
+  getIncomeDraftForBanking,
+  createIncomeFromBanking,
   scoreSuggestion,
   detectRefundSignal,
 };

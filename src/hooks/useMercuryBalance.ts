@@ -18,7 +18,7 @@ export function useMercuryBalance() {
       try {
         setMercuryBalance((current) => ({ ...current, loading: true }));
 
-        const res = await fetch(`${API_BASE}/api/teller/mercury/balance`, {
+        const res = await fetch(`${API_BASE}/api/banking/mercury/balance`, {
           headers: { Accept: "application/json" },
         });
         const data = await res.json().catch(() => ({}));

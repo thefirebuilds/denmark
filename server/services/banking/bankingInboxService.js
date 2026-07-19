@@ -1,13 +1,13 @@
 // ------------------------------------------------------------
-// /server/services/teller/tellerInboxService.js
-// Read-only Teller inbox service for:
-// - listing Teller transactions with filters + pagination
-// - fetching a single Teller transaction by id
+// /server/services/banking/bankingInboxService.js
+// Read-only Banking inbox service for:
+// - listing Banking transactions with filters + pagination
+// - fetching a single Banking transaction by id
 // - returning summary counts by review status
 // ------------------------------------------------------------
 
 const pool = require("../../db");
-const { scoreSuggestion } = require("./tellerMatchService");
+const { scoreSuggestion } = require("./bankingMatchService");
 
 function parsePositiveInt(value, fallback) {
   const n = Number(value);
@@ -26,12 +26,12 @@ function parseLastFourFromText(value) {
   return match?.[1] || null;
 }
 
-async function loadTellerAccountMetadataMap() {
+async function loadBankingAccountMetadataMap() {
   const result = await pool.query(`
     SELECT DISTINCT ON (raw_json->'account'->>'id')
       raw_json->'account' AS account
-    FROM teller_transactions
-    WHERE raw_json->>'source' IN ('teller', 'plaid')
+    FROM banking_transactions
+    WHERE raw_json->>'source' IN ('banking', 'plaid')
       AND raw_json->'account'->>'id' IS NOT NULL
     ORDER BY raw_json->'account'->>'id', updated_at DESC
   `);
@@ -46,8 +46,8 @@ async function loadTellerAccountMetadataMap() {
 
 function getTransactionSourceFields(row, accountById = new Map()) {
   const raw = row?.raw_json && typeof row.raw_json === "object" ? row.raw_json : {};
-  const txId = String(row?.teller_transaction_id || "");
-  const accountId = String(row?.teller_account_id || "");
+  const txId = String(row?.provider_transaction_id || "");
+  const accountId = String(row?.provider_account_id || "");
   const rawSource = String(raw.source || "").trim().toLowerCase();
   const account =
     raw.account || raw.source_account || accountById.get(accountId) || {};
@@ -75,7 +75,7 @@ function getTransactionSourceFields(row, accountById = new Map()) {
     };
   }
 
-  const sourceLabel = institution || (rawSource === "plaid" ? "Plaid" : "Teller");
+  const sourceLabel = institution || (rawSource === "plaid" ? "Plaid" : "Banking");
   const accountLabel = accountName
     ? lastFour
       ? `${accountName.replace(/\s+-\s+[0-9]{4}\s*$/, "")} ****${lastFour}`
@@ -85,7 +85,7 @@ function getTransactionSourceFields(row, accountById = new Map()) {
       : sourceLabel;
 
   return {
-    transaction_source: rawSource === "plaid" ? "plaid" : "teller",
+    transaction_source: rawSource === "plaid" ? "plaid" : "banking",
     transaction_source_label: sourceLabel,
     source_account_label: accountLabel,
     source_account_last_four: lastFour || null,
@@ -129,7 +129,7 @@ async function listIgnoredVendorGroups(filters = {}) {
           NULLIF(TRIM(tt.description), ''),
           'Unknown'
         ) AS vendor_key
-      FROM teller_transactions tt
+      FROM banking_transactions tt
       ${whereSql}
       GROUP BY 1
     ) grouped
@@ -155,7 +155,7 @@ async function listIgnoredVendorGroups(filters = {}) {
       MIN(tt.description) AS sample_description,
       BOOL_OR(tt.ignored = TRUE) AS has_ignored_rows,
       MAX(tt.ignore_reason) AS sample_ignore_reason
-    FROM teller_transactions tt
+    FROM banking_transactions tt
     ${whereSql}
     GROUP BY 1
     ORDER BY MAX(tt.transaction_date) DESC, 1 ASC
@@ -186,8 +186,8 @@ async function getIgnoredVendorGroupDetails(vendorKey, filters = {}) {
     `
     SELECT
       tt.id,
-      tt.teller_transaction_id,
-      tt.teller_account_id,
+      tt.provider_transaction_id,
+      tt.provider_account_id,
       tt.transaction_date,
       tt.description,
       tt.amount,
@@ -210,7 +210,7 @@ async function getIgnoredVendorGroupDetails(vendorKey, filters = {}) {
       tt.review_notes,
       tt.created_at,
       tt.updated_at
-    FROM teller_transactions tt
+    FROM banking_transactions tt
     WHERE tt.review_status = 'ignored'
       AND COALESCE(
         NULLIF(TRIM(tt.counterparty_name), ''),
@@ -223,7 +223,7 @@ async function getIgnoredVendorGroupDetails(vendorKey, filters = {}) {
     [vendorKey, limit]
   );
 
-  const accountById = await loadTellerAccountMetadataMap();
+  const accountById = await loadBankingAccountMetadataMap();
 
   return {
     vendor_key: vendorKey,
@@ -231,7 +231,7 @@ async function getIgnoredVendorGroupDetails(vendorKey, filters = {}) {
   };
 }
 
-async function listTellerTransactions(filters = {}) {
+async function listBankingTransactions(filters = {}) {
   const limit = parsePositiveInt(filters.limit, 50);
   const page = parsePositiveInt(filters.page, 1);
   const offset = (page - 1) * limit;
@@ -268,7 +268,7 @@ async function listTellerTransactions(filters = {}) {
 
   const countSql = `
     SELECT COUNT(*)::int AS total
-    FROM teller_transactions tt
+    FROM banking_transactions tt
     ${whereSql}
   `;
 
@@ -282,8 +282,8 @@ async function listTellerTransactions(filters = {}) {
   const sql = `
     SELECT
       tt.id,
-      tt.teller_transaction_id,
-      tt.teller_account_id,
+      tt.provider_transaction_id,
+      tt.provider_account_id,
       tt.transaction_date,
       tt.description,
       tt.amount,
@@ -306,7 +306,7 @@ async function listTellerTransactions(filters = {}) {
       tt.review_notes,
       tt.created_at,
       tt.updated_at
-    FROM teller_transactions tt
+    FROM banking_transactions tt
     ${whereSql}
     ORDER BY tt.transaction_date DESC, tt.id DESC
     LIMIT ${limitParam}
@@ -318,7 +318,7 @@ async function listTellerTransactions(filters = {}) {
     pool.query(countSql, values),
   ]);
 
-  const accountById = await loadTellerAccountMetadataMap();
+  const accountById = await loadBankingAccountMetadataMap();
   const rows = rowsResult.rows.map((row) => hydrateTransactionRow(row, accountById));
 
   if (!rows.length) {
@@ -339,7 +339,7 @@ async function listTellerTransactions(filters = {}) {
   const candidateResult = await pool.query(
     `
     SELECT
-      tt.id AS teller_transaction_row_id,
+      tt.id AS banking_transaction_row_id,
       e.id,
       e.vehicle_id,
       v.nickname AS vehicle_nickname,
@@ -353,7 +353,7 @@ async function listTellerTransactions(filters = {}) {
       e.date,
       e.expense_scope,
       e.trip_id
-    FROM teller_transactions tt
+    FROM banking_transactions tt
     JOIN expenses e
       ON e.date BETWEEN (tt.transaction_date::date - INTERVAL '3 days')
                     AND (tt.transaction_date::date + INTERVAL '3 days')
@@ -368,7 +368,7 @@ async function listTellerTransactions(filters = {}) {
   const statsByTxId = new Map();
 
   for (const candidate of candidateResult.rows) {
-    const txId = String(candidate.teller_transaction_row_id);
+    const txId = String(candidate.banking_transaction_row_id);
     const tx = txById.get(txId);
     if (!tx) continue;
 
@@ -411,13 +411,13 @@ async function listTellerTransactions(filters = {}) {
   };
 }
 
-async function getTellerTransactionById(id) {
+async function getBankingTransactionById(id) {
   const result = await pool.query(
     `
     SELECT
       tt.id,
-      tt.teller_transaction_id,
-      tt.teller_account_id,
+      tt.provider_transaction_id,
+      tt.provider_account_id,
       tt.transaction_date,
       tt.description,
       tt.amount,
@@ -446,7 +446,7 @@ async function getTellerTransactionById(id) {
       e.date AS matched_expense_date,
       (COALESCE(e.price, 0) + COALESCE(e.tax, 0))::numeric(10,2) AS matched_expense_total,
       e.vehicle_id AS matched_expense_vehicle_id
-    FROM teller_transactions tt
+    FROM banking_transactions tt
     LEFT JOIN expenses e
       ON e.id = tt.matched_expense_id
     WHERE tt.id = $1
@@ -455,11 +455,11 @@ async function getTellerTransactionById(id) {
     [id]
   );
 
-  const accountById = await loadTellerAccountMetadataMap();
+  const accountById = await loadBankingAccountMetadataMap();
   return hydrateTransactionRow(result.rows[0] || null, accountById);
 }
 
-async function getTellerSummary() {
+async function getBankingSummary() {
   const result = await pool.query(`
     SELECT
       COUNT(*)::int AS total,
@@ -469,13 +469,13 @@ async function getTellerSummary() {
       COUNT(*) FILTER (WHERE review_status = 'dismissed')::int AS dismissed,
       COUNT(*) FILTER (WHERE review_status = 'ignored' OR ignored = TRUE)::int AS ignored,
       MAX(created_at) AS last_new_transaction_at
-    FROM teller_transactions
+    FROM banking_transactions
   `);
 
   const syncResult = await pool.query(`
     SELECT value
     FROM app_settings
-    WHERE key IN ('integrations.plaid.sync_status', 'integrations.teller.sync_status')
+    WHERE key IN ('integrations.plaid.sync_status', 'integrations.banking.sync_status')
     ORDER BY CASE WHEN key = 'integrations.plaid.sync_status' THEN 0 ELSE 1 END
     LIMIT 1
   `);
@@ -496,9 +496,9 @@ async function getTellerSummary() {
 }
 
 module.exports = {
-  listTellerTransactions,
+  listBankingTransactions,
   listIgnoredVendorGroups,
   getIgnoredVendorGroupDetails,
-  getTellerTransactionById,
-  getTellerSummary,
+  getBankingTransactionById,
+  getBankingSummary,
 };

@@ -207,7 +207,7 @@ async function getBalanceSummary() {
 async function getIgnoreRules() {
   const result = await pool.query(`
     SELECT match_type, match_value, reason
-    FROM teller_ignore_rules
+    FROM banking_ignore_rules
     WHERE is_active = TRUE
   `);
 
@@ -288,9 +288,9 @@ async function saveTransaction(tx, ignoreRules) {
 
   await pool.query(
     `
-    INSERT INTO teller_transactions (
-      teller_transaction_id,
-      teller_account_id,
+    INSERT INTO banking_transactions (
+      provider_transaction_id,
+      provider_account_id,
       transaction_date,
       description,
       amount,
@@ -311,9 +311,9 @@ async function saveTransaction(tx, ignoreRules) {
       $1, $2, $3, $4, $5, $6, $7, $8,
       $9, $10, $11, $12, $13, $14, $15, $16, NOW()
     )
-    ON CONFLICT (teller_transaction_id)
+    ON CONFLICT (provider_transaction_id)
     DO UPDATE SET
-      teller_account_id = EXCLUDED.teller_account_id,
+      provider_account_id = EXCLUDED.provider_account_id,
       transaction_date = EXCLUDED.transaction_date,
       description = EXCLUDED.description,
       amount = EXCLUDED.amount,

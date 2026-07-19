@@ -93,9 +93,9 @@ const BASE_SCHEMA_TABLES = [
   "marketplace_preferences",
   "notification_events",
   "messages",
-  "teller_ignore_rules",
-  "teller_tokens",
-  "teller_transactions",
+  "banking_ignore_rules",
+  "banking_tokens",
+  "banking_transactions",
   "toll_charges",
   "toll_sync_runs",
   "trip_stage_history",
@@ -117,7 +117,7 @@ const BASE_SCHEMA_TABLES = [
 ];
 const RUNTIME_ENSURED_TABLES = ["income_transactions", "maintenance_google_sync"];
 const REQUIRED_TABLES = [...BASE_SCHEMA_TABLES, ...RUNTIME_ENSURED_TABLES];
-const RUNTIME_DEPENDENCY_TABLES = ["vehicles", "trips", "teller_transactions"];
+const RUNTIME_DEPENDENCY_TABLES = ["vehicles", "trips", "banking_transactions"];
 
 function getConnectionConfig() {
   return {

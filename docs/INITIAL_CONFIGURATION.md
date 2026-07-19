@@ -164,14 +164,14 @@ BOUNCIE_REDIRECT_URI=
 
 Current gap: DIMO and Bouncie credential setup should move into guided integration panels, with provider status and reconnect flows.
 
-## 10. Expenses, Tolls, Banking
+## 10. Expenses, Tolls, and Banking
 
 In Settings > Expenses:
 
 - Review categories.
 - Add tenant-specific expense categories.
 
-Banking/Teller and Mercury still rely on `.env` credentials. These are useful for a power beta tenant but should not be required for first useful value.
+Plaid credentials are saved through the encrypted integration settings panel. Mercury continues to use its direct API credential and does not route through Plaid.
 
 ## 11. Backup
 
