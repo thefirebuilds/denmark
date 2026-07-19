@@ -4537,7 +4537,7 @@ function IntegrationsSettingsPanel() {
       const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}/webhook/test`,{method:"POST"});
       const json=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(json?.error||"Failed to fire Plaid webhook");
-      setMessage(json.webhook_fired===false?"Plaid did not fire the webhook.":"Plaid fired the Sandbox webhook successfully.");
+      setMessage(json.webhook_fired===false?"Plaid did not fire the onboarding webhook.":"Plaid fired ITEM / NEW_ACCOUNTS_AVAILABLE successfully.");
       await loadBankingState();
     } catch(err){setMessage(err.message||"Failed to test Plaid webhook");}
   }
@@ -5107,7 +5107,7 @@ function IntegrationsSettingsPanel() {
             <div className="settings-vehicle-row"><strong>Ingestion begins</strong><span>July 1, 2026 (earlier transactions are always rejected)</span></div>
             <div className="settings-vehicle-row"><strong>Webhook URL</strong><span>{connections?.webhook?.webhookUrl||"Set the public base URL in Settings"}</span></div>
             <div className="settings-vehicle-row"><strong>Last webhook</strong><span>{connections?.webhook?.lastDelivery?.receivedAt?`${new Date(connections.webhook.lastDelivery.receivedAt).toLocaleString()} · ${connections.webhook.lastDelivery.webhookType||"unknown"}/${connections.webhook.lastDelivery.webhookCode||"unknown"}`:"None received"}</span></div>
-            {(connections?.items||[]).map((item)=><div className="settings-vehicle-row" key={item.item_id}><strong>{item.institution_name||"Plaid Item"}</strong><span>{item.transactions_last_success_at?`Synced ${new Date(item.transactions_last_success_at).toLocaleString()}`:"Not synced"} {item.last_error?<em>{item.last_error.message}</em>:null} {config?.environment==="sandbox"?<button type="button" className="settings-action-btn secondary" disabled={!connections?.webhook?.configured} onClick={()=>testPlaidWebhook(item.item_id)}>Test Webhook</button>:null} <button type="button" className="settings-action-btn secondary" onClick={()=>connectPlaid(item.item_id)}>Repair</button> <button type="button" className="settings-action-btn secondary" onClick={()=>deletePlaidItem(item.item_id)}>Remove</button></span></div>)}
+            {(connections?.items||[]).map((item)=><div className="settings-vehicle-row" key={item.item_id}><strong>{item.institution_name||"Plaid Item"}</strong><span>{item.transactions_last_success_at?`Synced ${new Date(item.transactions_last_success_at).toLocaleString()}`:"Not synced"} {item.last_error?<em>{item.last_error.message}</em>:null} {config?.environment==="sandbox"?<button type="button" className="settings-action-btn secondary" disabled={!connections?.webhook?.configured} onClick={()=>testPlaidWebhook(item.item_id)}>Test Onboarding Webhook</button>:null} <button type="button" className="settings-action-btn secondary" onClick={()=>connectPlaid(item.item_id)}>Repair</button> <button type="button" className="settings-action-btn secondary" onClick={()=>deletePlaidItem(item.item_id)}>Remove</button></span></div>)}
           </div>
           <div className="settings-form-actions">
             <button type="button" className="settings-action-btn" disabled={loading||connecting||!config?.configured} onClick={()=>connectPlaid()}>{connecting?"Opening…":"Connect with Plaid"}</button>
