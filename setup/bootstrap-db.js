@@ -19,6 +19,9 @@ requireAppDependency("dotenv").config({ path: path.join(ROOT_DIR, ".env") });
 
 const appPool = require("../server/db");
 const {
+  ensureBankingRuntimeSchema,
+} = require("../server/services/banking/bankingRuntimeSchema");
+const {
   getRuntimeNumber,
   getRuntimeSecret,
 } = require("../server/config/runtimeSecrets");
@@ -384,6 +387,10 @@ async function main() {
     console.log(
       `[db:bootstrap] connecting to ${config.user}@${config.host}:${config.port}/${config.database}`
     );
+
+    // Upgrade existing banking storage before deciding whether the schema is
+    // complete. This is non-destructive and must run ahead of the partial-schema guard.
+    await ensureBankingRuntimeSchema();
 
     const existing = await getExistingRequiredTables(client);
     const missing = BASE_SCHEMA_TABLES.filter((table) => !existing.has(table));
