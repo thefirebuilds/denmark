@@ -16,6 +16,7 @@ const {
   appErrorHandler,
   jsonParseErrorHandler,
 } = require("./errorHandlers");
+const plaidWebhookRoutes = require("../routes/plaidWebhook");
 
 function createApp({ port }) {
   const app = express();
@@ -26,10 +27,14 @@ function createApp({ port }) {
   app.options(/^\/api\/marketplace(?:\/.*)?$/, marketplaceCors);
 
   app.use(createSessionMiddleware());
+  app.use(
+    "/api/webhooks/plaid",
+    express.json({ limit: "256kb" }),
+    plaidWebhookRoutes
+  );
   app.use(express.json({ limit: "500mb" }));
   app.use(createPublicHealthRouter({ port }));
   app.use("/api", databaseUnavailableMiddleware);
-
   // The Android notification bridge intentionally sits before user auth.
   app.use("/api/notifications", defaultCors, notificationRoutes);
 

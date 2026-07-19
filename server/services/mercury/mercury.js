@@ -7,6 +7,11 @@ dotenv.config({
 });
 
 const pool = require("../../db");
+const {
+  BANKING_INGESTION_START_DATE,
+  isWithinBankingIngestionWindow,
+  clampBankingStartDate,
+} = require("../banking/bankingIngestionPolicy");
 
 const API = "https://api.mercury.com/api/v1";
 
@@ -249,7 +254,7 @@ async function fetchTransactions({ start, end, limit = 1000, maxPages = 20 } = {
       order: "desc",
     };
 
-    if (start) params.start = start;
+    params.start = clampBankingStartDate(start);
     if (end) params.end = end;
     if (cursor != null) params.cursor = cursor;
 
@@ -278,6 +283,10 @@ async function saveTransaction(tx, ignoreRules) {
   const transactionDate = toDateOnly(getTransactionDate(tx));
 
   if (!transactionDate) {
+    return false;
+  }
+
+  if (!isWithinBankingIngestionWindow(transactionDate)) {
     return false;
   }
 
@@ -360,7 +369,7 @@ async function syncMercuryTransactions(options = {}) {
     throw err;
   }
 
-  console.log("[mercury] syncing transactions");
+  console.log(`[mercury] syncing transactions | ingestionStart=${BANKING_INGESTION_START_DATE}`);
 
   const ignoreRules = await getIgnoreRules();
   const transactions = await fetchTransactions(options);
@@ -385,6 +394,7 @@ async function syncMercuryTransactions(options = {}) {
     seen: transactions.length,
     processed,
     skipped,
+    ingestionStartDate: BANKING_INGESTION_START_DATE,
   };
 }
 

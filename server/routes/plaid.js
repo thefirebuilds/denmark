@@ -13,5 +13,7 @@ router.post("/sync",async(req,res)=>{try{res.json(await service.syncTransactions
 router.post("/balances/refresh",async(_q,res)=>{try{res.json(await service.refreshBalances());}catch(e){fail(res,e);}});
 router.get("/balances",async(_q,res)=>{try{res.json(await service.getCachedBalances());}catch(e){fail(res,e);}});
 router.get("/citi-4483/balance",async(_q,res)=>{try{res.json(await service.getCiti4483BalanceSummary());}catch(e){fail(res,e);}});
+router.post("/items/:itemId/webhook",async(req,res)=>{try{res.json(await service.configureItemWebhook(req.params.itemId));}catch(e){fail(res,e);}});
+router.post("/items/:itemId/webhook/test",async(req,res)=>{try{res.json(await service.fireSandboxWebhook(req.params.itemId));}catch(e){fail(res,e);}});
 router.delete("/items/:itemId",async(req,res)=>{try{res.json(await service.removeItem(req.params.itemId));}catch(e){fail(res,e);}});
 module.exports=router;
