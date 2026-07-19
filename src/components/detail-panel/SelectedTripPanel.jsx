@@ -309,6 +309,13 @@ export default function SelectedTripPanel({
 
   const canShowCloseoutOps =
     tripHasEnded || isCloseoutStage || Boolean(selectedTrip?.closed_out);
+  const returnLateMinutes = Number(selectedTrip?.return_late_minutes);
+  const hasRecordedReturn = Boolean(selectedTrip?.returned_at);
+  const returnTimingLabel = hasRecordedReturn
+    ? Number.isFinite(returnLateMinutes) && returnLateMinutes > 0
+      ? `${Math.floor(returnLateMinutes / 60) > 0 ? `${Math.floor(returnLateMinutes / 60)}h ` : ""}${returnLateMinutes % 60}m late`
+      : "On time"
+    : "";
 
   const closeoutChecks = useMemo(() => {
     const expenseStatus = String(closeoutForm.expense_status || "").toLowerCase();
@@ -684,8 +691,16 @@ function renderLocationLink(vehicle) {
                     : "Ready to close"}
                 </div>
                 <div className="detail-closeout-copy">
-                  Audit HCTRA tolls, send tolls and incidentals through Turo,
-                  then transcribe the result here.
+                  {hasRecordedReturn ? (
+                    <>
+                      Returned {formatDateTime(selectedTrip.returned_at)} at {selectedTrip.return_detected_location || "the required return location"} ({returnTimingLabel}).
+                    </>
+                  ) : (
+                    <>
+                      Audit HCTRA tolls, send tolls and incidentals through Turo,
+                      then transcribe the result here.
+                    </>
+                  )}
                 </div>
               </div>
               <button

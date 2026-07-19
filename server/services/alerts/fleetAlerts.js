@@ -7,6 +7,7 @@ const {
   getPrimaryParkingLocation,
 } = require("../locations/locationSettings");
 const { transitionTripStage } = require("../trips/transitionTripStage");
+const { DateTime } = require("luxon");
 
 let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
@@ -275,6 +276,44 @@ function getMatchedTripReturnGeoLocation(row, locations) {
   }
 
   return null;
+}
+
+function getReturnObservedAt(row) {
+  const raw = row.location_last_updated || row.vehicle_last_updated || row.captured_at;
+  if (!raw) return new Date();
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw;
+  const text = String(raw).trim();
+  const hasZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(text);
+  const parsed = hasZone
+    ? DateTime.fromISO(text, { setZone: true })
+    : String(row.service_name || "").toLowerCase() === "bouncie"
+      ? DateTime.fromISO(text, { zone: "utc" })
+      : DateTime.fromISO(text, { zone: "America/Chicago" });
+  return parsed.isValid ? parsed.toJSDate() : new Date();
+}
+
+async function recordTripReturnObservation(row, match) {
+  const observedAt = getReturnObservedAt(row);
+  const dueAt = new Date(row.trip_end);
+  const lateMinutes = Number.isNaN(dueAt.getTime())
+    ? 0
+    : Math.max(0, Math.round((observedAt.getTime() - dueAt.getTime()) / 60000));
+  const result = await pool.query(`UPDATE trips SET
+      returned_at=COALESCE(returned_at,$2::timestamptz),
+      return_late_minutes=COALESCE(return_late_minutes,$3::integer),
+      return_detection_source=COALESCE(return_detection_source,$4),
+      return_detected_location=COALESCE(return_detected_location,$5),
+      return_distance_miles=COALESCE(return_distance_miles,$6::numeric),
+      updated_at=NOW()
+    WHERE id=$1 RETURNING returned_at,return_late_minutes`, [
+    row.id,
+    observedAt.toISOString(),
+    lateMinutes,
+    `telemetry:${row.service_name || "unknown"}`,
+    match.location.label || match.location.id || "return location",
+    match.milesAway,
+  ]);
+  return result.rows[0] || { returned_at: observedAt, return_late_minutes: lateMinutes };
 }
 
 async function ensureFleetAlertTables(client = pool) {
@@ -1308,18 +1347,22 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
 
   let advanced = 0;
   for (const row of rows) {
+    if (isStaleLocationEntrySignal(row)) continue;
     const match = getMatchedTripReturnGeoLocation(row, returnLocations);
     if (!match) continue;
 
     try {
+      const observation = await recordTripReturnObservation(row, match);
       await recordTripReturnGeoMessage(row, match);
       await transitionTripStage(row.id, "turnaround", {
         changedBy: "system:return-geo-location",
-        reason: `return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}`,
+        changedAt: observation.returned_at,
+        reason: `return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}; ${observation.return_late_minutes || 0} minute(s) late`,
       });
       await transitionTripStage(row.id, "awaiting_expenses", {
         changedBy: "system:return-geo-location",
-        reason: `trip ended and return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}`,
+        changedAt: observation.returned_at,
+        reason: `trip ended and return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}; ${observation.return_late_minutes || 0} minute(s) late`,
       });
       advanced += 1;
     } catch (err) {

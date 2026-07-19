@@ -432,7 +432,7 @@ async function runBankingSync(reason = "interval") {
     let processed = 0;
 
     try {
-      const result = await syncPlaidTransactions({ reason });
+      const result = await syncPlaidTransactions({ reason, allowInitialImport: true });
       processed += Number(result.fetched || 0);
       await refreshPlaidBalances();
     } catch (err) {

@@ -12,6 +12,7 @@ async function ensureSchema() {
       id bigserial PRIMARY KEY, item_id text UNIQUE NOT NULL, access_token_encrypted text NOT NULL,
       institution_id text, institution_name text, cursor text,
       transactions_last_attempt_at timestamptz, transactions_last_success_at timestamptz,
+      initial_import_claimed_at timestamptz, initial_import_completed_at timestamptz,
       balance_last_attempt_at timestamptz, balance_last_success_at timestamptz,
       last_error jsonb, created_at timestamptz NOT NULL DEFAULT NOW(), updated_at timestamptz NOT NULL DEFAULT NOW()
     );
@@ -20,7 +21,10 @@ async function ensureSchema() {
       name text, official_name text, mask text, type text, subtype text,
       current_balance numeric, available_balance numeric, credit_limit numeric, iso_currency_code text,
       balance_fetched_at timestamptz, updated_at timestamptz NOT NULL DEFAULT NOW()
-    );`);
+    );
+    ALTER TABLE plaid_items
+      ADD COLUMN IF NOT EXISTS initial_import_claimed_at timestamptz,
+      ADD COLUMN IF NOT EXISTS initial_import_completed_at timestamptz;`);
   return schemaPromise;
 }
 
@@ -82,26 +86,30 @@ async function claimGate(kind, hours, environment) {
 }
 
 async function claimInitialTransactionImport() {
-  const count = await pool.query("SELECT COUNT(*)::int AS count FROM banking_transactions WHERE raw_json->>'source'='plaid'");
-  if (Number(count.rows[0]?.count || 0) > 0) return false;
-  const key = "integrations.plaid.initial_transaction_import";
-  const result = await pool.query(`INSERT INTO app_settings(key,value,updated_at)
-    VALUES($1,jsonb_build_object('claimedAt',NOW()),NOW()) ON CONFLICT(key) DO NOTHING RETURNING key`, [key]);
-  return result.rowCount === 1;
+  const result = await pool.query(`UPDATE plaid_items
+    SET initial_import_claimed_at=NOW(),updated_at=NOW()
+    WHERE initial_import_completed_at IS NULL
+      AND (initial_import_claimed_at IS NULL OR initial_import_claimed_at < NOW() - interval '10 minutes')
+    RETURNING item_id`);
+  return new Set(result.rows.map((row) => row.item_id));
 }
 
-async function releaseInitialTransactionImportClaim() {
-  await pool.query("DELETE FROM app_settings WHERE key='integrations.plaid.initial_transaction_import'");
+async function finishInitialTransactionImport(itemId, completed) {
+  await pool.query(`UPDATE plaid_items SET
+      initial_import_claimed_at=NULL,
+      initial_import_completed_at=CASE WHEN $2::boolean THEN COALESCE(initial_import_completed_at,NOW()) ELSE initial_import_completed_at END,
+      updated_at=NOW()
+    WHERE item_id=$1`, [itemId, completed]);
 }
 
 function normalizedAmount(tx) { const amount = Number(tx.amount); return Number.isFinite(amount) ? -amount : 0; }
 function findIgnoreReason(description,rules){const text=String(description||"").trim().toLowerCase();for(const rule of rules){const value=String(rule.match_value||"").trim().toLowerCase();if((rule.match_type==="exact"&&text===value)||(rule.match_type==="contains"&&text.includes(value)))return rule.reason||"Ignored by rule";}return null;}
-async function upsertTransaction(tx, account, institutionName, ignoreRules=[]) {
+async function upsertTransaction(tx, account, itemId, institutionName, ignoreRules=[]) {
   const transactionDate=tx.authorized_date || tx.date;
   if(!isWithinBankingIngestionWindow(transactionDate))return {inserted:false,beforeCutoff:true};
   const description=tx.merchant_name || tx.name || "Plaid transaction";
   const ignoreReason=findIgnoreReason(description,ignoreRules);
-  const raw = { ...tx, source: "plaid", institution: institutionName || null,
+  const raw = { ...tx, source: "plaid", plaid_item_id: itemId, institution: institutionName || null,
     account: account ? { id: account.account_id, name: account.name, official_name: account.official_name, mask: account.mask, type: account.type, subtype: account.subtype } : null };
   const result = await pool.query(`INSERT INTO banking_transactions
     (provider_transaction_id,provider_account_id,transaction_date,description,amount,transaction_type,status,counterparty_name,category,raw_json,ignored,ignore_reason,updated_at)
@@ -120,7 +128,8 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
   const settings = await getPlaidSettings();
   const { rows: items } = await pool.query("SELECT * FROM plaid_items ORDER BY id");
   if (!items.length) return { skipped: true, reason: "no_items", items: 0, fetched: 0, inserted: 0 };
-  const initialImportClaimed = allowInitialImport ? await claimInitialTransactionImport() : false;
+  const initialImportItems = allowInitialImport ? await claimInitialTransactionImport() : new Set();
+  const initialImportClaimed = initialImportItems.size > 0;
   const gate = initialImportClaimed
     ? { allowed: true, initialImport: true }
     : await claimGate("transactions", TRANSACTION_INTERVAL_HOURS, settings.environment);
@@ -128,6 +137,7 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
   let fetched=0, inserted=0, modified=0, removed=0, skippedBeforeCutoff=0;
   const ignoreRules=(await pool.query("SELECT match_type,match_value,reason FROM banking_ignore_rules WHERE is_active=TRUE")).rows;
   for (const item of items) {
+    let itemFetched = 0;
     await pool.query("UPDATE plaid_items SET transactions_last_attempt_at=NOW(),updated_at=NOW() WHERE item_id=$1", [item.item_id]);
     try {
       const token = decrypt(item.access_token_encrypted); const startingCursor=item.cursor || null;
@@ -139,13 +149,17 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
       const accountsData=await call("/accounts/get", { access_token: token });
       const accountMap=new Map((accountsData.accounts||[]).map(a=>[a.account_id,a]));
       for(const page of pages) { for(const tx of [...(page.added||[]),...(page.modified||[])]) {
-          const saved=await upsertTransaction(tx,accountMap.get(tx.account_id),item.institution_name,ignoreRules); fetched++; if(saved.inserted)inserted++;if(saved.beforeCutoff)skippedBeforeCutoff++;
+          const saved=await upsertTransaction(tx,accountMap.get(tx.account_id),item.item_id,item.institution_name,ignoreRules); fetched++; itemFetched++; if(saved.inserted)inserted++;if(saved.beforeCutoff)skippedBeforeCutoff++;
         } modified += (page.modified||[]).length;
         for(const tx of page.removed||[]) { const result=await pool.query("DELETE FROM banking_transactions WHERE provider_transaction_id=$1 AND review_status='pending'", [`plaid:${tx.transaction_id}`]); removed+=result.rowCount; }
       }
       await pool.query("UPDATE plaid_items SET cursor=$2,transactions_last_success_at=NOW(),last_error=NULL,updated_at=NOW() WHERE item_id=$1", [item.item_id,cursor]);
+      if(initialImportItems.has(item.item_id))await finishInitialTransactionImport(
+        item.item_id,
+        itemFetched>0 || String(reason).toLowerCase().includes("historical_update")
+      );
     } catch(error) {
-      if(initialImportClaimed)await releaseInitialTransactionImportClaim().catch(()=>null);
+      if(initialImportItems.has(item.item_id))await finishInitialTransactionImport(item.item_id,false).catch(()=>null);
       await pool.query("UPDATE plaid_items SET last_error=$2::jsonb,updated_at=NOW() WHERE item_id=$1", [item.item_id,JSON.stringify({at:new Date().toISOString(),code:error.code||null,message:error.message})]);
       await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES('integrations.plaid.sync_status',$1::jsonb,NOW())
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,[JSON.stringify({status:"error",lastCheckedAt:new Date().toISOString(),errors:[{itemId:item.item_id,institution:item.institution_name,code:error.code||null,message:error.message,reconnectRequired:error.code==="ITEM_LOGIN_REQUIRED"}]})]);
@@ -153,7 +167,6 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
     }
   }
   const result={ skipped:false, items:items.length,fetched,inserted,modified,removed,skippedBeforeCutoff,ingestionStartDate:BANKING_INGESTION_START_DATE };
-  if(initialImportClaimed&&inserted===0)await releaseInitialTransactionImportClaim();
   await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES('integrations.plaid.sync_status',$1::jsonb,NOW())
     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,[JSON.stringify({status:"ok",lastCheckedAt:new Date().toISOString(),...result})]);
   console.log(`[plaid] transactions done | reason=${reason} items=${items.length} fetched=${fetched} inserted=${inserted} skippedBeforeCutoff=${skippedBeforeCutoff} ingestionStart=${BANKING_INGESTION_START_DATE}`);
@@ -199,7 +212,7 @@ async function getCiti4483BalanceSummary(){
     debtBalance:Math.max(0,currentBalance),lastFour:"4483",balanceSource:"plaid_weekly_anchor_plus_transactions",
     fetchedAt:a.balance_fetched_at||null,calculatedAt:new Date().toISOString(),transactionDelta:normalizedDelta};
 }
-async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM banking_transactions WHERE raw_json->>'source'='plaid'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS,ingestionStartDate:BANKING_INGESTION_START_DATE,webhook:await getPlaidWebhookStatus()};}
+async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,initial_import_completed_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM banking_transactions WHERE raw_json->>'source'='plaid'");const syncStatus=await pool.query("SELECT value FROM app_settings WHERE key='integrations.plaid.sync_status'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,lastSync:syncStatus.rows[0]?.value||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS,ingestionStartDate:BANKING_INGESTION_START_DATE,webhook:await getPlaidWebhookStatus()};}
 async function configureItemWebhook(itemId){await ensureSchema();const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);if(!rows[0])throw Object.assign(new Error("Plaid Item not found"),{status:404});const webhook=await getPlaidWebhookUrl();if(!webhook)throw Object.assign(new Error("Configure Denmark's public base URL in Settings first"),{status:400});return call("/item/webhook/update",{access_token:decrypt(rows[0].access_token_encrypted),webhook});}
 async function removeItem(itemId){
   await ensureSchema();

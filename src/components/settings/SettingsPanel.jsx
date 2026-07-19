@@ -5087,6 +5087,7 @@ function IntegrationsSettingsPanel() {
           <div className="settings-vehicle-list">
             <div className="settings-vehicle-row"><strong>Items</strong><span>{loading?"Loading…":connections?.items?.length||0}</span></div>
             <div className="settings-vehicle-row"><strong>Latest Plaid transaction</strong><span>{connections?.latestTransaction?formatIntegrationDate(connections.latestTransaction):"None imported"}</span></div>
+            <div className="settings-vehicle-row"><strong>Last transaction pull</strong><span>{connections?.lastSync?.lastCheckedAt?`${formatIntegrationDate(connections.lastSync.lastCheckedAt)} · fetched ${connections.lastSync.fetched||0}, imported ${connections.lastSync.inserted||0}${connections.lastSync.skippedBeforeCutoff?`, ${connections.lastSync.skippedBeforeCutoff} before cutoff`:""}`:"No completed pull recorded"}</span></div>
             <div className="settings-vehicle-row"><strong>Production guards</strong><span>Transactions: 8 hours · Live balance anchor: 7 days</span></div>
             <div className="settings-vehicle-row"><strong>Ingestion begins</strong><span>July 1, 2026 (earlier transactions are always rejected)</span></div>
             <div className="settings-vehicle-row"><strong>Webhook URL</strong><span>{connections?.webhook?.webhookUrl||"Set the public base URL in Settings"}</span></div>

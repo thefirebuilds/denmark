@@ -14,7 +14,12 @@ async function ensureTripRuntimeSchema(client = pool) {
           ADD COLUMN IF NOT EXISTS speed_over_80_count integer DEFAULT 0 NOT NULL,
           ADD COLUMN IF NOT EXISTS mileage_verified boolean DEFAULT false NOT NULL,
           ADD COLUMN IF NOT EXISTS guest_rating_received boolean DEFAULT false NOT NULL,
-          ADD COLUMN IF NOT EXISTS guest_rating_received_at timestamptz;
+          ADD COLUMN IF NOT EXISTS guest_rating_received_at timestamptz,
+          ADD COLUMN IF NOT EXISTS returned_at timestamptz,
+          ADD COLUMN IF NOT EXISTS return_late_minutes integer,
+          ADD COLUMN IF NOT EXISTS return_detection_source text,
+          ADD COLUMN IF NOT EXISTS return_detected_location text,
+          ADD COLUMN IF NOT EXISTS return_distance_miles numeric;
 
         CREATE INDEX IF NOT EXISTS idx_trips_deleted_at
           ON public.trips (deleted_at);
