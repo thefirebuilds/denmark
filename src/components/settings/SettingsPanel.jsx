@@ -4310,7 +4310,7 @@ function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
   const [bankingForm, setBankingForm] = useState({
     clientId: "",
-    environment: "sandbox",
+    environment: "production",
     secret: "",
   });
   const [connections, setConnections] = useState(null);
@@ -4431,7 +4431,7 @@ function IntegrationsSettingsPanel() {
       setBankingForm((current) => ({
         ...current,
         clientId: configJson.clientId || "",
-        environment: configJson.environment || "sandbox",
+        environment: "production",
         secret: "",
       }));
       setConnections(connectionsJson);
@@ -4520,26 +4520,10 @@ function IntegrationsSettingsPanel() {
     } catch (err) { setMessage(err.message || "Failed to sync Plaid"); } finally { setSyncing(false); }
   }
 
-  async function createPlaidSandboxItem() {
-    try { setConnecting(true); const res=await fetch(`${API_BASE}/api/plaid/sandbox/item`,{method:"POST"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to create Sandbox Item"); setMessage("Sandbox Item created. Importing test transactions…"); await syncPlaid(); }
-    catch(err){setMessage(err.message||"Failed to create Sandbox Item");} finally{setConnecting(false);}
-  }
-
   async function deletePlaidItem(itemId) {
     if (!window.confirm("Disconnect this account? Denmark will deactivate the Item through Plaid and permanently delete its saved access token. Previously imported transaction history will remain in the Inbox.")) return;
     try { const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}`,{method:"DELETE"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to disconnect Plaid account"); setMessage(`${json.institutionName||"Plaid account"} disconnected. Imported history was retained.`); await loadBankingState(); }
     catch(err){setMessage(err.message||"Failed to disconnect Plaid account");}
-  }
-
-  async function testPlaidWebhook(itemId) {
-    try {
-      setMessage("Firing Plaid Sandbox webhook…");
-      const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}/webhook/test`,{method:"POST"});
-      const json=await res.json().catch(()=>({}));
-      if(!res.ok)throw new Error(json?.error||"Failed to fire Plaid webhook");
-      setMessage(json.webhook_fired===false?"Plaid did not fire the onboarding webhook.":"Plaid fired ITEM / NEW_ACCOUNTS_AVAILABLE successfully.");
-      await loadBankingState();
-    } catch(err){setMessage(err.message||"Failed to test Plaid webhook");}
   }
 
   async function persistBankingConfig() {
@@ -5089,15 +5073,15 @@ function IntegrationsSettingsPanel() {
         <div className="settings-group">
           <div className="settings-group-title">Plaid</div>
           <div className="settings-empty-state">
-            Plaid imports bank and card transactions into the existing Inbox. Production transaction pulls are limited to once every 8 hours. A paid live balance is taken weekly, then advanced locally from imported transactions; Sandbox is unrestricted.
+            Plaid imports bank and card transactions into the existing Inbox. Transaction pulls are limited to once every 8 hours. A paid live balance is taken weekly, then advanced locally from imported transactions.
           </div>
           <form onSubmit={savePlaidConfig}>
             <div className="settings-form-grid">
               <label className="settings-field"><span>Client ID</span><input type="text" value={bankingForm.clientId || ""} onChange={(event)=>setBankingForm((current)=>({...current,clientId:event.target.value}))} autoComplete="off" /></label>
-              <label className="settings-field"><span>Environment</span><select value={bankingForm.environment || "sandbox"} onChange={(event)=>setBankingForm((current)=>({...current,environment:event.target.value}))}><option value="sandbox">Sandbox</option><option value="production">Production</option></select></label>
+              <label className="settings-field"><span>Environment</span><input type="text" value="Production" disabled /></label>
               <label className="settings-field"><span>Secret</span><input type="password" value={bankingForm.secret || ""} placeholder={config?.secretConfigured ? "Saved; leave blank to keep" : "Plaid secret"} onChange={(event)=>setBankingForm((current)=>({...current,secret:event.target.value}))} autoComplete="new-password" /></label>
             </div>
-            <small className="settings-field-note">The secret is encrypted before storage. Save Sandbox credentials and run the test Item before switching to Production.</small>
+            <small className="settings-field-note">The production secret is encrypted before storage.</small>
             <div className="settings-form-actions"><button type="submit" className="settings-action-btn" disabled={loading||savingBankingConfig}>{savingBankingConfig?"Saving…":"Save Plaid Settings"}</button></div>
           </form>
           <div className="settings-vehicle-list">
@@ -5107,11 +5091,10 @@ function IntegrationsSettingsPanel() {
             <div className="settings-vehicle-row"><strong>Ingestion begins</strong><span>July 1, 2026 (earlier transactions are always rejected)</span></div>
             <div className="settings-vehicle-row"><strong>Webhook URL</strong><span>{connections?.webhook?.webhookUrl||"Set the public base URL in Settings"}</span></div>
             <div className="settings-vehicle-row"><strong>Last webhook</strong><span>{connections?.webhook?.lastDelivery?.receivedAt?`${new Date(connections.webhook.lastDelivery.receivedAt).toLocaleString()} · ${connections.webhook.lastDelivery.webhookType||"unknown"}/${connections.webhook.lastDelivery.webhookCode||"unknown"}`:"None received"}</span></div>
-            {(connections?.items||[]).map((item)=><div className="settings-vehicle-row" key={item.item_id}><strong>{item.institution_name||"Plaid Item"}</strong><span>{item.transactions_last_success_at?`Synced ${new Date(item.transactions_last_success_at).toLocaleString()}`:"Not synced"} {item.last_error?<em>{item.last_error.message}</em>:null} {config?.environment==="sandbox"?<button type="button" className="settings-action-btn secondary" disabled={!connections?.webhook?.configured} onClick={()=>testPlaidWebhook(item.item_id)}>Test Onboarding Webhook</button>:null} <button type="button" className="settings-action-btn secondary" onClick={()=>connectPlaid(item.item_id)}>Repair</button> <button type="button" className="settings-action-btn secondary" onClick={()=>deletePlaidItem(item.item_id)}>Disconnect Account</button></span></div>)}
+            {(connections?.items||[]).map((item)=><div className="settings-vehicle-row" key={item.item_id}><strong>{item.institution_name||"Plaid Item"}</strong><span>{item.transactions_last_success_at?`Synced ${new Date(item.transactions_last_success_at).toLocaleString()}`:"Not synced"} {item.last_error?<em>{item.last_error.message}</em>:null} <button type="button" className="settings-action-btn secondary" onClick={()=>connectPlaid(item.item_id)}>Repair</button> <button type="button" className="settings-action-btn secondary" onClick={()=>deletePlaidItem(item.item_id)}>Disconnect Account</button></span></div>)}
           </div>
           <div className="settings-form-actions">
             <button type="button" className="settings-action-btn" disabled={loading||connecting||!config?.configured} onClick={()=>connectPlaid()}>{connecting?"Opening…":"Connect with Plaid"}</button>
-            {config?.environment==="sandbox"?<button type="button" className="settings-action-btn secondary" disabled={loading||connecting||!config?.configured} onClick={createPlaidSandboxItem}>Create Sandbox Test Item</button>:null}
             <button type="button" className="settings-action-btn secondary" disabled={loading||syncing||!(connections?.items?.length)} onClick={syncPlaid}>{syncing?"Syncing…":"Sync Plaid"}</button>
             {message?<span className="settings-message">{message}</span>:null}
           </div>
@@ -5153,7 +5136,6 @@ function IntegrationsSettingsPanel() {
                 >
                   <option value="development">Development</option>
                   <option value="production">Production</option>
-                  <option value="sandbox">Sandbox</option>
                 </select>
               </label>
               <label className="settings-field">

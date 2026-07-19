@@ -71,17 +71,7 @@ async function savePublicToken(publicToken, metadata = {}) {
   return { itemId: exchanged.item_id };
 }
 
-async function createSandboxItem() {
-  const settings = await getPlaidSettings();
-  if (settings.environment !== "sandbox") throw Object.assign(new Error("Sandbox test Items can only be created in Sandbox"), { status: 400 });
-  const webhook = await getPlaidWebhookUrl();
-  const token = await call("/sandbox/public_token/create", { institution_id: "ins_109508", initial_products: ["transactions"],
-    options: { override_username: "user_transactions_dynamic", override_password: "pass_good", ...(webhook ? { webhook } : {}) } });
-  return savePublicToken(token.public_token, { institution_id: "ins_109508", institution_name: "First Platypus Bank (Sandbox)" });
-}
-
 async function claimGate(kind, hours, environment) {
-  if (environment === "sandbox") return { allowed: true, sandbox: true };
   const key = `integrations.plaid.${kind}_gate`;
   const result = await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES($1,jsonb_build_object('claimedAt',NOW()),NOW())
     ON CONFLICT(key) DO UPDATE SET value=jsonb_build_object('claimedAt',NOW()),updated_at=NOW()
@@ -145,7 +135,7 @@ async function syncTransactions({ reason = "manual" } = {}) {
       throw error;
     }
   }
-  const result={ skipped:false, sandbox:settings.environment==="sandbox", items:items.length,fetched,inserted,modified,removed,skippedBeforeCutoff,ingestionStartDate:BANKING_INGESTION_START_DATE };
+  const result={ skipped:false, items:items.length,fetched,inserted,modified,removed,skippedBeforeCutoff,ingestionStartDate:BANKING_INGESTION_START_DATE };
   await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES('integrations.plaid.sync_status',$1::jsonb,NOW())
     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,[JSON.stringify({status:"ok",lastCheckedAt:new Date().toISOString(),...result})]);
   console.log(`[plaid] transactions done | reason=${reason} items=${items.length} fetched=${fetched} inserted=${inserted} skippedBeforeCutoff=${skippedBeforeCutoff} ingestionStart=${BANKING_INGESTION_START_DATE}`);
@@ -193,7 +183,6 @@ async function getCiti4483BalanceSummary(){
 }
 async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM banking_transactions WHERE raw_json->>'source'='plaid'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS,ingestionStartDate:BANKING_INGESTION_START_DATE,webhook:await getPlaidWebhookStatus()};}
 async function configureItemWebhook(itemId){await ensureSchema();const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);if(!rows[0])throw Object.assign(new Error("Plaid Item not found"),{status:404});const webhook=await getPlaidWebhookUrl();if(!webhook)throw Object.assign(new Error("Configure Denmark's public base URL in Settings first"),{status:400});return call("/item/webhook/update",{access_token:decrypt(rows[0].access_token_encrypted),webhook});}
-async function fireSandboxWebhook(itemId){const settings=await getPlaidSettings();if(settings.environment!=="sandbox")throw Object.assign(new Error("Webhook test is available only in Sandbox"),{status:400});await configureItemWebhook(itemId);const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);return call("/sandbox/item/fire_webhook",{access_token:decrypt(rows[0].access_token_encrypted),webhook_type:"ITEM",webhook_code:"NEW_ACCOUNTS_AVAILABLE"});}
 async function removeItem(itemId){
   await ensureSchema();
   const {rows}=await pool.query("SELECT access_token_encrypted,institution_name FROM plaid_items WHERE item_id=$1",[itemId]);
@@ -206,4 +195,4 @@ async function removeItem(itemId){
     requestId:remote.request_id||null,disconnectedAt:new Date().toISOString(),historyRetained:true};
 }
 
-module.exports={createLinkToken,savePublicToken,createSandboxItem,syncTransactions,refreshBalances,getCachedBalances,getCiti4483BalanceSummary,getSummary,removeItem,configureItemWebhook,fireSandboxWebhook,ensureSchema};
+module.exports={createLinkToken,savePublicToken,syncTransactions,refreshBalances,getCachedBalances,getCiti4483BalanceSummary,getSummary,removeItem,configureItemWebhook,ensureSchema};

@@ -8,11 +8,9 @@ const BALANCE_INTERVAL_HOURS = 7 * 24;
 
 function clean(value) { return String(value || "").trim(); }
 function normalizeEnvironment(value) {
-  const environment = clean(value || "sandbox").toLowerCase();
-  if (!["sandbox", "production"].includes(environment)) {
-    throw new Error("Plaid environment must be sandbox or production");
-  }
-  return environment;
+  const environment = clean(value || "production").toLowerCase();
+  if (environment !== "production") return "production";
+  return "production";
 }
 function decryptSecret(value) { return value ? decrypt(value) : ""; }
 
@@ -22,7 +20,7 @@ async function getPlaidSettings() {
   return {
     clientId: clean(value.clientId || process.env.PLAID_CLIENT_ID),
     secret: value.secretEncrypted ? decryptSecret(value.secretEncrypted) : clean(process.env.PLAID_SECRET),
-    environment: normalizeEnvironment(value.environment || process.env.PLAID_ENV || "sandbox"),
+    environment: normalizeEnvironment(value.environment || process.env.PLAID_ENV || "production"),
     source: rows[0] ? "database" : "environment",
     transactionIntervalHours: TRANSACTION_INTERVAL_HOURS,
     balanceIntervalHours: BALANCE_INTERVAL_HOURS,
