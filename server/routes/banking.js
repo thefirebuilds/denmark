@@ -19,6 +19,7 @@ const {
   createIncomeFromBanking,
 } = require("../services/banking/bankingMatchService");
 const syncMercuryTransactions = require("../services/mercury/mercury");
+const { refreshBankingReconciliationNotice } = require("../services/banking/bankingReconciliationNotice");
 
 const router = express.Router();
 
@@ -55,6 +56,12 @@ function getValidatedTransactionId(req, res) {
   }
 
   return id;
+}
+
+function refreshReconciliationNotice() {
+  return refreshBankingReconciliationNotice().catch((error) =>
+    console.error("Failed to refresh banking reconciliation notice:", error)
+  );
 }
 
 router.post("/ignore-rules", async (req, res) => {
@@ -229,6 +236,7 @@ router.post("/:id/create-income", async (req, res) => {
     if (!txId) return;
 
     const result = await createIncomeFromBanking(txId, req.body || {});
+    await refreshReconciliationNotice();
     res.status(201).json(result);
   } catch (err) {
     console.error("Failed to create income from Banking transaction:", err);
@@ -265,6 +273,7 @@ router.post("/:id/match", async (req, res) => {
     }
 
     const result = await matchBankingTransaction(id, expenseId, req.body || {});
+    await refreshReconciliationNotice();
     res.json(result);
   } catch (err) {
     console.error("Failed to match Banking transaction:", err);
@@ -278,6 +287,7 @@ router.post("/:id/create-expense", async (req, res) => {
     if (!id) return;
 
     const result = await createExpenseFromBanking(id, req.body || {});
+    await refreshReconciliationNotice();
     res.status(201).json(result);
   } catch (err) {
     console.error("Failed to create expense from Banking transaction:", err);
@@ -291,6 +301,7 @@ router.post("/:id/dismiss", async (req, res) => {
     if (!id) return;
 
     const result = await dismissBankingTransaction(id, req.body || {});
+    await refreshReconciliationNotice();
     res.json(result);
   } catch (err) {
     console.error("Failed to dismiss Banking transaction:", err);
@@ -304,6 +315,7 @@ router.post("/:id/ignore", async (req, res) => {
     if (!id) return;
 
     const result = await ignoreBankingTransaction(id, req.body || {});
+    await refreshReconciliationNotice();
     res.json(result);
   } catch (err) {
     console.error("Failed to ignore Banking transaction:", err);

@@ -233,6 +233,18 @@ function tripReturnLocationMatchesNamedLocation(tripReturnLocation, location) {
     );
 }
 
+function tripReturnLocationMatchesPrimaryParking(tripReturnLocation, location) {
+  if (String(location?.kind || "").toLowerCase() !== "parking") return false;
+  const tripLocation = normalizeLocationText(tripReturnLocation);
+  if (!tripLocation) return false;
+
+  // Turo commonly describes the configured home return as the city/ZIP while
+  // Denmark's map uses the owner's friendly geofence label (for example,
+  // "Buda, TX 78610" versus "Garlic Creek"). These are established home
+  // aliases elsewhere in the Denmark UI, so treat them as the primary lot.
+  return /(?:^| )(?:home|buda|78610)(?: |$)/.test(tripLocation);
+}
+
 function tripReturnLocationMatchesTelemetryAddress(tripReturnLocation, address) {
   const tripTokens = new Set(
     normalizeLocationText(tripReturnLocation)
@@ -259,6 +271,7 @@ function getMatchedTripReturnGeoLocation(row, locations) {
   for (const location of locations) {
     const matchesExpectedLocation =
       tripReturnLocationMatchesNamedLocation(row.return_location, location) ||
+      tripReturnLocationMatchesPrimaryParking(row.return_location, location) ||
       tripReturnLocationMatchesTelemetryAddress(row.return_location, row.address);
     if (!matchesExpectedLocation) {
       continue;

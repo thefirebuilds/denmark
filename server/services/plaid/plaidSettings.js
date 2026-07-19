@@ -3,7 +3,7 @@ const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
 
 const SETTINGS_KEY = "integrations.plaid";
 const SECRET_MASK = "********";
-const TRANSACTION_INTERVAL_HOURS = 8;
+const TRANSACTION_INTERVAL_HOURS = 24;
 const BALANCE_INTERVAL_HOURS = 7 * 24;
 
 function clean(value) { return String(value || "").trim(); }

@@ -996,6 +996,10 @@ function buildMessageBody(message) {
     return `Denmark cannot update ${calendar}. Google returned ${error}. Reconnect Google Calendar so trip changes can update calendar events.`;
   }
 
+  if (type === "banking_reconciliation_required") {
+    return message?.subject || "Bank transactions are ready for reconciliation.";
+  }
+
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);
     const latest = message?.latest_guest_message || message?.guest_message || "";
@@ -1121,6 +1125,10 @@ function buildMessageTitle(message) {
     return "Google Calendar reconnect required";
   }
 
+  if (type === "banking_reconciliation_required") {
+    return "Bank transactions need review";
+  }
+
   if (type === "notification_unmatched") {
     return message?.notification_title || "Turo notification missing email";
   }
@@ -1153,6 +1161,7 @@ function buildMessageSub(message) {
   if (type === "return_location_check") return "Verify return GPS";
   if (type === "vehicle_diagnostic_alert") return "Diagnostic alert";
   if (type === "google_calendar_reconnect_required") return "Integration attention";
+  if (type === "banking_reconciliation_required") return "Expense reconciliation";
   if (type === "notification_unmatched") return "Urgent bridge/email mismatch";
   if (type === "guest_message_thread") {
     const count = Number(message?.guest_message_count || 0);

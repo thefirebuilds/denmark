@@ -2680,6 +2680,14 @@ router.get("/", async (req, res) => {
               )
             )
           )
+          OR (
+            m.message_type = 'banking_reconciliation_required'
+            AND EXISTS (
+              SELECT 1 FROM banking_transactions pending_banking
+              WHERE pending_banking.review_status = 'pending'
+                AND pending_banking.ignored = FALSE
+            )
+          )
       ) actionable_messages
       ORDER BY
         CASE
@@ -2805,8 +2813,17 @@ router.get("/", async (req, res) => {
       LEFT JOIN vehicles v
         ON t.turo_vehicle_id IS NOT NULL
         AND v.turo_vehicle_id = t.turo_vehicle_id
-      WHERE m.status = 'unread'
-        AND COALESCE(m.message_type, '') NOT IN ('payment_notice', 'renter_activity')
+      WHERE (
+          m.status = 'unread'
+          AND COALESCE(m.message_type, '') NOT IN ('payment_notice', 'renter_activity')
+        ) OR (
+          m.message_type = 'banking_reconciliation_required'
+          AND EXISTS (
+            SELECT 1 FROM banking_transactions pending_banking
+            WHERE pending_banking.review_status = 'pending'
+              AND pending_banking.ignored = FALSE
+          )
+        )
       ORDER BY
         CASE
           WHEN m.message_type = 'guest_message' THEN -2

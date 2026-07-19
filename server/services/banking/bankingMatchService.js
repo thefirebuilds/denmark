@@ -136,7 +136,7 @@ function scoreSuggestion(tx, expense) {
   const reasons = [];
 
   const txAmount = Math.abs(Number(tx.amount || 0));
-  const expenseTotal = Number(expense.total_cost || 0);
+  const expenseTotal = Math.abs(Number(expense.total_cost || 0));
 
   if (amountDiff(txAmount, expenseTotal) < 0.01) {
     score += 60;
@@ -162,6 +162,12 @@ function scoreSuggestion(tx, expense) {
     } else if (dayDiff <= 3) {
       score += 8;
       reasons.push("Within 3 days");
+    } else if (dayDiff <= 7) {
+      score += 5;
+      reasons.push("Within 7 days");
+    } else if (dayDiff <= 30) {
+      score += 2;
+      reasons.push("Within 30 days");
     }
   }
 
@@ -346,18 +352,35 @@ async function getBankingSuggestions(id) {
       e.notes,
       e.date,
       e.expense_scope,
-      e.trip_id
+      e.trip_id,
+      linked_tx.id AS linked_banking_transaction_id,
+      linked_tx.transaction_date AS linked_transaction_date,
+      linked_tx.description AS linked_transaction_description
     FROM expenses e
     LEFT JOIN vehicles v
       ON v.id = e.vehicle_id
-    WHERE e.date BETWEEN ($1::date - INTERVAL '3 days') AND ($1::date + INTERVAL '3 days')
-      AND ABS((COALESCE(e.price, 0) + COALESCE(e.tax, 0)) - $2::numeric) <= 1.00
+    LEFT JOIN LATERAL (
+      SELECT bt.id,bt.transaction_date,bt.description
+      FROM banking_transactions bt
+      WHERE bt.matched_expense_id=e.id AND bt.id<>$3
+      ORDER BY bt.reviewed_at DESC NULLS LAST,bt.id DESC
+      LIMIT 1
+    ) linked_tx ON TRUE
+    WHERE e.date BETWEEN ($1::date - INTERVAL '30 days') AND ($1::date + INTERVAL '30 days')
+      AND (
+        ABS(ABS(COALESCE(e.price,0)+COALESCE(e.tax,0))-ABS($2::numeric)) < 0.01
+        OR (
+          e.date BETWEEN ($1::date - INTERVAL '7 days') AND ($1::date + INTERVAL '7 days')
+          AND ABS(ABS(COALESCE(e.price,0)+COALESCE(e.tax,0))-ABS($2::numeric))
+            <= GREATEST(1.00,LEAST(10.00,ABS($2::numeric)*0.05))
+        )
+      )
     ORDER BY
-      ABS((COALESCE(e.price, 0) + COALESCE(e.tax, 0)) - $2::numeric) ASC,
+      ABS(ABS(COALESCE(e.price,0)+COALESCE(e.tax,0))-ABS($2::numeric)) ASC,
       ABS(EXTRACT(EPOCH FROM (e.date::timestamp - $1::timestamp))) ASC
     LIMIT 15
     `,
-    [txDate, amount]
+    [txDate, amount, id]
   );
 
   const suggestions = result.rows
@@ -370,6 +393,16 @@ async function getBankingSuggestions(id) {
         score: numericScore,
         confidence: numericScore,
         reason: match.reason,
+        amount_difference: Math.abs(
+          Math.abs(Number(expense.total_cost || 0)) - Math.abs(amount)
+        ),
+        day_difference: Math.abs(
+          Math.round(
+            (new Date(txDate).getTime() - new Date(expense.date).getTime()) /
+              (1000 * 60 * 60 * 24)
+          )
+        ),
+        already_linked: Boolean(expense.linked_banking_transaction_id),
         expense,
       };
     })
@@ -390,6 +423,16 @@ async function matchBankingTransaction(id, expenseId, options = {}) {
   if (!expense) {
     const err = new Error("Expense not found");
     err.status = 404;
+    throw err;
+  }
+
+  const existingLink = await pool.query(`SELECT id
+    FROM banking_transactions
+    WHERE matched_expense_id=$1 AND id<>$2
+    LIMIT 1`, [expenseId, id]);
+  if (existingLink.rowCount) {
+    const err = new Error("This expense is already matched to another imported transaction");
+    err.status = 409;
     throw err;
   }
 

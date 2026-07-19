@@ -4,6 +4,7 @@ const { encrypt, decrypt } = require("../googleCalendar/tokenCrypto");
 const { getPlaidSettings, TRANSACTION_INTERVAL_HOURS, BALANCE_INTERVAL_HOURS } = require("./plaidSettings");
 const { BANKING_INGESTION_START_DATE, isWithinBankingIngestionWindow } = require("../banking/bankingIngestionPolicy");
 const { getPlaidWebhookUrl, getPlaidWebhookStatus } = require("./plaidWebhook");
+const { refreshBankingReconciliationNotice } = require("../banking/bankingReconciliationNotice");
 
 let schemaPromise;
 async function ensureSchema() {
@@ -167,6 +168,7 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
     }
   }
   const result={ skipped:false, items:items.length,fetched,inserted,modified,removed,skippedBeforeCutoff,ingestionStartDate:BANKING_INGESTION_START_DATE };
+  result.pendingReconciliation = await refreshBankingReconciliationNotice({ reopen: inserted > 0 });
   await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES('integrations.plaid.sync_status',$1::jsonb,NOW())
     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,[JSON.stringify({status:"ok",lastCheckedAt:new Date().toISOString(),...result})]);
   console.log(`[plaid] transactions done | reason=${reason} items=${items.length} fetched=${fetched} inserted=${inserted} skippedBeforeCutoff=${skippedBeforeCutoff} ingestionStart=${BANKING_INGESTION_START_DATE}`);

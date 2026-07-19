@@ -5073,7 +5073,7 @@ function IntegrationsSettingsPanel() {
         <div className="settings-group">
           <div className="settings-group-title">Plaid</div>
           <div className="settings-empty-state">
-            Plaid imports bank and card transactions into the existing Inbox. Transaction pulls are limited to once every 8 hours. A paid live balance is taken weekly, then advanced locally from imported transactions.
+            Plaid imports bank and card transactions into the existing Inbox. Transaction pulls are limited to once a day. A paid live balance is taken weekly, then advanced locally from imported transactions.
           </div>
           <form onSubmit={savePlaidConfig}>
             <div className="settings-form-grid">
@@ -5088,7 +5088,7 @@ function IntegrationsSettingsPanel() {
             <div className="settings-vehicle-row"><strong>Items</strong><span>{loading?"Loading…":connections?.items?.length||0}</span></div>
             <div className="settings-vehicle-row"><strong>Latest Plaid transaction</strong><span>{connections?.latestTransaction?formatIntegrationDate(connections.latestTransaction):"None imported"}</span></div>
             <div className="settings-vehicle-row"><strong>Last transaction pull</strong><span>{connections?.lastSync?.lastCheckedAt?`${formatIntegrationDate(connections.lastSync.lastCheckedAt)} · fetched ${connections.lastSync.fetched||0}, imported ${connections.lastSync.inserted||0}${connections.lastSync.skippedBeforeCutoff?`, ${connections.lastSync.skippedBeforeCutoff} before cutoff`:""}`:"No completed pull recorded"}</span></div>
-            <div className="settings-vehicle-row"><strong>Production guards</strong><span>Transactions: 8 hours · Live balance anchor: 7 days</span></div>
+            <div className="settings-vehicle-row"><strong>Production guards</strong><span>Transactions: 24 hours · Live balance anchor: 7 days</span></div>
             <div className="settings-vehicle-row"><strong>Ingestion begins</strong><span>July 1, 2026 (earlier transactions are always rejected)</span></div>
             <div className="settings-vehicle-row"><strong>Webhook URL</strong><span>{connections?.webhook?.webhookUrl||"Set the public base URL in Settings"}</span></div>
             <div className="settings-vehicle-row"><strong>Last webhook</strong><span>{connections?.webhook?.lastDelivery?.receivedAt?`${new Date(connections.webhook.lastDelivery.receivedAt).toLocaleString()} · ${connections.webhook.lastDelivery.webhookType||"unknown"}/${connections.webhook.lastDelivery.webhookCode||"unknown"}`:"None received"}</span></div>

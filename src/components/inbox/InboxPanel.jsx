@@ -427,6 +427,9 @@ function SuggestionCard({ suggestion, onMatch, matching }) {
 
       <div className="inbox-suggestion-body">
         <div>
+          <strong>Vendor:</strong> {expense.vendor || "—"}
+        </div>
+        <div>
           <strong>Category:</strong> {expense.category || "—"}
         </div>
         <div>
@@ -435,6 +438,15 @@ function SuggestionCard({ suggestion, onMatch, matching }) {
         <div>
           <strong>Date:</strong> {formatDate(expense.date)}
         </div>
+        <div>
+          <strong>Difference:</strong>{" "}
+          {money(suggestion?.amount_difference || 0)} · {suggestion?.day_difference || 0} day{Number(suggestion?.day_difference || 0) === 1 ? "" : "s"}
+        </div>
+        {suggestion?.already_linked ? (
+          <div className="inbox-suggestion-warning">
+            Already linked to another imported transaction
+          </div>
+        ) : null}
         <div>
           <strong>Reason:</strong> {suggestion?.reason || "Possible match"}
         </div>
@@ -448,9 +460,13 @@ function SuggestionCard({ suggestion, onMatch, matching }) {
           type="button"
           className="inbox-action-btn"
           onClick={() => onMatch(suggestion?.expense_id || expense?.id)}
-          disabled={!(suggestion?.expense_id || expense?.id) || matching}
+          disabled={!(suggestion?.expense_id || expense?.id) || matching || suggestion?.already_linked}
         >
-          {matching ? "Matching…" : "Match"}
+          {matching
+            ? "Matching…"
+            : suggestion?.already_linked
+              ? "Already matched"
+              : "Match existing expense"}
         </button>
       </div>
     </div>
