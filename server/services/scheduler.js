@@ -14,7 +14,7 @@ const collectDimoSnapshot = require("./dimo/collectDimoSnapshot");
 const { pushPublicAvailabilitySnapshotSafe } = require("./pushPublicAvailability");
 
 // bank transX
-const syncTellerTransactions = require("./teller/teller");
+const { syncTransactions: syncPlaidTransactions, refreshBalances: refreshPlaidBalances } = require("./plaid/plaid");
 const syncMercuryTransactions = require("./mercury/mercury");
 
 // email connectivity
@@ -75,7 +75,7 @@ let telemetryRetentionIntervalHandle = null;
 let fleetAlertsIntervalHandle = null;
 
 const STARTUP_TASKS = [
-  "teller",
+  "plaid",
   "tolls",
   "imap",
   "bouncie",
@@ -412,10 +412,10 @@ function getStartupStatus() {
 }
 
 async function runTellerSync(reason = "interval") {
-  if (shouldDeferForDbPressure("teller", reason)) return;
+  if (shouldDeferForDbPressure("plaid", reason)) return;
 
-  if (!(await isIntegrationEnabled("teller"))) {
-    console.log(`[scheduler] teller skipped | reason=${reason} enabled=false`);
+  if (!(await isIntegrationEnabled("plaid"))) {
+    console.log(`[scheduler] plaid skipped | reason=${reason} enabled=false`);
     return;
   }
 
@@ -428,25 +428,26 @@ async function runTellerSync(reason = "interval") {
   const startedAt = Date.now();
 
   try {
-    console.log(`[scheduler] teller start | reason=${reason}`);
+    console.log(`[scheduler] plaid start | reason=${reason}`);
     let processed = 0;
 
     try {
-      const result = await syncTellerTransactions();
-      processed += Number(result.processed || 0);
+      const result = await syncPlaidTransactions({ reason });
+      processed += Number(result.fetched || 0);
+      await refreshPlaidBalances();
     } catch (err) {
       console.error(
-        `[scheduler] teller source failed | reason=${reason} error=${err.message || err}`
+        `[scheduler] plaid source failed | reason=${reason} error=${err.message || err}`
       );
       await logSystemActivity({
         category: "automation",
-        eventType: "teller_sync_failed",
+        eventType: "plaid_sync_failed",
         severity: "error",
         actorType: "system",
         outcome: "failure",
         subjectType: "integration",
-        subjectId: "teller",
-        subjectLabel: "Teller",
+        subjectId: "plaid",
+        subjectLabel: "Plaid",
         source: "scheduler",
         details: {
           reason,
@@ -470,10 +471,10 @@ async function runTellerSync(reason = "interval") {
     }
 
     console.log(
-      `[scheduler] teller done | reason=${reason} processed=${processed} durationMs=${Date.now() - startedAt}`
+      `[scheduler] plaid done | reason=${reason} processed=${processed} durationMs=${Date.now() - startedAt}`
     );
   } catch (err) {
-    console.error(`[scheduler] teller failed | reason=${reason} error=${err.message || err}`);
+    console.error(`[scheduler] plaid failed | reason=${reason} error=${err.message || err}`);
   } finally {
     tellerSyncInProgress = false;
   }
@@ -886,6 +887,7 @@ function startScheduler() {
   const everyFifteenMinutesMs = 15 * 60 * 1000;
   const everyHourMs = 60 * 60 * 1000;
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
+  const everyEightHoursMs = 8 * 60 * 60 * 1000;
   const everyFiveMinutesMs = 5 * 60 * 1000;
   const everyTwentyFourHoursMs = 24 * 60 * 60 * 1000;
   const everySevenDaysMs = 7 * 24 * 60 * 60 * 1000;
@@ -917,7 +919,7 @@ function startScheduler() {
       );
 
       await runStartupTaskSequence([
-        ["teller", () => runTellerSync("startup")],
+        ["plaid", () => runTellerSync("startup")],
         ["tolls", () => runTollSync("startup")],
         ["imap", () => runPoll("startup")],
         ["bouncie", () => runBouncie("startup")],
@@ -938,8 +940,8 @@ function startScheduler() {
   })();
 
   tellerSyncIntervalHandle = scheduleIntervalTask(
-    "teller",
-    everyTwoHoursMs,
+    "plaid",
+    everyEightHoursMs,
     SCHEDULER_INTERVAL_OFFSET_STEP_MS * 8,
     () => runTellerSync("interval")
   );

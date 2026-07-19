@@ -9,6 +9,7 @@ const maintenanceRoutes = require("../routes/maintenance");
 const tollRoutes = require("../routes/tolls");
 const expensesRouter = require("../routes/expenses");
 const tellerRoutes = require("../routes/teller");
+const plaidRoutes = require("../routes/plaid");
 const metricsRouter = require("../routes/metrics");
 const businessMetricsRouter = require("../routes/businessMetrics");
 const marketplaceRoutes = require("../routes/marketplace");
@@ -108,6 +109,12 @@ function registerApiRoutes(app) {
     defaultCors,
     requireMethodPermissions({ GET: "expenses.read", POST: "expenses.write" }),
     tellerRoutes
+  );
+  app.use(
+    "/api/plaid",
+    defaultCors,
+    requireMethodPermissions({ GET: "expenses.read", POST: "expenses.write", PUT: "settings.write", DELETE: "settings.write" }),
+    plaidRoutes
   );
   app.use(
     "/api/metrics/business",

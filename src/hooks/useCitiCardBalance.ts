@@ -21,7 +21,7 @@ export function useCitiCardBalance() {
       try {
         setCitiCardBalance((current) => ({ ...current, loading: true }));
 
-        const res = await fetch(`${API_BASE}/api/teller/citi-4483/balance`, {
+        const res = await fetch(`${API_BASE}/api/plaid/citi-4483/balance`, {
           headers: { Accept: "application/json" },
         });
         const data = await res.json().catch(() => ({}));

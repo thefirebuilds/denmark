@@ -6,7 +6,7 @@ const DEFAULT_INTEGRATION_ENABLEMENT = Object.freeze({
   imap: true,
   bouncie: true,
   dimo: true,
-  teller: true,
+  plaid: true,
   tolls: true,
   googleCalendar: true,
   fmv: true,

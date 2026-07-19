@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "test:plaid-sandbox": "node scripts/test-plaid-sandbox.js",
     "db:bootstrap": "node ../setup/bootstrap-db.js",
     "db:verify": "node ../setup/verify-db-bootstrap.js",
     "db:restore-json": "node ../setup/restore-json-backup.js",

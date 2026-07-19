@@ -51,7 +51,7 @@ const DEFAULT_INTEGRATION_ENABLEMENT = {
   imap: true,
   bouncie: true,
   dimo: true,
-  teller: true,
+  plaid: true,
   tolls: true,
   googleCalendar: true,
   fmv: true,
@@ -497,6 +497,24 @@ function toPayloadVehicle(form) {
         : Number(vehicleFields.oil_capacity_liters),
     lockbox_pin_public: vehicleFields.lockbox_pin_public !== false,
   };
+}
+
+function loadPlaidLinkScript() {
+  if (window.Plaid) return Promise.resolve(window.Plaid);
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector("script[data-plaid-link]");
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.Plaid));
+      existing.addEventListener("error", reject);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+    script.dataset.plaidLink = "true";
+    script.onload = () => resolve(window.Plaid);
+    script.onerror = () => reject(new Error("Failed to load Plaid Link"));
+    document.body.appendChild(script);
+  });
 }
 
 function formatIntegrationDate(value, includeTime = false) {
@@ -4074,7 +4092,7 @@ const INTEGRATION_SWITCH_LABELS = [
   ["googleCalendar", "Google Calendar sync", "Creates and updates trip calendar events."],
   ["dimo", "DIMO telemetry", "Polls shared DIMO vehicles for location, odometer, and diagnostics."],
   ["bouncie", "Bouncie telemetry", "Polls Bouncie devices where configured."],
-  ["teller", "Teller and Mercury banking", "Runs banking import jobs for expense review."],
+  ["plaid", "Plaid banking", "Imports bank and card activity with production cost guards."],
   ["tolls", "Toll import", "Runs toll import jobs."],
   ["fmv", "FMV estimates", "Refreshes market value estimates when stale."],
   ["businessMetrics", "Business metrics snapshots", "Creates periodic business metric snapshots."],
@@ -4291,11 +4309,9 @@ function TollSettingsCard({
 function IntegrationsSettingsPanel() {
   const [config, setConfig] = useState(null);
   const [tellerForm, setTellerForm] = useState({
-    applicationId: "",
-    environment: "development",
-    staleTransactionDays: 7,
-    certificate: "",
-    privateKey: "",
+    clientId: "",
+    environment: "sandbox",
+    secret: "",
   });
   const [connections, setConnections] = useState(null);
   const [mercuryConfig, setMercuryConfig] = useState(null);
@@ -4345,8 +4361,8 @@ function IntegrationsSettingsPanel() {
         tollSettingsRes,
         integrationSwitchesRes,
       ] = await Promise.all([
-        fetch(`${API_BASE}/api/teller/connect/config`),
-        fetch(`${API_BASE}/api/teller/connections`),
+        fetch(`${API_BASE}/api/plaid/config`),
+        fetch(`${API_BASE}/api/plaid/summary`),
         fetch(`${API_BASE}/api/teller/mercury/config`),
         fetch(`${API_BASE}/api/dimo/config`),
         fetch(`${API_BASE}/api/dimo/status`),
@@ -4369,12 +4385,12 @@ function IntegrationsSettingsPanel() {
         .catch(() => ({}));
 
       if (!configRes.ok) {
-        throw new Error(configJson?.error || "Failed to load Teller config");
+        throw new Error(configJson?.error || "Failed to load Plaid config");
       }
 
       if (!connectionsRes.ok) {
         throw new Error(
-          connectionsJson?.error || "Failed to load Teller connections"
+          connectionsJson?.error || "Failed to load Plaid connections"
         );
       }
 
@@ -4414,11 +4430,9 @@ function IntegrationsSettingsPanel() {
       setConfig(configJson);
       setTellerForm((current) => ({
         ...current,
-        applicationId: configJson.applicationId || "",
-        environment: configJson.environment || "development",
-        staleTransactionDays: configJson.staleTransactionDays || 7,
-        certificate: "",
-        privateKey: "",
+        clientId: configJson.clientId || "",
+        environment: configJson.environment || "sandbox",
+        secret: "",
       }));
       setConnections(connectionsJson);
       setMercuryConfig(mercuryConfigJson);
@@ -4464,6 +4478,57 @@ function IntegrationsSettingsPanel() {
     }
 
     return json;
+  }
+
+  async function savePlaidConfig(event) {
+    event?.preventDefault();
+    try {
+      setSavingTellerConfig(true); setMessage("");
+      const res = await fetch(`${API_BASE}/api/plaid/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(tellerForm) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to save Plaid settings");
+      setConfig(json); setTellerForm((current) => ({ ...current, clientId: json.clientId || current.clientId, environment: json.environment, secret: "" }));
+      setMessage("Plaid settings saved.");
+    } catch (err) { setMessage(err.message || "Failed to save Plaid settings"); }
+    finally { setSavingTellerConfig(false); }
+  }
+
+  async function connectPlaid(itemId = null) {
+    try {
+      setConnecting(true); setMessage("");
+      const Plaid = await loadPlaidLinkScript();
+      const tokenRes = await fetch(`${API_BASE}/api/plaid/link-token`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(itemId ? { itemId } : {}) });
+      const tokenJson = await tokenRes.json().catch(() => ({}));
+      if (!tokenRes.ok) throw new Error(tokenJson?.error || "Failed to create Plaid Link token");
+      const handler = Plaid.create({ token: tokenJson.link_token,
+        onSuccess: async (publicToken, metadata) => {
+          try { if (itemId) { setMessage("Plaid connection repaired."); await loadTellerState(); return; }
+            const res = await fetch(`${API_BASE}/api/plaid/exchange`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicToken, metadata }) });
+            const json = await res.json().catch(() => ({})); if (!res.ok) throw new Error(json?.error || "Failed to save Plaid Item");
+            setMessage("Plaid connection saved. Running initial transaction import…"); await syncPlaid();
+          } catch (err) { setMessage(err.message || "Failed to save Plaid connection"); } finally { setConnecting(false); }
+        }, onExit: () => setConnecting(false), onEvent: (name, metadata) => console.info("[plaid-link]", name, metadata) });
+      handler.open();
+    } catch (err) { setConnecting(false); setMessage(err.message || "Failed to open Plaid Link"); }
+  }
+
+  async function syncPlaid() {
+    try { setSyncing(true); const res = await fetch(`${API_BASE}/api/plaid/sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "settings" }) });
+      const json = await res.json().catch(() => ({})); if (!res.ok) throw new Error(json?.error || "Failed to sync Plaid");
+      setMessage(json.skipped ? `Plaid production guard active. Next transaction pull: ${new Date(json.nextAllowedAt).toLocaleString()}.` : `Plaid fetched ${json.fetched || 0} transactions; ${json.inserted || 0} were new.`);
+      await loadTellerState();
+    } catch (err) { setMessage(err.message || "Failed to sync Plaid"); } finally { setSyncing(false); }
+  }
+
+  async function createPlaidSandboxItem() {
+    try { setConnecting(true); const res=await fetch(`${API_BASE}/api/plaid/sandbox/item`,{method:"POST"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to create Sandbox Item"); setMessage("Sandbox Item created. Importing test transactions…"); await syncPlaid(); }
+    catch(err){setMessage(err.message||"Failed to create Sandbox Item");} finally{setConnecting(false);}
+  }
+
+  async function deletePlaidItem(itemId) {
+    if (!window.confirm("Remove this Plaid connection? Imported transaction history will be retained.")) return;
+    try { const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}`,{method:"DELETE"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to remove Plaid connection"); setMessage("Plaid connection removed."); await loadTellerState(); }
+    catch(err){setMessage(err.message||"Failed to remove Plaid connection");}
   }
 
   async function persistTellerConfig() {
@@ -4522,11 +4587,15 @@ function IntegrationsSettingsPanel() {
 
       const repairTarget = getTellerRepairTarget(connections);
       const repairEnrollmentId = repairTarget?.enrollment_id || null;
-      const tellerConnect = TellerConnect.setup({
+      const connectOptions = {
         applicationId: activeConfig.applicationId,
         environment: activeConfig.environment || "development",
-        products: activeConfig.products || ["transactions", "balance"],
-        selectAccount: activeConfig.selectAccount || "multiple",
+        products: repair
+          ? activeConfig.products || ["transactions", "balance"]
+          : ["transactions"],
+        ...(repair
+          ? { selectAccount: activeConfig.selectAccount || "multiple" }
+          : {}),
         ...(!repair && repairTarget?.institution?.id
           ? { institution: repairTarget.institution.id }
           : {}),
@@ -4558,7 +4627,23 @@ function IntegrationsSettingsPanel() {
         onExit: () => {
           setConnecting(false);
         },
+        onFailure: (failure) => {
+          const failureMessage =
+            failure?.message || failure?.code || "Teller Connect failed";
+          console.error("[teller-connect] enrollment failed", failure);
+          setMessage(`Teller Connect failed: ${failureMessage}`);
+          setConnecting(false);
+        },
+      };
+      console.info("[teller-connect] opening", {
+        applicationId: connectOptions.applicationId,
+        environment: connectOptions.environment,
+        products: connectOptions.products,
+        institution: connectOptions.institution || null,
+        enrollmentId: connectOptions.enrollmentId || null,
+        repair,
       });
+      const tellerConnect = TellerConnect.setup(connectOptions);
 
       tellerConnect.open();
     } catch (err) {
@@ -4991,6 +5076,34 @@ function IntegrationsSettingsPanel() {
         />
 
         <div className="settings-group">
+          <div className="settings-group-title">Plaid</div>
+          <div className="settings-empty-state">
+            Plaid imports bank and card transactions into the existing Inbox. Production transaction pulls are limited to once every 8 hours. A paid live balance is taken weekly, then advanced locally from imported transactions; Sandbox is unrestricted.
+          </div>
+          <form onSubmit={savePlaidConfig}>
+            <div className="settings-form-grid">
+              <label className="settings-field"><span>Client ID</span><input type="text" value={tellerForm.clientId || ""} onChange={(event)=>setTellerForm((current)=>({...current,clientId:event.target.value}))} autoComplete="off" /></label>
+              <label className="settings-field"><span>Environment</span><select value={tellerForm.environment || "sandbox"} onChange={(event)=>setTellerForm((current)=>({...current,environment:event.target.value}))}><option value="sandbox">Sandbox</option><option value="production">Production</option></select></label>
+              <label className="settings-field"><span>Secret</span><input type="password" value={tellerForm.secret || ""} placeholder={config?.secretConfigured ? "Saved; leave blank to keep" : "Plaid secret"} onChange={(event)=>setTellerForm((current)=>({...current,secret:event.target.value}))} autoComplete="new-password" /></label>
+            </div>
+            <small className="settings-field-note">The secret is encrypted before storage. Save Sandbox credentials and run the test Item before switching to Production.</small>
+            <div className="settings-form-actions"><button type="submit" className="settings-action-btn" disabled={loading||savingTellerConfig}>{savingTellerConfig?"Saving…":"Save Plaid Settings"}</button></div>
+          </form>
+          <div className="settings-vehicle-list">
+            <div className="settings-vehicle-row"><strong>Items</strong><span>{loading?"Loading…":connections?.items?.length||0}</span></div>
+            <div className="settings-vehicle-row"><strong>Latest Plaid transaction</strong><span>{connections?.latestTransaction?formatIntegrationDate(connections.latestTransaction):"None imported"}</span></div>
+            <div className="settings-vehicle-row"><strong>Production guards</strong><span>Transactions: 8 hours · Live balance anchor: 7 days</span></div>
+            {(connections?.items||[]).map((item)=><div className="settings-vehicle-row" key={item.item_id}><strong>{item.institution_name||"Plaid Item"}</strong><span>{item.transactions_last_success_at?`Synced ${new Date(item.transactions_last_success_at).toLocaleString()}`:"Not synced"} {item.last_error?<em>{item.last_error.message}</em>:null} <button type="button" className="settings-action-btn secondary" onClick={()=>connectPlaid(item.item_id)}>Repair</button> <button type="button" className="settings-action-btn secondary" onClick={()=>deletePlaidItem(item.item_id)}>Remove</button></span></div>)}
+          </div>
+          <div className="settings-form-actions">
+            <button type="button" className="settings-action-btn" disabled={loading||connecting||!config?.configured} onClick={()=>connectPlaid()}>{connecting?"Opening…":"Connect with Plaid"}</button>
+            {config?.environment==="sandbox"?<button type="button" className="settings-action-btn secondary" disabled={loading||connecting||!config?.configured} onClick={createPlaidSandboxItem}>Create Sandbox Test Item</button>:null}
+            <button type="button" className="settings-action-btn secondary" disabled={loading||syncing||!(connections?.items?.length)} onClick={syncPlaid}>{syncing?"Syncing…":"Sync Plaid"}</button>
+            {message?<span className="settings-message">{message}</span>:null}
+          </div>
+        </div>
+
+        {false ? (<div className="settings-group">
           <div className="settings-group-title">Teller</div>
           <div className="settings-empty-state">
             Connect another bank or card through Teller. New connections are added
@@ -5207,13 +5320,13 @@ function IntegrationsSettingsPanel() {
             </button>
             {message ? <span className="settings-message">{message}</span> : null}
           </div>
-        </div>
+        </div>) : null}
 
         <div className="settings-group">
           <div className="settings-group-title">Mercury</div>
           <div className="settings-empty-state">
             Mercury uses its direct API token and imports into the same Inbox
-            review flow as Teller card transactions.
+            review flow as Plaid card transactions.
           </div>
 
           <div className="settings-vehicle-list">

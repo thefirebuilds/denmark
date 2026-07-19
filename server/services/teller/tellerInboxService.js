@@ -31,7 +31,7 @@ async function loadTellerAccountMetadataMap() {
     SELECT DISTINCT ON (raw_json->'account'->>'id')
       raw_json->'account' AS account
     FROM teller_transactions
-    WHERE raw_json->>'source' = 'teller'
+    WHERE raw_json->>'source' IN ('teller', 'plaid')
       AND raw_json->'account'->>'id' IS NOT NULL
     ORDER BY raw_json->'account'->>'id', updated_at DESC
   `);
@@ -75,7 +75,7 @@ function getTransactionSourceFields(row, accountById = new Map()) {
     };
   }
 
-  const sourceLabel = institution || (rawSource === "teller" ? "Teller" : "Teller");
+  const sourceLabel = institution || (rawSource === "plaid" ? "Plaid" : "Teller");
   const accountLabel = accountName
     ? lastFour
       ? `${accountName.replace(/\s+-\s+[0-9]{4}\s*$/, "")} ****${lastFour}`
@@ -85,7 +85,7 @@ function getTransactionSourceFields(row, accountById = new Map()) {
       : sourceLabel;
 
   return {
-    transaction_source: "teller",
+    transaction_source: rawSource === "plaid" ? "plaid" : "teller",
     transaction_source_label: sourceLabel,
     source_account_label: accountLabel,
     source_account_last_four: lastFour || null,
@@ -475,7 +475,8 @@ async function getTellerSummary() {
   const syncResult = await pool.query(`
     SELECT value
     FROM app_settings
-    WHERE key = 'integrations.teller.sync_status'
+    WHERE key IN ('integrations.plaid.sync_status', 'integrations.teller.sync_status')
+    ORDER BY CASE WHEN key = 'integrations.plaid.sync_status' THEN 0 ELSE 1 END
     LIMIT 1
   `);
 
