@@ -406,7 +406,15 @@ async function getBankingSuggestions(id) {
         expense,
       };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      if (a.day_difference !== b.day_difference) {
+        return a.day_difference - b.day_difference;
+      }
+      if (a.amount_difference !== b.amount_difference) {
+        return a.amount_difference - b.amount_difference;
+      }
+      return b.score - a.score;
+    });
 
   return suggestions;
 }
