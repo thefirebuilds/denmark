@@ -81,6 +81,19 @@ async function claimGate(kind, hours, environment) {
   return { allowed: false, nextAllowedAt: new Date(new Date(prior.rows[0].updated_at).getTime() + hours*3600000).toISOString() };
 }
 
+async function claimInitialTransactionImport() {
+  const count = await pool.query("SELECT COUNT(*)::int AS count FROM banking_transactions WHERE raw_json->>'source'='plaid'");
+  if (Number(count.rows[0]?.count || 0) > 0) return false;
+  const key = "integrations.plaid.initial_transaction_import";
+  const result = await pool.query(`INSERT INTO app_settings(key,value,updated_at)
+    VALUES($1,jsonb_build_object('claimedAt',NOW()),NOW()) ON CONFLICT(key) DO NOTHING RETURNING key`, [key]);
+  return result.rowCount === 1;
+}
+
+async function releaseInitialTransactionImportClaim() {
+  await pool.query("DELETE FROM app_settings WHERE key='integrations.plaid.initial_transaction_import'");
+}
+
 function normalizedAmount(tx) { const amount = Number(tx.amount); return Number.isFinite(amount) ? -amount : 0; }
 function findIgnoreReason(description,rules){const text=String(description||"").trim().toLowerCase();for(const rule of rules){const value=String(rule.match_value||"").trim().toLowerCase();if((rule.match_type==="exact"&&text===value)||(rule.match_type==="contains"&&text.includes(value)))return rule.reason||"Ignored by rule";}return null;}
 async function upsertTransaction(tx, account, institutionName, ignoreRules=[]) {
@@ -102,12 +115,15 @@ async function upsertTransaction(tx, account, institutionName, ignoreRules=[]) {
   return {inserted:result.rows[0]?.inserted === true,beforeCutoff:false};
 }
 
-async function syncTransactions({ reason = "manual" } = {}) {
+async function syncTransactions({ reason = "manual", allowInitialImport = false } = {}) {
   await ensureSchema();
   const settings = await getPlaidSettings();
   const { rows: items } = await pool.query("SELECT * FROM plaid_items ORDER BY id");
   if (!items.length) return { skipped: true, reason: "no_items", items: 0, fetched: 0, inserted: 0 };
-  const gate = await claimGate("transactions", TRANSACTION_INTERVAL_HOURS, settings.environment);
+  const initialImportClaimed = allowInitialImport ? await claimInitialTransactionImport() : false;
+  const gate = initialImportClaimed
+    ? { allowed: true, initialImport: true }
+    : await claimGate("transactions", TRANSACTION_INTERVAL_HOURS, settings.environment);
   if (!gate.allowed) return { skipped: true, reason: "production_rate_guard", nextAllowedAt: gate.nextAllowedAt, fetched: 0, inserted: 0 };
   let fetched=0, inserted=0, modified=0, removed=0, skippedBeforeCutoff=0;
   const ignoreRules=(await pool.query("SELECT match_type,match_value,reason FROM banking_ignore_rules WHERE is_active=TRUE")).rows;
@@ -129,6 +145,7 @@ async function syncTransactions({ reason = "manual" } = {}) {
       }
       await pool.query("UPDATE plaid_items SET cursor=$2,transactions_last_success_at=NOW(),last_error=NULL,updated_at=NOW() WHERE item_id=$1", [item.item_id,cursor]);
     } catch(error) {
+      if(initialImportClaimed)await releaseInitialTransactionImportClaim().catch(()=>null);
       await pool.query("UPDATE plaid_items SET last_error=$2::jsonb,updated_at=NOW() WHERE item_id=$1", [item.item_id,JSON.stringify({at:new Date().toISOString(),code:error.code||null,message:error.message})]);
       await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES('integrations.plaid.sync_status',$1::jsonb,NOW())
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,[JSON.stringify({status:"error",lastCheckedAt:new Date().toISOString(),errors:[{itemId:item.item_id,institution:item.institution_name,code:error.code||null,message:error.message,reconnectRequired:error.code==="ITEM_LOGIN_REQUIRED"}]})]);
@@ -136,6 +153,7 @@ async function syncTransactions({ reason = "manual" } = {}) {
     }
   }
   const result={ skipped:false, items:items.length,fetched,inserted,modified,removed,skippedBeforeCutoff,ingestionStartDate:BANKING_INGESTION_START_DATE };
+  if(initialImportClaimed&&inserted===0)await releaseInitialTransactionImportClaim();
   await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES('integrations.plaid.sync_status',$1::jsonb,NOW())
     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,[JSON.stringify({status:"ok",lastCheckedAt:new Date().toISOString(),...result})]);
   console.log(`[plaid] transactions done | reason=${reason} items=${items.length} fetched=${fetched} inserted=${inserted} skippedBeforeCutoff=${skippedBeforeCutoff} ingestionStart=${BANKING_INGESTION_START_DATE}`);
