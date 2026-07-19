@@ -194,6 +194,16 @@ async function getCiti4483BalanceSummary(){
 async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM banking_transactions WHERE raw_json->>'source'='plaid'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS,ingestionStartDate:BANKING_INGESTION_START_DATE,webhook:await getPlaidWebhookStatus()};}
 async function configureItemWebhook(itemId){await ensureSchema();const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);if(!rows[0])throw Object.assign(new Error("Plaid Item not found"),{status:404});const webhook=await getPlaidWebhookUrl();if(!webhook)throw Object.assign(new Error("Configure Denmark's public base URL in Settings first"),{status:400});return call("/item/webhook/update",{access_token:decrypt(rows[0].access_token_encrypted),webhook});}
 async function fireSandboxWebhook(itemId){const settings=await getPlaidSettings();if(settings.environment!=="sandbox")throw Object.assign(new Error("Webhook test is available only in Sandbox"),{status:400});await configureItemWebhook(itemId);const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);return call("/sandbox/item/fire_webhook",{access_token:decrypt(rows[0].access_token_encrypted),webhook_type:"ITEM",webhook_code:"NEW_ACCOUNTS_AVAILABLE"});}
-async function removeItem(itemId){await ensureSchema();const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);if(!rows[0])throw Object.assign(new Error("Plaid Item not found"),{status:404});await call("/item/remove",{access_token:decrypt(rows[0].access_token_encrypted)});await pool.query("DELETE FROM plaid_items WHERE item_id=$1",[itemId]);return {removed:true,itemId};}
+async function removeItem(itemId){
+  await ensureSchema();
+  const {rows}=await pool.query("SELECT access_token_encrypted,institution_name FROM plaid_items WHERE item_id=$1",[itemId]);
+  if(!rows[0])throw Object.assign(new Error("Plaid Item not found"),{status:404});
+  // Do not discard the local credential until Plaid confirms deactivation.
+  const remote=await call("/item/remove",{access_token:decrypt(rows[0].access_token_encrypted)});
+  const deleted=await pool.query("DELETE FROM plaid_items WHERE item_id=$1 RETURNING item_id",[itemId]);
+  if(!deleted.rowCount)throw new Error("Plaid deactivated the Item, but local cleanup did not complete");
+  return {removed:true,disconnected:true,itemId,institutionName:rows[0].institution_name||null,
+    requestId:remote.request_id||null,disconnectedAt:new Date().toISOString(),historyRetained:true};
+}
 
 module.exports={createLinkToken,savePublicToken,createSandboxItem,syncTransactions,refreshBalances,getCachedBalances,getCiti4483BalanceSummary,getSummary,removeItem,configureItemWebhook,fireSandboxWebhook,ensureSchema};

@@ -4526,9 +4526,9 @@ function IntegrationsSettingsPanel() {
   }
 
   async function deletePlaidItem(itemId) {
-    if (!window.confirm("Remove this Plaid connection? Imported transaction history will be retained.")) return;
-    try { const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}`,{method:"DELETE"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to remove Plaid connection"); setMessage("Plaid connection removed."); await loadBankingState(); }
-    catch(err){setMessage(err.message||"Failed to remove Plaid connection");}
+    if (!window.confirm("Disconnect this account? Denmark will deactivate the Item through Plaid and permanently delete its saved access token. Previously imported transaction history will remain in the Inbox.")) return;
+    try { const res=await fetch(`${API_BASE}/api/plaid/items/${encodeURIComponent(itemId)}`,{method:"DELETE"}); const json=await res.json().catch(()=>({})); if(!res.ok)throw new Error(json?.error||"Failed to disconnect Plaid account"); setMessage(`${json.institutionName||"Plaid account"} disconnected. Imported history was retained.`); await loadBankingState(); }
+    catch(err){setMessage(err.message||"Failed to disconnect Plaid account");}
   }
 
   async function testPlaidWebhook(itemId) {
@@ -5107,7 +5107,7 @@ function IntegrationsSettingsPanel() {
             <div className="settings-vehicle-row"><strong>Ingestion begins</strong><span>July 1, 2026 (earlier transactions are always rejected)</span></div>
             <div className="settings-vehicle-row"><strong>Webhook URL</strong><span>{connections?.webhook?.webhookUrl||"Set the public base URL in Settings"}</span></div>
             <div className="settings-vehicle-row"><strong>Last webhook</strong><span>{connections?.webhook?.lastDelivery?.receivedAt?`${new Date(connections.webhook.lastDelivery.receivedAt).toLocaleString()} · ${connections.webhook.lastDelivery.webhookType||"unknown"}/${connections.webhook.lastDelivery.webhookCode||"unknown"}`:"None received"}</span></div>
-            {(connections?.items||[]).map((item)=><div className="settings-vehicle-row" key={item.item_id}><strong>{item.institution_name||"Plaid Item"}</strong><span>{item.transactions_last_success_at?`Synced ${new Date(item.transactions_last_success_at).toLocaleString()}`:"Not synced"} {item.last_error?<em>{item.last_error.message}</em>:null} {config?.environment==="sandbox"?<button type="button" className="settings-action-btn secondary" disabled={!connections?.webhook?.configured} onClick={()=>testPlaidWebhook(item.item_id)}>Test Onboarding Webhook</button>:null} <button type="button" className="settings-action-btn secondary" onClick={()=>connectPlaid(item.item_id)}>Repair</button> <button type="button" className="settings-action-btn secondary" onClick={()=>deletePlaidItem(item.item_id)}>Remove</button></span></div>)}
+            {(connections?.items||[]).map((item)=><div className="settings-vehicle-row" key={item.item_id}><strong>{item.institution_name||"Plaid Item"}</strong><span>{item.transactions_last_success_at?`Synced ${new Date(item.transactions_last_success_at).toLocaleString()}`:"Not synced"} {item.last_error?<em>{item.last_error.message}</em>:null} {config?.environment==="sandbox"?<button type="button" className="settings-action-btn secondary" disabled={!connections?.webhook?.configured} onClick={()=>testPlaidWebhook(item.item_id)}>Test Onboarding Webhook</button>:null} <button type="button" className="settings-action-btn secondary" onClick={()=>connectPlaid(item.item_id)}>Repair</button> <button type="button" className="settings-action-btn secondary" onClick={()=>deletePlaidItem(item.item_id)}>Disconnect Account</button></span></div>)}
           </div>
           <div className="settings-form-actions">
             <button type="button" className="settings-action-btn" disabled={loading||connecting||!config?.configured} onClick={()=>connectPlaid()}>{connecting?"Opening…":"Connect with Plaid"}</button>
