@@ -248,6 +248,19 @@ function tripReturnLocationMatchesPrimaryParking(tripReturnLocation, location) {
   return /(?:^| )(?:home|buda|78610)(?: |$)/.test(tripLocation);
 }
 
+function tripReturnLocationAllowsPrimaryParkingFallback(tripReturnLocation, location) {
+  if (location?.isPrimaryParking !== true) return false;
+  const tripLocation = normalizeLocationText(tripReturnLocation);
+  if (!tripLocation) return true;
+
+  // Do not infer a home return when Turo explicitly identifies an alternate
+  // delivery/return class. Ordinary street-address text is allowed because
+  // configured geofences currently retain only a friendly label and coords.
+  return !/(?:^| )(?:airport|terminal|hotel|delivery|delivered|station|garage)(?: |$)/.test(
+    tripLocation
+  );
+}
+
 function tripReturnLocationMatchesTelemetryAddress(tripReturnLocation, address) {
   const tripTokens = new Set(
     normalizeLocationText(tripReturnLocation)
@@ -275,6 +288,7 @@ function getMatchedTripReturnGeoLocation(row, locations) {
     const matchesExpectedLocation =
       tripReturnLocationMatchesNamedLocation(row.return_location, location) ||
       tripReturnLocationMatchesPrimaryParking(row.return_location, location) ||
+      tripReturnLocationAllowsPrimaryParkingFallback(row.return_location, location) ||
       tripReturnLocationMatchesTelemetryAddress(row.return_location, row.address);
     if (!matchesExpectedLocation) {
       continue;
@@ -1360,7 +1374,6 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       AND COALESCE(t.closed_out, false) = false
       AND COALESCE(t.workflow_stage, '') = 'in_progress'
       AND COALESCE(t.status, '') <> 'canceled'
-      AND COALESCE(NULLIF(t.return_location,''),NULLIF(t.pickup_location,'')) IS NOT NULL
       AND NOT EXISTS (
         SELECT 1
         FROM trips newer
@@ -1387,7 +1400,16 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
   let advanced = 0;
   for (const row of rows) {
     const match = getMatchedTripReturnGeoLocation(row, returnLocations);
-    if (!match) continue;
+    if (!match) {
+      console.log(
+        `[alerts] overdue return not advanced | trip=${row.id} expected=${JSON.stringify(
+          row.return_location || null
+        )} telemetry=${row.service_name || "none"} lat=${row.latitude ?? "none"} lon=${
+          row.longitude ?? "none"
+        } configuredLocations=${returnLocations.map((location) => location.label).join(",") || "none"}`
+      );
+      continue;
+    }
 
     try {
       const observation = await recordTripReturnObservation(row, match);

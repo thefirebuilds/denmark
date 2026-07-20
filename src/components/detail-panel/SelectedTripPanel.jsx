@@ -663,6 +663,7 @@ function renderLocationLink(vehicle) {
             <div className="detail-overdue-facts">
               <div><span>Current behavior</span><strong>{vehicleBehavior}</strong></div>
               <div><span>Current location</span><strong>{selectedVehicle ? renderLocationLink(selectedVehicle) : "Awaiting telemetry"}</strong></div>
+              <div><span>Required return</span><strong>{selectedTrip.return_location || selectedTrip.pickup_location || "Primary parking location"}</strong></div>
               <div><span>From Buda / 78610</span><strong>{Number.isFinite(milesFromHome) ? `${Math.round(milesFromHome)} mi straight-line / ${formatDriveEstimate(milesFromHome)} drive` : "Awaiting home/GPS coordinates"}</strong></div>
               <div><span>Mileage position</span><strong>{mileageOver == null ? "Awaiting odometer" : mileageOver > 0 ? `${Math.round(mileageOver).toLocaleString("en-US")} mi over allowance` : `${Math.round(mileageStats.remaining || 0).toLocaleString("en-US")} mi remaining`}</strong></div>
               <div><span>Last GPS update</span><strong>{selectedVehicle ? formatRelativeComm(selectedVehicle?.telemetry?.last_comm) : "Awaiting telemetry"}</strong></div>

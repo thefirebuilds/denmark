@@ -435,6 +435,8 @@ const TRIP_SELECT = `
     COALESCE(t.guest_name, ti.guest_name) AS guest_name,
     COALESCE(t.trip_start, ti.trip_start) AS trip_start,
     COALESCE(t.trip_end, ti.trip_end) AS trip_end,
+    t.pickup_location,
+    t.return_location,
     COALESCE(t.status, ti.status) AS status,
     COALESCE(t.amount, ti.amount) AS amount,
     COALESCE(t.needs_review, ti.needs_review) AS needs_review,
