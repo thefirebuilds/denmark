@@ -234,7 +234,10 @@ function tripReturnLocationMatchesNamedLocation(tripReturnLocation, location) {
 }
 
 function tripReturnLocationMatchesPrimaryParking(tripReturnLocation, location) {
-  if (String(location?.kind || "").toLowerCase() !== "parking") return false;
+  if (
+    String(location?.kind || "").toLowerCase() !== "parking" &&
+    location?.isPrimaryParking !== true
+  ) return false;
   const tripLocation = normalizeLocationText(tripReturnLocation);
   if (!tripLocation) return false;
 
@@ -294,15 +297,29 @@ function getMatchedTripReturnGeoLocation(row, locations) {
 function getReturnObservedAt(row) {
   const raw = row.location_last_updated || row.vehicle_last_updated || row.captured_at;
   if (!raw) return new Date();
-  if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw;
-  const text = String(raw).trim();
-  const hasZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(text);
-  const parsed = hasZone
-    ? DateTime.fromISO(text, { setZone: true })
-    : String(row.service_name || "").toLowerCase() === "bouncie"
-      ? DateTime.fromISO(text, { zone: "utc" })
-      : DateTime.fromISO(text, { zone: "America/Chicago" });
-  return parsed.isValid ? parsed.toJSDate() : new Date();
+  let observedAt;
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    observedAt = raw;
+  } else {
+    const text = String(raw).trim();
+    const hasZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(text);
+    const parsed = hasZone
+      ? DateTime.fromISO(text, { setZone: true })
+      : String(row.service_name || "").toLowerCase() === "bouncie"
+        ? DateTime.fromISO(text, { zone: "utc" })
+        : DateTime.fromISO(text, { zone: "America/Chicago" });
+    observedAt = parsed.isValid ? parsed.toJSDate() : new Date();
+  }
+  const tripStartedAt = row.trip_start ? new Date(row.trip_start) : null;
+  if (
+    tripStartedAt &&
+    !Number.isNaN(tripStartedAt.getTime()) &&
+    observedAt.getTime() < tripStartedAt.getTime()
+  ) {
+    const detectedAt = row.captured_at ? new Date(row.captured_at) : new Date();
+    return Number.isNaN(detectedAt.getTime()) ? new Date() : detectedAt;
+  }
+  return observedAt;
 }
 
 async function recordTripReturnObservation(row, match) {
@@ -1241,7 +1258,12 @@ async function recordTripReturnGeoMessage(row, match) {
 }
 
 async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
-  const returnLocations = await getEnabledLocations();
+  const enabledLocations = await getEnabledLocations();
+  const primaryParking = await getPrimaryParkingLocation();
+  const returnLocations = enabledLocations.map((location) => ({
+    ...location,
+    isPrimaryParking: location.id === primaryParking?.id,
+  }));
   if (!returnLocations.length) return { advanced: 0 };
 
   const { rows } = await pool.query(`
@@ -1252,8 +1274,9 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       v.nickname AS vehicle_nickname,
       v.vin AS vehicle_vin,
       t.guest_name,
+      t.trip_start,
       t.trip_end,
-      t.return_location,
+      COALESCE(NULLIF(t.return_location,''),NULLIF(t.pickup_location,'')) AS return_location,
       latest.service_name,
       latest.latitude,
       latest.longitude,
@@ -1293,11 +1316,14 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       FROM vehicle_telemetry_snapshots s
       WHERE s.latitude IS NOT NULL
         AND s.longitude IS NOT NULL
+        AND COALESCE(s.captured_at,s.vehicle_last_updated) >= NOW() - INTERVAL '30 minutes'
         AND (
           s.captured_at >= t.trip_end - INTERVAL '6 hours'
           OR COALESCE(s.location_last_updated, s.vehicle_last_updated) >= t.trip_end - INTERVAL '6 hours'
         )
         AND (
+          s.trip_id = t.id
+          OR
           (
             v.vin IS NOT NULL
             AND s.vin IS NOT NULL
@@ -1334,7 +1360,7 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       AND COALESCE(t.closed_out, false) = false
       AND COALESCE(t.workflow_stage, '') = 'in_progress'
       AND COALESCE(t.status, '') <> 'canceled'
-      AND COALESCE(t.return_location, '') <> ''
+      AND COALESCE(NULLIF(t.return_location,''),NULLIF(t.pickup_location,'')) IS NOT NULL
       AND NOT EXISTS (
         SELECT 1
         FROM trips newer
@@ -1360,7 +1386,6 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
 
   let advanced = 0;
   for (const row of rows) {
-    if (isStaleLocationEntrySignal(row)) continue;
     const match = getMatchedTripReturnGeoLocation(row, returnLocations);
     if (!match) continue;
 
