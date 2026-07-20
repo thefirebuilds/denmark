@@ -1316,11 +1316,11 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       FROM vehicle_telemetry_snapshots s
       WHERE s.latitude IS NOT NULL
         AND s.longitude IS NOT NULL
-        AND COALESCE(s.captured_at,s.vehicle_last_updated) >= NOW() - INTERVAL '30 minutes'
         AND (
           s.captured_at >= t.trip_end - INTERVAL '6 hours'
           OR COALESCE(s.location_last_updated, s.vehicle_last_updated) >= t.trip_end - INTERVAL '6 hours'
         )
+        AND COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at) >= t.trip_start
         AND (
           s.trip_id = t.id
           OR
