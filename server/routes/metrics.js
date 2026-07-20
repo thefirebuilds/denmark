@@ -23,6 +23,10 @@ const {
   getParkingEconomics,
 } = require("../services/metrics/parkingMetricsService");
 const {
+  getTollAccountBalance,
+  reconcileTollAccountBalance,
+} = require("../services/metrics/tollAccountBalanceService");
+const {
   getHomeParkingTransfers,
 } = require("../services/metrics/parkingTransferService");
 const {
@@ -160,6 +164,24 @@ router.get("/tolls/detail", limitMetricRead(async (req, res) => {
     return res.status(500).json({ error: "Failed to load toll detail" });
   }
 }));
+
+router.get("/tolls/account-balance", async (_req, res) => {
+  try {
+    return res.json(await getTollAccountBalance());
+  } catch (err) {
+    console.error("GET /api/metrics/tolls/account-balance failed:", err);
+    return res.status(500).json({ error: "Failed to load toll account balance" });
+  }
+});
+
+router.put("/tolls/account-balance", async (req, res) => {
+  try {
+    return res.json(await reconcileTollAccountBalance(req.body?.amount));
+  } catch (err) {
+    console.error("PUT /api/metrics/tolls/account-balance failed:", err);
+    return res.status(err.status || 500).json({ error: err.message || "Failed to reconcile toll account balance" });
+  }
+});
 
 router.get("/parking", limitMetricRead(async (req, res) => {
   try {

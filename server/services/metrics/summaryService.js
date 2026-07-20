@@ -27,6 +27,7 @@ const {
 const {
   getLatestVehicleFmvEstimates,
 } = require("../vehicles/fmvEstimateService");
+const { getTollAccountBalance } = require("./tollAccountBalanceService");
 
 async function fetchTripsInRange(client, startDate, endDate) {
   const { rows } = await client.query(
@@ -1091,6 +1092,7 @@ async function getSummaryMetrics(rangeKey = "30d") {
       : [];
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
+    const tollAccountBalance = await getTollAccountBalance(client);
 
     const tripIncome = trips.reduce(
       (sum, trip) => sum + getTripProratedAmount(trip, startDate, endDate),
@@ -1672,6 +1674,19 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       tolls_recovered: roundMoney(tollsRecovered),
       tolls_attributed_outstanding: roundMoney(tollsAttributedOutstanding),
       tolls_unattributed: roundMoney(tollsUnattributed),
+      toll_account_balance: {
+        ...tollAccountBalance,
+        anchorBalance:
+          tollAccountBalance.anchorBalance == null
+            ? null
+            : roundMoney(tollAccountBalance.anchorBalance),
+        fundingAdded: roundMoney(tollAccountBalance.fundingAdded),
+        tollsDeducted: roundMoney(tollAccountBalance.tollsDeducted),
+        currentBalance:
+          tollAccountBalance.currentBalance == null
+            ? null
+            : roundMoney(tollAccountBalance.currentBalance),
+      },
       toll_recovery_rate: roundNumber(safeDivide(tollsRecovered, tollsPaid)),
       toll_effective_recovery_rate: roundNumber(
         safeDivide(tollsRecovered + tollsAttributedOutstanding, tollsPaid)

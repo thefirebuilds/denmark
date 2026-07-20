@@ -601,6 +601,7 @@ function BusinessHeartbeat({
   businessSummary,
   parkingSummary,
   onOpenExpenseBreakdown,
+  onReconcileTollBalance,
 }) {
   const margin = safeDivide(summary?.net_profit, summary?.revenue);
   const tollLeakage =
@@ -745,6 +746,30 @@ function BusinessHeartbeat({
       </HeartbeatRow>
 
       <HeartbeatRow label="Margin Leaks">
+        <HeartbeatMetric
+          label="Toll Account Balance"
+          value={
+            summary?.toll_account_balance?.currentBalance == null
+              ? "--"
+              : formatCurrency(summary.toll_account_balance.currentBalance)
+          }
+          comp={
+            summary?.toll_account_balance?.configured
+              ? `+${formatCurrencyCompact(
+                  summary.toll_account_balance.fundingAdded
+                )} funding / -${formatCurrencyCompact(
+                  summary.toll_account_balance.tollsDeducted
+                )} tolls · click to reconcile`
+              : "Click to enter the current account balance"
+          }
+          tone={
+            summary?.toll_account_balance?.currentBalance != null &&
+            Number(summary.toll_account_balance.currentBalance) < 20
+              ? "warning"
+              : "neutral"
+          }
+          onClick={onReconcileTollBalance}
+        />
         <HeartbeatMetric
           label="Toll Exposure"
           value={formatCurrencyCompact(tollLeakage)}
@@ -1147,6 +1172,7 @@ export default function MetricsPanel() {
   const [error, setError] = useState(null);
   const [fmvRefreshing, setFmvRefreshing] = useState(false);
   const [fmvRefreshStatus, setFmvRefreshStatus] = useState("");
+  const [tollBalanceSaving, setTollBalanceSaving] = useState(false);
 
   const [expandedVehicleId, setExpandedVehicleId] = useState(null);
   const [sortBy, setSortBy] = useState("profit_desc");
@@ -1784,6 +1810,40 @@ export default function MetricsPanel() {
     return data;
   }
 
+  async function handleReconcileTollBalance() {
+    if (tollBalanceSaving) return;
+    const current = summary?.toll_account_balance?.currentBalance;
+    const entered = window.prompt(
+      "Enter the current toll account balance. This becomes the new reconciliation anchor.",
+      current == null ? "" : Number(current).toFixed(2)
+    );
+    if (entered == null) return;
+    const amount = Number(String(entered).replace(/[$,]/g, "").trim());
+    if (!Number.isFinite(amount) || amount < 0) {
+      window.alert("Enter a non-negative dollar amount.");
+      return;
+    }
+
+    try {
+      setTollBalanceSaving(true);
+      const response = await fetch(`${API_BASE}/api/metrics/tolls/account-balance`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || "Failed to reconcile toll balance");
+      setSummary((existing) => ({
+        ...(existing || {}),
+        toll_account_balance: payload,
+      }));
+    } catch (err) {
+      window.alert(err.message || "Failed to reconcile toll balance");
+    } finally {
+      setTollBalanceSaving(false);
+    }
+  }
+
   const avgVehiclesBookedPerDay = useMemo(() => {
     if (!summary) return 0;
     const booked = Number(summary.booked_vehicle_days ?? 0);
@@ -2397,6 +2457,7 @@ const mileageStats = useMemo(() => {
             businessSummary={businessMetrics?.fleet_summary}
             parkingSummary={parkingMetrics?.summary}
             onOpenExpenseBreakdown={() => setExpenseBreakdownOpen(true)}
+            onReconcileTollBalance={handleReconcileTollBalance}
           />
 
           <div className="metrics-ledger-grid">
