@@ -1250,6 +1250,11 @@ async function getSummaryMetrics(rangeKey = "30d") {
       previousRange.startDate,
       previousRange.endDate
     );
+    const yearOverYearBookedVehicleDays = getBookedVehicleDays(
+      yearOverYearTrips,
+      yearOverYearRange.startDate,
+      yearOverYearRange.endDate
+    );
 
     const earliestTripStartForAll =
       key === "all"
@@ -1399,6 +1404,11 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       yearOverYearTripIncome,
       yearOverYearTripCountOverlapping
     );
+    const averageTripDayPrice = safeDivide(tripIncome, bookedVehicleDays);
+    const lastYearAverageTripDayPrice = safeDivide(
+      yearOverYearTripIncome,
+      yearOverYearBookedVehicleDays
+    );
     const yearOverYearRevenuePerOverlappingTrip = safeDivide(
       yearOverYearRevenue,
       yearOverYearTripCountOverlapping
@@ -1545,6 +1555,15 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       average_trip_price_yoy_delta:
         yearOverYearTripCountOverlapping > 0
           ? roundMoney(averageTripPrice - lastYearAverageTripPrice)
+          : null,
+      average_trip_day_price: roundMoney(averageTripDayPrice),
+      last_year_average_trip_day_price:
+        yearOverYearBookedVehicleDays > 0
+          ? roundMoney(lastYearAverageTripDayPrice)
+          : null,
+      average_trip_day_price_yoy_delta:
+        yearOverYearBookedVehicleDays > 0
+          ? roundMoney(averageTripDayPrice - lastYearAverageTripDayPrice)
           : null,
       last_year_revenue_per_overlapping_trip:
         yearOverYearTripCountOverlapping > 0

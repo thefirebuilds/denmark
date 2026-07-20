@@ -706,6 +706,18 @@ function BusinessHeartbeat({
           tone={getMoneyTone(summary?.average_trip_price_yoy_delta)}
         />
         <HeartbeatMetric
+          label="Average Day Price"
+          value={`${formatCurrencyCompact(summary?.average_trip_day_price)} / day`}
+          comp={
+            summary?.last_year_average_trip_day_price == null
+              ? "No same-range last-year comp"
+              : `Last year ${formatCurrencyCompact(
+                  summary.last_year_average_trip_day_price
+                )} / day`
+          }
+          tone={getMoneyTone(summary?.average_trip_day_price_yoy_delta)}
+        />
+        <HeartbeatMetric
           label="Run Rate"
           value={`${formatCurrencyCompact(
             summary?.vehicle_run_rate?.operating_run_rate_daily
