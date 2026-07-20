@@ -136,7 +136,14 @@ async function getEnabledLocations() {
 async function getPrimaryParkingLocation() {
   const locations = await getEnabledLocations();
   const parking =
-    locations.find((location) => location.kind === "parking") || locations[0] || null;
+    locations.find((location) =>
+      /(?:^|\b)(?:garlic creek|home|buda|78610)(?:\b|$)/i.test(
+        String(location.label || "")
+      )
+    ) ||
+    locations.find((location) => location.kind === "parking") ||
+    locations[0] ||
+    null;
   if (!parking) {
     return {
       ...getDefaultParkingLocation(),

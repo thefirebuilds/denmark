@@ -50,6 +50,9 @@ const {
 const {
   ensureMessageRuntimeSchema,
 } = require("../services/messageRuntimeSchema");
+const {
+  backfillTripLocationsFromStoredMessages,
+} = require("../services/saveMessage");
 
 const STARTUP_ENSURE_TIMEOUT_MS = Number(
   process.env.STARTUP_ENSURE_TIMEOUT_MS || 30000
@@ -111,6 +114,11 @@ async function initializeStartupTables() {
     console.log(`[server] ensuring ${label}`);
     await withStartupEnsureTimeout(label, ensureFn());
   }
+  console.log("[server] backfilling trip pickup/return locations");
+  await withStartupEnsureTimeout(
+    "trip location backfill",
+    backfillTripLocationsFromStoredMessages()
+  );
 }
 
 module.exports = {

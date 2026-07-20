@@ -355,6 +355,12 @@ const LOCATION_LABELS = new Set([
   "delivery",
   "pickup",
   "pickup location",
+  "launch",
+  "launch location",
+  "pickup & return",
+  "pickup and return",
+  "pickup & return location",
+  "pickup and return location",
   "return",
   "return location",
   "dropoff",
@@ -420,14 +426,17 @@ function extractTripLocations(lines) {
     const line = lines[i];
     const normalized = line.replace(/:$/, "").toLowerCase();
     const inline = line.match(
-      /^(Delivery|Pickup(?: location)?|Return(?: location)?|Drop[- ]?off)\s*:\s*(.+)$/i
+      /^(Pickup\s*(?:&|and)\s*return(?: location)?|Delivery|Launch(?: location)?|Pickup(?: location)?|Return(?: location)?|Drop[- ]?off)\s*:\s*(.+)$/i
     );
 
     if (inline) {
       const label = inline[1].toLowerCase();
       const value = cleanLocationLine(inline[2]);
       if (!value) continue;
-      if (label === "delivery" || label.startsWith("pickup")) {
+      if (/^pickup\s*(?:&|and)\s*return/.test(label)) {
+        pickupLocation = pickupLocation || value;
+        returnLocation = returnLocation || value;
+      } else if (label === "delivery" || label.startsWith("pickup") || label.startsWith("launch")) {
         pickupLocation = pickupLocation || value;
       } else {
         returnLocation = returnLocation || value;
@@ -440,7 +449,10 @@ function extractTripLocations(lines) {
     const value = extractLocationBlock(lines, i);
     if (!value) continue;
 
-    if (normalized === "delivery" || normalized.startsWith("pickup")) {
+    if (/^pickup\s*(?:&|and)\s*return/.test(normalized)) {
+      pickupLocation = pickupLocation || value;
+      returnLocation = returnLocation || value;
+    } else if (normalized === "delivery" || normalized.startsWith("pickup") || normalized.startsWith("launch")) {
       pickupLocation = pickupLocation || value;
     } else {
       returnLocation = returnLocation || value;
@@ -1162,7 +1174,60 @@ async function saveMessage(message) {
   return savedMessage;
 }
 
+async function backfillTripLocationsFromStoredMessages() {
+  await ensureMessageRuntimeSchema();
+  const { rows } = await pool.query(`SELECT id,reservation_id,subject,normalized_text_body,html_body
+    FROM messages
+    WHERE reservation_id IS NOT NULL
+      AND normalized_text_body IS NOT NULL
+      AND (pickup_location IS NULL OR return_location IS NULL)
+      AND COALESCE(message_type,'') IN ('trip_booked','trip_changed','turo_notification')
+    ORDER BY COALESCE(message_timestamp,created_at) DESC NULLS LAST
+    LIMIT 5000`);
+
+  let repairedMessages = 0;
+  for (const row of rows) {
+    const extracted = baseExtractFields(
+      row.normalized_text_body,
+      row.subject || "",
+      row.html_body || ""
+    );
+    if (!extracted.pickupLocation && !extracted.returnLocation) continue;
+    const result = await pool.query(`UPDATE messages SET
+        pickup_location=COALESCE(pickup_location,$2),
+        return_location=COALESCE(return_location,$3)
+      WHERE id=$1`, [row.id, extracted.pickupLocation, extracted.returnLocation]);
+    repairedMessages += result.rowCount;
+  }
+
+  const repairedTrips = await pool.query(`WITH locations AS (
+      SELECT reservation_id,
+        (ARRAY_AGG(pickup_location ORDER BY COALESCE(message_timestamp,created_at) DESC)
+          FILTER (WHERE pickup_location IS NOT NULL))[1] AS pickup_location,
+        (ARRAY_AGG(return_location ORDER BY COALESCE(message_timestamp,created_at) DESC)
+          FILTER (WHERE return_location IS NOT NULL))[1] AS return_location
+      FROM messages
+      WHERE reservation_id IS NOT NULL
+      GROUP BY reservation_id
+    )
+    UPDATE trips t SET
+      pickup_location=COALESCE(t.pickup_location,locations.pickup_location),
+      return_location=COALESCE(t.return_location,locations.return_location),
+      updated_at=CASE WHEN (t.pickup_location IS NULL AND locations.pickup_location IS NOT NULL)
+        OR (t.return_location IS NULL AND locations.return_location IS NOT NULL)
+        THEN NOW() ELSE t.updated_at END
+    FROM locations
+    WHERE t.reservation_id=locations.reservation_id
+      AND ((t.pickup_location IS NULL AND locations.pickup_location IS NOT NULL)
+        OR (t.return_location IS NULL AND locations.return_location IS NOT NULL))`);
+
+  console.log(`[messages] trip location backfill | scanned=${rows.length} repairedMessages=${repairedMessages} repairedTrips=${repairedTrips.rowCount}`);
+  return { scanned: rows.length, repairedMessages, repairedTrips: repairedTrips.rowCount };
+}
+
 module.exports = saveMessage;
 module.exports.applyTripCloseoutSignalsFromMessage = applyTripCloseoutSignalsFromMessage;
 module.exports.extractFuelReimbursementFromText = extractFuelReimbursementFromText;
+module.exports.extractTripLocations = extractTripLocations;
+module.exports.backfillTripLocationsFromStoredMessages = backfillTripLocationsFromStoredMessages;
 

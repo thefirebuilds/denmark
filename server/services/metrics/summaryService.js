@@ -1394,6 +1394,11 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
     const yearOverYearRevenue =
       yearOverYearTripIncome + yearOverYearOtherIncome;
     const revenuePerOverlappingTrip = safeDivide(revenue, tripCountOverlapping);
+    const averageTripPrice = safeDivide(tripIncome, tripCountOverlapping);
+    const lastYearAverageTripPrice = safeDivide(
+      yearOverYearTripIncome,
+      yearOverYearTripCountOverlapping
+    );
     const yearOverYearRevenuePerOverlappingTrip = safeDivide(
       yearOverYearRevenue,
       yearOverYearTripCountOverlapping
@@ -1532,6 +1537,15 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
         : null,
 
       revenue_per_overlapping_trip: roundMoney(revenuePerOverlappingTrip),
+      average_trip_price: roundMoney(averageTripPrice),
+      last_year_average_trip_price:
+        yearOverYearTripCountOverlapping > 0
+          ? roundMoney(lastYearAverageTripPrice)
+          : null,
+      average_trip_price_yoy_delta:
+        yearOverYearTripCountOverlapping > 0
+          ? roundMoney(averageTripPrice - lastYearAverageTripPrice)
+          : null,
       last_year_revenue_per_overlapping_trip:
         yearOverYearTripCountOverlapping > 0
           ? roundMoney(yearOverYearRevenuePerOverlappingTrip)

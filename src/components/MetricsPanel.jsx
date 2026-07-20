@@ -694,6 +694,18 @@ function BusinessHeartbeat({
 
       <HeartbeatRow label="Yield + Pace">
         <HeartbeatMetric
+          label="Average Trip Price"
+          value={formatCurrencyCompact(summary?.average_trip_price)}
+          comp={
+            summary?.last_year_average_trip_price == null
+              ? "No same-range last-year comp"
+              : `Last year ${formatCurrencyCompact(
+                  summary.last_year_average_trip_price
+                )} / trip`
+          }
+          tone={getMoneyTone(summary?.average_trip_price_yoy_delta)}
+        />
+        <HeartbeatMetric
           label="Run Rate"
           value={`${formatCurrencyCompact(
             summary?.vehicle_run_rate?.operating_run_rate_daily
