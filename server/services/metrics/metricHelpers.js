@@ -8,10 +8,15 @@ function isTripTollRecovered(trip) {
   const workflowStage = String(trip?.workflow_stage || "").toLowerCase();
   const expenseStatus = String(trip?.expense_status || "").toLowerCase();
   const tollReviewStatus = String(trip?.toll_review_status || "").toLowerCase();
+  const tollTotal = toNumber(trip?.toll_total);
+  const tollChargedTotal = toNumber(trip?.toll_charged_total);
 
   if (trip?.completed_at) return true;
-  if (expenseStatus === "complete" || expenseStatus === "completed") return true;
-  if (workflowStage === "complete" || workflowStage === "completed") return true;
+  if (trip?.closed_out || trip?.closed_out_at) return true;
+  if (["complete", "completed", "resolved", "waived"].includes(expenseStatus)) return true;
+  if (["complete", "completed", "closed"].includes(workflowStage)) return true;
+  if (["billed", "waived"].includes(tollReviewStatus)) return true;
+  if (tollTotal > 0 && tollChargedTotal + 0.01 >= tollTotal) return true;
   if (workflowStage === "turnaround" && tollReviewStatus !== "pending") return true;
 
   return false;
@@ -20,6 +25,10 @@ function isTripTollRecovered(trip) {
 function isTripTollAttributedOutstanding(trip) {
   const tollTotal = toNumber(trip?.toll_total);
   if (tollTotal <= 0) return false;
+  const tripEnd = trip?.trip_end ? new Date(trip.trip_end) : null;
+  if (!tripEnd || Number.isNaN(tripEnd.getTime()) || tripEnd.getTime() > Date.now()) {
+    return false;
+  }
   return !isTripTollRecovered(trip);
 }
 

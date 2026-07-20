@@ -124,7 +124,7 @@ export default function TollAuditDrawer({
           <div>
             <div className="app-drawer-title">Toll Audit Detail</div>
             <div className="app-drawer-subtitle">
-              Inspect unmatched toll charges and trips still pending toll recovery.
+              Review ended trips awaiting toll settlement and charges with no trip.
             </div>
           </div>
           <button type="button" className="app-drawer-close" onClick={onClose}>
@@ -147,7 +147,7 @@ export default function TollAuditDrawer({
                 }`}
               >
                 <div className="toll-audit-section__header">
-                  <div className="toll-audit-section__title">Outstanding</div>
+                  <div className="toll-audit-section__title">Outstanding Trip Tolls</div>
                   <div className="toll-audit-section__meta">
                     {formatCurrency(outstanding.total_amount)} across{" "}
                     {Number(outstanding.count ?? 0)} trip
@@ -175,9 +175,8 @@ export default function TollAuditDrawer({
                         </div>
                       </div>
                       <div className="toll-audit-item__details">
-                        <span>Status: {trip.toll_review_status || "pending"}</span>
-                        <span>Stage: {trip.workflow_stage || "--"}</span>
-                        <span>Expenses: {trip.expense_status || "--"}</span>
+                        <span>Trip ended: {formatDateTime(trip.trip_end)}</span>
+                        <span>Settlement: no billing or reconciliation recorded</span>
                       </div>
                       <div className="toll-audit-item__details toll-audit-item__details--financial">
                         <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>

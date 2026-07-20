@@ -602,11 +602,9 @@ function BusinessHeartbeat({
   parkingSummary,
   onOpenExpenseBreakdown,
   onReconcileTollBalance,
+  onOpenTollAudit,
 }) {
   const margin = safeDivide(summary?.net_profit, summary?.revenue);
-  const tollLeakage =
-    Number(summary?.tolls_unattributed ?? 0) +
-    Number(summary?.tolls_attributed_outstanding ?? 0);
   const parkingNet = Number(parkingSummary?.passNetValue ?? 0);
 
   return (
@@ -771,12 +769,18 @@ function BusinessHeartbeat({
           onClick={onReconcileTollBalance}
         />
         <HeartbeatMetric
-          label="Toll Exposure"
-          value={formatCurrencyCompact(tollLeakage)}
-          comp={`${formatCurrencyCompact(summary?.tolls_unattributed)} unattributed / ${formatCurrencyCompact(
-            summary?.tolls_attributed_outstanding
-          )} outstanding`}
-          tone={tollLeakage > 0 ? "warning" : "positive"}
+          label="Outstanding Trip Tolls"
+          value={formatCurrencyCompact(summary?.tolls_attributed_outstanding)}
+          comp="Ended trips not yet billed or reconciled"
+          tone={Number(summary?.tolls_attributed_outstanding ?? 0) > 0 ? "warning" : "positive"}
+          onClick={() => onOpenTollAudit?.("outstanding")}
+        />
+        <HeartbeatMetric
+          label="Unassociated Toll Charges"
+          value={formatCurrencyCompact(summary?.tolls_unattributed)}
+          comp="Toll charges with no associated trip"
+          tone={Number(summary?.tolls_unattributed ?? 0) > 0 ? "negative" : "positive"}
+          onClick={() => onOpenTollAudit?.("unattributed")}
         />
         <HeartbeatMetric
           label="Parking Net"
@@ -2458,6 +2462,7 @@ const mileageStats = useMemo(() => {
             parkingSummary={parkingMetrics?.summary}
             onOpenExpenseBreakdown={() => setExpenseBreakdownOpen(true)}
             onReconcileTollBalance={handleReconcileTollBalance}
+            onOpenTollAudit={openTollAudit}
           />
 
           <div className="metrics-ledger-grid">
@@ -4075,45 +4080,33 @@ const mileageStats = useMemo(() => {
       />
 
           <CompactLedger
-            title="Toll Margin"
-            subtitle="Paid, recovered, outstanding, and unattributed toll exposure"
+            title="Toll Position"
+            subtitle="Cash on hand, ended-trip tolls awaiting settlement, and charges without a trip"
           >
             <LedgerLine
-              label="Paid"
-              value={formatCurrencyCompact(summary.tolls_paid)}
-              detail="Toll expense recorded in this range"
+              label="Current Account Balance"
+              value={
+                summary?.toll_account_balance?.currentBalance == null
+                  ? "--"
+                  : formatCurrencyCompact(summary.toll_account_balance.currentBalance)
+              }
+              detail="Click to reconcile against the toll account"
+              tone={Number(summary?.toll_account_balance?.currentBalance ?? 0) < 20 ? "warning" : "neutral"}
+              onClick={handleReconcileTollBalance}
             />
             <LedgerLine
-              label="Recovered"
-              value={formatCurrencyCompact(summary.tolls_recovered)}
-              detail={`${formatPercent(summary.toll_recovery_rate, 0)} direct recovery`}
-              tone="positive"
-            />
-            <LedgerLine
-              label="Outstanding"
+              label="Outstanding Trip Tolls"
               value={formatCurrencyCompact(summary.tolls_attributed_outstanding)}
-              detail="Matched to trips but not recovered yet"
-              tone="warning"
+              detail="Ended trips not yet billed or reconciled"
+              tone={Number(summary.tolls_attributed_outstanding ?? 0) > 0 ? "warning" : "positive"}
               onClick={() => openTollAudit("outstanding")}
             />
             <LedgerLine
-              label="Unattributed"
+              label="Unassociated Toll Charges"
               value={formatCurrencyCompact(summary.tolls_unattributed)}
-              detail="Paid tolls not assigned to a trip"
+              detail="Toll charges with no associated trip"
               tone={Number(summary.tolls_unattributed ?? 0) > 0 ? "negative" : "positive"}
               onClick={() => openTollAudit("unattributed")}
-            />
-            <LedgerLine
-              label="Effective Recovery"
-              value={formatPercent(summary.toll_effective_recovery_rate, 0)}
-              detail="Recovered plus outstanding against paid"
-              tone={
-                Number(summary.toll_effective_recovery_rate) >= 0.85
-                  ? "positive"
-                  : Number(summary.toll_effective_recovery_rate) >= 0.65
-                  ? "warning"
-                  : "negative"
-              }
             />
           </CompactLedger>
 

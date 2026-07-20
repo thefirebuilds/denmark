@@ -56,6 +56,8 @@ async function fetchTripsInRange(client, startDate, endDate) {
         t.workflow_stage,
         t.expense_status,
         t.completed_at,
+        t.closed_out,
+        t.closed_out_at,
         t.canceled_at,
         tf.cleaning_reimbursed,
         tf.ticket_reimbursed
@@ -931,6 +933,15 @@ async function getTollMetricsDetail(rangeKey = "30d") {
             : invoice?.charged_toll_amount != null
             ? roundMoney(invoice.charged_toll_amount)
             : null;
+        const settlementBasis =
+          attributedTollAmount > 0
+            ? attributedTollAmount
+            : roundMoney(trip.toll_total);
+        const recovered =
+          isTripTollRecovered(trip) ||
+          (chargedTollAmount != null &&
+            settlementBasis > 0 &&
+            chargedTollAmount + 0.01 >= settlementBasis);
         return {
           trip_id: trip.id,
           reservation_id: trip.reservation_id || null,
@@ -952,9 +963,10 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           toll_review_status: getNormalizedTollStatus(trip),
           workflow_stage: trip.workflow_stage || null,
           expense_status: trip.expense_status || null,
-          recovered: isTripTollRecovered(trip),
+          recovered,
         };
       })
+      .filter((trip) => !trip.recovered)
       .sort((a, b) => new Date(a.trip_end || 0).getTime() - new Date(b.trip_end || 0).getTime());
 
     const discrepancyTrips = trips
@@ -1336,16 +1348,6 @@ async function getSummaryMetrics(rangeKey = "30d") {
   .filter(isTollExpense)
   .reduce((sum, expense) => sum + getExpenseTotal(expense), 0);
 
-function isTripComplete(trip) {
-  const workflowStage = String(trip?.workflow_stage || "").trim().toLowerCase();
-  return workflowStage === "complete" || trip?.completed_at != null;
-}
-
-function isTollBillingComplete(trip) {
-  const tollStatus = String(trip?.toll_review_status || "").trim().toLowerCase();
-  return tollStatus === "billed";
-}
-
 function getTollValueForRange(trip) {
   const tollTotal = Number(trip?.toll_total ?? 0);
   if (!(tollTotal > 0)) return 0;
@@ -1367,15 +1369,13 @@ function getOutstandingTollValue(trip) {
 }
 
 const tollsRecovered = trips.reduce((sum, trip) => {
-  if (!isTripComplete(trip)) return sum;
-  if (!isTollBillingComplete(trip)) return sum;
+  if (!isTripTollRecovered(trip)) return sum;
 
   return sum + getTollValueForRange(trip);
 }, 0);
 
 const tollsAttributedOutstanding = trips.reduce((sum, trip) => {
-  if (isTripComplete(trip)) return sum;
-  if (isTollBillingComplete(trip)) return sum;
+  if (!isTripTollAttributedOutstanding(trip)) return sum;
 
   return sum + getOutstandingTollValue(trip);
 }, 0);
