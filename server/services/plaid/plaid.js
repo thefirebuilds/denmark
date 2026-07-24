@@ -269,15 +269,51 @@ async function refreshBalances() {
   return {skipped:false,accounts,...await getCachedBalances()};
 }
 async function getCachedBalances(){await ensureSchema();const {rows}=await pool.query("SELECT * FROM plaid_accounts ORDER BY name");return {accounts:rows,fetchedAt:rows.reduce((v,r)=>!v||r.balance_fetched_at>v?r.balance_fetched_at:v,null)};}
+
+function isCitiCardPaymentTransaction(row) {
+  const raw=row?.raw_json||{};
+  const text=[row?.description,row?.counterparty_name,raw?.name,raw?.merchant_name]
+    .filter(Boolean).join(" ").toLowerCase();
+  return /\bciti(?:bank)?\b/.test(text)&&/\bpayment\b/.test(text)&&(/\bcard\b/.test(text)||/\bonline\b/.test(text));
+}
+
 async function getCiti4483BalanceSummary(){
   const settings=await getPlaidSettings();
   await refreshBalances();
   const cached=await getCachedBalances();
   const a=cached.accounts.find(x=>x.mask==="4483"&&x.type==="credit");
   if(!a)return {configured:Boolean(settings.clientId&&settings.secret),found:false,currentBalance:null,availableBalance:null,debtBalance:null,lastFour:"4483",balanceSource:"plaid_weekly_anchor",fetchedAt:null};
-  const deltaResult=await pool.query(`SELECT COALESCE(SUM(amount),0)::numeric AS normalized_delta
-    FROM banking_transactions WHERE provider_account_id=$1 AND created_at > $2`,[`plaid:${a.account_id}`,a.balance_fetched_at]);
-  const normalizedDelta=Number(deltaResult.rows[0]?.normalized_delta||0);
+  const targetProviderAccountId=`plaid:${a.account_id}`;
+  const deltaResult=await pool.query(`SELECT id,provider_account_id,transaction_date,description,
+      amount,counterparty_name,raw_json
+    FROM banking_transactions
+    WHERE created_at>$1
+      AND (
+        provider_account_id=$2
+        OR (
+          (description ILIKE '%citi%' OR counterparty_name ILIKE '%citi%')
+          AND (description ILIKE '%payment%' OR counterparty_name ILIKE '%payment%')
+        )
+      )
+    ORDER BY transaction_date,id`,[a.balance_fetched_at,targetProviderAccountId]);
+  let cardActivityDelta=0;
+  const paymentDeltas=new Map();
+  for(const row of deltaResult.rows) {
+    const amount=Number(row.amount||0);
+    if(!Number.isFinite(amount))continue;
+    if(isCitiCardPaymentTransaction(row)) {
+      // A payment may appear once on the funding account and once on the card.
+      // Treat it as a debt reduction regardless of its source-side sign and
+      // collapse matching same-day counterparts.
+      const paymentAmount=Math.abs(amount);
+      const paymentKey=`${String(row.transaction_date||"").slice(0,10)}:${paymentAmount.toFixed(2)}`;
+      paymentDeltas.set(paymentKey,paymentAmount);
+      continue;
+    }
+    if(row.provider_account_id===targetProviderAccountId)cardActivityDelta+=amount;
+  }
+  const recognizedPaymentDelta=Array.from(paymentDeltas.values()).reduce((sum,value)=>sum+value,0);
+  const normalizedDelta=cardActivityDelta+recognizedPaymentDelta;
   // Imported expenses are negative and payments/refunds are positive. Subtracting
   // that normalized activity advances Plaid's positive credit-card debt balance.
   const currentBalance=Number(a.current_balance)-normalizedDelta;
@@ -287,7 +323,8 @@ async function getCiti4483BalanceSummary(){
     : Math.max(0,creditLimit-currentBalance);
   return {configured:Boolean(settings.clientId&&settings.secret),found:true,currentBalance,availableBalance,
     debtBalance:Math.max(0,currentBalance),lastFour:"4483",balanceSource:"plaid_weekly_anchor_plus_transactions",
-    fetchedAt:a.balance_fetched_at||null,calculatedAt:new Date().toISOString(),transactionDelta:normalizedDelta};
+    fetchedAt:a.balance_fetched_at||null,calculatedAt:new Date().toISOString(),transactionDelta:normalizedDelta,
+    cardActivityDelta,recognizedPaymentDelta,recognizedPaymentCount:paymentDeltas.size};
 }
 async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,initial_import_completed_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM banking_transactions WHERE raw_json->>'source'='plaid'");const syncStatus=await pool.query("SELECT value FROM app_settings WHERE key='integrations.plaid.sync_status'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,lastSync:syncStatus.rows[0]?.value||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS,ingestionStartDate:BANKING_INGESTION_START_DATE,webhook:await getPlaidWebhookStatus()};}
 async function configureItemWebhook(itemId){await ensureSchema();const {rows}=await pool.query("SELECT access_token_encrypted FROM plaid_items WHERE item_id=$1",[itemId]);if(!rows[0])throw Object.assign(new Error("Plaid Item not found"),{status:404});const webhook=await getPlaidWebhookUrl();if(!webhook)throw Object.assign(new Error("Configure Denmark's public base URL in Settings first"),{status:400});return call("/item/webhook/update",{access_token:decrypt(rows[0].access_token_encrypted),webhook});}
