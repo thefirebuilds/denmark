@@ -32,6 +32,7 @@ import type { UnknownRecord } from "./appTypes";
 
 type ViewContext = UnknownRecord & {
   activeView: string;
+  onChangeView?: (view: string) => void;
 };
 
 export function renderActiveView(ctx: ViewContext) {
@@ -122,6 +123,7 @@ export function renderActiveView(ctx: ViewContext) {
         onSelectTrip={ctx.onTripFocused}
         onEditTrip={ctx.onEditTripFromMessage}
         onOpenMaintenanceVehicle={ctx.onOpenMaintenanceVehicle}
+        onOpenBankingReconciliation={() => ctx.onChangeView?.("inbox")}
         initialMessages={ctx.startupMessages}
         initialUnreadCount={ctx.initialUnreadCount}
         initialLoadComplete={ctx.initialLoadComplete}

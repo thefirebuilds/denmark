@@ -1305,6 +1305,11 @@ function isGoogleCalendarReconnectNotice(message) {
   return type === "google_calendar_reconnect_required";
 }
 
+function isBankingReconciliationNotice(message) {
+  const type = message?.type || message?.message_type;
+  return type === "banking_reconciliation_required";
+}
+
 function isDailyBriefNotice(message) {
   const type = message?.type || message?.message_type;
   return type === "daily_brief" && Boolean(message?.daily_brief_text);
@@ -1813,6 +1818,7 @@ export default function MessagesPanel({
   onSelectTrip,
   onEditTrip,
   onOpenMaintenanceVehicle,
+  onOpenBankingReconciliation,
   initialMessages = [],
   initialUnreadCount = 0,
   initialLoadComplete = false,
@@ -3403,6 +3409,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canReviewDiagnostic = isVehicleDiagnosticAlert(message);
             const canReconnectGoogleCalendar =
               isGoogleCalendarReconnectNotice(message);
+            const canReviewBanking = isBankingReconciliationNotice(message);
             const canShowDailyBrief = isDailyBriefNotice(message);
             const canReviewGuestThread =
               (message.type || message.message_type) === "guest_message_thread";
@@ -4319,6 +4326,7 @@ async function handleExportGuestInspectionSheet(message) {
                   hasMaintenanceDetails ||
                   canOpenMaintenanceQueue ||
                   canReconnectGoogleCalendar ||
+                  canReviewBanking ||
                   canFocusTrip) && (
                   <div className="message-actions">
                     {canFocusTrip && (
@@ -4359,6 +4367,19 @@ async function handleExportGuestInspectionSheet(message) {
                         }}
                       >
                         Reconnect Google
+                      </button>
+                    )}
+
+                    {canReviewBanking && (
+                      <button
+                        type="button"
+                        className="message-action"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenBankingReconciliation?.();
+                        }}
+                      >
+                        Reconcile now
                       </button>
                     )}
 

@@ -105,23 +105,97 @@ async function finishInitialTransactionImport(itemId, completed) {
 
 function normalizedAmount(tx) { const amount = Number(tx.amount); return Number.isFinite(amount) ? -amount : 0; }
 function findIgnoreReason(description,rules){const text=String(description||"").trim().toLowerCase();for(const rule of rules){const value=String(rule.match_value||"").trim().toLowerCase();if((rule.match_type==="exact"&&text===value)||(rule.match_type==="contains"&&text.includes(value)))return rule.reason||"Ignored by rule";}return null;}
+
+async function promotePendingTransaction(client, tx) {
+  const pendingTransactionId=String(tx?.pending_transaction_id||"").trim();
+  const postedTransactionId=String(tx?.transaction_id||"").trim();
+  if(!pendingTransactionId||!postedTransactionId||pendingTransactionId===postedTransactionId)return false;
+
+  const pendingProviderId=`plaid:${pendingTransactionId}`;
+  const postedProviderId=`plaid:${postedTransactionId}`;
+  const {rows}=await client.query(`SELECT * FROM banking_transactions
+    WHERE provider_transaction_id=ANY($1::text[]) FOR UPDATE`,[[pendingProviderId,postedProviderId]]);
+  const pendingRow=rows.find(row=>row.provider_transaction_id===pendingProviderId);
+  const postedRow=rows.find(row=>row.provider_transaction_id===postedProviderId);
+  if(!pendingRow)return false;
+
+  const pendingWasReviewed=pendingRow.review_status!=="pending";
+  const postedWasReviewed=postedRow&&postedRow.review_status!=="pending";
+  if(pendingWasReviewed&&postedWasReviewed)return false;
+
+  if(pendingWasReviewed) {
+    // Keep the original row so expense/income links and its completed review survive.
+    if(postedRow)await client.query("DELETE FROM banking_transactions WHERE id=$1",[postedRow.id]);
+    await client.query(`UPDATE banking_transactions
+      SET provider_transaction_id=$2,updated_at=NOW()
+      WHERE id=$1`,[pendingRow.id,postedProviderId]);
+    return true;
+  }
+
+  if(postedRow) {
+    await client.query("DELETE FROM banking_transactions WHERE id=$1",[pendingRow.id]);
+    return true;
+  }
+
+  await client.query(`UPDATE banking_transactions
+    SET provider_transaction_id=$2,updated_at=NOW()
+    WHERE id=$1`,[pendingRow.id,postedProviderId]);
+  return true;
+}
+
 async function upsertTransaction(tx, account, itemId, institutionName, ignoreRules=[]) {
   const transactionDate=tx.authorized_date || tx.date;
   if(!isWithinBankingIngestionWindow(transactionDate))return {inserted:false,beforeCutoff:true};
   const description=tx.merchant_name || tx.name || "Plaid transaction";
   const ignoreReason=findIgnoreReason(description,ignoreRules);
   const raw = { ...tx, source: "plaid", plaid_item_id: itemId, institution: institutionName || null,
-    account: account ? { id: account.account_id, name: account.name, official_name: account.official_name, mask: account.mask, type: account.type, subtype: account.subtype } : null };
-  const result = await pool.query(`INSERT INTO banking_transactions
-    (provider_transaction_id,provider_account_id,transaction_date,description,amount,transaction_type,status,counterparty_name,category,raw_json,ignored,ignore_reason,updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,NOW()) ON CONFLICT(provider_transaction_id) DO UPDATE SET
-    provider_account_id=EXCLUDED.provider_account_id,transaction_date=EXCLUDED.transaction_date,description=EXCLUDED.description,
-    amount=EXCLUDED.amount,transaction_type=EXCLUDED.transaction_type,status=EXCLUDED.status,counterparty_name=EXCLUDED.counterparty_name,
-    category=EXCLUDED.category,raw_json=EXCLUDED.raw_json,ignored=EXCLUDED.ignored,ignore_reason=EXCLUDED.ignore_reason,updated_at=NOW() RETURNING (xmax=0) AS inserted`,
-    [`plaid:${tx.transaction_id}`, `plaid:${tx.account_id}`, tx.authorized_date || tx.date,
-      description, normalizedAmount(tx),tx.payment_channel||null, tx.pending ? "pending" : "posted",tx.merchant_name||null,
-      tx.personal_finance_category?.primary||null,JSON.stringify(raw),Boolean(ignoreReason),ignoreReason]);
-  return {inserted:result.rows[0]?.inserted === true,beforeCutoff:false};
+    account: account ? { id: account.account_id||account.id||null, name: account.name, official_name: account.official_name, mask: account.mask, type: account.type, subtype: account.subtype } : null };
+  const client=await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const promoted=await promotePendingTransaction(client,tx);
+    const result = await client.query(`INSERT INTO banking_transactions
+      (provider_transaction_id,provider_account_id,transaction_date,description,amount,transaction_type,status,counterparty_name,category,raw_json,ignored,ignore_reason,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,NOW()) ON CONFLICT(provider_transaction_id) DO UPDATE SET
+      provider_account_id=EXCLUDED.provider_account_id,transaction_date=EXCLUDED.transaction_date,description=EXCLUDED.description,
+      amount=EXCLUDED.amount,transaction_type=EXCLUDED.transaction_type,status=EXCLUDED.status,counterparty_name=EXCLUDED.counterparty_name,
+      category=EXCLUDED.category,raw_json=EXCLUDED.raw_json,
+      ignored=CASE WHEN banking_transactions.review_status='pending' THEN EXCLUDED.ignored ELSE banking_transactions.ignored END,
+      ignore_reason=CASE WHEN banking_transactions.review_status='pending' THEN EXCLUDED.ignore_reason ELSE banking_transactions.ignore_reason END,
+      updated_at=NOW() RETURNING (xmax=0) AS inserted`,
+      [`plaid:${tx.transaction_id}`, `plaid:${tx.account_id}`, tx.authorized_date || tx.date,
+        description, normalizedAmount(tx),tx.payment_channel||null, tx.pending ? "pending" : "posted",tx.merchant_name||null,
+        tx.personal_finance_category?.primary||null,JSON.stringify(raw),Boolean(ignoreReason),ignoreReason]);
+    await client.query("COMMIT");
+    return {inserted:result.rows[0]?.inserted === true,beforeCutoff:false,promoted};
+  } catch(error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function repairExistingPendingPostedPairs(ignoreRules=[]) {
+  const {rows}=await pool.query(`SELECT posted.raw_json
+    FROM banking_transactions posted
+    JOIN banking_transactions pending
+      ON pending.provider_transaction_id='plaid:'||(posted.raw_json->>'pending_transaction_id')
+    WHERE posted.provider_transaction_id LIKE 'plaid:%'
+      AND posted.review_status='pending'
+      AND pending.review_status<>'pending'
+      AND COALESCE(posted.raw_json->>'pending_transaction_id','')<>''
+      AND posted.raw_json->>'source'='plaid'
+    ORDER BY posted.id`);
+  let repaired=0;
+  for(const row of rows) {
+    const tx=row.raw_json;
+    if(!tx?.transaction_id||!tx?.pending_transaction_id)continue;
+    const account=tx.account||null;
+    const saved=await upsertTransaction(tx,account,tx.plaid_item_id||null,tx.institution||null,ignoreRules);
+    if(saved.promoted)repaired++;
+  }
+  return repaired;
 }
 
 async function syncTransactions({ reason = "manual", allowInitialImport = false } = {}) {
@@ -135,7 +209,7 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
     ? { allowed: true, initialImport: true }
     : await claimGate("transactions", TRANSACTION_INTERVAL_HOURS, settings.environment);
   if (!gate.allowed) return { skipped: true, reason: "production_rate_guard", nextAllowedAt: gate.nextAllowedAt, fetched: 0, inserted: 0 };
-  let fetched=0, inserted=0, modified=0, removed=0, skippedBeforeCutoff=0;
+  let fetched=0, inserted=0, modified=0, removed=0, promoted=0, skippedBeforeCutoff=0;
   const ignoreRules=(await pool.query("SELECT match_type,match_value,reason FROM banking_ignore_rules WHERE is_active=TRUE")).rows;
   for (const item of items) {
     let itemFetched = 0;
@@ -150,7 +224,7 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
       const accountsData=await call("/accounts/get", { access_token: token });
       const accountMap=new Map((accountsData.accounts||[]).map(a=>[a.account_id,a]));
       for(const page of pages) { for(const tx of [...(page.added||[]),...(page.modified||[])]) {
-          const saved=await upsertTransaction(tx,accountMap.get(tx.account_id),item.item_id,item.institution_name,ignoreRules); fetched++; itemFetched++; if(saved.inserted)inserted++;if(saved.beforeCutoff)skippedBeforeCutoff++;
+          const saved=await upsertTransaction(tx,accountMap.get(tx.account_id),item.item_id,item.institution_name,ignoreRules); fetched++; itemFetched++; if(saved.inserted)inserted++;if(saved.promoted)promoted++;if(saved.beforeCutoff)skippedBeforeCutoff++;
         } modified += (page.modified||[]).length;
         for(const tx of page.removed||[]) { const result=await pool.query("DELETE FROM banking_transactions WHERE provider_transaction_id=$1 AND review_status='pending'", [`plaid:${tx.transaction_id}`]); removed+=result.rowCount; }
       }
@@ -167,11 +241,12 @@ async function syncTransactions({ reason = "manual", allowInitialImport = false 
       throw error;
     }
   }
-  const result={ skipped:false, items:items.length,fetched,inserted,modified,removed,skippedBeforeCutoff,ingestionStartDate:BANKING_INGESTION_START_DATE };
+  const repairedPendingPosted=await repairExistingPendingPostedPairs(ignoreRules);
+  const result={ skipped:false, items:items.length,fetched,inserted,modified,removed,promoted,repairedPendingPosted,skippedBeforeCutoff,ingestionStartDate:BANKING_INGESTION_START_DATE };
   result.pendingReconciliation = await refreshBankingReconciliationNotice({ reopen: inserted > 0 });
   await pool.query(`INSERT INTO app_settings(key,value,updated_at) VALUES('integrations.plaid.sync_status',$1::jsonb,NOW())
     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,[JSON.stringify({status:"ok",lastCheckedAt:new Date().toISOString(),...result})]);
-  console.log(`[plaid] transactions done | reason=${reason} items=${items.length} fetched=${fetched} inserted=${inserted} skippedBeforeCutoff=${skippedBeforeCutoff} ingestionStart=${BANKING_INGESTION_START_DATE}`);
+  console.log(`[plaid] transactions done | reason=${reason} items=${items.length} fetched=${fetched} inserted=${inserted} promoted=${promoted} repairedPendingPosted=${repairedPendingPosted} skippedBeforeCutoff=${skippedBeforeCutoff} ingestionStart=${BANKING_INGESTION_START_DATE}`);
   return result;
 }
 
