@@ -5,6 +5,7 @@ const { getPlaidSettings, TRANSACTION_INTERVAL_HOURS, BALANCE_INTERVAL_HOURS } =
 const { BANKING_INGESTION_START_DATE, isWithinBankingIngestionWindow } = require("../banking/bankingIngestionPolicy");
 const { getPlaidWebhookUrl, getPlaidWebhookStatus } = require("./plaidWebhook");
 const { refreshBankingReconciliationNotice } = require("../banking/bankingReconciliationNotice");
+const CITI_4483_MANUAL_ANCHOR_KEY="integrations.plaid.citi_4483_manual_anchor";
 
 let schemaPromise;
 async function ensureSchema() {
@@ -277,12 +278,41 @@ function isCitiCardPaymentTransaction(row) {
   return /\bciti(?:bank)?\b/.test(text)&&/\bpayment\b/.test(text)&&(/\bcard\b/.test(text)||/\bonline\b/.test(text));
 }
 
-async function getCiti4483BalanceSummary(){
+async function getCiti4483ManualAnchor() {
+  const {rows}=await pool.query("SELECT value FROM app_settings WHERE key=$1 LIMIT 1",[CITI_4483_MANUAL_ANCHOR_KEY]);
+  const value=rows[0]?.value||null;
+  const balance=Number(value?.balance);
+  const reconciledAt=value?.reconciledAt?new Date(value.reconciledAt):null;
+  if(!Number.isFinite(balance)||!reconciledAt||Number.isNaN(reconciledAt.getTime()))return null;
+  return {balance,reconciledAt:reconciledAt.toISOString()};
+}
+
+async function reconcileCiti4483Balance(value) {
+  const balance=Number(value);
+  if(!Number.isFinite(balance)||balance<0)throw Object.assign(new Error("Current Citi balance must be a non-negative number"),{status:400});
+  const reconciledAt=new Date().toISOString();
+  await pool.query(`INSERT INTO app_settings(key,value,updated_at)
+    VALUES($1,$2::jsonb,NOW())
+    ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,
+    [CITI_4483_MANUAL_ANCHOR_KEY,JSON.stringify({balance,reconciledAt})]);
+  return getCiti4483BalanceSummary({skipBalanceRefresh:true});
+}
+
+async function getCiti4483BalanceSummary({skipBalanceRefresh=false}={}){
   const settings=await getPlaidSettings();
-  await refreshBalances();
+  if(!skipBalanceRefresh)await refreshBalances();
   const cached=await getCachedBalances();
   const a=cached.accounts.find(x=>x.mask==="4483"&&x.type==="credit");
   if(!a)return {configured:Boolean(settings.clientId&&settings.secret),found:false,currentBalance:null,availableBalance:null,debtBalance:null,lastFour:"4483",balanceSource:"plaid_weekly_anchor",fetchedAt:null};
+  const manualAnchor=await getCiti4483ManualAnchor();
+  const liveCheckedAt=a.balance_fetched_at?new Date(a.balance_fetched_at):null;
+  const manualReconciledAt=manualAnchor?.reconciledAt?new Date(manualAnchor.reconciledAt):null;
+  const useManualAnchor=Boolean(
+    manualAnchor&&manualReconciledAt&&!Number.isNaN(manualReconciledAt.getTime())&&
+    (!liveCheckedAt||Number.isNaN(liveCheckedAt.getTime())||manualReconciledAt>liveCheckedAt)
+  );
+  const anchorAt=useManualAnchor?manualAnchor.reconciledAt:a.balance_fetched_at;
+  const anchorBalance=useManualAnchor?manualAnchor.balance:Number(a.current_balance);
   const targetProviderAccountId=`plaid:${a.account_id}`;
   const deltaResult=await pool.query(`SELECT id,provider_account_id,transaction_date,description,
       amount,counterparty_name,raw_json
@@ -295,7 +325,7 @@ async function getCiti4483BalanceSummary(){
           AND (description ILIKE '%payment%' OR counterparty_name ILIKE '%payment%')
         )
       )
-    ORDER BY transaction_date,id`,[a.balance_fetched_at,targetProviderAccountId]);
+    ORDER BY transaction_date,id`,[anchorAt,targetProviderAccountId]);
   let cardActivityDelta=0;
   const paymentDeltas=new Map();
   for(const row of deltaResult.rows) {
@@ -316,14 +346,17 @@ async function getCiti4483BalanceSummary(){
   const normalizedDelta=cardActivityDelta+recognizedPaymentDelta;
   // Imported expenses are negative and payments/refunds are positive. Subtracting
   // that normalized activity advances Plaid's positive credit-card debt balance.
-  const currentBalance=Number(a.current_balance)-normalizedDelta;
+  const currentBalance=anchorBalance-normalizedDelta;
   const creditLimit=a.credit_limit==null?null:Number(a.credit_limit);
   const availableBalance=creditLimit==null
     ? (a.available_balance==null?null:Number(a.available_balance)+normalizedDelta)
     : Math.max(0,creditLimit-currentBalance);
   return {configured:Boolean(settings.clientId&&settings.secret),found:true,currentBalance,availableBalance,
-    debtBalance:Math.max(0,currentBalance),lastFour:"4483",balanceSource:"plaid_weekly_anchor_plus_transactions",
-    fetchedAt:a.balance_fetched_at||null,calculatedAt:new Date().toISOString(),transactionDelta:normalizedDelta,
+    debtBalance:Math.max(0,currentBalance),lastFour:"4483",
+    balanceSource:useManualAnchor?"manual_anchor_plus_transactions":"plaid_weekly_anchor_plus_transactions",
+    fetchedAt:a.balance_fetched_at||null,lastCheckedAt:a.balance_fetched_at||null,anchorAt,
+    anchorSource:useManualAnchor?"manual":"plaid",reconciledAt:useManualAnchor?manualAnchor.reconciledAt:null,
+    calculatedAt:new Date().toISOString(),transactionDelta:normalizedDelta,
     cardActivityDelta,recognizedPaymentDelta,recognizedPaymentCount:paymentDeltas.size};
 }
 async function getSummary(){await ensureSchema();const settings=await getPlaidSettings();const items=await pool.query(`SELECT item_id,institution_id,institution_name,created_at,transactions_last_attempt_at,transactions_last_success_at,initial_import_completed_at,balance_last_success_at,last_error FROM plaid_items ORDER BY created_at DESC`);const latest=await pool.query("SELECT MAX(transaction_date) latest FROM banking_transactions WHERE raw_json->>'source'='plaid'");const syncStatus=await pool.query("SELECT value FROM app_settings WHERE key='integrations.plaid.sync_status'");return {environment:settings.environment,configured:Boolean(settings.clientId&&settings.secret),items:items.rows,latestTransaction:latest.rows[0]?.latest||null,lastSync:syncStatus.rows[0]?.value||null,transactionIntervalHours:TRANSACTION_INTERVAL_HOURS,balanceIntervalHours:BALANCE_INTERVAL_HOURS,ingestionStartDate:BANKING_INGESTION_START_DATE,webhook:await getPlaidWebhookStatus()};}
@@ -340,4 +373,4 @@ async function removeItem(itemId){
     requestId:remote.request_id||null,disconnectedAt:new Date().toISOString(),historyRetained:true};
 }
 
-module.exports={createLinkToken,savePublicToken,syncTransactions,refreshBalances,getCachedBalances,getCiti4483BalanceSummary,getSummary,removeItem,configureItemWebhook,ensureSchema};
+module.exports={createLinkToken,savePublicToken,syncTransactions,refreshBalances,getCachedBalances,getCiti4483BalanceSummary,reconcileCiti4483Balance,getSummary,removeItem,configureItemWebhook,ensureSchema};

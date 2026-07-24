@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 function formatLastReceived(ts) {
   if (!ts) return "-";
@@ -35,6 +35,19 @@ function money(value) {
   });
 }
 
+function formatBalanceTimestamp(value) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export default function TopBanner({
   stats,
   mercuryBalance = null,
@@ -46,6 +59,8 @@ export default function TopBanner({
   effectiveLayoutMode = "desktop",
   onChangeLayoutMode,
 }) {
+  const [editingCitiBalance, setEditingCitiBalance] = useState(false);
+  const [citiBalanceDraft, setCitiBalanceDraft] = useState("");
   const todayLabel = useMemo(() => {
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
@@ -54,6 +69,43 @@ export default function TopBanner({
   }, []);
   const serverFreshnessLabel =
     stats?.deploymentLabel || stats?.serverUptimeLabel || "server";
+
+  function beginCitiBalanceReconciliation() {
+    const current = citiCardBalance?.debtBalance ?? citiCardBalance?.currentBalance;
+    setCitiBalanceDraft(current == null ? "" : Number(current).toFixed(2));
+    setEditingCitiBalance(true);
+  }
+
+  async function handleReconcileCitiBalance(event) {
+    event?.preventDefault?.();
+    if (typeof citiCardBalance?.reconcileBalance !== "function") return;
+    const amount = Number(String(citiBalanceDraft).replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(amount) || amount < 0) {
+      window.alert("Enter a valid non-negative Citi balance.");
+      return;
+    }
+    try {
+      await citiCardBalance.reconcileBalance(amount);
+      setEditingCitiBalance(false);
+    } catch (error) {
+      window.alert(error?.message || "Could not reconcile the Citi balance.");
+    }
+  }
+
+  const mercuryBalanceTooltip = `Mercury last checked: ${formatBalanceTimestamp(
+    mercuryBalance?.fetchedAt
+  )}`;
+  const citiBalanceTooltip = [
+    `Citi last checked by Plaid: ${formatBalanceTimestamp(
+      citiCardBalance?.lastCheckedAt || citiCardBalance?.fetchedAt
+    )}`,
+    citiCardBalance?.reconciledAt
+      ? `Manually reconciled: ${formatBalanceTimestamp(citiCardBalance.reconciledAt)}`
+      : null,
+    "Click to reconcile the current balance.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   return (
     <div className="top-banner">
@@ -106,7 +158,7 @@ export default function TopBanner({
             </span>
           )}
 
-          <span className="top-banner-balance">
+          <span className="top-banner-balance" title={mercuryBalanceTooltip}>
             Mercury {mercuryBalance?.configured === false
               ? "not configured"
               : mercuryBalance?.loading
@@ -114,16 +166,56 @@ export default function TopBanner({
                 : money(mercuryBalance?.availableBalance ?? mercuryBalance?.currentBalance)}
           </span>
 
-          <span className="top-banner-balance top-banner-balance--debt">
-            Citi {citiCardBalance?.lastFour || "4483"}{" "}
-            {citiCardBalance?.configured === false
-              ? "not configured"
-              : citiCardBalance?.loading
-                ? "loading"
-                : citiCardBalance?.found === false
-                  ? "not found"
-                  : money(citiCardBalance?.debtBalance ?? citiCardBalance?.currentBalance)}
-          </span>
+          {editingCitiBalance ? (
+            <form
+              className="top-banner-balance top-banner-balance--debt top-banner-balance-editor"
+              title={citiBalanceTooltip}
+              onSubmit={handleReconcileCitiBalance}
+            >
+              <span>Citi {citiCardBalance?.lastFour || "4483"} $</span>
+              <input
+                autoFocus
+                type="number"
+                min="0"
+                step="0.01"
+                value={citiBalanceDraft}
+                disabled={citiCardBalance?.reconciling}
+                aria-label="Current Citi balance owed"
+                onChange={(event) => setCitiBalanceDraft(event.target.value)}
+              />
+              <button type="submit" disabled={citiCardBalance?.reconciling}>
+                {citiCardBalance?.reconciling ? "..." : "Save"}
+              </button>
+              <button
+                type="button"
+                disabled={citiCardBalance?.reconciling}
+                onClick={() => setEditingCitiBalance(false)}
+              >
+                ×
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="top-banner-balance top-banner-balance--debt top-banner-balance--action"
+              title={citiBalanceTooltip}
+              disabled={
+                citiCardBalance?.loading ||
+                citiCardBalance?.configured === false ||
+                citiCardBalance?.found === false
+              }
+              onClick={beginCitiBalanceReconciliation}
+            >
+              Citi {citiCardBalance?.lastFour || "4483"}{" "}
+              {citiCardBalance?.configured === false
+                ? "not configured"
+                : citiCardBalance?.loading
+                  ? "loading"
+                  : citiCardBalance?.found === false
+                    ? "not found"
+                    : money(citiCardBalance?.debtBalance ?? citiCardBalance?.currentBalance)}
+            </button>
+          )}
 
           <span>
             {loading
