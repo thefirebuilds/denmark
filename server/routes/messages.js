@@ -27,7 +27,7 @@ const BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES = Number.isFinite(
   : 5;
 const TURNOVER_REFUEL_THRESHOLD_PERCENT = 95;
 const REFUEL_ACK_SETTINGS_KEY = "messages.refuelAcknowledgements";
-const DEVICE_CONNECTIVITY_STALE_HOURS = 24;
+const DEVICE_CONNECTIVITY_STALE_HOURS = 48;
 const DEVICE_CONNECTIVITY_SNOOZE_HOURS = 8;
 
 function parseSubject(subject) {

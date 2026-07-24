@@ -13,7 +13,7 @@ let ensureFleetAlertTablesPromise = null;
 let fleetAlertsInProgress = false;
 const FUTURE_TELEMETRY_GRACE_MS = 5 * 60 * 1000;
 const LOCATION_ENTRY_STALE_LOCATION_MS = 15 * 60 * 1000;
-const DEVICE_STALE_HOURS = 24;
+const DEVICE_STALE_HOURS = 48;
 const DEVICE_STALE_SNOOZE_HOURS = 8;
 const DEVICE_RECOVERY_FRESH_MINUTES = 90;
 
@@ -358,6 +358,41 @@ async function recordTripReturnObservation(row, match) {
     match.milesAway,
   ]);
   return result.rows[0] || { returned_at: observedAt, return_late_minutes: lateMinutes };
+}
+
+async function reconcileTripReturnAtCurrentLocation(row, locations, primaryParking) {
+  const returnLocations = (locations || []).map((location) => ({
+    ...location,
+    isPrimaryParking: location.id === primaryParking?.id,
+  }));
+  let match = getMatchedTripReturnGeoLocation(row, returnLocations);
+
+  if (!match && primaryParking?.enabled) {
+    const lat = toNumber(row.latitude);
+    const lon = toNumber(row.longitude);
+    const allowsParking = tripReturnLocationAllowsPrimaryParkingFallback(
+      row.return_location,
+      { ...primaryParking, isPrimaryParking: true }
+    );
+    if (allowsParking && lat != null && lon != null) {
+      const milesAway = distanceMiles(lat, lon, primaryParking.lat, primaryParking.lon);
+      if (milesAway <= primaryParking.radiusMiles) {
+        match = { location: { ...primaryParking, isPrimaryParking: true }, milesAway };
+      }
+    }
+  }
+
+  if (!match) return { returned: false, reason: "outside_return_geofence" };
+
+  const observation = await recordTripReturnObservation(row, match);
+  await transitionTripStage(row.id, "turnaround", {
+    changedBy: "system:return-geo-location",
+    changedAt: observation.returned_at,
+    force: String(row.workflow_stage || "").toLowerCase() !== "in_progress",
+    reason: `return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}; ${observation.return_late_minutes || 0} minute(s) late`,
+  });
+  await recordTripReturnGeoMessage(row, match);
+  return { returned: true, match, observation };
 }
 
 async function ensureFleetAlertTables(client = pool) {
@@ -884,6 +919,7 @@ async function collectOverdueReturnAlerts() {
       latest.service_name,
       latest.latitude,
       latest.longitude,
+      latest.address,
       latest.vehicle_last_updated,
       latest.location_last_updated,
       latest.captured_at
@@ -912,17 +948,17 @@ async function collectOverdueReturnAlerts() {
         s.service_name,
         s.latitude,
         s.longitude,
+        s.address,
         s.vehicle_last_updated,
         s.location_last_updated,
         s.captured_at
       FROM vehicle_telemetry_snapshots s
       WHERE s.latitude IS NOT NULL
         AND s.longitude IS NOT NULL
+        AND COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at) >= t.trip_start
         AND (
-          s.captured_at >= t.trip_end - INTERVAL '6 hours'
-          OR COALESCE(s.location_last_updated, s.vehicle_last_updated) >= t.trip_end - INTERVAL '6 hours'
-        )
-        AND (
+          s.trip_id = t.id
+          OR
           (
             v.vin IS NOT NULL
             AND s.vin IS NOT NULL
@@ -958,6 +994,7 @@ async function collectOverdueReturnAlerts() {
     WHERE t.trip_end < NOW() - INTERVAL '30 minutes'
       AND t.trip_end >= NOW() - INTERVAL '24 hours'
       AND COALESCE(t.closed_out, false) = false
+      AND t.returned_at IS NULL
       AND COALESCE(t.workflow_stage, '') IN (
         'booked',
         'confirmed',
@@ -988,22 +1025,26 @@ async function collectOverdueReturnAlerts() {
   const parking = await getPrimaryParkingLocation();
   const returnLocations = await getEnabledLocations();
 
-  return rows
-    .map((row) => {
-      if (getMatchedTripReturnGeoLocation(row, returnLocations)) return null;
-
-      if (parking.enabled) {
-        const lat = toNumber(row.latitude);
-        const lon = toNumber(row.longitude);
-        if (lat != null && lon != null) {
-          const milesAway = distanceMiles(lat, lon, parking.lat, parking.lon);
-          if (milesAway <= parking.radiusMiles) return null;
-        }
-      }
+  const alerts = [];
+  for (const row of rows) {
+    try {
+      const reconciliation = await reconcileTripReturnAtCurrentLocation(
+        row,
+        returnLocations,
+        parking
+      );
+      if (reconciliation.returned) continue;
+    } catch (error) {
+      console.warn(
+        `[alerts] overdue return reconciliation failed | trip=${row.id} error=${error.message || error}`
+      );
+      const state = await pool.query("SELECT returned_at FROM trips WHERE id=$1", [row.id]);
+      if (state.rows[0]?.returned_at) continue;
+    }
 
       const vehicle = row.vehicle_nickname || row.vehicle_name || "vehicle";
       const guest = row.guest_name || "guest";
-      return {
+      alerts.push({
         alertKey: `return-overdue:${row.id}`,
         alertType: "return_overdue",
         severity: "urgent",
@@ -1011,9 +1052,9 @@ async function collectOverdueReturnAlerts() {
           row.trip_end
         )}.`,
         details: row,
-      };
-    })
-    .filter(Boolean);
+      });
+  }
+  return alerts;
 }
 
 async function collectDeviceConnectivityAlerts() {
@@ -1330,10 +1371,6 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       FROM vehicle_telemetry_snapshots s
       WHERE s.latitude IS NOT NULL
         AND s.longitude IS NOT NULL
-        AND (
-          s.captured_at >= t.trip_end - INTERVAL '6 hours'
-          OR COALESCE(s.location_last_updated, s.vehicle_last_updated) >= t.trip_end - INTERVAL '6 hours'
-        )
         AND COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at) >= t.trip_start
         AND (
           s.trip_id = t.id
@@ -1370,9 +1407,10 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
         s.id DESC
       LIMIT 1
     ) latest ON true
-    WHERE t.trip_end < NOW()
+    WHERE NOW() >= t.trip_end - INTERVAL '2 hours'
       AND COALESCE(t.closed_out, false) = false
       AND COALESCE(t.workflow_stage, '') = 'in_progress'
+      AND t.returned_at IS NULL
       AND COALESCE(t.status, '') <> 'canceled'
       AND NOT EXISTS (
         SELECT 1
@@ -1412,19 +1450,12 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
     }
 
     try {
-      const observation = await recordTripReturnObservation(row, match);
-      await recordTripReturnGeoMessage(row, match);
-      await transitionTripStage(row.id, "turnaround", {
-        changedBy: "system:return-geo-location",
-        changedAt: observation.returned_at,
-        reason: `return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}; ${observation.return_late_minutes || 0} minute(s) late`,
-      });
-      await transitionTripStage(row.id, "awaiting_expenses", {
-        changedBy: "system:return-geo-location",
-        changedAt: observation.returned_at,
-        reason: `trip ended and return GPS verified within ${match.milesAway.toFixed(2)} mi of ${match.location.label}; ${observation.return_late_minutes || 0} minute(s) late`,
-      });
-      advanced += 1;
+      const reconciliation = await reconcileTripReturnAtCurrentLocation(
+        row,
+        returnLocations,
+        primaryParking
+      );
+      if (reconciliation.returned) advanced += 1;
     } catch (err) {
       console.warn(
         `[alerts] return geo auto-stage skipped for trip ${row.id}: ${

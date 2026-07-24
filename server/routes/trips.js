@@ -44,7 +44,8 @@ function isOverdueTrip(trip) {
     stage === "awaiting_expenses" ||
     stage === "complete" ||
     stage === "closed" ||
-    trip?.closed_out === true
+    trip?.closed_out === true ||
+    Boolean(trip?.returned_at)
   ) {
     return false;
   }

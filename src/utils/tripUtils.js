@@ -231,6 +231,7 @@ export function isOverdueTrip(trip) {
   if (!Number.isFinite(endMs) || endMs === Number.MAX_SAFE_INTEGER) return false;
   if (isCanceledTrip(trip)) return false;
   if (isClosedTrip(trip)) return false;
+  if (trip?.returned_at) return false;
 
   const stage = String(trip?.workflow_stage || "").toLowerCase();
   const status = String(trip?.display_status || "").toLowerCase();

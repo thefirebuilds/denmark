@@ -266,6 +266,7 @@ export default function SelectedTripPanel({
   const isOverdue =
     tripHasEnded &&
     workflowStage === "in_progress" &&
+    !selectedTrip?.returned_at &&
     !selectedTrip?.closed_out &&
     !isCanceledTrip;
   const telemetryPoint = getTelemetryPoint(selectedVehicle);
