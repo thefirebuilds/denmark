@@ -5,6 +5,7 @@
 // ------------------------------------------------------
 
 import { useEffect, useMemo, useState } from "react";
+import TripSpeedNote from "./TripSpeedNote";
 import {
   findVehicleForTrip,
   getVehicleLocationLabel,
@@ -739,6 +740,7 @@ if (urgency.dependencyNote) {
                   </div>
                 </div>
               )}
+              <TripSpeedNote trip={trip} />
             </article>
           );
         })}
@@ -804,6 +806,7 @@ if (urgency.dependencyNote) {
     <span className="trip-fact-value">{trip.meta4Value}</span>
   </div>
 </div>
+            <TripSpeedNote trip={trip} />
           </article>
         ))}
       </div>

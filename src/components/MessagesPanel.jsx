@@ -3107,6 +3107,29 @@ async function handleExportGuestInspectionSheet(message) {
   }, [selectedTrip?.id, selectedTrip?.closed_out, messageMode]);
 
   useEffect(() => {
+    const handleBankingReconciliationUpdated = () => {
+      try {
+        window.sessionStorage?.removeItem(LIVE_MESSAGE_CACHE_STORAGE_KEY);
+      } catch {
+        // Ignore storage access failures in restricted browser contexts.
+      }
+      forceMessageQueueRefreshRef.current = true;
+      lastFullQueueRefreshAtRef.current = 0;
+      void loadMessages(false);
+      void loadMessageStats();
+    };
+    window.addEventListener(
+      "banking:reconciliation-updated",
+      handleBankingReconciliationUpdated
+    );
+    return () =>
+      window.removeEventListener(
+        "banking:reconciliation-updated",
+        handleBankingReconciliationUpdated
+      );
+  }, [selectedTrip?.id, messageMode]);
+
+  useEffect(() => {
     if (!prepExport) return undefined;
 
     let cancelled = false;

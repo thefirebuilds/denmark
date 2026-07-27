@@ -8,6 +8,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const VEHICLES_API = `${API_BASE}/api/vehicles`;
+const BANKING_RECONCILIATION_UPDATED_EVENT = "banking:reconciliation-updated";
+
+function notifyBankingReconciliationUpdated() {
+  window.dispatchEvent(new CustomEvent(BANKING_RECONCILIATION_UPDATED_EVENT));
+  window.dispatchEvent(new CustomEvent("messages:stats-updated"));
+}
 
 function money(value) {
   const n = Number(value || 0);
@@ -1571,6 +1577,7 @@ export default function InboxPanel() {
 
       await loadSummary();
       await loadTransactions(() => false, rawMatchValue);
+      notifyBankingReconciliationUpdated();
     } catch (err) {
       setActionError(err.message || "Failed to ignore similar transactions.");
     } finally {
@@ -1580,6 +1587,7 @@ export default function InboxPanel() {
 
   async function refreshAfterAction(indexHint) {
     await loadSummary();
+    notifyBankingReconciliationUpdated();
 
     const params = new URLSearchParams({
       page: String(page),

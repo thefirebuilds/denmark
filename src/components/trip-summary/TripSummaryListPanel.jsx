@@ -6,6 +6,7 @@
 // ------------------------------------------------------------
 
 import { useMemo } from "react";
+import TripSpeedNote from "../TripSpeedNote";
 import {
   getMilesDriven,
   isTripInProgress,
@@ -346,6 +347,8 @@ export default function TripSummaryListPanel({
                     </div>
                   </div>
                 </div>
+
+                <TripSpeedNote trip={trip} />
 
                 {!!flags.length && (
                   <div className="panel-subbar">

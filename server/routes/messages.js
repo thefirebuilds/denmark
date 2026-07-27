@@ -16,6 +16,9 @@ const {
 const {
   suggestGuestReply,
 } = require("../services/guestReplySuggestionService");
+const {
+  onBankingReconciliationNoticeChanged,
+} = require("../services/banking/bankingReconciliationNotice");
 
 const bridgeEmailMismatchGraceMinutes = Number(
   process.env.BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES || 5
@@ -426,6 +429,8 @@ function invalidateMessageCaches() {
   messageQueueCache.clear();
   messageStatsCache = null;
 }
+
+onBankingReconciliationNoticeChanged(() => invalidateMessageCaches());
 
 let ensureNotificationAckColumnsPromise = null;
 let ensureDiagnosticSuppressionsPromise = null;

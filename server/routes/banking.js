@@ -67,6 +67,7 @@ function refreshReconciliationNotice() {
 router.post("/ignore-rules", async (req, res) => {
   try {
     const result = await createBankingIgnoreRule(req.body || {});
+    await refreshReconciliationNotice();
     res.status(201).json(result);
   } catch (err) {
     console.error("Failed to create Banking ignore rule:", err);
