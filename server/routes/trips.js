@@ -436,8 +436,12 @@ const TRIP_SELECT = `
     COALESCE(t.guest_name, ti.guest_name) AS guest_name,
     COALESCE(t.trip_start, ti.trip_start) AS trip_start,
     COALESCE(t.trip_end, ti.trip_end) AS trip_end,
-    t.pickup_location,
-    t.return_location,
+    COALESCE(t.pickup_location, message_location.pickup_location) AS pickup_location,
+    COALESCE(
+      t.return_location,
+      message_location.return_location,
+      message_location.pickup_location
+    ) AS return_location,
     COALESCE(t.status, ti.status) AS status,
     COALESCE(t.amount, ti.amount) AS amount,
     COALESCE(t.needs_review, ti.needs_review) AS needs_review,
@@ -500,6 +504,14 @@ const TRIP_SELECT = `
   FROM trip_intelligence ti
   JOIN trips t
     ON t.id = ti.id
+  LEFT JOIN LATERAL (
+    SELECT m.pickup_location, m.return_location
+    FROM messages m
+    WHERE m.reservation_id = t.reservation_id
+      AND (m.pickup_location IS NOT NULL OR m.return_location IS NOT NULL)
+    ORDER BY COALESCE(m.message_timestamp, m.created_at) DESC NULLS LAST
+    LIMIT 1
+  ) message_location ON true
   LEFT JOIN LATERAL (
     SELECT v.*
     FROM vehicles v

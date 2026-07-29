@@ -309,6 +309,14 @@ export default function SelectedTripPanel({
     ? new Date(selectedTrip.trip_end).getTime()
     : NaN;
   const tripHasEnded = Number.isFinite(tripEndMs) && tripEndMs <= Date.now();
+  const minutesLate = tripHasEnded
+    ? Math.max(0, Math.floor((Date.now() - tripEndMs) / 60000))
+    : 0;
+  const canReportLateReturn =
+    minutesLate >= 30 && Boolean(selectedTrip?.reservation_id);
+  const lateReturnUrl = selectedTrip?.reservation_id
+    ? `https://turo.com/us/en/report-issue/${encodeURIComponent(selectedTrip.reservation_id)}/select-issue`
+    : "";
   const workflowStage = String(selectedTrip?.workflow_stage || "").toLowerCase();
   const isOverdue =
     tripHasEnded &&
@@ -317,14 +325,16 @@ export default function SelectedTripPanel({
     !selectedTrip?.closed_out &&
     !isCanceledTrip;
   const telemetryPoint = getTelemetryPoint(selectedVehicle);
-  const bookedReturnLabel =
-    selectedTrip.return_location ||
-    selectedTrip.pickup_location ||
-    "Primary parking location";
   const configuredReturn = getConfiguredReturnLocation(
     selectedTrip,
     configuredLocations
   );
+  const bookedReturnLabel =
+    selectedTrip.return_location ||
+    selectedTrip.pickup_location ||
+    configuredReturn?.label ||
+    configuredReturn?.name ||
+    "Return location unavailable";
   const returnPoint = configuredReturn
     ? {
         lat: Number(configuredReturn.latitude ?? configuredReturn.lat),
@@ -765,6 +775,25 @@ function renderLocationLink(vehicle) {
             <div className="detail-overdue-actions">
               <button type="button" className="detail-action-button" onClick={() => onOpenVehicleMap?.(selectedVehicle?.id)} disabled={!selectedVehicle?.id}>Open Fleet Map</button>
               <button type="button" className="detail-action-button secondary" onClick={() => openUrl(directionsUrl)} disabled={!directionsUrl}>Directions to return</button>
+              <button
+                type="button"
+                className={`detail-action-button detail-late-return-button ${
+                  canReportLateReturn ? "detail-late-return-button--active" : ""
+                }`}
+                onClick={() => openUrl(lateReturnUrl)}
+                disabled={!canReportLateReturn}
+                title={
+                  canReportLateReturn
+                    ? `Open Turo late-return report for trip #${selectedTrip.reservation_id}`
+                    : selectedTrip?.reservation_id
+                    ? `Available in ${Math.max(0, 30 - minutesLate)} minutes`
+                    : "Reservation number unavailable"
+                }
+              >
+                {canReportLateReturn
+                  ? "Report late return"
+                  : `Report late return · ${Math.max(0, 30 - minutesLate)}m`}
+              </button>
             </div>
           </section>
         ) : null}
