@@ -152,11 +152,20 @@ function normalizeLocationText(value) {
 function getConfiguredReturnLocation(trip, locations) {
   const bookedLabel = trip?.return_location || trip?.pickup_location || "";
   const bookedText = normalizeLocationText(bookedLabel);
-  if (!bookedText) return null;
+  const enabledLocations = locations.filter((location) => {
+    const lat = Number(location?.latitude ?? location?.lat);
+    const lon = Number(location?.longitude ?? location?.lon ?? location?.lng);
+    return location?.enabled !== false && Number.isFinite(lat) && Number.isFinite(lon);
+  });
 
-  return (
-    locations.find((location) => {
-      const candidates = [location?.label, location?.name, location?.address]
+  const namedMatch = bookedText
+    ? enabledLocations.find((location) => {
+      const candidates = [
+        location?.label,
+        location?.name,
+        location?.address,
+        location?.id,
+      ]
         .map(normalizeLocationText)
         .filter(Boolean);
       return candidates.some(
@@ -165,8 +174,30 @@ function getConfiguredReturnLocation(trip, locations) {
           (candidate.length >= 6 && bookedText.includes(candidate)) ||
           (bookedText.length >= 6 && candidate.includes(bookedText))
       );
-    }) || null
-  );
+    })
+    : null;
+  if (namedMatch) return namedMatch;
+
+  // Keep this fallback aligned with server-side return geofence detection:
+  // ordinary Turo street-address text resolves to the primary parking lot,
+  // even though configured geofences retain only a friendly label and coords.
+  const primaryParking =
+    enabledLocations.find((location) =>
+      /(?:^|\b)(?:garlic creek|home|buda|78610)(?:\b|$)/i.test(
+        String(location?.label || "")
+      )
+    ) ||
+    enabledLocations.find(
+      (location) => String(location?.kind || "").toLowerCase() === "parking"
+    ) ||
+    enabledLocations[0] ||
+    null;
+  const explicitlyAlternate =
+    /(?:^| )(?:airport|terminal|hotel|delivery|delivered|station|garage)(?: |$)/.test(
+      bookedText
+    );
+
+  return explicitlyAlternate ? null : primaryParking;
 }
 
 export default function SelectedTripPanel({
