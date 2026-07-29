@@ -186,6 +186,16 @@
   background: linear-gradient(180deg, #f43f5e, #e11d48);
 }
 
+.detail-action-button--restore {
+  border-color: rgba(52, 211, 153, 0.75);
+  background: linear-gradient(180deg, #059669, #047857);
+  color: #fff;
+}
+
+.detail-action-button--restore:hover {
+  background: linear-gradient(180deg, #10b981, #059669);
+}
+
 .detail-overdue-kicker {
   color: #fca5a5;
   font-size: 0.68rem;

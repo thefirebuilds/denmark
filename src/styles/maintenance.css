@@ -1656,6 +1656,13 @@ select.drawer-input option {
   gap: 6px;
 }
 
+.fleet-maintenance-wiper-sizes {
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
 .fleet-maintenance-form-field {
   display: flex;
   flex-direction: column;

@@ -3866,6 +3866,22 @@ export default function FleetMaintenancePanel({
                               {item.value}
                             </div>
 
+                            {item.ruleCode === "wiper_replacement" ? (
+                              <div className="fleet-maintenance-wiper-sizes">
+                                Sizes: {[1, 2, 3]
+                                  .map(
+                                    (position) =>
+                                      item.lastEvent?.data?.[
+                                        `wiper_size_${position}_inches`
+                                      ]
+                                  )
+                                  .map((size) =>
+                                    size != null && size !== "" ? `${size}\"` : "—"
+                                  )
+                                  .join(" / ")}
+                              </div>
+                            ) : null}
+
                             <div
                               className={getRuleCountdownClass(
                                 item,

@@ -141,6 +141,15 @@ function renderHistorySummary(ruleCode, entry) {
     }
   }
 
+  if (code === "wiper_replacement" || code.includes("wiper")) {
+    const sizes = [
+      data.wiper_size_1_inches,
+      data.wiper_size_2_inches,
+      data.wiper_size_3_inches,
+    ].filter((value) => value != null && value !== "");
+    if (sizes.length) return `Wipers ${sizes.map((value) => `${value}\"`).join(" / ")}`;
+  }
+
   if (code.includes("clean")) {
     const bits = [];
     if (data.interior_cleaned) bits.push("Interior cleaned");
@@ -264,6 +273,9 @@ export default function InspectionItemDrawer({
     tieRodsOk: false,
     ballJointsOk: false,
     steeringPlayOk: false,
+    wiperSize1: "",
+    wiperSize2: "",
+    wiperSize3: "",
   });
 
   const recentHistory = useMemo(() => {
@@ -373,6 +385,18 @@ export default function InspectionItemDrawer({
           ? String(lastData.high_side_pressure_psi)
           : "",
       acCompressorEngages: Boolean(lastData.compressor_engages),
+      wiperSize1:
+        lastData.wiper_size_1_inches != null
+          ? String(lastData.wiper_size_1_inches)
+          : "",
+      wiperSize2:
+        lastData.wiper_size_2_inches != null
+          ? String(lastData.wiper_size_2_inches)
+          : "",
+      wiperSize3:
+        lastData.wiper_size_3_inches != null
+          ? String(lastData.wiper_size_3_inches)
+          : "",
     });
   }, [
     open,
@@ -416,6 +440,7 @@ export default function InspectionItemDrawer({
       code === "fluid_leak_check" ||
       code === "oil_change" ||
       code === "leak_check";
+    const isWiperReplacement = code === "wiper_replacement";
 
     const cleanedDotCode = normalizeDotCode(form.dotCode);
 
@@ -463,6 +488,20 @@ export default function InspectionItemDrawer({
 
     if (isAcPerformanceCheck && (form.acAmbientTempF === "" || form.acVentTempF === "")) {
       window.alert("Enter the outside air temperature and center vent temperature.");
+      return;
+    }
+
+
+    const wiperSizes = [form.wiperSize1, form.wiperSize2, form.wiperSize3];
+    if (
+      isWiperReplacement &&
+      wiperSizes.some(
+        (value) =>
+          value !== "" &&
+          (!Number.isFinite(Number(value)) || Number(value) <= 0 || Number(value) > 40)
+      )
+    ) {
+      window.alert("Enter wiper sizes in inches between 1 and 40.");
       return;
     }
 
@@ -547,6 +586,13 @@ export default function InspectionItemDrawer({
               coolant_ok: form.coolantOk,
               transmission_fluid_ok: form.transmissionFluidOk,
               power_steering_fluid_ok: form.powerSteeringFluidOk,
+            }
+          : {}),
+        ...(isWiperReplacement
+          ? {
+              wiper_size_1_inches: toNumberOrNull(form.wiperSize1),
+              wiper_size_2_inches: toNumberOrNull(form.wiperSize2),
+              wiper_size_3_inches: toNumberOrNull(form.wiperSize3),
             }
           : {}),
       },
@@ -686,6 +732,30 @@ export default function InspectionItemDrawer({
                 placeholder="4"
                 disabled={saving}
               />
+            </div>
+          ) : null}
+
+          {item.ruleCode === "wiper_replacement" ? (
+            <div className="drawer-field">
+              <label className="drawer-label">Wiper sizes (inches)</label>
+              <div className="drawer-check-grid">
+                {["wiperSize1", "wiperSize2", "wiperSize3"].map((field, index) => (
+                  <input
+                    key={field}
+                    className="drawer-input"
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="40"
+                    step="1"
+                    value={form[field]}
+                    onChange={(e) => updateField(field, e.target.value)}
+                    placeholder={`Wiper ${index + 1}`}
+                    aria-label={`Wiper ${index + 1} size in inches`}
+                    disabled={saving}
+                  />
+                ))}
+              </div>
             </div>
           ) : null}
 

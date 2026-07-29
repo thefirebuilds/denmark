@@ -207,6 +207,7 @@ export default function SelectedTripPanel({
   vehiclesError,
   onEditTrip,
   onAdvanceStage,
+  onRestoreTrip,
   stageSaving = false,
   onCloseoutSave,
   closeoutSaving = false,
@@ -707,24 +708,37 @@ function renderLocationLink(vehicle) {
             : formatStageActionLabel(nextStage)}
         </button>
 
-        <button
-          type="button"
-          className="detail-action-button secondary"
-          disabled={isCanceledTrip || stageSaving}
-          onClick={() => {
-            const confirmed = window.confirm(
-              "Cancel this trip in Denmark? This will set start and end to today, set mileage to 0, and keep the recorded earnings."
-            );
-            if (!confirmed) return;
-            onAdvanceStage?.(selectedTrip, "canceled", true);
-          }}
-        >
-          {stageSaving
-            ? "Saving..."
-            : isCanceledTrip
-            ? "Canceled"
-            : "Cancel trip"}
-        </button>
+        {isCanceledTrip ? (
+          <button
+            type="button"
+            className="detail-action-button detail-action-button--restore"
+            disabled={stageSaving}
+            onClick={() => {
+              const confirmed = window.confirm(
+                `Restore trip #${selectedTrip.reservation_id || selectedTrip.id}? Its original booking schedule and mileage allowance will be recovered from the stored booking message.`
+              );
+              if (!confirmed) return;
+              onRestoreTrip?.(selectedTrip);
+            }}
+          >
+            {stageSaving ? "Restoring..." : "Restore canceled trip"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="detail-action-button secondary"
+            disabled={stageSaving}
+            onClick={() => {
+              const confirmed = window.confirm(
+                "Cancel this trip in Denmark? This will set start and end to today, set mileage to 0, and keep the recorded earnings."
+              );
+              if (!confirmed) return;
+              onAdvanceStage?.(selectedTrip, "canceled", true);
+            }}
+          >
+            {stageSaving ? "Saving..." : "Cancel trip"}
+          </button>
+        )}
       </div>
 
       <div className="detail-body">

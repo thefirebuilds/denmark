@@ -1317,6 +1317,99 @@ router.patch("/:id/stage", async (req, res) => {
   }
 });
 
+router.post("/:id/restore", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const tripId = Number(req.params.id);
+    if (!Number.isInteger(tripId) || tripId <= 0) {
+      return res.status(400).json({ error: "Invalid trip id" });
+    }
+
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        WITH original_booking AS (
+          SELECT
+            m.trip_start,
+            m.trip_end,
+            m.mileage_included,
+            m.pickup_location,
+            m.return_location
+          FROM messages m
+          JOIN trips source_trip ON source_trip.id = $1
+          WHERE m.reservation_id = source_trip.reservation_id
+            AND (m.trip_start IS NOT NULL OR m.trip_end IS NOT NULL)
+          ORDER BY COALESCE(m.message_timestamp, m.created_at) DESC NULLS LAST
+          LIMIT 1
+        )
+        UPDATE trips t
+        SET
+          trip_start = COALESCE(original_booking.trip_start, t.trip_start),
+          trip_end = COALESCE(original_booking.trip_end, t.trip_end),
+          mileage_included = COALESCE(original_booking.mileage_included, t.mileage_included),
+          pickup_location = COALESCE(original_booking.pickup_location, t.pickup_location),
+          return_location = COALESCE(
+            original_booking.return_location,
+            original_booking.pickup_location,
+            t.return_location
+          ),
+          workflow_stage = CASE
+            WHEN original_booking.trip_start IS NOT NULL
+              AND original_booking.trip_start > NOW()
+            THEN 'confirmed'
+            ELSE 'in_progress'
+          END,
+          status = 'booked',
+          stage_updated_at = NOW(),
+          canceled_at = NULL,
+          closed_out = FALSE,
+          closed_out_at = NULL,
+          completed_at = NULL,
+          starting_odometer = NULL,
+          ending_odometer = NULL,
+          mileage_verified = FALSE,
+          needs_review = FALSE,
+          updated_at = NOW()
+        FROM original_booking
+        WHERE t.id = $1
+          AND (t.workflow_stage = 'canceled' OR t.status = 'canceled')
+        RETURNING t.*
+      `,
+      [tripId]
+    );
+
+    if (!result.rows[0]) {
+      const existing = await client.query(
+        "SELECT workflow_stage, status FROM trips WHERE id = $1",
+        [tripId]
+      );
+      await client.query("ROLLBACK");
+      if (!existing.rows[0]) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+      if (
+        existing.rows[0].workflow_stage !== "canceled" &&
+        existing.rows[0].status !== "canceled"
+      ) {
+        return res.status(400).json({ error: "Trip is not canceled" });
+      }
+      return res.status(409).json({
+        error: "Original booking dates were not found in stored messages",
+      });
+    }
+
+    await client.query("COMMIT");
+    void pushPublicAvailabilitySnapshotSafe("trip restored");
+    res.json(enrichTrip(result.rows[0]));
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(`POST /api/trips/${req.params.id}/restore failed:`, err);
+    res.status(500).json({ error: err.message || "Failed to restore trip" });
+  } finally {
+    client.release();
+  }
+});
+
 router.get("/:id/messages", async (req, res) => {
   try {
     await ensureVehicleAliasesTable();

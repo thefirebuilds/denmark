@@ -189,6 +189,27 @@ export default function DetailPanel({
     }
   }
 
+  async function handleRestoreTrip(trip) {
+    if (!trip?.id) return;
+
+    setStageSaving(true);
+    try {
+      const resp = await fetch(`${API_BASE}/api/trips/${trip.id}/restore`, {
+        method: "POST",
+      });
+      const body = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        throw new Error(body?.error || `HTTP ${resp.status}`);
+      }
+      onTripUpdated?.(body);
+    } catch (err) {
+      console.error("Failed to restore canceled trip:", err);
+      window.alert(err.message || "Failed to restore canceled trip");
+    } finally {
+      setStageSaving(false);
+    }
+  }
+
   async function handleCloseoutSave(trip, payload) {
     if (!trip?.id || !payload) return null;
 
@@ -249,6 +270,7 @@ export default function DetailPanel({
         vehiclesError={vehiclesError}
         onEditTrip={handleEditTrip}
         onAdvanceStage={handleAdvanceStage}
+        onRestoreTrip={handleRestoreTrip}
         stageSaving={stageSaving}
         onCloseoutSave={handleCloseoutSave}
         closeoutSaving={closeoutSaving}
