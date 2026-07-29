@@ -91,6 +91,7 @@ export default function TripSummary() {
 
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [restoringTripId, setRestoringTripId] = useState(null);
 
   function buildNewTripDraft() {
     const selectedVehicle =
@@ -429,6 +430,36 @@ async function handleSelectTrip(trip) {
     }
   }
 
+  async function handleRestoreTrip(trip) {
+    if (!trip?.id) return;
+    const confirmed = window.confirm(
+      `Restore canceled trip #${trip.reservation_id || trip.id}? The original booking details will be recovered from its stored message.`
+    );
+    if (!confirmed) return;
+
+    setRestoringTripId(trip.id);
+    try {
+      const restoreRes = await fetch(`${API_BASE}/api/trips/${trip.id}/restore`, {
+        method: "POST",
+      });
+      const restoreBody = await restoreRes.json().catch(() => null);
+      if (!restoreRes.ok) {
+        throw new Error(restoreBody?.error || "Failed to restore trip");
+      }
+
+      const detailRes = await fetch(`${API_BASE}/api/trip-summaries/${trip.id}`);
+      const restored = detailRes.ok ? await detailRes.json() : restoreBody;
+      setTrips((current) =>
+        current.map((item) => (item.id === restored.id ? restored : item))
+      );
+      if (selectedTrip?.id === restored.id) setSelectedTrip(restored);
+    } catch (err) {
+      window.alert(err.message || "Failed to restore canceled trip");
+    } finally {
+      setRestoringTripId(null);
+    }
+  }
+
   return (
     <div className="trip-summary-layout">
       <TripSummaryVehiclePanel
@@ -448,6 +479,8 @@ async function handleSelectTrip(trip) {
         onSelectTrip={handleSelectTrip}
         onCreateTrip={handleCreateTrip}
         vehicleStatuses={vehicles}
+        onRestoreTrip={handleRestoreTrip}
+        restoringTripId={restoringTripId}
       />
 
       <TripSummaryMetricsPanel
@@ -467,6 +500,8 @@ async function handleSelectTrip(trip) {
           }}
           onSave={handleSaveTrip}
           onDelete={handleDeleteTrip}
+          onRestore={handleRestoreTrip}
+          restoring={restoringTripId === selectedTrip.id}
         />
       ) : null}
     </div>

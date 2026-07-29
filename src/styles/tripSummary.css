@@ -1270,6 +1270,32 @@ body.drawer-open {
   line-height: 1.35;
 }
 
+.trip-ledger-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.trip-ledger-restore-button {
+  border: 1px solid rgba(52, 211, 153, 0.72);
+  border-radius: 9px;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, #059669, #047857);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.trip-ledger-restore-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #10b981, #059669);
+}
+
+.trip-ledger-restore-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .panel-error {
   border: 1px solid rgba(248, 113, 113, 0.3);
   background: rgba(127, 29, 29, 0.18);

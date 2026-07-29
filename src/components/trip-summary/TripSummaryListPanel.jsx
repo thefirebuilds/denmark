@@ -140,6 +140,8 @@ export default function TripSummaryListPanel({
   loading = false,
   loadError = "",
   vehicleStatuses = [],
+  onRestoreTrip,
+  restoringTripId = null,
 }) {
   const sortedTrips = useMemo(() => {
     return [...trips].sort((a, b) => {
@@ -258,6 +260,10 @@ export default function TripSummaryListPanel({
             const selected = trip.id === selectedTripId;
             const miles = getMilesDriven(trip, vehicleStatuses);
             const flags = getAuditFlags(trip, vehicleStatuses);
+            const canceled =
+              String(trip?.workflow_stage || "").toLowerCase() === "canceled" ||
+              String(trip?.status || "").toLowerCase() === "canceled" ||
+              String(trip?.display_status || "").toLowerCase() === "canceled";
 
             return (
               <article
@@ -349,6 +355,24 @@ export default function TripSummaryListPanel({
                 </div>
 
                 <TripSpeedNote trip={trip} />
+
+                {canceled ? (
+                  <div className="trip-ledger-card-actions">
+                    <button
+                      type="button"
+                      className="trip-ledger-restore-button"
+                      disabled={restoringTripId === trip.id}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRestoreTrip?.(trip);
+                      }}
+                    >
+                      {restoringTripId === trip.id
+                        ? "Restoring..."
+                        : "Restore canceled trip"}
+                    </button>
+                  </div>
+                ) : null}
 
                 {!!flags.length && (
                   <div className="panel-subbar">

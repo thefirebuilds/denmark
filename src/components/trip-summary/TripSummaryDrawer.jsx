@@ -114,8 +114,14 @@ export default function TripSummaryDrawer({
   onClose,
   onSave,
   onDelete,
+  onRestore,
+  restoring = false,
 }) {
   const isNewTrip = !trip?.id;
+  const isCanceledTrip =
+    String(trip?.workflow_stage || "").toLowerCase() === "canceled" ||
+    String(trip?.status || "").toLowerCase() === "canceled" ||
+    String(trip?.display_status || "").toLowerCase() === "canceled";
   const [form, setForm] = useState({
     reservation_id: "",
     guest_name: "",
@@ -936,6 +942,17 @@ async function handleSubmit(e) {
             >
               Delete
             </button>
+
+            {isCanceledTrip ? (
+              <button
+                type="button"
+                className="trip-ledger-restore-button"
+                onClick={() => onRestore?.(trip)}
+                disabled={saving || restoring}
+              >
+                {restoring ? "Restoring..." : "Restore canceled trip"}
+              </button>
+            ) : null}
 
             <button
               type="submit"
