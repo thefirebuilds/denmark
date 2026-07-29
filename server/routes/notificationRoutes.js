@@ -279,6 +279,21 @@ function includesAny(text, phrases = []) {
   return phrases.some((phrase) => text.includes(phrase));
 }
 
+function isExplicitTripCancellation(text) {
+  return includesAny(text, [
+    "has cancelled their trip",
+    "has canceled their trip",
+    "trip has been cancelled",
+    "trip has been canceled",
+    "trip was cancelled",
+    "trip was canceled",
+    "turo has cancelled the trip",
+    "turo has canceled the trip",
+    "turo cancelled the trip",
+    "turo canceled the trip",
+  ]);
+}
+
 function classifyTuroNotification(event) {
   const text = buildSearchText(event);
   const source = cleanString(event?.source).toLowerCase();
@@ -340,7 +355,18 @@ function classifyTuroNotification(event) {
     return "booking_request";
   }
 
-  if (includesAny(text, ["cancelled", "canceled"])) {
+  if (
+    includesAny(text, [
+      "has changed their trip",
+      "has requested a change to their trip",
+      "new trip end",
+      "new trip start",
+    ])
+  ) {
+    return "trip_changed";
+  }
+
+  if (isExplicitTripCancellation(text)) {
     return "trip_cancelled";
   }
 

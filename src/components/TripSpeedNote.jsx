@@ -1,12 +1,14 @@
 const TOS_SPEED_THRESHOLD_MPH = 80;
 
-export default function TripSpeedNote({ trip }) {
+export default function TripSpeedNote({ trip, violationsOnly = false }) {
   const maxSpeed = Number(trip?.max_speed_mph);
   const overThresholdCount = Number(trip?.speed_over_80_count);
   const hasSpeed = Number.isFinite(maxSpeed) && maxSpeed >= 0;
   const likelyTosViolation =
     (hasSpeed && maxSpeed > TOS_SPEED_THRESHOLD_MPH) ||
     (Number.isFinite(overThresholdCount) && overThresholdCount > 0);
+
+  if (violationsOnly && !likelyTosViolation) return null;
 
   return (
     <div
@@ -24,4 +26,3 @@ export default function TripSpeedNote({ trip }) {
     </div>
   );
 }
-

@@ -740,7 +740,7 @@ if (urgency.dependencyNote) {
                   </div>
                 </div>
               )}
-              <TripSpeedNote trip={trip} />
+              <TripSpeedNote trip={trip} violationsOnly />
             </article>
           );
         })}
@@ -806,7 +806,7 @@ if (urgency.dependencyNote) {
     <span className="trip-fact-value">{trip.meta4Value}</span>
   </div>
 </div>
-            <TripSpeedNote trip={trip} />
+            <TripSpeedNote trip={trip} violationsOnly />
           </article>
         ))}
       </div>

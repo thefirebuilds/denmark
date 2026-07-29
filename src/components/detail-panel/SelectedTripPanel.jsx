@@ -142,6 +142,33 @@ function formatDriveEstimate(miles) {
   return `~${hours} hr${remainder ? ` ${remainder} min` : ""}`;
 }
 
+function normalizeLocationText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getConfiguredReturnLocation(trip, locations) {
+  const bookedLabel = trip?.return_location || trip?.pickup_location || "";
+  const bookedText = normalizeLocationText(bookedLabel);
+  if (!bookedText) return null;
+
+  return (
+    locations.find((location) => {
+      const candidates = [location?.label, location?.name, location?.address]
+        .map(normalizeLocationText)
+        .filter(Boolean);
+      return candidates.some(
+        (candidate) =>
+          candidate === bookedText ||
+          (candidate.length >= 6 && bookedText.includes(candidate)) ||
+          (bookedText.length >= 6 && candidate.includes(bookedText))
+      );
+    }) || null
+  );
+}
+
 export default function SelectedTripPanel({
   selectedTrip,
   selectedVehicleInfo,
@@ -174,11 +201,7 @@ export default function SelectedTripPanel({
     closed_out: false,
   });
   const [closeoutSavedNotice, setCloseoutSavedNotice] = useState("");
-  const [homeLocation, setHomeLocation] = useState({
-    lat: 30.0852,
-    lon: -97.8431,
-    label: "Buda, TX 78610",
-  });
+  const [configuredLocations, setConfiguredLocations] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,14 +211,7 @@ export default function SelectedTripPanel({
         const locations = Array.isArray(json?.value?.locations)
           ? json.value.locations
           : [];
-        const home =
-          locations.find((item) => String(item?.kind || "").toLowerCase() === "home") ||
-          locations.find((item) => /home|buda|78610/i.test(String(item?.label || "")));
-        const lat = Number(home?.latitude ?? home?.lat);
-        const lon = Number(home?.longitude ?? home?.lon ?? home?.lng);
-        if (!cancelled && Number.isFinite(lat) && Number.isFinite(lon)) {
-          setHomeLocation({ lat, lon, label: home?.label || "Buda, TX 78610" });
-        }
+        if (!cancelled) setConfiguredLocations(locations);
       })
       .catch(() => null);
     return () => {
@@ -270,7 +286,27 @@ export default function SelectedTripPanel({
     !selectedTrip?.closed_out &&
     !isCanceledTrip;
   const telemetryPoint = getTelemetryPoint(selectedVehicle);
-  const milesFromHome = distanceMiles(homeLocation, telemetryPoint);
+  const bookedReturnLabel =
+    selectedTrip.return_location ||
+    selectedTrip.pickup_location ||
+    "Primary parking location";
+  const configuredReturn = getConfiguredReturnLocation(
+    selectedTrip,
+    configuredLocations
+  );
+  const returnPoint = configuredReturn
+    ? {
+        lat: Number(configuredReturn.latitude ?? configuredReturn.lat),
+        lon: Number(
+          configuredReturn.longitude ?? configuredReturn.lon ?? configuredReturn.lng
+        ),
+      }
+    : null;
+  const hasReturnPoint =
+    Number.isFinite(returnPoint?.lat) && Number.isFinite(returnPoint?.lon);
+  const milesToReturn = hasReturnPoint
+    ? distanceMiles(telemetryPoint, returnPoint)
+    : null;
   const mileageOver =
     mileageStats.allowed != null && mileageStats.used != null
       ? Math.max(0, mileageStats.used - mileageStats.allowed)
@@ -285,8 +321,8 @@ export default function SelectedTripPanel({
       ? `Moving at ${Math.round(currentSpeed)} mph`
       : "Parked / engine off"
     : "Awaiting telemetry";
-  const directionsUrl = telemetryPoint
-    ? `https://www.google.com/maps/dir/?api=1&origin=78610&destination=${telemetryPoint.lat},${telemetryPoint.lon}`
+  const directionsUrl = telemetryPoint && hasReturnPoint
+    ? `https://www.google.com/maps/dir/?api=1&origin=${telemetryPoint.lat},${telemetryPoint.lon}&destination=${returnPoint.lat},${returnPoint.lon}`
     : "";
   const mapUrl = telemetryPoint
     ? `https://www.openstreetmap.org/export/embed.html?bbox=${telemetryPoint.lon - 0.08}%2C${telemetryPoint.lat - 0.06}%2C${telemetryPoint.lon + 0.08}%2C${telemetryPoint.lat + 0.06}&layer=mapnik&marker=${telemetryPoint.lat}%2C${telemetryPoint.lon}`
@@ -661,11 +697,31 @@ function renderLocationLink(vehicle) {
               <strong>{deriveReturnEta(selectedTrip)}</strong>
             </div>
 
+            <div className="detail-return-breadcrumb" aria-label="Distance to required return location">
+              <div className="detail-return-breadcrumb__point">
+                <span>Now</span>
+                <strong>{vehicleBehavior}</strong>
+              </div>
+              <div className="detail-return-breadcrumb__travel">
+                <span aria-hidden="true">&#8594;</span>
+                <strong>
+                  {Number.isFinite(milesToReturn)
+                    ? `${milesToReturn < 10 ? milesToReturn.toFixed(1) : Math.round(milesToReturn)} mi · ${formatDriveEstimate(milesToReturn)}`
+                    : "Return coordinates unavailable"}
+                </strong>
+                <span aria-hidden="true">&#8594;</span>
+              </div>
+              <div className="detail-return-breadcrumb__point detail-return-breadcrumb__point--return">
+                <span>Required return</span>
+                <strong>{bookedReturnLabel}</strong>
+              </div>
+            </div>
+
             <div className="detail-overdue-facts">
               <div><span>Current behavior</span><strong>{vehicleBehavior}</strong></div>
               <div><span>Current location</span><strong>{selectedVehicle ? renderLocationLink(selectedVehicle) : "Awaiting telemetry"}</strong></div>
-              <div><span>Required return</span><strong>{selectedTrip.return_location || selectedTrip.pickup_location || "Primary parking location"}</strong></div>
-              <div><span>From Buda / 78610</span><strong>{Number.isFinite(milesFromHome) ? `${Math.round(milesFromHome)} mi straight-line / ${formatDriveEstimate(milesFromHome)} drive` : "Awaiting home/GPS coordinates"}</strong></div>
+              <div><span>Required return</span><strong>{bookedReturnLabel}</strong></div>
+              <div><span>Distance to return</span><strong>{Number.isFinite(milesToReturn) ? `${milesToReturn < 10 ? milesToReturn.toFixed(1) : Math.round(milesToReturn)} mi straight-line / ${formatDriveEstimate(milesToReturn)} estimated drive` : "Return location needs configured coordinates"}</strong></div>
               <div><span>Mileage position</span><strong>{mileageOver == null ? "Awaiting odometer" : mileageOver > 0 ? `${Math.round(mileageOver).toLocaleString("en-US")} mi over allowance` : `${Math.round(mileageStats.remaining || 0).toLocaleString("en-US")} mi remaining`}</strong></div>
               <div><span>Last GPS update</span><strong>{selectedVehicle ? formatRelativeComm(selectedVehicle?.telemetry?.last_comm) : "Awaiting telemetry"}</strong></div>
               <div><span>Telemetry status</span><strong>{selectedVehicleCommAlert?.label || `${getTelemetrySourceLabel(selectedVehicle)} reporting`}</strong></div>
@@ -677,7 +733,7 @@ function renderLocationLink(vehicle) {
 
             <div className="detail-overdue-actions">
               <button type="button" className="detail-action-button" onClick={() => onOpenVehicleMap?.(selectedVehicle?.id)} disabled={!selectedVehicle?.id}>Open Fleet Map</button>
-              <button type="button" className="detail-action-button secondary" onClick={() => openUrl(directionsUrl)} disabled={!directionsUrl}>Directions from 78610</button>
+              <button type="button" className="detail-action-button secondary" onClick={() => openUrl(directionsUrl)} disabled={!directionsUrl}>Directions to return</button>
             </div>
           </section>
         ) : null}
