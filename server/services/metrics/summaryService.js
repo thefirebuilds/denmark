@@ -646,6 +646,8 @@ async function fetchTollChargesInRange(client, startDate, endDate) {
         tc.id,
         tc.trxn_at,
         tc.posted_at,
+        tc.created_at,
+        tc.updated_at,
         tc.amount,
         tc.license_plate,
         tc.license_state,
@@ -750,6 +752,8 @@ async function fetchTollChargesForTripIds(client, tripIds) {
         tc.id,
         tc.trxn_at,
         tc.posted_at,
+        tc.created_at,
+        tc.updated_at,
         tc.amount,
         tc.review_status,
         tc.match_status,
@@ -907,6 +911,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
     }
 
     const attributedTollTotalsByTripId = new Map();
+    const tollTimingByTripId = new Map();
     for (const charge of allMatchedTripCharges) {
       if (!charge?.matched_trip_id) continue;
       const tripId = Number(charge.matched_trip_id);
@@ -915,6 +920,42 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         tripId,
         current + Number(charge.amount || 0)
       );
+      const timing = tollTimingByTripId.get(tripId) || {
+        last_toll_received_at: null,
+        charges: [],
+      };
+      const receivedAt = charge.created_at || charge.posted_at || charge.trxn_at;
+      if (
+        receivedAt &&
+        (!timing.last_toll_received_at ||
+          new Date(receivedAt).getTime() > new Date(timing.last_toll_received_at).getTime())
+      ) {
+        timing.last_toll_received_at = receivedAt;
+      }
+      timing.charges.push(charge);
+      tollTimingByTripId.set(tripId, timing);
+    }
+
+    function getTollAuditTiming(trip, invoice) {
+      const timing = tollTimingByTripId.get(Number(trip.id)) || {};
+      const billedAt = invoice?.charged_at || null;
+      const billedMs = billedAt ? new Date(billedAt).getTime() : NaN;
+      const postBillingCharges = Number.isFinite(billedMs)
+        ? (timing.charges || []).filter((charge) => {
+            const receivedMs = new Date(
+              charge.created_at || charge.posted_at || charge.trxn_at || 0
+            ).getTime();
+            return Number.isFinite(receivedMs) && receivedMs > billedMs;
+          })
+        : [];
+      return {
+        billed_at: billedAt,
+        last_toll_received_at: timing.last_toll_received_at || null,
+        post_billing_toll_count: postBillingCharges.length,
+        post_billing_toll_amount: roundMoney(
+          postBillingCharges.reduce((sum, charge) => sum + Number(charge.amount || 0), 0)
+        ),
+      };
     }
 
     const outstandingTrips = trips
@@ -942,6 +983,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           (chargedTollAmount != null &&
             settlementBasis > 0 &&
             chargedTollAmount + 0.01 >= settlementBasis);
+        const auditTiming = getTollAuditTiming(trip, invoice);
         return {
           trip_id: trip.id,
           reservation_id: trip.reservation_id || null,
@@ -960,6 +1002,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
               ? null
               : roundMoney(chargedTollAmount - attributedTollAmount),
           charged_at: invoice?.charged_at || null,
+          ...auditTiming,
           toll_review_status: getNormalizedTollStatus(trip),
           workflow_stage: trip.workflow_stage || null,
           expense_status: trip.expense_status || null,
@@ -992,7 +1035,8 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         }
 
         const tollDelta = roundMoney((chargedTollAmount || 0) - attributedTollAmount);
-        if (Math.abs(tollDelta) < 0.01) return null;
+        if (tollDelta >= -0.01) return null;
+        const auditTiming = getTollAuditTiming(trip, invoice);
 
         return {
           trip_id: trip.id,
@@ -1011,11 +1055,48 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           workflow_stage: trip.workflow_stage || null,
           expense_status: trip.expense_status || null,
           charged_at: invoice?.charged_at || null,
+          ...auditTiming,
+          loss_amount: roundMoney(attributedTollAmount - (chargedTollAmount || 0)),
           recovered,
         };
       })
       .filter(Boolean)
-      .sort((a, b) => Math.abs(Number(b.toll_delta || 0)) - Math.abs(Number(a.toll_delta || 0)));
+      .sort((a, b) => Number(b.loss_amount || 0) - Number(a.loss_amount || 0));
+
+    const postBillingTrips = trips
+      .map((trip) => {
+        const invoice =
+          latestTollInvoiceByTripKey.get(`trip:${trip.id}`) ||
+          latestTollInvoiceByTripKey.get(`reservation:${trip.reservation_id}`) ||
+          null;
+        if (!invoice?.charged_at) return null;
+        const timing = getTollAuditTiming(trip, invoice);
+        if (!timing.post_billing_toll_count) return null;
+        return {
+          trip_id: trip.id,
+          reservation_id: trip.reservation_id || null,
+          guest_name: trip.guest_name || null,
+          vehicle_name: trip.vehicle_name || null,
+          vehicle_nickname: trip.vehicle_nickname || null,
+          vehicle_plate: trip.vehicle_plate || null,
+          trip_start: trip.trip_start || null,
+          trip_end: trip.trip_end || null,
+          charged_toll_amount:
+            trip.toll_charged_total == null
+              ? invoice.charged_toll_amount
+              : roundMoney(trip.toll_charged_total),
+          attributed_toll_amount: roundMoney(
+            attributedTollTotalsByTripId.get(Number(trip.id)) || 0
+          ),
+          ...timing,
+        };
+      })
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          new Date(b.last_toll_received_at || 0).getTime() -
+          new Date(a.last_toll_received_at || 0).getTime()
+      );
 
     const unattributedCharges = tollCharges
       .filter(
@@ -1044,11 +1125,21 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         trips: outstandingTrips,
       },
       discrepancies: {
-        total_delta: roundMoney(
-          discrepancyTrips.reduce((sum, item) => sum + Math.abs(Number(item.toll_delta || 0)), 0)
+        total_loss: roundMoney(
+          discrepancyTrips.reduce((sum, item) => sum + Number(item.loss_amount || 0), 0)
         ),
         count: discrepancyTrips.length,
         trips: discrepancyTrips,
+      },
+      post_billing: {
+        total_amount: roundMoney(
+          postBillingTrips.reduce(
+            (sum, item) => sum + Number(item.post_billing_toll_amount || 0),
+            0
+          )
+        ),
+        count: postBillingTrips.length,
+        trips: postBillingTrips,
       },
     };
   } finally {
@@ -1104,6 +1195,10 @@ async function getSummaryMetrics(rangeKey = "30d") {
       : [];
     const latestFmvEstimates = await getLatestVehicleFmvEstimates(client);
     const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
+    const matchedTollCharges = await fetchTollChargesForTripIds(
+      client,
+      trips.map((trip) => trip.id)
+    );
     const tollAccountBalance = await getTollAccountBalance(client);
 
     const tripIncome = trips.reduce(
@@ -1392,6 +1487,21 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
   return sum + Number(charge?.amount ?? 0);
 }, 0);
 
+const attributedByTripId = new Map();
+for (const charge of matchedTollCharges) {
+  const tripId = Number(charge.matched_trip_id);
+  attributedByTripId.set(
+    tripId,
+    Number(attributedByTripId.get(tripId) || 0) + Number(charge.amount || 0)
+  );
+}
+const tollsUnderbilledLoss = trips.reduce((sum, trip) => {
+  if (String(trip.toll_review_status || "").toLowerCase() !== "billed") return sum;
+  const attributed = Number(attributedByTripId.get(Number(trip.id)) || 0);
+  const charged = Number(trip.toll_charged_total || 0);
+  return sum + Math.max(0, attributed - charged);
+}, 0);
+
     const otherIncome = fuelReimbursements + tollRevenue;
     const revenue = tripIncome + otherIncome;
     const previousOtherIncome = previousFuelReimbursements + previousTollRevenue;
@@ -1674,6 +1784,7 @@ const tollsUnattributed = tollCharges.reduce((sum, charge) => {
       tolls_recovered: roundMoney(tollsRecovered),
       tolls_attributed_outstanding: roundMoney(tollsAttributedOutstanding),
       tolls_unattributed: roundMoney(tollsUnattributed),
+      tolls_underbilled_loss: roundMoney(tollsUnderbilledLoss),
       toll_account_balance: {
         ...tollAccountBalance,
         anchorBalance:

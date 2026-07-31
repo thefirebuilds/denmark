@@ -23,6 +23,29 @@ function formatDateTime(value) {
   });
 }
 
+function formatRelativeTime(value) {
+  if (!value) return "--";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "--";
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+function formatBilledStatus(value) {
+  if (!value) return "Billing date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Billing date unavailable";
+  return `Billed ${date.toLocaleDateString("en-US", {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  })}`;
+}
+
 function formatTripLabel(item) {
   if (item?.reservation_id && item?.guest_name) {
     return `Reservation #${item.reservation_id} - ${item.guest_name}`;
@@ -57,7 +80,7 @@ function groupTripsByVehicle(trips) {
     };
 
     current.trips.push(trip);
-    current.total_delta += Math.abs(Number(trip?.toll_delta || 0));
+    current.total_delta += Number(trip?.loss_amount || 0);
     groups.set(key, current);
   }
 
@@ -114,6 +137,7 @@ export default function TollAuditDrawer({
   const unattributed = detail?.unattributed || {};
   const outstanding = detail?.outstanding || {};
   const discrepancies = detail?.discrepancies || {};
+  const postBilling = detail?.post_billing || {};
   const discrepancyGroups = groupTripsByVehicle(discrepancies.trips || []);
 
   return (
@@ -141,6 +165,40 @@ export default function TollAuditDrawer({
             <div className="metrics-financial-empty">No toll detail available.</div>
           ) : (
             <>
+              <section className="toll-audit-section toll-audit-section--late">
+                <div className="toll-audit-section__header">
+                  <div className="toll-audit-section__title">Tolls Received After Billing</div>
+                  <div className="toll-audit-section__meta">
+                    {formatCurrency(postBilling.total_amount)} across{" "}
+                    {Number(postBilling.count ?? 0)} trip
+                    {Number(postBilling.count ?? 0) === 1 ? "" : "s"}
+                  </div>
+                </div>
+                <div className="toll-audit-list">
+                  {(postBilling.trips || []).map((trip) => (
+                    <article key={`post-billing-${trip.trip_id}`} className="toll-audit-item toll-audit-item--late">
+                      <div className="toll-audit-item__top">
+                        <div>
+                          <div className="toll-audit-item__title">{formatTripLabel(trip)}</div>
+                          <div className="toll-audit-item__meta">{formatVehicleLabel(trip)}</div>
+                        </div>
+                        <div className="toll-audit-item__amount">
+                          +{formatCurrency(trip.post_billing_toll_amount)}
+                        </div>
+                      </div>
+                      <div className="toll-audit-item__details">
+                        <span>{formatBilledStatus(trip.billed_at)}</span>
+                        <span>Last toll received: {formatRelativeTime(trip.last_toll_received_at)}</span>
+                        <span>{trip.post_billing_toll_count} toll{trip.post_billing_toll_count === 1 ? "" : "s"} arrived after billing</span>
+                      </div>
+                    </article>
+                  ))}
+                  {!postBilling.trips?.length ? (
+                    <div className="metrics-financial-empty">No tolls arrived after guest billing in this range.</div>
+                  ) : null}
+                </div>
+              </section>
+
               <section
                 className={`toll-audit-section ${
                   focus === "outstanding" ? "is-focused" : ""
@@ -177,6 +235,7 @@ export default function TollAuditDrawer({
                       <div className="toll-audit-item__details">
                         <span>Trip ended: {formatDateTime(trip.trip_end)}</span>
                         <span>Settlement: no billing or reconciliation recorded</span>
+                        <span>Last toll received: {formatRelativeTime(trip.last_toll_received_at)}</span>
                       </div>
                       <div className="toll-audit-item__details toll-audit-item__details--financial">
                         <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>
@@ -191,11 +250,15 @@ export default function TollAuditDrawer({
                 </div>
               </section>
 
-              <section className="toll-audit-section">
+              <section
+                className={`toll-audit-section ${
+                  focus === "discrepancies" ? "is-focused" : ""
+                }`}
+              >
                 <div className="toll-audit-section__header">
-                  <div className="toll-audit-section__title">Charge Discrepancies</div>
+                  <div className="toll-audit-section__title">Underbilled Toll Loss</div>
                   <div className="toll-audit-section__meta">
-                    {formatCurrency(discrepancies.total_delta)} across{" "}
+                    {formatCurrency(discrepancies.total_loss)} across{" "}
                     {Number(discrepancies.count ?? 0)} trip
                     {Number(discrepancies.count ?? 0) === 1 ? "" : "s"}
                   </div>
@@ -223,23 +286,29 @@ export default function TollAuditDrawer({
                               </div>
                             </div>
                             <div className="toll-audit-item__amount">
-                              {formatCurrency(trip.toll_delta)}
+                              {formatCurrency(trip.loss_amount)} loss
                             </div>
                           </div>
                           <div className="toll-audit-item__details">
                             <span>Vehicle: {formatVehicleLabel(trip)}</span>
-                            <span>Status: {trip.toll_review_status || "pending"}</span>
+                            <span>Status: {formatBilledStatus(trip.billed_at || trip.charged_at)}</span>
+                            <span>Last toll received: {formatRelativeTime(trip.last_toll_received_at)}</span>
                           </div>
                           <div className="toll-audit-item__details toll-audit-item__details--financial">
                             <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>
                             <span>Attributed: {formatCurrency(trip.attributed_toll_amount ?? 0)}</span>
                           </div>
+                          {trip.post_billing_toll_count > 0 ? (
+                            <div className="toll-audit-item__hint">
+                              Notice: {trip.post_billing_toll_count} toll{trip.post_billing_toll_count === 1 ? "" : "s"} totaling {formatCurrency(trip.post_billing_toll_amount)} arrived after billing.
+                            </div>
+                          ) : null}
                         </article>
                       ))}
                     </section>
                   ))}
                   {!discrepancies.trips?.length ? (
-                    <div className="metrics-financial-empty">No toll charge mismatches in this range.</div>
+                    <div className="metrics-financial-empty">No attributed tolls were underbilled in this range.</div>
                   ) : null}
                 </div>
               </section>

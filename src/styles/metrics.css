@@ -2328,6 +2328,16 @@
   }
 }
 
+.toll-audit-section--late {
+  border-color: rgba(251, 146, 60, 0.48);
+  background: rgba(124, 45, 18, 0.13);
+}
+
+.toll-audit-item--late {
+  border-color: rgba(251, 146, 60, 0.38);
+  box-shadow: inset 3px 0 0 #f97316;
+}
+
 /* --------------------------------------------------------------
    Vehicle comparison list
 -------------------------------------------------------------- */

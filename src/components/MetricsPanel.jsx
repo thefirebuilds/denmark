@@ -783,6 +783,13 @@ function BusinessHeartbeat({
           onClick={() => onOpenTollAudit?.("unattributed")}
         />
         <HeartbeatMetric
+          label="Underbilled Toll Loss"
+          value={formatCurrencyCompact(summary?.tolls_underbilled_loss)}
+          comp="Attributed tolls that were not billed to guests"
+          tone={Number(summary?.tolls_underbilled_loss ?? 0) > 0 ? "negative" : "positive"}
+          onClick={() => onOpenTollAudit?.("discrepancies")}
+        />
+        <HeartbeatMetric
           label="Parking Net"
           value={parkingSummary?.passNetValue == null ? "--" : formatSignedCurrency(parkingNet)}
           comp="Modeled parking value after fixed cost"
@@ -4107,6 +4114,13 @@ const mileageStats = useMemo(() => {
               detail="Toll charges with no associated trip"
               tone={Number(summary.tolls_unattributed ?? 0) > 0 ? "negative" : "positive"}
               onClick={() => openTollAudit("unattributed")}
+            />
+            <LedgerLine
+              label="Underbilled Toll Loss"
+              value={formatCurrencyCompact(summary.tolls_underbilled_loss)}
+              detail="Attributed tolls that were not billed to guests"
+              tone={Number(summary.tolls_underbilled_loss ?? 0) > 0 ? "negative" : "positive"}
+              onClick={() => openTollAudit("discrepancies")}
             />
           </CompactLedger>
 
