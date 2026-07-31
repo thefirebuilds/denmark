@@ -1527,6 +1527,7 @@ function mapCloseoutNoticeRow(row) {
     closeout_toll_count: row.toll_count,
     closeout_toll_total: row.toll_total,
     closeout_toll_arrival_delay_hours: row.toll_arrival_delay_hours,
+    closeout_unresolved_toll_count: row.unresolved_toll_count,
     starting_odometer: row.starting_odometer,
     ending_odometer: row.ending_odometer,
     has_tolls: row.has_tolls,
@@ -3746,7 +3747,16 @@ router.get("/", async (req, res) => {
           t.toll_count,
           t.toll_total,
           t.toll_review_status,
-          toll_arrival_window.delay_hours AS toll_arrival_delay_hours
+          toll_arrival_window.delay_hours AS toll_arrival_delay_hours,
+          (
+            SELECT COUNT(*)::integer
+            FROM toll_charges unresolved
+            WHERE unresolved.matched_trip_id IS NULL
+              AND unresolved.matched_vehicle_id = v.id
+              AND unresolved.trxn_at BETWEEN t.trip_start - INTERVAL '2 hours'
+                AND t.trip_end + make_interval(hours => toll_arrival_window.delay_hours)
+              AND COALESCE(unresolved.review_status, '') NOT IN ('dismissed', 'ignored')
+          ) AS unresolved_toll_count
         FROM trips t
         CROSS JOIN toll_arrival_window
         LEFT JOIN vehicles v
@@ -3802,6 +3812,7 @@ router.get("/", async (req, res) => {
         c.toll_total,
         c.toll_review_status,
         c.toll_arrival_delay_hours,
+        c.unresolved_toll_count,
         latest_fuel.fuel_level AS latest_fuel_level,
         latest_fuel.service_name AS latest_fuel_source,
         latest_fuel.fuel_at AS latest_fuel_at,
@@ -3823,6 +3834,7 @@ router.get("/", async (req, res) => {
             COALESCE(c.has_tolls, false) = true
             OR COALESCE(c.toll_count, 0) > 0
             OR COALESCE(c.toll_total, 0) > 0
+            OR COALESCE(c.unresolved_toll_count, 0) > 0
           )
           AND COALESCE(c.toll_review_status, '') NOT IN ('billed', 'waived')
         ) AS tolls_pending,
@@ -3865,6 +3877,7 @@ router.get("/", async (req, res) => {
               COALESCE(c.has_tolls, false) = true
               OR COALESCE(c.toll_count, 0) > 0
               OR COALESCE(c.toll_total, 0) > 0
+              OR COALESCE(c.unresolved_toll_count, 0) > 0
             )
             AND COALESCE(c.toll_review_status, '') NOT IN ('billed', 'waived')
           )

@@ -28,6 +28,7 @@ const {
   getLatestVehicleFmvEstimates,
 } = require("../vehicles/fmvEstimateService");
 const { getTollAccountBalance } = require("./tollAccountBalanceService");
+const { ensureTollAuditSchema } = require("../tolls/tollAuditService");
 
 async function fetchTripsInRange(client, startDate, endDate) {
   const { rows } = await client.query(
@@ -648,6 +649,8 @@ async function fetchTollChargesInRange(client, startDate, endDate) {
         tc.posted_at,
         tc.created_at,
         tc.updated_at,
+        tc.attributed_at,
+        tc.attributed_by,
         tc.amount,
         tc.license_plate,
         tc.license_state,
@@ -754,6 +757,8 @@ async function fetchTollChargesForTripIds(client, tripIds) {
         tc.posted_at,
         tc.created_at,
         tc.updated_at,
+        tc.attributed_at,
+        tc.attributed_by,
         tc.amount,
         tc.review_status,
         tc.match_status,
@@ -816,6 +821,28 @@ async function fetchTollInvoiceMessages(client, tripIds, reservationIds) {
   return rows;
 }
 
+async function fetchLatestTollBillingSnapshots(client, tripIds) {
+  const validTripIds = [...new Set(tripIds.map(Number).filter(Number.isInteger))];
+  if (!validTripIds.length) return [];
+  const { rows } = await client.query(
+    `
+      SELECT DISTINCT ON (s.trip_id)
+        s.*,
+        COALESCE(
+          ARRAY_AGG(i.toll_charge_id) FILTER (WHERE i.toll_charge_id IS NOT NULL),
+          ARRAY[]::bigint[]
+        ) AS toll_charge_ids
+      FROM trip_toll_billing_snapshots s
+      LEFT JOIN trip_toll_billing_snapshot_items i ON i.snapshot_id = s.id
+      WHERE s.trip_id = ANY($1::int[])
+      GROUP BY s.id
+      ORDER BY s.trip_id, s.billed_at DESC, s.id DESC
+    `,
+    [validTripIds]
+  );
+  return rows;
+}
+
 function mapUnattributedTollCharge(row) {
   return {
     toll_charge_id: row.id,
@@ -869,6 +896,7 @@ function mapUnattributedTollCharge(row) {
 }
 
 async function getTollMetricsDetail(rangeKey = "30d") {
+  await ensureTollAuditSchema();
   const { key, startDate, endDate } = getDateRange(rangeKey);
   const client = await pool.connect();
 
@@ -887,6 +915,13 @@ async function getTollMetricsDetail(rangeKey = "30d") {
       client,
       trips.map((trip) => trip.id),
       trips.map((trip) => trip.reservation_id)
+    );
+    const billingSnapshots = await fetchLatestTollBillingSnapshots(
+      client,
+      trips.map((trip) => trip.id)
+    );
+    const billingSnapshotByTripId = new Map(
+      billingSnapshots.map((snapshot) => [Number(snapshot.trip_id), snapshot])
     );
 
     const latestTollInvoiceByTripKey = new Map();
@@ -938,14 +973,26 @@ async function getTollMetricsDetail(rangeKey = "30d") {
 
     function getTollAuditTiming(trip, invoice) {
       const timing = tollTimingByTripId.get(Number(trip.id)) || {};
-      const billedAt = invoice?.charged_at || null;
+      const snapshot = billingSnapshotByTripId.get(Number(trip.id)) || null;
+      const billedAt = snapshot?.billed_at || invoice?.charged_at || null;
       const billedMs = billedAt ? new Date(billedAt).getTime() : NaN;
+      const snapshotIds = new Set(
+        (snapshot?.toll_charge_ids || []).map((value) => Number(value))
+      );
       const postBillingCharges = Number.isFinite(billedMs)
         ? (timing.charges || []).filter((charge) => {
             const receivedMs = new Date(
               charge.created_at || charge.posted_at || charge.trxn_at || 0
             ).getTime();
             return Number.isFinite(receivedMs) && receivedMs > billedMs;
+          })
+        : [];
+      const assignedAfterBilling = Number.isFinite(billedMs) && snapshot
+        ? (timing.charges || []).filter((charge) => {
+            if (snapshotIds.has(Number(charge.id))) return false;
+            const attributedMs = new Date(charge.attributed_at || 0).getTime();
+            const receivedMs = new Date(charge.created_at || 0).getTime();
+            return attributedMs > billedMs && receivedMs <= billedMs;
           })
         : [];
       return {
@@ -955,6 +1002,23 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         post_billing_toll_amount: roundMoney(
           postBillingCharges.reduce((sum, charge) => sum + Number(charge.amount || 0), 0)
         ),
+        post_billing_assignment_count: assignedAfterBilling.length,
+        post_billing_assignment_amount: roundMoney(
+          assignedAfterBilling.reduce(
+            (sum, charge) => sum + Number(charge.amount || 0),
+            0
+          )
+        ),
+        billing_snapshot_available: Boolean(snapshot),
+        attributed_at_billing: snapshot
+          ? roundMoney(snapshot.attributed_amount)
+          : null,
+        unresolved_at_billing: snapshot
+          ? Number(snapshot.unresolved_vehicle_window_count || 0)
+          : null,
+        discrepancy_at_billing: snapshot
+          ? Number(snapshot.attributed_amount || 0) - Number(snapshot.billed_amount || 0) > 0.009
+          : null,
       };
     }
 
@@ -1071,7 +1135,10 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           null;
         if (!invoice?.charged_at) return null;
         const timing = getTollAuditTiming(trip, invoice);
-        if (!timing.post_billing_toll_count) return null;
+        if (
+          !timing.post_billing_toll_count &&
+          !timing.post_billing_assignment_count
+        ) return null;
         return {
           trip_id: trip.id,
           reservation_id: trip.reservation_id || null,
@@ -1160,7 +1227,10 @@ async function getTollMetricsDetail(rangeKey = "30d") {
       post_billing: {
         total_amount: roundMoney(
           postBillingTrips.reduce(
-            (sum, item) => sum + Number(item.post_billing_toll_amount || 0),
+            (sum, item) =>
+              sum +
+              Number(item.post_billing_toll_amount || 0) +
+              Number(item.post_billing_assignment_amount || 0),
             0
           )
         ),
@@ -1183,6 +1253,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
 }
 
 async function getSummaryMetrics(rangeKey = "30d") {
+  await ensureTollAuditSchema();
   const { key, startDate, endDate } = getDateRange(rangeKey);
   const previousRange = getPreviousDateRange(startDate, endDate);
   const yearOverYearRange =

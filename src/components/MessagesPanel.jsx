@@ -1658,14 +1658,18 @@ function buildTollCloseoutDetail(message) {
     24,
     Number(message?.closeout_toll_arrival_delay_hours || 24)
   );
+  const unresolved = Number(message?.closeout_unresolved_toll_count || 0);
+  const unresolvedText = unresolved > 0
+    ? ` ${unresolved} vehicle-window toll${unresolved === 1 ? " is" : "s are"} still unresolved and must be assigned or dismissed before billing.`
+    : " No unresolved vehicle-window tolls remain.";
 
   if (count > 0 || total > 0) {
     const tollLabel =
       count > 0 ? `${count} toll${count === 1 ? "" : "s"}` : "Tolls";
-    return `${tollLabel} totaling ${formatMoney(total)} need Turo billing review. Current status: ${status}. Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
+    return `${tollLabel} totaling ${formatMoney(total)} need Turo billing review. Current status: ${status}.${unresolvedText} Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
   }
 
-  return `Audit HCTRA tolls against Turo billing. Current status: ${status}. Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
+  return `Audit HCTRA tolls against Turo billing. Current status: ${status}.${unresolvedText} Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
 }
 
 function buildCloseoutActionItems(message) {

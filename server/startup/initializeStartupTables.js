@@ -53,6 +53,7 @@ const {
 const {
   backfillTripLocationsFromStoredMessages,
 } = require("../services/saveMessage");
+const { ensureTollAuditSchema } = require("../services/tolls/tollAuditService");
 
 const STARTUP_ENSURE_TIMEOUT_MS = Number(
   process.env.STARTUP_ENSURE_TIMEOUT_MS || 30000
@@ -101,6 +102,7 @@ async function initializeStartupTables() {
     ["vehicle runtime schema", ensureVehicleRuntimeSchema],
     ["trip runtime schema", ensureTripRuntimeSchema],
     ["maintenance runtime schema", ensureMaintenanceRuntimeSchema],
+    ["toll audit schema", ensureTollAuditSchema],
     ["income tables", ensureIncomeTables],
     ["fleet alerts", ensureFleetAlertTables],
     ["Google Calendar health columns", ensureGoogleCalendarConnectionHealthColumns],

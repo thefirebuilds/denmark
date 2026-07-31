@@ -177,7 +177,7 @@ export default function TollAuditDrawer({
 
               <section className="toll-audit-section toll-audit-section--late">
                 <div className="toll-audit-section__header">
-                  <div className="toll-audit-section__title">Tolls Received After Billing</div>
+                  <div className="toll-audit-section__title">Toll Changes After Billing</div>
                   <div className="toll-audit-section__meta">
                     {formatCurrency(postBilling.total_amount)} across{" "}
                     {Number(postBilling.count ?? 0)} trip
@@ -193,18 +193,26 @@ export default function TollAuditDrawer({
                           <div className="toll-audit-item__meta">{formatVehicleLabel(trip)}</div>
                         </div>
                         <div className="toll-audit-item__amount">
-                          +{formatCurrency(trip.post_billing_toll_amount)}
+                          +{formatCurrency(
+                            Number(trip.post_billing_toll_amount || 0) +
+                              Number(trip.post_billing_assignment_amount || 0)
+                          )}
                         </div>
                       </div>
                       <div className="toll-audit-item__details">
                         <span>{formatBilledStatus(trip.billed_at)}</span>
                         <span>Last toll received: {formatRelativeTime(trip.last_toll_received_at)}</span>
-                        <span>{trip.post_billing_toll_count} toll{trip.post_billing_toll_count === 1 ? "" : "s"} arrived after billing</span>
+                        {trip.post_billing_toll_count > 0 ? (
+                          <span>{trip.post_billing_toll_count} newly received after billing</span>
+                        ) : null}
+                        {trip.post_billing_assignment_count > 0 ? (
+                          <span>{trip.post_billing_assignment_count} existing toll{trip.post_billing_assignment_count === 1 ? " was" : "s were"} assigned after billing</span>
+                        ) : null}
                       </div>
                     </article>
                   ))}
                   {!postBilling.trips?.length ? (
-                    <div className="metrics-financial-empty">No tolls arrived after guest billing in this range.</div>
+                    <div className="metrics-financial-empty">No tolls were received or assigned after guest billing in this range.</div>
                   ) : null}
                 </div>
               </section>
@@ -315,12 +323,31 @@ export default function TollAuditDrawer({
                                   : "toll-audit-badge--clear"
                               }`}
                             >
-                              {trip.post_billing_toll_count > 0
-                                ? `${trip.post_billing_toll_count} toll${trip.post_billing_toll_count === 1 ? "" : "s"} after billing`
-                                : "No tolls after billing"}
+                              {!trip.billing_snapshot_available
+                                ? "Historical billing - cause not recorded"
+                                : trip.post_billing_toll_count > 0
+                                ? `${trip.post_billing_toll_count} newly received after billing`
+                                : "No new toll receipts after billing"}
                             </span>
+                            {trip.billing_snapshot_available ? (
+                              <span
+                                className={`toll-audit-badge ${
+                                  trip.post_billing_assignment_count > 0
+                                    ? "toll-audit-badge--late"
+                                    : "toll-audit-badge--clear"
+                                }`}
+                              >
+                                {trip.post_billing_assignment_count > 0
+                                  ? `${trip.post_billing_assignment_count} assigned after billing`
+                                  : "No assignments after billing"}
+                              </span>
+                            ) : null}
                             <span className="toll-audit-badge toll-audit-badge--audit">
-                              Billing audit discrepancy
+                              {trip.discrepancy_at_billing === true
+                                ? "Mismatch existed when billed"
+                                : trip.discrepancy_at_billing === false
+                                ? "Matched when billed"
+                                : "Current billing discrepancy"}
                             </span>
                           </div>
                           <div className="toll-audit-item__details toll-audit-item__details--financial">
@@ -330,6 +357,12 @@ export default function TollAuditDrawer({
                           <div className="toll-audit-equation">
                             {formatCurrency(trip.attributed_toll_amount ?? 0)} attributed - {formatCurrency(trip.charged_toll_amount ?? 0)} billed = {formatCurrency(trip.loss_amount)} loss
                           </div>
+                          {trip.billing_snapshot_available ? (
+                            <div className="toll-audit-item__details">
+                              <span>At billing: {formatCurrency(trip.attributed_at_billing)} attributed</span>
+                              <span>Unresolved candidates at billing: {trip.unresolved_at_billing}</span>
+                            </div>
+                          ) : null}
                           {trip.post_billing_toll_count > 0 ? (
                             <div className="toll-audit-item__hint">
                               Notice: {trip.post_billing_toll_count} toll{trip.post_billing_toll_count === 1 ? "" : "s"} totaling {formatCurrency(trip.post_billing_toll_amount)} arrived after billing.

@@ -8,6 +8,9 @@ const pool = require("../db");
 const { DateTime } = require("luxon");
 const upsertTripFromMessage = require("./upsertTripFromMessage");
 const { ensureMessageRuntimeSchema } = require("./messageRuntimeSchema");
+const {
+  captureTripTollBillingSnapshot,
+} = require("./tolls/tollAuditService");
 
 
 function clean(value) {
@@ -657,6 +660,8 @@ async function applyTripCloseoutSignalsFromMessage({
   tripId,
   messageType,
   normalizedTextBody,
+  invoiceMessageId = null,
+  invoiceTimestamp = null,
 }) {
   if (!tripId) {
     return;
@@ -701,6 +706,15 @@ async function applyTripCloseoutSignalsFromMessage({
     `,
     [tripId, tollInvoice, tollAmount, fuelInvoice?.fuelTotal ?? null]
   );
+
+  if (tollInvoice) {
+    await captureTripTollBillingSnapshot({
+      tripId,
+      invoiceMessageId,
+      billedAt: invoiceTimestamp,
+      billedAmount: tollAmount ?? 0,
+    });
+  }
 }
 
 function extractTripChangedFields(normalizedTextBody, subject = "", htmlBody = "") {
@@ -1168,6 +1182,9 @@ async function saveMessage(message) {
       tripId: trip.id,
       messageType,
       normalizedTextBody,
+      invoiceMessageId: savedMessage.id,
+      invoiceTimestamp:
+        savedMessage.message_timestamp || savedMessage.created_at || new Date(),
     });
   }
 

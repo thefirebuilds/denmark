@@ -1208,7 +1208,9 @@ CREATE TABLE public.toll_charges (
     review_status text DEFAULT 'pending'::text NOT NULL,
     raw_payload jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    attributed_at timestamp with time zone,
+    attributed_by text
 );
 
 

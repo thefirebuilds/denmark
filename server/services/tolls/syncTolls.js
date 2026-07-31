@@ -440,6 +440,7 @@ async function syncTolls() {
 
     client = await pool.connect();
     await client.query("BEGIN");
+    await client.query("SELECT set_config('denmark.toll_assignment_actor', 'automatic_sync', true)");
 
     runId = await createSyncRun(client);
 

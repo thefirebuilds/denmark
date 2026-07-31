@@ -327,6 +327,7 @@ router.put("/tolls/charges/:tollChargeId/assign-trip", async (req, res) => {
     }
 
     if (isOffTrip) {
+      await client.query("SELECT set_config('denmark.toll_assignment_actor', 'manual_metrics', true)");
       await client.query(
         `
           UPDATE toll_charges
@@ -343,6 +344,7 @@ router.put("/tolls/charges/:tollChargeId/assign-trip", async (req, res) => {
         [tollChargeId]
       );
     } else {
+      await client.query("SELECT set_config('denmark.toll_assignment_actor', 'manual_metrics', true)");
       await client.query(
         `
           UPDATE toll_charges
