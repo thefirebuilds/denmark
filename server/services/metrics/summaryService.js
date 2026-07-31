@@ -1098,6 +1098,32 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           new Date(a.last_toll_received_at || 0).getTime()
       );
 
+    const tripEndById = new Map(
+      trips.map((trip) => [Number(trip.id), trip.trip_end || null])
+    );
+    const receiptLagsHours = allMatchedTripCharges
+      .map((charge) => {
+        const tripEnd = tripEndById.get(Number(charge.matched_trip_id));
+        const receivedAt = charge.created_at || charge.posted_at || charge.trxn_at;
+        const lag =
+          (new Date(receivedAt || 0).getTime() - new Date(tripEnd || 0).getTime()) /
+          3600000;
+        return Number.isFinite(lag) && lag >= 0 && lag <= 24 * 14 ? lag : null;
+      })
+      .filter((value) => value != null)
+      .sort((a, b) => a - b);
+    const maxReceiptLagHours = receiptLagsHours.length
+      ? receiptLagsHours[receiptLagsHours.length - 1]
+      : 24;
+    const p95ReceiptLagHours = receiptLagsHours.length
+      ? receiptLagsHours[
+          Math.min(
+            receiptLagsHours.length - 1,
+            Math.floor(receiptLagsHours.length * 0.95)
+          )
+        ]
+      : 24;
+
     const unattributedCharges = tollCharges
       .filter(
         (charge) =>
@@ -1140,6 +1166,15 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         ),
         count: postBillingTrips.length,
         trips: postBillingTrips,
+      },
+      arrival_timing: {
+        observed_count: receiptLagsHours.length,
+        max_hours_after_trip_end: Math.ceil(maxReceiptLagHours),
+        p95_hours_after_trip_end: Math.ceil(p95ReceiptLagHours),
+        closeout_delay_hours: Math.max(
+          24,
+          Math.min(168, Math.ceil(maxReceiptLagHours))
+        ),
       },
     };
   } finally {

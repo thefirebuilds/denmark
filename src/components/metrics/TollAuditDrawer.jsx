@@ -138,6 +138,7 @@ export default function TollAuditDrawer({
   const outstanding = detail?.outstanding || {};
   const discrepancies = detail?.discrepancies || {};
   const postBilling = detail?.post_billing || {};
+  const arrivalTiming = detail?.arrival_timing || {};
   const discrepancyGroups = groupTripsByVehicle(discrepancies.trips || []);
 
   return (
@@ -165,6 +166,15 @@ export default function TollAuditDrawer({
             <div className="metrics-financial-empty">No toll detail available.</div>
           ) : (
             <>
+              <section className="toll-audit-timing-summary">
+                <strong>
+                  Observed toll arrival window: {Number(arrivalTiming.max_hours_after_trip_end ?? 24)} hours after trip end
+                </strong>
+                <span>
+                  95% arrived within {Number(arrivalTiming.p95_hours_after_trip_end ?? 24)} hours. Closeout reminders now wait {Number(arrivalTiming.closeout_delay_hours ?? 24)} hours.
+                </span>
+              </section>
+
               <section className="toll-audit-section toll-audit-section--late">
                 <div className="toll-audit-section__header">
                   <div className="toll-audit-section__title">Tolls Received After Billing</div>
@@ -294,9 +304,31 @@ export default function TollAuditDrawer({
                             <span>Status: {formatBilledStatus(trip.billed_at || trip.charged_at)}</span>
                             <span>Last toll received: {formatRelativeTime(trip.last_toll_received_at)}</span>
                           </div>
+                          <div className="toll-audit-badges">
+                            <span className="toll-audit-badge toll-audit-badge--loss">
+                              Delta -{formatCurrency(trip.loss_amount)} underbilled
+                            </span>
+                            <span
+                              className={`toll-audit-badge ${
+                                trip.post_billing_toll_count > 0
+                                  ? "toll-audit-badge--late"
+                                  : "toll-audit-badge--clear"
+                              }`}
+                            >
+                              {trip.post_billing_toll_count > 0
+                                ? `${trip.post_billing_toll_count} toll${trip.post_billing_toll_count === 1 ? "" : "s"} after billing`
+                                : "No tolls after billing"}
+                            </span>
+                            <span className="toll-audit-badge toll-audit-badge--audit">
+                              Billing audit discrepancy
+                            </span>
+                          </div>
                           <div className="toll-audit-item__details toll-audit-item__details--financial">
                             <span>Charged: {trip.charged_toll_amount == null ? "--" : formatCurrency(trip.charged_toll_amount)}</span>
                             <span>Attributed: {formatCurrency(trip.attributed_toll_amount ?? 0)}</span>
+                          </div>
+                          <div className="toll-audit-equation">
+                            {formatCurrency(trip.attributed_toll_amount ?? 0)} attributed - {formatCurrency(trip.charged_toll_amount ?? 0)} billed = {formatCurrency(trip.loss_amount)} loss
                           </div>
                           {trip.post_billing_toll_count > 0 ? (
                             <div className="toll-audit-item__hint">

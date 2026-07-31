@@ -2338,6 +2338,56 @@
   box-shadow: inset 3px 0 0 #f97316;
 }
 
+.toll-audit-timing-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 10px;
+  background: rgba(30, 64, 175, 0.12);
+  color: #dbeafe;
+}
+
+.toll-audit-timing-summary span {
+  color: #bfdbfe;
+  font-size: 0.78rem;
+}
+
+.toll-audit-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.toll-audit-badge {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.toll-audit-badge--loss,
+.toll-audit-badge--audit {
+  background: rgba(190, 24, 93, 0.22);
+  color: #fda4af;
+}
+
+.toll-audit-badge--late {
+  background: rgba(194, 65, 12, 0.24);
+  color: #fdba74;
+}
+
+.toll-audit-badge--clear {
+  background: rgba(5, 150, 105, 0.2);
+  color: #6ee7b7;
+}
+
+.toll-audit-equation {
+  color: #fecdd3;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 /* --------------------------------------------------------------
    Vehicle comparison list
 -------------------------------------------------------------- */

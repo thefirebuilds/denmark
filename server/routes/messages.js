@@ -1526,6 +1526,7 @@ function mapCloseoutNoticeRow(row) {
     closeout_toll_review_status: row.toll_review_status,
     closeout_toll_count: row.toll_count,
     closeout_toll_total: row.toll_total,
+    closeout_toll_arrival_delay_hours: row.toll_arrival_delay_hours,
     starting_odometer: row.starting_odometer,
     ending_odometer: row.ending_odometer,
     has_tolls: row.has_tolls,
@@ -3707,7 +3708,24 @@ router.get("/", async (req, res) => {
     `;
 
     const closeoutSql = `
-      WITH closeout_candidates AS (
+      WITH toll_arrival_window AS (
+        SELECT GREATEST(
+          24,
+          LEAST(
+            168,
+            COALESCE(
+              CEIL(MAX(EXTRACT(EPOCH FROM (tc.created_at - t.trip_end)) / 3600.0)),
+              24
+            )
+          )
+        )::integer AS delay_hours
+        FROM toll_charges tc
+        JOIN trips t ON t.id = tc.matched_trip_id
+        WHERE t.trip_end >= NOW() - INTERVAL '180 days'
+          AND tc.created_at >= t.trip_end
+          AND tc.created_at <= t.trip_end + INTERVAL '14 days'
+      ),
+      closeout_candidates AS (
         SELECT
           t.id AS trip_id,
           t.reservation_id,
@@ -3727,8 +3745,10 @@ router.get("/", async (req, res) => {
           t.has_tolls,
           t.toll_count,
           t.toll_total,
-          t.toll_review_status
+          t.toll_review_status,
+          toll_arrival_window.delay_hours AS toll_arrival_delay_hours
         FROM trips t
+        CROSS JOIN toll_arrival_window
         LEFT JOIN vehicles v
           ON (
             t.turo_vehicle_id IS NOT NULL
@@ -3738,7 +3758,7 @@ router.get("/", async (req, res) => {
             COALESCE(t.vehicle_name, '') <> ''
             AND LOWER(v.nickname) = LOWER(t.vehicle_name)
           )
-        WHERE t.trip_end <= NOW() - INTERVAL '24 hours'
+        WHERE t.trip_end <= NOW() - make_interval(hours => toll_arrival_window.delay_hours)
           AND t.trip_end >= NOW() - INTERVAL '45 days'
           AND COALESCE(t.workflow_stage, '') <> 'canceled'
           AND COALESCE(t.status, '') <> 'canceled'
@@ -3781,6 +3801,7 @@ router.get("/", async (req, res) => {
         c.toll_count,
         c.toll_total,
         c.toll_review_status,
+        c.toll_arrival_delay_hours,
         latest_fuel.fuel_level AS latest_fuel_level,
         latest_fuel.service_name AS latest_fuel_source,
         latest_fuel.fuel_at AS latest_fuel_at,

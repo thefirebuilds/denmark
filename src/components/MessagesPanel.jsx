@@ -1654,14 +1654,18 @@ function buildTollCloseoutDetail(message) {
   const count = Number(message?.closeout_toll_count ?? 0);
   const total = Number(message?.closeout_toll_total ?? 0);
   const status = message?.closeout_toll_review_status || "none";
+  const arrivalDelay = Math.max(
+    24,
+    Number(message?.closeout_toll_arrival_delay_hours || 24)
+  );
 
   if (count > 0 || total > 0) {
     const tollLabel =
       count > 0 ? `${count} toll${count === 1 ? "" : "s"}` : "Tolls";
-    return `${tollLabel} totaling ${formatMoney(total)} need Turo billing review. Current status: ${status}`;
+    return `${tollLabel} totaling ${formatMoney(total)} need Turo billing review. Current status: ${status}. Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
   }
 
-  return `Audit HCTRA tolls against Turo billing. Current status: ${status}`;
+  return `Audit HCTRA tolls against Turo billing. Current status: ${status}. Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
 }
 
 function buildCloseoutActionItems(message) {
