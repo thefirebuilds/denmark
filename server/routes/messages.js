@@ -2510,7 +2510,11 @@ router.get("/", async (req, res) => {
         SELECT
           m.id,
           m.message_id,
-          m.subject,
+          CASE
+            WHEN m.message_type = 'banking_reconciliation_required'
+            THEN banking_queue.subject
+            ELSE m.subject
+          END AS subject,
           m.mailbox,
           m.message_timestamp,
           m.created_at,
@@ -2560,6 +2564,17 @@ router.get("/", async (req, res) => {
           m.reply_url,
           m.trip_details_url
         FROM messages m
+        CROSS JOIN LATERAL (
+          SELECT CASE
+            WHEN pending_count = 1 THEN '1 transaction is pending reconciliation'
+            ELSE pending_count::text || ' transactions are pending reconciliation'
+          END AS subject
+          FROM (
+            SELECT COUNT(*)::int AS pending_count
+            FROM banking_transactions
+            WHERE review_status = 'pending' AND ignored = FALSE
+          ) live_pending
+        ) banking_queue
         LEFT JOIN trips t
           ON t.id = m.trip_id
           OR (
@@ -2739,7 +2754,11 @@ router.get("/", async (req, res) => {
       SELECT
         m.id,
         m.message_id,
-        m.subject,
+        CASE
+          WHEN m.message_type = 'banking_reconciliation_required'
+          THEN banking_queue.subject
+          ELSE m.subject
+        END AS subject,
         m.mailbox,
         m.message_timestamp,
         m.created_at,
@@ -2789,6 +2808,17 @@ router.get("/", async (req, res) => {
         m.reply_url,
         m.trip_details_url
       FROM messages m
+      CROSS JOIN LATERAL (
+        SELECT CASE
+          WHEN pending_count = 1 THEN '1 transaction is pending reconciliation'
+          ELSE pending_count::text || ' transactions are pending reconciliation'
+        END AS subject
+        FROM (
+          SELECT COUNT(*)::int AS pending_count
+          FROM banking_transactions
+          WHERE review_status = 'pending' AND ignored = FALSE
+        ) live_pending
+      ) banking_queue
       LEFT JOIN trips t
         ON t.id = m.trip_id
       LEFT JOIN LATERAL (

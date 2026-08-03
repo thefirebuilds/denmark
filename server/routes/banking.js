@@ -121,6 +121,7 @@ router.get("/mercury/balance", async (req, res) => {
 router.post("/mercury/sync", async (req, res) => {
   try {
     const result = await syncMercuryTransactions();
+    await refreshReconciliationNotice();
     res.json(result);
   } catch (err) {
     console.error("Failed to sync Mercury transactions:", err);
