@@ -219,6 +219,7 @@ export default function SelectedTripPanel({
   onOpenVehicleMap,
 }) {
   const [closeoutForm, setCloseoutForm] = useState({
+    amount: "",
     starting_odometer: "",
     ending_odometer: "",
     mileage_verified: false,
@@ -253,6 +254,7 @@ export default function SelectedTripPanel({
 
   useEffect(() => {
     setCloseoutForm({
+      amount: toFieldValue(selectedTrip?.amount),
       starting_odometer: toFieldValue(
         selectedTrip?.starting_odometer ??
           selectedTrip?.start_odometer ??
@@ -494,6 +496,7 @@ export default function SelectedTripPanel({
     const closedOut = Boolean(merged.closed_out);
 
     return {
+      ...(isCanceledTrip ? { amount: toNullableNumber(merged.amount) ?? 0 } : {}),
       starting_odometer: toNullableNumber(merged.starting_odometer),
       ending_odometer: toNullableNumber(merged.ending_odometer),
       mileage_verified: Boolean(merged.mileage_verified),
@@ -528,6 +531,7 @@ export default function SelectedTripPanel({
 
     if (savedTrip) {
       setCloseoutForm({
+        amount: toFieldValue(savedTrip.amount ?? optimisticForm.amount),
         starting_odometer: toFieldValue(
           savedTrip.starting_odometer ?? optimisticForm.starting_odometer
         ),
@@ -829,7 +833,7 @@ function renderLocationLink(vehicle) {
                 <div className="detail-label">Turo reconciliation</div>
                 <div className="detail-closeout-title">
                   {isCanceledTrip
-                    ? `Cancellation value: ${formatMoney(selectedTrip.amount || 0)}`
+                    ? `Cancellation value: ${formatMoney(closeoutForm.amount || 0)}`
                     : closeoutRemaining
                     ? `${closeoutRemaining} item${closeoutRemaining === 1 ? "" : "s"} left`
                     : "Ready to close"}
@@ -885,6 +889,27 @@ function renderLocationLink(vehicle) {
                 </div>
               ))}
             </div>
+
+            {isCanceledTrip ? (
+              <div className="detail-closeout-grid">
+                <label className="detail-closeout-field">
+                  <span>Final cancellation revenue</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={closeoutForm.amount}
+                    onChange={(event) =>
+                      updateCloseoutField("amount", event.target.value)
+                    }
+                  />
+                </label>
+                <div className="detail-closeout-field">
+                  <span>Recorded mileage</span>
+                  <strong>0 miles</strong>
+                </div>
+              </div>
+            ) : null}
 
             {!isCanceledTrip ? (
               <>

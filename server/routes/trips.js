@@ -990,17 +990,28 @@ router.patch("/:id", async (req, res) => {
     const existingTripResult = await client.query(
       `
         SELECT
-          id,
-          starting_odometer,
-          ending_odometer,
-          mileage_verified,
-          expense_status,
-          has_tolls,
-          toll_review_status,
-          guest_rating_received,
-          closed_out
-        FROM trips
-        WHERE id = $1
+          t.id,
+          t.status,
+          t.workflow_stage,
+          t.canceled_at,
+          t.starting_odometer,
+          t.ending_odometer,
+          t.mileage_verified,
+          t.expense_status,
+          t.has_tolls,
+          t.toll_review_status,
+          t.guest_rating_received,
+          t.closed_out,
+          COALESCE(
+            v.current_odometer_miles,
+            t.starting_odometer,
+            t.ending_odometer,
+            0
+          ) AS cancellation_odometer
+        FROM trips t
+        LEFT JOIN vehicles v
+          ON CAST(v.turo_vehicle_id AS text) = CAST(t.turo_vehicle_id AS text)
+        WHERE t.id = $1
         LIMIT 1
       `,
       [tripId]
@@ -1012,6 +1023,12 @@ router.patch("/:id", async (req, res) => {
     }
 
     const existingTrip = existingTripResult.rows[0];
+    const isCanceledTrip =
+      String(existingTrip.status || "").toLowerCase() === "canceled" ||
+      String(existingTrip.workflow_stage || "").toLowerCase() === "canceled" ||
+      Boolean(existingTrip.canceled_at);
+    const isClosingCanceledTrip = isCanceledTrip && normalizedClosedOut === true;
+    const cancellationOdometer = Number(existingTrip.cancellation_odometer || 0);
 
     let resolvedVehicleId = null;
     let resolvedVehicleName = null;
@@ -1119,29 +1136,37 @@ router.patch("/:id", async (req, res) => {
         trip_end || null,
         amount === "" || amount == null ? null : Number(amount),
         status ?? null,
-        typeof needs_review === "boolean" ? needs_review : null,
+        isClosingCanceledTrip
+          ? false
+          : typeof needs_review === "boolean" ? needs_review : null,
         resolvedVehicleId,
-        mileage_included === "" || mileage_included == null
+        isClosingCanceledTrip
+          ? 0
+          : mileage_included === "" || mileage_included == null
           ? null
           : Number(mileage_included),
-        starting_odometer === "" || starting_odometer == null
+        isClosingCanceledTrip
+          ? cancellationOdometer
+          : starting_odometer === "" || starting_odometer == null
           ? null
           : Number(starting_odometer),
-        ending_odometer === "" || ending_odometer == null
+        isClosingCanceledTrip
+          ? cancellationOdometer
+          : ending_odometer === "" || ending_odometer == null
           ? null
           : Number(ending_odometer),
-        effectiveHasTolls,
-        effectiveTollCount,
-        effectiveTollTotal,
-        effectiveTollReviewStatus,
+        isClosingCanceledTrip ? false : effectiveHasTolls,
+        isClosingCanceledTrip ? 0 : effectiveTollCount,
+        isClosingCanceledTrip ? 0 : effectiveTollTotal,
+        isClosingCanceledTrip ? "none" : effectiveTollReviewStatus,
         fuel_reimbursement_total === "" || fuel_reimbursement_total == null
           ? null
           : Number(fuel_reimbursement_total),
         normalizedClosedOut,
         closed_out_at || null,
-        normalizedExpenseStatus,
+        isClosingCanceledTrip ? "none" : normalizedExpenseStatus,
         normalizedGuestRatingReceived,
-        normalizedMileageVerified,
+        isClosingCanceledTrip ? true : normalizedMileageVerified,
         tripId,
       ]
     );

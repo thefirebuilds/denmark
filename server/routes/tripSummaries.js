@@ -803,6 +803,9 @@ router.patch("/:id", async (req, res) => {
       `
         SELECT
           id,
+          status,
+          workflow_stage,
+          canceled_at,
           starting_odometer,
           ending_odometer,
           mileage_verified,
