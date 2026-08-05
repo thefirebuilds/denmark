@@ -18,6 +18,23 @@ function hasPendingTollReview(hasTolls, tollReviewStatus) {
 }
 
 function evaluateCloseoutCompleteness(trip) {
+  const canceled =
+    normalizeText(trip?.status) === "canceled" ||
+    normalizeText(trip?.workflow_stage) === "canceled" ||
+    Boolean(trip?.canceled_at);
+
+  if (canceled) {
+    return {
+      missingStartingOdometer: false,
+      missingEndingOdometer: false,
+      mileageUnverified: false,
+      expensesPending: false,
+      tollsPending: false,
+      reasons: [],
+      isIncomplete: false,
+    };
+  }
+
   const missingStartingOdometer = trip?.starting_odometer == null;
   const missingEndingOdometer = trip?.ending_odometer == null;
   const mileageUnverified = trip?.mileage_verified !== true;

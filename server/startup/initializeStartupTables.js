@@ -52,6 +52,7 @@ const {
 } = require("../services/messageRuntimeSchema");
 const {
   backfillTripLocationsFromStoredMessages,
+  backfillCanceledTripAmountsFromStoredMessages,
 } = require("../services/saveMessage");
 const { ensureTollAuditSchema } = require("../services/tolls/tollAuditService");
 
@@ -120,6 +121,11 @@ async function initializeStartupTables() {
   await withStartupEnsureTimeout(
     "trip location backfill",
     backfillTripLocationsFromStoredMessages()
+  );
+  console.log("[server] backfilling canceled trip financial values");
+  await withStartupEnsureTimeout(
+    "canceled trip amount backfill",
+    backfillCanceledTripAmountsFromStoredMessages()
   );
 }
 

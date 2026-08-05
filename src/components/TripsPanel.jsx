@@ -494,7 +494,10 @@ if (urgency.dependencyNote) {
   const canceledTrips = normalizedDispatchSettings.visibleBuckets.canceled
     ? sortTripsWithSettings(
         mappedTrips.filter(
-          (trip) => trip.canceled && isBucketVisible(trip, normalizedDispatchSettings)
+          (trip) =>
+            trip.canceled &&
+            trip.closed_out !== true &&
+            isBucketVisible(trip, normalizedDispatchSettings)
         ),
         normalizedDispatchSettings
       )

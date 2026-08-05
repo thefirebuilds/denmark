@@ -15,6 +15,30 @@ const {
   ensureVehicleAliasesTable,
 } = require("./vehicles/vehicleAliases");
 const { transitionTripStage } = require("./trips/transitionTripStage");
+const { getEnabledLocations } = require("./locations/locationSettings");
+
+async function resolveTripLocations(savedMessage, useConfiguredDefault) {
+  let pickupLocation = String(savedMessage.pickup_location || "").trim() || null;
+  let returnLocation = String(savedMessage.return_location || "").trim() || null;
+
+  // Turo trips currently use one location for both pickup and return. Preserve
+  // either explicit value when only one side was present in the source message.
+  pickupLocation = pickupLocation || returnLocation;
+  returnLocation = returnLocation || pickupLocation;
+
+  if ((!pickupLocation || !returnLocation) && useConfiguredDefault) {
+    const locations = await getEnabledLocations();
+    const parking =
+      locations.find(
+        (location) => String(location.kind || "").toLowerCase() === "parking"
+      ) || locations.find((location) => location.id === "park-my-share");
+    const defaultLocation = String(parking?.label || "").trim() || null;
+    pickupLocation = pickupLocation || defaultLocation;
+    returnLocation = returnLocation || pickupLocation || defaultLocation;
+  }
+
+  return { pickupLocation, returnLocation };
+}
 
 function normalizeTripStatus(messageType) {
   switch (messageType) {
@@ -186,6 +210,10 @@ async function upsertTripFromMessage(savedMessage) {
   }
 
   const isCanceledMessage = tripStatus === "canceled";
+  const { pickupLocation, returnLocation } = await resolveTripLocations(
+    savedMessage,
+    !isCanceledMessage
+  );
 
   const workflowStage = deriveWorkflowStage({
     status: tripStatus,
@@ -380,8 +408,8 @@ async function upsertTripFromMessage(savedMessage) {
     savedMessage.guest_name || null,
     savedMessage.trip_start || null,
     savedMessage.trip_end || null,
-    savedMessage.pickup_location || null,
-    savedMessage.return_location || null,
+    pickupLocation,
+    returnLocation,
     tripStatus,
     savedMessage.amount ?? null,
     savedMessage.mileage_included ??

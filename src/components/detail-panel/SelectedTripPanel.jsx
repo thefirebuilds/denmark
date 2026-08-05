@@ -387,7 +387,7 @@ export default function SelectedTripPanel({
   }`;
 
   const canShowCloseoutOps =
-    tripHasEnded || isCloseoutStage || Boolean(selectedTrip?.closed_out);
+    isCanceledTrip || tripHasEnded || isCloseoutStage || Boolean(selectedTrip?.closed_out);
   const returnLateMinutes = Number(selectedTrip?.return_late_minutes);
   const hasRecordedReturn = Boolean(selectedTrip?.returned_at);
   const returnTimingLabel = hasRecordedReturn
@@ -397,6 +397,16 @@ export default function SelectedTripPanel({
     : "";
 
   const closeoutChecks = useMemo(() => {
+    if (isCanceledTrip) {
+      return [
+        {
+          key: "closed",
+          label: "Cancellation payout reviewed and trip dismissed",
+          done: Boolean(closeoutForm.closed_out),
+        },
+      ];
+    }
+
     const expenseStatus = String(closeoutForm.expense_status || "").toLowerCase();
     const tollReview = String(closeoutForm.toll_review_status || "").toLowerCase();
     const tollTotalValue = Number(closeoutForm.toll_total || 0);
@@ -433,7 +443,7 @@ export default function SelectedTripPanel({
         done: Boolean(closeoutForm.closed_out),
       },
     ];
-  }, [closeoutForm]);
+  }, [closeoutForm, isCanceledTrip]);
 
   const closeoutRemaining = closeoutChecks.filter((item) => !item.done).length;
   const closeoutBlockers = closeoutChecks.filter(
@@ -818,12 +828,19 @@ function renderLocationLink(vehicle) {
               <div>
                 <div className="detail-label">Turo reconciliation</div>
                 <div className="detail-closeout-title">
-                  {closeoutRemaining
+                  {isCanceledTrip
+                    ? `Cancellation value: ${formatMoney(selectedTrip.amount || 0)}`
+                    : closeoutRemaining
                     ? `${closeoutRemaining} item${closeoutRemaining === 1 ? "" : "s"} left`
                     : "Ready to close"}
                 </div>
                 <div className="detail-closeout-copy">
-                  {hasRecordedReturn ? (
+                  {isCanceledTrip ? (
+                    <>
+                      Confirm this is the final payout from Turo, then close the
+                      canceled trip to remove it from the console.
+                    </>
+                  ) : hasRecordedReturn ? (
                     <>
                       Returned {formatDateTime(selectedTrip.returned_at)} at {selectedTrip.return_detected_location || "the required return location"} ({returnTimingLabel}).
                     </>
@@ -849,6 +866,8 @@ function renderLocationLink(vehicle) {
                   ? "Saving..."
                   : closeoutForm.closed_out
                   ? "Closed out"
+                  : isCanceledTrip
+                  ? "Close canceled trip"
                   : "Close out trip"}
               </button>
             </div>
@@ -867,6 +886,8 @@ function renderLocationLink(vehicle) {
               ))}
             </div>
 
+            {!isCanceledTrip ? (
+              <>
             <div className="detail-closeout-grid">
               <label className="detail-closeout-field">
                 <span>Starting odometer</span>
@@ -1042,6 +1063,8 @@ function renderLocationLink(vehicle) {
                 {closeoutSaving ? "Saving..." : "Save reconciliation"}
               </button>
             </div>
+              </>
+            ) : null}
 
             {closeoutError ? (
               <div className="detail-closeout-error">{closeoutError}</div>

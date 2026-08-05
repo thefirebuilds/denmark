@@ -230,6 +230,39 @@ function stripHtml(html) {
     .trim();
 }
 
+function decodeHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&#(\d+);/g, (_match, decimal) =>
+      String.fromCodePoint(Number.parseInt(decimal, 10))
+    )
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) =>
+      String.fromCodePoint(Number.parseInt(hex, 16))
+    )
+    .replace(/&nbsp;|&#8239;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function htmlToStructuredText(html) {
+  if (!html) return "";
+  return decodeHtmlEntities(
+    String(html)
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(?:address|div|h[1-6]|li|p|table|td|th|tr)>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+  )
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 function extractAmount({ subject, textBody, htmlBody, rawHeaders }) {
   const haystack = [
     subject || "",
@@ -355,6 +388,7 @@ function extractVehicleImageUrlFromHtml(html) {
 }
 
 const LOCATION_LABELS = new Set([
+  "location",
   "delivery",
   "pickup",
   "pickup location",
@@ -386,6 +420,8 @@ const LOCATION_STOP_LABELS = new Set([
   "view receipt",
   "about your host",
   "about your guest",
+  "about the host",
+  "about the guest",
   "download the turo app",
   "have a question?",
 ]);
@@ -429,14 +465,14 @@ function extractTripLocations(lines) {
     const line = lines[i];
     const normalized = line.replace(/:$/, "").toLowerCase();
     const inline = line.match(
-      /^(Pickup\s*(?:&|and)\s*return(?: location)?|Delivery|Launch(?: location)?|Pickup(?: location)?|Return(?: location)?|Drop[- ]?off)\s*:\s*(.+)$/i
+      /^(Location|Pickup\s*(?:&|and)\s*return(?: location)?|Delivery|Launch(?: location)?|Pickup(?: location)?|Return(?: location)?|Drop[- ]?off)\s*:\s*(.+)$/i
     );
 
     if (inline) {
       const label = inline[1].toLowerCase();
       const value = cleanLocationLine(inline[2]);
       if (!value) continue;
-      if (/^pickup\s*(?:&|and)\s*return/.test(label)) {
+      if (label === "location" || /^pickup\s*(?:&|and)\s*return/.test(label)) {
         pickupLocation = pickupLocation || value;
         returnLocation = returnLocation || value;
       } else if (label === "delivery" || label.startsWith("pickup") || label.startsWith("launch")) {
@@ -452,7 +488,7 @@ function extractTripLocations(lines) {
     const value = extractLocationBlock(lines, i);
     if (!value) continue;
 
-    if (/^pickup\s*(?:&|and)\s*return/.test(normalized)) {
+    if (normalized === "location" || /^pickup\s*(?:&|and)\s*return/.test(normalized)) {
       pickupLocation = pickupLocation || value;
       returnLocation = returnLocation || value;
     } else if (normalized === "delivery" || normalized.startsWith("pickup") || normalized.startsWith("launch")) {
@@ -471,7 +507,20 @@ function extractTripLocations(lines) {
 function baseExtractFields(normalizedTextBody, subject = "", htmlBody = "") {
   const text = normalizedTextBody || "";
   const lines = text.split("\n").map((s) => s.trim()).filter(Boolean);
-  const locations = extractTripLocations(lines);
+  const textLocations = extractTripLocations(lines);
+  const htmlLocations = extractTripLocations(
+    htmlToStructuredText(htmlBody)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
+  const locations = {
+    pickupLocation:
+      textLocations.pickupLocation || htmlLocations.pickupLocation || null,
+    returnLocation:
+      textLocations.returnLocation || htmlLocations.returnLocation || null,
+  };
+  locations.returnLocation = locations.returnLocation || locations.pickupLocation;
 
   const reservationId =
     extractMatch(text, /Reservation ID\s*#\s*(\d+)/i) ||
@@ -992,9 +1041,11 @@ async function saveMessage(message) {
     cleanedHtmlBody
   );
 
+  // Cancellation notices replace the booked revenue. Until Turo explicitly
+  // states a cancellation payout, the reservation's actual value is zero.
   const effectiveAmount =
-    extracted?.cancellationPayoutAmount != null
-      ? extracted.cancellationPayoutAmount
+    messageType === "trip_canceled"
+      ? extracted?.cancellationPayoutAmount ?? 0
       : amount;
   const initialStatus = messageType === "renter_activity" ? "read" : "unread";
 
@@ -1228,17 +1279,78 @@ async function backfillTripLocationsFromStoredMessages() {
       GROUP BY reservation_id
     )
     UPDATE trips t SET
-      pickup_location=COALESCE(t.pickup_location,locations.pickup_location),
-      return_location=COALESCE(t.return_location,locations.return_location),
-      updated_at=CASE WHEN (t.pickup_location IS NULL AND locations.pickup_location IS NOT NULL)
-        OR (t.return_location IS NULL AND locations.return_location IS NOT NULL)
+      pickup_location=CASE
+        WHEN locations.pickup_location IS NOT NULL
+          AND (t.pickup_location IS NULL OR LOWER(TRIM(t.pickup_location)) = 'park my share')
+        THEN locations.pickup_location
+        ELSE t.pickup_location
+      END,
+      return_location=CASE
+        WHEN locations.return_location IS NOT NULL
+          AND (t.return_location IS NULL OR LOWER(TRIM(t.return_location)) = 'park my share')
+        THEN locations.return_location
+        ELSE t.return_location
+      END,
+      updated_at=CASE WHEN ((t.pickup_location IS NULL OR LOWER(TRIM(t.pickup_location)) = 'park my share')
+          AND locations.pickup_location IS NOT NULL)
+        OR ((t.return_location IS NULL OR LOWER(TRIM(t.return_location)) = 'park my share')
+          AND locations.return_location IS NOT NULL)
         THEN NOW() ELSE t.updated_at END
     FROM locations
     WHERE t.reservation_id=locations.reservation_id
-      AND ((t.pickup_location IS NULL AND locations.pickup_location IS NOT NULL)
-        OR (t.return_location IS NULL AND locations.return_location IS NOT NULL))`);
+      AND (((t.pickup_location IS NULL OR LOWER(TRIM(t.pickup_location)) = 'park my share')
+          AND locations.pickup_location IS NOT NULL)
+        OR ((t.return_location IS NULL OR LOWER(TRIM(t.return_location)) = 'park my share')
+          AND locations.return_location IS NOT NULL))`);
 
   console.log(`[messages] trip location backfill | scanned=${rows.length} repairedMessages=${repairedMessages} repairedTrips=${repairedTrips.rowCount}`);
+  return { scanned: rows.length, repairedMessages, repairedTrips: repairedTrips.rowCount };
+}
+
+async function backfillCanceledTripAmountsFromStoredMessages() {
+  await ensureMessageRuntimeSchema();
+  const { rows } = await pool.query(`SELECT id,reservation_id,subject,normalized_text_body,html_body
+    FROM messages
+    WHERE reservation_id IS NOT NULL
+      AND COALESCE(message_type,'') = 'trip_canceled'
+    ORDER BY COALESCE(message_timestamp,created_at) ASC NULLS LAST
+    LIMIT 5000`);
+
+  let repairedMessages = 0;
+  for (const row of rows) {
+    const extracted = extractTripCanceledFields(
+      row.normalized_text_body || "",
+      row.subject || "",
+      row.html_body || ""
+    );
+    const cancellationAmount = extracted.cancellationPayoutAmount ?? 0;
+    const result = await pool.query(
+      `UPDATE messages SET amount=$2 WHERE id=$1 AND amount IS DISTINCT FROM $2`,
+      [row.id, cancellationAmount]
+    );
+    repairedMessages += result.rowCount;
+  }
+
+  const repairedTrips = await pool.query(`WITH latest_cancellation AS (
+      SELECT DISTINCT ON (reservation_id)
+        reservation_id,
+        COALESCE(amount, 0) AS cancellation_amount
+      FROM messages
+      WHERE reservation_id IS NOT NULL
+        AND COALESCE(message_type,'') = 'trip_canceled'
+      ORDER BY reservation_id, COALESCE(message_timestamp,created_at) DESC NULLS LAST, id DESC
+    )
+    UPDATE trips t SET
+      amount=latest_cancellation.cancellation_amount,
+      updated_at=NOW()
+    FROM latest_cancellation
+    WHERE t.reservation_id=latest_cancellation.reservation_id
+      AND (LOWER(COALESCE(t.status,''))='canceled'
+        OR LOWER(COALESCE(t.workflow_stage,''))='canceled'
+        OR t.canceled_at IS NOT NULL)
+      AND t.amount IS DISTINCT FROM latest_cancellation.cancellation_amount`);
+
+  console.log(`[messages] canceled trip amount backfill | scanned=${rows.length} repairedMessages=${repairedMessages} repairedTrips=${repairedTrips.rowCount}`);
   return { scanned: rows.length, repairedMessages, repairedTrips: repairedTrips.rowCount };
 }
 
@@ -1246,5 +1358,14 @@ module.exports = saveMessage;
 module.exports.applyTripCloseoutSignalsFromMessage = applyTripCloseoutSignalsFromMessage;
 module.exports.extractFuelReimbursementFromText = extractFuelReimbursementFromText;
 module.exports.extractTripLocations = extractTripLocations;
+module.exports.extractTripLocationsFromHtml = (html) =>
+  extractTripLocations(
+    htmlToStructuredText(html)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+  );
 module.exports.backfillTripLocationsFromStoredMessages = backfillTripLocationsFromStoredMessages;
+module.exports.backfillCanceledTripAmountsFromStoredMessages =
+  backfillCanceledTripAmountsFromStoredMessages;
 
