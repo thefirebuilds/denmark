@@ -2270,6 +2270,16 @@ function FleetSettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [savingVehicleId, setSavingVehicleId] = useState(null);
   const [message, setMessage] = useState("");
+  const [periodXForm, setPeriodXForm] = useState({
+    registeredOwner: "",
+    garagingAddress: "",
+    garagingCity: "",
+    garagingState: "TX",
+    garagingZip: "",
+    addCompCollision: false,
+    seatCounts: {},
+  });
+  const [periodXSaving, setPeriodXSaving] = useState(false);
 
   async function loadVehicles() {
     try {
@@ -2291,8 +2301,24 @@ function FleetSettingsPanel() {
     }
   }
 
+  async function loadPeriodXSettings() {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/insurance.periodx`);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to load Period X settings");
+      setPeriodXForm((current) => ({
+        ...current,
+        ...(json.value || {}),
+        seatCounts: json.value?.seatCounts || {},
+      }));
+    } catch (err) {
+      setMessage(err.message || "Failed to load Period X settings");
+    }
+  }
+
   useEffect(() => {
     loadVehicles();
+    loadPeriodXSettings();
   }, []);
 
   async function addVehicle(e) {
@@ -2336,6 +2362,104 @@ function FleetSettingsPanel() {
         [field]: value,
       },
     }));
+  }
+
+  const periodXVehicles = vehicles.filter(
+    (vehicle) =>
+      vehicle.is_active !== false &&
+      vehicle.in_service !== false &&
+      vehicle.trip_eligible !== false
+  );
+
+  function updatePeriodX(field, value) {
+    setPeriodXForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updatePeriodXSeats(vehicle, value) {
+    const key = vehicle.vin || String(vehicle.id);
+    setPeriodXForm((current) => ({
+      ...current,
+      seatCounts: { ...(current.seatCounts || {}), [key]: value },
+    }));
+  }
+
+  function csvCell(value) {
+    const text = String(value ?? "");
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  async function downloadPeriodXCsv() {
+    const required = [
+      [periodXForm.registeredOwner, "registered owner"],
+      [periodXForm.garagingAddress, "garaging address"],
+      [periodXForm.garagingCity, "garaging city"],
+      [periodXForm.garagingState, "garaging state"],
+      [periodXForm.garagingZip, "garaging ZIP"],
+    ];
+    const missing = required.filter(([value]) => !String(value || "").trim());
+    if (missing.length) {
+      setMessage(`Period X export needs ${missing.map(([, label]) => label).join(", ")}`);
+      return;
+    }
+    if (!periodXVehicles.length) {
+      setMessage("No active trip-eligible fleet vehicles are available to export");
+      return;
+    }
+    if (periodXVehicles.some((vehicle) => !String(vehicle.vin || "").trim())) {
+      setMessage("Every exported vehicle must have a VIN");
+      return;
+    }
+
+    try {
+      setPeriodXSaving(true);
+      setMessage("");
+      const res = await fetch(`${API_BASE}/api/settings/insurance.periodx`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: periodXForm }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to save Period X settings");
+
+      const headers = [
+        "VIN", "Garaging Address", "Garaging City", "Garaging State",
+        "Garaging Zip", "State Registered", "Registered Owner",
+        "Number of Seats", "Add Comp. & Collision",
+      ];
+      const rows = periodXVehicles.map((vehicle) => {
+        const key = vehicle.vin || String(vehicle.id);
+        const seats = Number(periodXForm.seatCounts?.[key] || 5);
+        return [
+          vehicle.vin,
+          periodXForm.garagingAddress,
+          periodXForm.garagingCity,
+          String(periodXForm.garagingState).toUpperCase(),
+          periodXForm.garagingZip,
+          String(vehicle.license_state || periodXForm.garagingState).toUpperCase(),
+          periodXForm.registeredOwner,
+          Number.isFinite(seats) && seats > 0 ? Math.round(seats) : 5,
+          periodXForm.addCompCollision ? "true" : "false",
+        ];
+      });
+      const csv = [headers, ...rows]
+        .map((row) => row.map(csvCell).join(","))
+        .join("\r\n");
+      const blob = new Blob([`${csv}\r\n`], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "vehicle_template_periodx.csv";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setPeriodXForm((current) => ({ ...current, ...(json.value || {}) }));
+      setMessage(`Downloaded ${periodXVehicles.length} active fleet vehicles`);
+    } catch (err) {
+      setMessage(err.message || "Failed to export Period X vehicle CSV");
+    } finally {
+      setPeriodXSaving(false);
+    }
   }
 
   async function saveVehicle(vehicle) {
@@ -2395,6 +2519,99 @@ function FleetSettingsPanel() {
           <div>
             <strong>{loading ? "..." : inServiceCount}</strong>
             <span>in service</span>
+          </div>
+        </div>
+
+        <div className="settings-group">
+          <div className="settings-group-title">Period X vehicle CSV</div>
+          <div className="settings-empty-state">
+            Generates the insurer template from active, in-service,
+            trip-eligible rental vehicles only. Support vehicles are excluded.
+          </div>
+          <div className="settings-form-grid">
+            <label className="settings-field settings-field-wide">
+              <span>Registered owner</span>
+              <input
+                value={periodXForm.registeredOwner || ""}
+                onChange={(event) => updatePeriodX("registeredOwner", event.target.value)}
+              />
+            </label>
+            <label className="settings-field settings-field-wide">
+              <span>Garaging address</span>
+              <input
+                value={periodXForm.garagingAddress || ""}
+                onChange={(event) => updatePeriodX("garagingAddress", event.target.value)}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Garaging city</span>
+              <input
+                value={periodXForm.garagingCity || ""}
+                onChange={(event) => updatePeriodX("garagingCity", event.target.value)}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Garaging state</span>
+              <input
+                maxLength={2}
+                value={periodXForm.garagingState || ""}
+                onChange={(event) => updatePeriodX("garagingState", event.target.value.toUpperCase())}
+              />
+            </label>
+            <label className="settings-field">
+              <span>Garaging ZIP</span>
+              <input
+                inputMode="numeric"
+                value={periodXForm.garagingZip || ""}
+                onChange={(event) => updatePeriodX("garagingZip", event.target.value)}
+              />
+            </label>
+            <label className="settings-check-row">
+              <input
+                type="checkbox"
+                checked={Boolean(periodXForm.addCompCollision)}
+                onChange={(event) => updatePeriodX("addCompCollision", event.target.checked)}
+              />
+              <span>Add comprehensive &amp; collision</span>
+            </label>
+          </div>
+
+          <div className="settings-vehicle-config-list">
+            {periodXVehicles.map((vehicle) => {
+              const key = vehicle.vin || String(vehicle.id);
+              return (
+                <div key={key} className="settings-vehicle-config-card settings-vehicle-config-head">
+                  <div>
+                    <strong>{vehicle.nickname || vehicle.vin}</strong>
+                    <span>{[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ")}</span>
+                  </div>
+                  <label className="settings-field">
+                    <span>Seats</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="15"
+                      value={periodXForm.seatCounts?.[key] || 5}
+                      onChange={(event) => updatePeriodXSeats(vehicle, event.target.value)}
+                    />
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={loading || periodXSaving || !periodXVehicles.length}
+              onClick={downloadPeriodXCsv}
+            >
+              {periodXSaving
+                ? "Preparing..."
+                : `Save & download ${periodXVehicles.length} vehicles`}
+            </button>
+            {message ? <span className="settings-message">{message}</span> : null}
           </div>
         </div>
 

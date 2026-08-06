@@ -234,17 +234,19 @@ function tripReturnLocationMatchesNamedLocation(tripReturnLocation, location) {
 }
 
 function tripReturnLocationMatchesPrimaryParking(tripReturnLocation, location) {
+  const locationKind = String(location?.kind || "").toLowerCase();
   if (
-    String(location?.kind || "").toLowerCase() !== "parking" &&
+    locationKind !== "parking" &&
+    locationKind !== "home" &&
     location?.isPrimaryParking !== true
   ) return false;
   const tripLocation = normalizeLocationText(tripReturnLocation);
   if (!tripLocation) return false;
 
-  // Turo commonly describes the configured home return as the city/ZIP while
-  // Denmark's map uses the owner's friendly geofence label (for example,
-  // "Buda, TX 78610" versus "Garlic Creek"). These are established home
-  // aliases elsewhere in the Denmark UI, so treat them as the primary lot.
+  // Turo commonly gives the street/city while Denmark's map uses a friendly
+  // geofence label (for example, "135 Fletcher Bend, Buda, TX" versus
+  // "Garlic Creek"). Allow those established aliases to match both parking
+  // and home geofences; the distance check below selects the actual location.
   return /(?:^| )(?:home|buda|78610)(?: |$)/.test(tripLocation);
 }
 
