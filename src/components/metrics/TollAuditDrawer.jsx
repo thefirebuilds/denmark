@@ -252,7 +252,9 @@ export default function TollAuditDrawer({
                       </div>
                       <div className="toll-audit-item__details">
                         <span>Trip ended: {formatDateTime(trip.trip_end)}</span>
-                        <span>Settlement: no billing or reconciliation recorded</span>
+                        <span>
+                          Collection window: loss review after {formatDateTime(trip.collection_due_at)}
+                        </span>
                         <span>Last toll received: {formatRelativeTime(trip.last_toll_received_at)}</span>
                       </div>
                       <div className="toll-audit-item__details toll-audit-item__details--financial">

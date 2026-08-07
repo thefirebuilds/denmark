@@ -18,6 +18,20 @@ export function isTripInProgress(trip) {
   );
 }
 
+export function isPickupConfirmationOverdue(trip) {
+  if (isCanceledTrip(trip) || isClosedTrip(trip) || isTripInProgress(trip)) {
+    return false;
+  }
+
+  const startMs = trip?.trip_start ? new Date(trip.trip_start).getTime() : NaN;
+  const endMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
+
+  const now = Date.now();
+  const confirmationGraceMs = 30 * 60 * 1000;
+  return startMs + confirmationGraceMs < now && endMs >= now;
+}
+
 export function findVehicleForTrip(trip, vehicles = []) {
   const tripVehicleName = String(
     trip?.vehicle_name || trip?.vehicle_nickname || ""
@@ -318,7 +332,7 @@ export function deriveCardStatus(trip) {
 export function deriveEtaText(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
 
-  if (stage === "ready_for_handoff" || stage === "in_progress") {
+  if (stage === "ready_for_handoff" || isTripInProgress(trip)) {
     return formatTimeShort(trip.trip_end) || formatDateShort(trip.trip_end);
   }
 
@@ -330,7 +344,7 @@ export function deriveEtaText(trip) {
 export function deriveEtaLabel(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
 
-  if (stage === "ready_for_handoff" || stage === "in_progress") {
+  if (stage === "ready_for_handoff" || isTripInProgress(trip)) {
     return "Return ETA";
   }
 
@@ -374,8 +388,8 @@ export function deriveStatusLabel(trip) {
   const tripEnded = Number.isFinite(endMs) && endMs < now;
   const isClosed = isClosedTrip(trip);
 
-  const isReadyForCustomer =
-    stage === "ready_for_handoff" || stage === "in_progress";
+  const inProgress = isTripInProgress(trip);
+  const isReadyForCustomer = stage === "ready_for_handoff" || inProgress;
 
   const needsCloseout =
     stage === "awaiting_expenses" ||
@@ -390,6 +404,10 @@ export function deriveStatusLabel(trip) {
   if (needsCloseout) {
     return tollReviewStatus === "pending" ? "Needs tolls" : "Needs expenses";
   }
+
+  if (isPickupConfirmationOverdue(trip)) return "Late pickup";
+
+  if (inProgress) return "In trip";
 
   if (isSameLocalDay(startMs, now) && !isReadyForCustomer) {
     return "Not ready for pickup";
@@ -411,8 +429,6 @@ export function deriveStatusLabel(trip) {
     return "Dropoff tomorrow";
   }
 
-  if (stage === "in_progress") return "In trip";
-
   return "Upcoming";
 }
 
@@ -428,6 +444,7 @@ export function deriveMeta4(trip) {
   const tripEnded = Number.isFinite(endMs) && endMs < now;
   const tripStarted = Number.isFinite(startMs) && startMs <= now;
   const isClosed = isClosedTrip(trip);
+  const inProgress = isTripInProgress(trip);
 
   if (isCanceledTrip(trip)) {
     return {
@@ -444,6 +461,20 @@ export function deriveMeta4(trip) {
   }
 
   if (!tripEnded) {
+    if (isPickupConfirmationOverdue(trip)) {
+      return {
+        label: "Action needed",
+        value: "Confirm pickup or correct trip status",
+      };
+    }
+
+    if (inProgress) {
+      return {
+        label: "Next step",
+        value: "Await return",
+      };
+    }
+
     if (stage === "booked") {
       return {
         label: "Next step",
@@ -462,13 +493,6 @@ export function deriveMeta4(trip) {
       return {
         label: "Next step",
         value: tripStarted ? "Await pickup" : "Vehicle ready",
-      };
-    }
-
-    if (stage === "in_progress") {
-      return {
-        label: "Next step",
-        value: "Await return",
       };
     }
 
@@ -585,7 +609,7 @@ export function deriveOperationalUrgency(trip, previousTrip, nextTrip) {
   const tripEnded = Number.isFinite(endMs) && endMs < now;
 
   const isLive =
-    stage === "in_progress" ||
+    isTripInProgress(trip) ||
     displayStatus === "active" ||
     displayStatus === "ending_today";
 
@@ -655,6 +679,17 @@ export function deriveOperationalUrgency(trip, previousTrip, nextTrip) {
       urgencyLabel: nextTrip ? "Overdue + blocking next trip" : "Overdue",
       turnGapHours: turnGapToNext,
       isTurnaroundRisk: Boolean(nextTrip),
+      dependencyNote: null,
+    };
+  }
+
+  if (isPickupConfirmationOverdue(trip)) {
+    return {
+      bucket: 0,
+      attentionAt: startMs,
+      urgencyLabel: "Late pickup - confirm handoff",
+      turnGapHours: turnGapFromPrev,
+      isTurnaroundRisk: Boolean(previousTripStillActive),
       dependencyNote: null,
     };
   }

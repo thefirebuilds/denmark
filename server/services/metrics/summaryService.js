@@ -22,6 +22,7 @@ const {
   safeDivide,
   tripOverlapsRange,
   isTripTollAttributedOutstanding,
+  isTripTollBillingFinalized,
   isTripTollRecovered,
 } = require("./metricHelpers");
 const {
@@ -1058,6 +1059,9 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           vehicle_plate: trip.vehicle_plate || null,
           trip_start: trip.trip_start || null,
           trip_end: trip.trip_end || null,
+          collection_due_at: trip.trip_end
+            ? new Date(new Date(trip.trip_end).getTime() + 100 * 60 * 60 * 1000).toISOString()
+            : null,
           toll_total: roundMoney(trip.toll_total),
           attributed_toll_amount: attributedTollAmount,
           charged_toll_amount: chargedTollAmount,
@@ -1073,7 +1077,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           recovered,
         };
       })
-      .filter((trip) => !trip.recovered)
+      .filter((trip) => !trip.billed_at)
       .sort((a, b) => new Date(a.trip_end || 0).getTime() - new Date(b.trip_end || 0).getTime());
 
     const discrepancyTrips = trips
@@ -1093,15 +1097,13 @@ async function getTollMetricsDetail(rangeKey = "30d") {
             ? roundMoney(invoice.charged_toll_amount)
             : null;
 
-        if (chargedTollAmount == null) {
-          if (!recovered) return null;
-          if (!(attributedTollAmount > 0)) return null;
-        }
+        const auditTiming = getTollAuditTiming(trip, invoice);
+        if (!isTripTollBillingFinalized(trip, auditTiming.billed_at)) return null;
+
+        if (chargedTollAmount == null && !(attributedTollAmount > 0)) return null;
 
         const tollDelta = roundMoney((chargedTollAmount || 0) - attributedTollAmount);
         if (tollDelta >= -0.01) return null;
-        const auditTiming = getTollAuditTiming(trip, invoice);
-
         return {
           trip_id: trip.id,
           reservation_id: trip.reservation_id || null,
@@ -1241,10 +1243,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         observed_count: receiptLagsHours.length,
         max_hours_after_trip_end: Math.ceil(maxReceiptLagHours),
         p95_hours_after_trip_end: Math.ceil(p95ReceiptLagHours),
-        closeout_delay_hours: Math.max(
-          24,
-          Math.min(168, Math.ceil(maxReceiptLagHours))
-        ),
+        closeout_delay_hours: 100,
       },
     };
   } finally {
@@ -1602,7 +1601,7 @@ for (const charge of matchedTollCharges) {
   );
 }
 const tollsUnderbilledLoss = trips.reduce((sum, trip) => {
-  if (String(trip.toll_review_status || "").toLowerCase() !== "billed") return sum;
+  if (!isTripTollBillingFinalized(trip)) return sum;
   const attributed = Number(attributedByTripId.get(Number(trip.id)) || 0);
   const charged = Number(trip.toll_charged_total || 0);
   return sum + Math.max(0, attributed - charged);

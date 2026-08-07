@@ -3740,21 +3740,7 @@ router.get("/", async (req, res) => {
 
     const closeoutSql = `
       WITH toll_arrival_window AS (
-        SELECT GREATEST(
-          24,
-          LEAST(
-            168,
-            COALESCE(
-              CEIL(MAX(EXTRACT(EPOCH FROM (tc.created_at - t.trip_end)) / 3600.0)),
-              24
-            )
-          )
-        )::integer AS delay_hours
-        FROM toll_charges tc
-        JOIN trips t ON t.id = tc.matched_trip_id
-        WHERE t.trip_end >= NOW() - INTERVAL '180 days'
-          AND tc.created_at >= t.trip_end
-          AND tc.created_at <= t.trip_end + INTERVAL '14 days'
+        SELECT 100::integer AS delay_hours
       ),
       closeout_candidates AS (
         SELECT

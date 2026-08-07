@@ -1,4 +1,6 @@
 // ------------------------------------------------------------
+
+const TOLL_COLLECTION_WAIT_HOURS = 100;
 // /server/services/metrics/metricHelpers.js
 // Shared helpers for metrics date windows, money math, mileage,
 // and allocation logic.
@@ -29,7 +31,24 @@ function isTripTollAttributedOutstanding(trip) {
   if (!tripEnd || Number.isNaN(tripEnd.getTime()) || tripEnd.getTime() > Date.now()) {
     return false;
   }
-  return !isTripTollRecovered(trip);
+  const tollReviewStatus = String(trip?.toll_review_status || "").toLowerCase();
+  if (["billed", "waived"].includes(tollReviewStatus)) return false;
+
+  return !isTripTollCollectionOverdue(trip);
+}
+
+function isTripTollCollectionOverdue(trip, now = Date.now()) {
+  const tripEndMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+  if (!Number.isFinite(tripEndMs)) return false;
+  return now >= tripEndMs + TOLL_COLLECTION_WAIT_HOURS * 60 * 60 * 1000;
+}
+
+function isTripTollBillingFinalized(trip, billedAt = null) {
+  const tollReviewStatus = String(trip?.toll_review_status || "").toLowerCase();
+  if (["billed", "waived"].includes(tollReviewStatus)) return true;
+
+  const billedMs = billedAt ? new Date(billedAt).getTime() : NaN;
+  return Number.isFinite(billedMs) || isTripTollCollectionOverdue(trip);
 }
 
 function getTripFuelReimbursementValue(trip, rangeStart, rangeEnd) {
@@ -50,39 +69,6 @@ function getTripRecognizedTollRevenueValue(trip, rangeStart, rangeEnd) {
 
   return getTripProratedValue(
     chargedTollTotal,
-    trip?.trip_start,
-    trip?.trip_end,
-    rangeStart,
-    rangeEnd
-  );
-}
-
-function getTripTotalDays(tripStartInput, tripEndInput) {
-  if (!tripStartInput || !tripEndInput) return 0;
-
-  const tripStart = new Date(tripStartInput);
-  const tripEnd = new Date(tripEndInput);
-
-  if (Number.isNaN(tripStart.getTime()) || Number.isNaN(tripEnd.getTime())) {
-    return 0;
-  }
-
-  const millis = endOfDay(tripEnd).getTime() - startOfDay(tripStart).getTime();
-  return Math.max(0, Math.floor(millis / 86400000) + 1);
-}
-
-function getTripProratedValue(value, tripStartInput, tripEndInput, rangeStart, rangeEnd) {
-  const totalValue = toNumber(value);
-  const totalDays = getTripTotalDays(tripStartInput, tripEndInput);
-  const overlapDays = getOverlapDays(tripStartInput, tripEndInput, rangeStart, rangeEnd);
-
-  if (!totalValue || !totalDays || !overlapDays) return 0;
-  return totalValue * (overlapDays / totalDays);
-}
-
-function getTripProratedAmount(trip, rangeStart, rangeEnd) {
-  return getTripProratedValue(
-    trip?.amount,
     trip?.trip_start,
     trip?.trip_end,
     rangeStart,
@@ -369,6 +355,8 @@ module.exports = {
   isOnboardingExpense,
   isTollExpense,
   isTripTollAttributedOutstanding,
+  isTripTollBillingFinalized,
+  isTripTollCollectionOverdue,
   isTripTollRecovered,
   normalizeCategory,
   roundMoney,

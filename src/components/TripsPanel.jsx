@@ -27,6 +27,7 @@ import {
   getHoursUntilTripEnd,
   getTripStartMs,
   isCanceledTrip,
+  isPickupConfirmationOverdue,
   isTripInProgress,
   isOverdueTrip,
   sortTrips,
@@ -62,7 +63,7 @@ const DEFAULT_VISIBLE_BUCKETS = DEFAULT_DISPATCH_SETTINGS.visibleBuckets;
 
 function shouldShowCurrentLocation(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
-  return stage === "ready_for_handoff" || stage === "in_progress";
+  return stage === "ready_for_handoff" || isTripInProgress(trip);
 }
 
 function normalizeHeading(value) {
@@ -119,7 +120,11 @@ function getCompactNextActivityText(trip) {
     ? formatAttentionDateTime(trip.previousTrip.trip_end)
     : null;
 
-  if (stage === "in_progress") {
+  if (isPickupConfirmationOverdue(trip)) {
+    return `Confirm pickup - scheduled ${attentionText}`;
+  }
+
+  if (isTripInProgress(trip)) {
     return `Dropoff ${attentionText}`;
   }
 
@@ -205,6 +210,10 @@ function isUnconfirmedTrip(trip) {
     bucket === "unconfirmed" ||
     stage === "booked"
   );
+}
+
+function isQueueBucket(trip, bucket) {
+  return String(trip?.queue_bucket || "").toLowerCase() === bucket;
 }
 
 function isPickupAttentionSoon(trip) {
@@ -503,22 +512,39 @@ if (urgency.dependencyNote) {
       )
     : [];
 
-  const unconfirmedCount = activeTrips.filter((trip) => isUnconfirmedTrip(trip)).length;
-  const inProgressCount = activeTrips.filter((trip) => isTripInProgress(trip)).length;
-  const upcomingCount = activeTrips.filter(
-    (trip) => String(trip?.queue_bucket || "").toLowerCase() === "upcoming"
+  // These primary counts mirror the mutually exclusive queue buckets used to
+  // render the cards. Keep contextual alerts (returning soon, overdue, pickup
+  // today) separate because they intentionally overlap the primary buckets.
+  const needsCloseoutCount = activeTrips.filter((trip) =>
+    isQueueBucket(trip, "needs_closeout")
+  ).length;
+  const latePickupCount = activeTrips.filter((trip) =>
+    isPickupConfirmationOverdue(trip)
+  ).length;
+  const unconfirmedCount = activeTrips.filter((trip) =>
+    isQueueBucket(trip, "unconfirmed")
+  ).length;
+  const inProgressCount = activeTrips.filter((trip) =>
+    isQueueBucket(trip, "in_progress") && !isPickupConfirmationOverdue(trip)
+  ).length;
+  const upcomingCount = activeTrips.filter((trip) =>
+    isQueueBucket(trip, "upcoming")
   ).length;
   const returningSoonCount = activeTrips.filter((trip) => isReturnSoonTrip(trip)).length;
   const overdueCount = activeTrips.filter((trip) => isOverdueTrip(trip)).length;
   const pickupTodayCount = activeTrips.filter((trip) => isPickupAttentionSoon(trip)).length;
   const filteredActiveTrips = activeTrips.filter((trip) => {
     switch (summaryFilter) {
+      case "late_pickup":
+        return isPickupConfirmationOverdue(trip);
+      case "needs_closeout":
+        return isQueueBucket(trip, "needs_closeout");
       case "unconfirmed":
-        return isUnconfirmedTrip(trip);
+        return isQueueBucket(trip, "unconfirmed");
       case "in_progress":
-        return isTripInProgress(trip);
+        return isQueueBucket(trip, "in_progress") && !isPickupConfirmationOverdue(trip);
       case "upcoming":
-        return String(trip?.queue_bucket || "").toLowerCase() === "upcoming";
+        return isQueueBucket(trip, "upcoming");
       case "returning_soon":
         return isReturnSoonTrip(trip);
       case "overdue":
@@ -537,6 +563,8 @@ if (urgency.dependencyNote) {
   useEffect(() => {
     if (
       (summaryFilter === "unconfirmed" && unconfirmedCount === 0) ||
+      (summaryFilter === "late_pickup" && latePickupCount === 0) ||
+      (summaryFilter === "needs_closeout" && needsCloseoutCount === 0) ||
       (summaryFilter === "in_progress" && inProgressCount === 0) ||
       (summaryFilter === "upcoming" && upcomingCount === 0) ||
       (summaryFilter === "returning_soon" && returningSoonCount === 0) ||
@@ -547,6 +575,8 @@ if (urgency.dependencyNote) {
     }
   }, [
     summaryFilter,
+    latePickupCount,
+    needsCloseoutCount,
     unconfirmedCount,
     inProgressCount,
     upcomingCount,
@@ -592,10 +622,30 @@ if (urgency.dependencyNote) {
     <section className="panel trips-panel">
       <div className="panel-header">
         <h2>Open Trips</h2>
-        <span>{normalizedDispatchSettings.openTripsSort.replaceAll("_", " ")}</span>
+        <span>
+          {activeTrips.length} open · {normalizedDispatchSettings.openTripsSort.replaceAll("_", " ")}
+        </span>
       </div>
 
       <div className="panel-subbar">
+        {latePickupCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter risk ${summaryFilter === "late_pickup" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("late_pickup")}
+          >
+            {latePickupCount} late pickup
+          </button>
+        )}
+        {needsCloseoutCount > 0 && (
+          <button
+            type="button"
+            className={`chip chip-filter ${summaryFilter === "needs_closeout" ? "is-active" : ""}`}
+            onClick={() => toggleSummaryFilter("needs_closeout")}
+          >
+            {needsCloseoutCount} needs closeout
+          </button>
+        )}
         {unconfirmedCount > 0 && (
           <button
             type="button"
@@ -816,4 +866,3 @@ if (urgency.dependencyNote) {
     </section>
   );
 }
-

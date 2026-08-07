@@ -771,7 +771,7 @@ function BusinessHeartbeat({
         <HeartbeatMetric
           label="Outstanding Trip Tolls"
           value={formatCurrencyCompact(summary?.tolls_attributed_outstanding)}
-          comp="Ended trips not yet billed or reconciled"
+          comp="Unbilled tolls within the 100-hour collection window"
           tone={Number(summary?.tolls_attributed_outstanding ?? 0) > 0 ? "warning" : "positive"}
           onClick={() => onOpenTollAudit?.("outstanding")}
         />
@@ -785,7 +785,7 @@ function BusinessHeartbeat({
         <HeartbeatMetric
           label="Underbilled Toll Loss"
           value={formatCurrencyCompact(summary?.tolls_underbilled_loss)}
-          comp="Attributed tolls that were not billed to guests"
+          comp="Billed discrepancies or unbilled tolls overdue by 100 hours"
           tone={Number(summary?.tolls_underbilled_loss ?? 0) > 0 ? "negative" : "positive"}
           onClick={() => onOpenTollAudit?.("discrepancies")}
         />
@@ -4104,7 +4104,7 @@ const mileageStats = useMemo(() => {
             <LedgerLine
               label="Outstanding Trip Tolls"
               value={formatCurrencyCompact(summary.tolls_attributed_outstanding)}
-              detail="Ended trips not yet billed or reconciled"
+              detail="Unbilled tolls within the 100-hour collection window"
               tone={Number(summary.tolls_attributed_outstanding ?? 0) > 0 ? "warning" : "positive"}
               onClick={() => openTollAudit("outstanding")}
             />
@@ -4118,7 +4118,7 @@ const mileageStats = useMemo(() => {
             <LedgerLine
               label="Underbilled Toll Loss"
               value={formatCurrencyCompact(summary.tolls_underbilled_loss)}
-              detail="Attributed tolls that were not billed to guests"
+              detail="Billed discrepancies or unbilled tolls overdue by 100 hours"
               tone={Number(summary.tolls_underbilled_loss ?? 0) > 0 ? "negative" : "positive"}
               onClick={() => openTollAudit("discrepancies")}
             />
