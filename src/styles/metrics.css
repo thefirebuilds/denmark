@@ -2755,6 +2755,28 @@
   padding-left: 0;
 }
 
+.vehicle-compare-header__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vehicle-compare-header__sort:hover,
+.vehicle-compare-header__sort:focus-visible {
+  color: #eef4ff;
+}
+
+.vehicle-compare-header__sort span {
+  color: #7dd3fc;
+  font-size: 0.72rem;
+  letter-spacing: 0;
+}
+
 /* --------------------------------------------------------------
    Expanded group styling
 -------------------------------------------------------------- */

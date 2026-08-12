@@ -1188,6 +1188,16 @@ export default function MetricsPanel() {
   const [expandedVehicleId, setExpandedVehicleId] = useState(null);
   const [sortBy, setSortBy] = useState("profit_desc");
   const [filterBy, setFilterBy] = useState("all");
+
+  const toggleVehicleSort = (key) => {
+    setSortBy((current) => (current === `${key}_desc` ? `${key}_asc` : `${key}_desc`));
+  };
+
+  const vehicleSortIndicator = (key) => {
+    if (sortBy === `${key}_desc`) return "↓";
+    if (sortBy === `${key}_asc`) return "↑";
+    return "↕";
+  };
   const [offTripAuditOpen, setOffTripAuditOpen] = useState(false);
   const [offTripAudit, setOffTripAudit] = useState(null);
   const [offTripAuditLoading, setOffTripAuditLoading] = useState(false);
@@ -1943,18 +1953,30 @@ export default function MetricsPanel() {
           return aProfit - bProfit;
         case "revenue_desc":
           return bRevenue - aRevenue;
+        case "revenue_asc":
+          return aRevenue - bRevenue;
         case "occupancy_desc":
           return bOccupancy - aOccupancy;
+        case "occupancy_asc":
+          return aOccupancy - bOccupancy;
         case "rev_day_desc":
           return bRevDay - aRevDay;
         case "rev_mile_desc":
           return bRevMile - aRevMile;
+        case "rev_mile_asc":
+          return aRevMile - bRevMile;
         case "trips_desc":
           return bTrips - aTrips;
+        case "trips_asc":
+          return aTrips - bTrips;
         case "value_desc":
           return bValue - aValue;
+        case "value_asc":
+          return aValue - bValue;
         case "run_rate_desc":
           return bRunRate - aRunRate || bProfit - aProfit;
+        case "run_rate_asc":
+          return aRunRate - bRunRate || aProfit - bProfit;
         case "recovery_desc":
           return bRecoveryPct - aRecoveryPct;
         case "capital_remaining_asc":
@@ -4205,23 +4227,21 @@ const mileageStats = useMemo(() => {
             <div className="metrics-toolbar">
               <div className="metrics-toolbar__group">
                 <label className="metrics-toolbar__label" htmlFor="metrics-sort">
-                  Sort
+                  More sorts
                 </label>
                 <select
                   id="metrics-sort"
                   className="metrics-toolbar__select"
-                  value={sortBy}
+                  value={[
+                    "rev_day_desc",
+                    "recovery_desc",
+                    "capital_remaining_asc",
+                    "payoff_date_asc",
+                  ].includes(sortBy) ? sortBy : ""}
                   onChange={(e) => setSortBy(e.target.value)}
                 >
-                  <option value="profit_desc">Profit ↓</option>
-                  <option value="profit_asc">Profit ↑</option>
-                  <option value="revenue_desc">Revenue ↓</option>
-                  <option value="value_desc">Value ↓</option>
-                  <option value="occupancy_desc">Occupancy ↓</option>
+                  <option value="" disabled>Choose a sort</option>
                   <option value="rev_day_desc">Rev / Day ↓</option>
-                  <option value="rev_mile_desc">Rev / Trip Mile ↓</option>
-                  <option value="trips_desc">Trips ↓</option>
-                  <option value="run_rate_desc">Run Rate ↓</option>
                   <option value="recovery_desc">Recovery % ↓</option>
                   <option value="capital_remaining_asc">Capital Remaining ↑</option>
                   <option value="payoff_date_asc">Payoff Soonest</option>
@@ -4252,20 +4272,20 @@ const mileageStats = useMemo(() => {
               </div>
             </div>
 
-            <div className="vehicle-compare-header" aria-hidden="true">
+            <div className="vehicle-compare-header">
               <div className="vehicle-compare-header__cell vehicle-compare-header__cell--vehicle">
                 Vehicle
               </div>
-              <div className="vehicle-compare-header__cell">Profit</div>
-              <div className="vehicle-compare-header__cell">Revenue</div>
-              <div className="vehicle-compare-header__cell">Value</div>
+              <button type="button" className="vehicle-compare-header__cell vehicle-compare-header__sort" onClick={() => toggleVehicleSort("profit")}>Profit <span aria-hidden="true">{vehicleSortIndicator("profit")}</span></button>
+              <button type="button" className="vehicle-compare-header__cell vehicle-compare-header__sort" onClick={() => toggleVehicleSort("revenue")}>Revenue <span aria-hidden="true">{vehicleSortIndicator("revenue")}</span></button>
+              <button type="button" className="vehicle-compare-header__cell vehicle-compare-header__sort" onClick={() => toggleVehicleSort("value")}>Value <span aria-hidden="true">{vehicleSortIndicator("value")}</span></button>
               <div className="vehicle-compare-header__cell">Rented / Available</div>
-              <div className="vehicle-compare-header__cell">Occupancy</div>
-              <div className="vehicle-compare-header__cell">Rev / Trip Mi</div>
+              <button type="button" className="vehicle-compare-header__cell vehicle-compare-header__sort" onClick={() => toggleVehicleSort("occupancy")}>Occupancy <span aria-hidden="true">{vehicleSortIndicator("occupancy")}</span></button>
+              <button type="button" className="vehicle-compare-header__cell vehicle-compare-header__sort" onClick={() => toggleVehicleSort("rev_mile")}>Rev / Trip Mi <span aria-hidden="true">{vehicleSortIndicator("rev_mile")}</span></button>
               <div className="vehicle-compare-header__cell">Profit / Trip Mi</div>
               <div className="vehicle-compare-header__cell">Exp / Trip Mi</div>
-              <div className="vehicle-compare-header__cell">Trips</div>
-              <div className="vehicle-compare-header__cell">Run Rate</div>
+              <button type="button" className="vehicle-compare-header__cell vehicle-compare-header__sort" onClick={() => toggleVehicleSort("trips")}>Trips <span aria-hidden="true">{vehicleSortIndicator("trips")}</span></button>
+              <button type="button" className="vehicle-compare-header__cell vehicle-compare-header__sort" onClick={() => toggleVehicleSort("run_rate")}>Run Rate <span aria-hidden="true">{vehicleSortIndicator("run_rate")}</span></button>
               <div className="vehicle-compare-header__cell"></div>
             </div>
 
