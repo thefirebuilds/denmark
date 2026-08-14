@@ -1008,16 +1008,21 @@ async function collectOverdueReturnAlerts() {
         SELECT 1
         FROM notification_events ne
         WHERE ne.classification = 'trip_returned'
-          AND COALESCE(t.guest_name, '') <> ''
           AND COALESCE(ne.posted_at, ne.received_at) BETWEEN
             t.trip_end - INTERVAL '12 hours'
             AND NOW() + INTERVAL '1 hour'
-          AND LOWER(COALESCE(ne.title, '')) LIKE
-            '%' || LOWER(COALESCE(t.guest_name, '')) || '%'
           AND (
-            COALESCE(t.vehicle_name, '') = ''
-            OR LOWER(COALESCE(ne.title, '')) LIKE '%' || LOWER(COALESCE(t.vehicle_name, '')) || '%'
-            OR LOWER(COALESCE(ne.title, '')) LIKE '%' || LOWER(split_part(COALESCE(t.vehicle_name, ''), ' ', 1)) || '%'
+            ne.reservation_id = t.reservation_id
+            OR (
+              COALESCE(t.guest_name, '') <> ''
+              AND LOWER(COALESCE(ne.guest_name, ne.title, '')) LIKE
+                '%' || LOWER(COALESCE(t.guest_name, '')) || '%'
+            )
+            OR (
+              COALESCE(t.vehicle_name, '') <> ''
+              AND LOWER(CONCAT_WS(' ', ne.vehicle_name, ne.title, ne.body, ne.big_text, ne.sub_text))
+                LIKE '%' || LOWER(COALESCE(t.vehicle_name, '')) || '%'
+            )
           )
       )
     ORDER BY t.trip_end ASC

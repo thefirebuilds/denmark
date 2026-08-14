@@ -585,8 +585,12 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
           ne.id,
           ne.received_at,
           COALESCE(ne.posted_at, ne.received_at) AS event_at,
-          substring(ne.title from '^([^ ]+) has returned ') AS returned_guest_name,
-          NULLIF(regexp_replace(ne.title, '^[^ ]+ has returned ', ''), ne.title) AS returned_vehicle_name
+          COALESCE(ne.guest_name, substring(ne.title from '^([^ ]+) has returned ')) AS returned_guest_name,
+          COALESCE(
+            ne.vehicle_name,
+            substring(ne.title from '^(.+?) has returned to '),
+            NULLIF(regexp_replace(ne.title, '^[^ ]+ has returned ', ''), ne.title)
+          ) AS returned_vehicle_name
         FROM notification_events ne
         WHERE ne.classification = 'trip_returned'
           AND ne.acknowledged_at IS NULL
@@ -604,15 +608,17 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
         JOIN LATERAL (
           SELECT t.*
           FROM trips t
-          WHERE LOWER(COALESCE(t.guest_name, '')) = LOWER(ne.returned_guest_name)
-            AND t.trip_end BETWEEN ne.event_at - INTERVAL '3 days'
+          WHERE t.trip_end BETWEEN ne.event_at - INTERVAL '3 days'
               AND ne.event_at + INTERVAL '36 hours'
             AND COALESCE(t.workflow_stage, '') <> 'canceled'
             AND COALESCE(t.status, '') <> 'canceled'
             AND (
-              COALESCE(ne.returned_vehicle_name, '') = ''
-              OR LOWER(ne.returned_vehicle_name) LIKE '%' || LOWER(COALESCE(t.vehicle_name, '')) || '%'
-              OR LOWER(COALESCE(t.vehicle_name, '')) LIKE '%' || LOWER(split_part(ne.returned_vehicle_name, ' ', 1)) || '%'
+              LOWER(COALESCE(t.guest_name, '')) = LOWER(COALESCE(ne.returned_guest_name, ''))
+              OR (
+                COALESCE(ne.returned_guest_name, '') = ''
+                AND COALESCE(ne.returned_vehicle_name, '') <> ''
+                AND LOWER(ne.returned_vehicle_name) = LOWER(COALESCE(t.vehicle_name, ''))
+              )
             )
           ORDER BY t.trip_end DESC NULLS LAST, t.id DESC
           LIMIT 1
@@ -630,6 +636,7 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
       latest_locations AS (
         SELECT
           mt.notification_id,
+          mt.event_at,
           mt.trip_id,
           mt.workflow_stage,
           latest.latitude,
@@ -700,6 +707,7 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
       RETURNING
         ne.id,
         latest_locations.trip_id,
+        latest_locations.event_at,
         latest_locations.workflow_stage,
         latest_locations.miles_from_return_location
     `,
@@ -750,6 +758,21 @@ async function advanceTripAfterReturnNotification(row, location) {
   const reason = Number.isFinite(gpsMiles)
     ? `return notification matched; GPS ${gpsMiles.toFixed(2)} mi from ${locationLabel}`
     : "Turo return notification matched to trip";
+
+  await db.query(
+    `UPDATE trips
+     SET returned_at = COALESCE(returned_at, $2::timestamptz),
+         return_late_minutes = COALESCE(
+           return_late_minutes,
+           GREATEST(0, ROUND(EXTRACT(EPOCH FROM ($2::timestamptz - trip_end)) / 60)::integer)
+         ),
+         return_detection_source = COALESCE(return_detection_source, 'turo_notification'),
+         return_detected_location = COALESCE(return_detected_location, $3),
+         return_distance_miles = COALESCE(return_distance_miles, $4::numeric),
+         updated_at = NOW()
+     WHERE id = $1`,
+    [row.trip_id, row.event_at || new Date(), locationLabel, Number.isFinite(gpsMiles) ? gpsMiles : null]
+  );
 
   if (stage === "in_progress") {
     await transitionTripStage(row.trip_id, "turnaround", {

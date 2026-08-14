@@ -429,6 +429,7 @@ const LOCATION_STOP_LABELS = new Set([
 function cleanLocationLine(value) {
   const text = String(value || "")
     .replace(/\s+/g, " ")
+    .replace(/\s*,?\s*Guests see\s*:\s*.*$/i, "")
     .trim();
   if (!text) return null;
   if (/^https?:\/\//i.test(text)) return null;
@@ -450,6 +451,7 @@ function extractLocationBlock(lines, startIndex) {
     if (/^(trip start|trip end|reservation id|total paid|you earn)\b/i.test(line)) {
       break;
     }
+    if (/^Guests see\s*:/i.test(line)) break;
 
     parts.push(line);
   }

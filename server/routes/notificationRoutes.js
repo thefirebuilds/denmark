@@ -168,6 +168,34 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
   const match = result.rows[0];
   if (!match) return null;
 
+  if (event.classification === "trip_returned") {
+    const observedMiles =
+      match.miles_from_return_location == null
+        ? null
+        : Number(match.miles_from_return_location);
+    await pool.query(
+      `
+        UPDATE trips
+        SET returned_at = COALESCE(returned_at, $2::timestamptz),
+            return_late_minutes = COALESCE(
+              return_late_minutes,
+              GREATEST(0, ROUND(EXTRACT(EPOCH FROM ($2::timestamptz - trip_end)) / 60)::integer)
+            ),
+            return_detection_source = COALESCE(return_detection_source, 'turo_notification'),
+            return_detected_location = COALESCE(return_detected_location, $3::text),
+            return_distance_miles = COALESCE(return_distance_miles, $4::numeric),
+            updated_at = NOW()
+        WHERE id = $1
+      `,
+      [
+        trip.id,
+        eventAt,
+        location?.label || "Turo return notification",
+        Number.isFinite(observedMiles) ? observedMiles : null,
+      ]
+    );
+  }
+
   if (event.classification === "trip_rated") {
     await pool.query(
       `
@@ -460,6 +488,7 @@ function extractVehicleName(text) {
 
   const patterns = [
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+has returned your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\b/i,
+    /^([A-Z0-9][A-Za-z0-9 .'\-]{1,80}?)\s+has returned to\s+/i,
     /\babout\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\s+from\s+[A-Z][A-Za-z.'-]+/i,
     /\btrip with your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\b/i,
     /\babout your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})$/i,
@@ -775,6 +804,19 @@ async function findTripForReturnedNotification(event) {
               OR LOWER(COALESCE(t.vehicle_name, '')) LIKE '%' || LOWER(regexp_replace($3::text, '\\s+\\d{4}$', '')) || '%'
               OR LOWER($3::text) LIKE '%' || LOWER(COALESCE(v.nickname, '')) || '%'
               OR LOWER(COALESCE(v.nickname, '')) LIKE '%' || LOWER(regexp_replace($3::text, '\\s+\\d{4}$', '')) || '%'
+            )
+          )
+          OR (
+            $1::bigint IS NULL
+            AND $2::text = ''
+            AND $3::text <> ''
+            AND t.trip_end BETWEEN $4::timestamptz - INTERVAL '3 days'
+              AND $4::timestamptz + INTERVAL '36 hours'
+            AND (
+              LOWER($3::text) = LOWER(COALESCE(t.vehicle_name, ''))
+              OR LOWER($3::text) = LOWER(COALESCE(v.nickname, ''))
+              OR LOWER(COALESCE(t.vehicle_name, '')) LIKE LOWER($3::text) || ' %'
+              OR LOWER(COALESCE(v.nickname, '')) LIKE LOWER($3::text) || ' %'
             )
           )
         )
