@@ -2228,6 +2228,20 @@ select.drawer-input option {
   font-size: 15px;
 }
 
+.fleet-maintenance-telemetry-history-row--diagnostic {
+  grid-template-columns: minmax(180px, 1.4fr) minmax(132px, 1fr) minmax(86px, 0.8fr);
+}
+
+.fleet-maintenance-telemetry-history-row--diagnostic > div {
+  min-width: 0;
+}
+
+.fleet-maintenance-telemetry-history-row--diagnostic small {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
 .fleet-maintenance-telemetry-history-row small,
 .fleet-maintenance-telemetry-history-row em,
 .fleet-maintenance-telemetry-history-row span {

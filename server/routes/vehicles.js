@@ -102,6 +102,11 @@ function getAgeMinutes(value) {
 }
 
 const TELEMETRY_READING_DEFINITIONS = {
+  mil_status: {
+    label: "MIL / diagnostic history",
+    unit: null,
+    structured: true,
+  },
   battery_voltage: {
     label: "Battery voltage",
     valueSql: "s.battery_voltage::numeric",
@@ -647,6 +652,86 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
       1,
       Math.min(100, Number.parseInt(req.query.limit, 10) || 50)
     );
+
+    if (signal === "mil_status") {
+      const { rows } = await pool.query(
+        `
+          WITH candidates AS (
+            SELECT
+              s.id AS snapshot_id,
+              s.service_name,
+              s.mil_on,
+              s.dtc_count,
+              COALESCE(s.qualified_dtc_list, '[]'::jsonb) AS qualified_dtc_list,
+              COALESCE(s.mil_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at,
+              s.captured_at,
+              CONCAT_WS('|',
+                COALESCE(s.mil_on::text, 'unknown'),
+                COALESCE(s.dtc_count::text, 'unknown'),
+                COALESCE(s.qualified_dtc_list::text, '[]')
+              ) AS diagnostic_state
+            FROM vehicle_telemetry_snapshots s
+            WHERE (
+                s.mil_on IS NOT NULL
+                OR s.dtc_count IS NOT NULL
+                OR (
+                  jsonb_typeof(COALESCE(s.qualified_dtc_list, '[]'::jsonb)) = 'array'
+                  AND jsonb_array_length(COALESCE(s.qualified_dtc_list, '[]'::jsonb)) > 0
+                )
+              )
+              AND (
+                ($1::text IS NOT NULL AND $1::text <> '' AND LOWER(COALESCE(s.vin, '')) = LOWER($1::text))
+                OR ($2::bigint IS NOT NULL AND s.dimo_token_id = $2::bigint)
+                OR ($3::text IS NOT NULL AND $3::text <> '' AND s.external_vehicle_key = $3::text)
+              )
+          ),
+          sequenced AS (
+            SELECT
+              candidates.*,
+              LAG(diagnostic_state) OVER (
+                PARTITION BY service_name
+                ORDER BY captured_at ASC, snapshot_id ASC
+              ) AS previous_diagnostic_state
+            FROM candidates
+          )
+          SELECT *
+          FROM sequenced
+          WHERE previous_diagnostic_state IS DISTINCT FROM diagnostic_state
+          ORDER BY captured_at DESC, snapshot_id DESC
+          LIMIT $4
+        `,
+        [
+          vehicle.vin || null,
+          vehicle.dimo_token_id || null,
+          vehicle.external_vehicle_key || null,
+          limit,
+        ]
+      );
+
+      return res.json({
+        vehicle: {
+          id: vehicle.id,
+          nickname: vehicle.nickname,
+          vin: vehicle.vin,
+        },
+        signal,
+        label: definition.label,
+        unit: null,
+        limit,
+        readings: rows.map((row) => ({
+          snapshotId: row.snapshot_id,
+          source: row.service_name || null,
+          milOn: row.mil_on,
+          dtcCount: row.dtc_count == null ? null : Number(row.dtc_count),
+          codes: Array.isArray(row.qualified_dtc_list)
+            ? row.qualified_dtc_list
+            : [],
+          recordedAt: row.recorded_at || row.captured_at || null,
+          capturedAt: row.captured_at || null,
+        })),
+      });
+    }
+
     const includeEngineOnContext = signal === "battery_voltage";
     const engineOnSelectSql = includeEngineOnContext
       ? `

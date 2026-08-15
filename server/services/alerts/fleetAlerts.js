@@ -787,13 +787,10 @@ async function collectDtcAlerts() {
       : row.mil_on
       ? "mil-on-no-codes"
       : `count-${row.dtc_count || 1}`;
-    const firstReported = row.diagnostic_first_reported_at
-      ? ` First reported ${formatChicago(
-          normalizeDisplayTimestamp(row.diagnostic_first_reported_at, row.captured_at)
-        )}.`
-      : "";
-    const lastSeen = normalizeDisplayTimestamp(
-      row.vehicle_last_updated || row.captured_at,
+    const firstRecordedAt = normalizeDisplayTimestamp(
+      row.diagnostic_first_reported_at ||
+        row.vehicle_last_updated ||
+        row.captured_at,
       row.captured_at
     );
 
@@ -801,10 +798,15 @@ async function collectDtcAlerts() {
       alertKey: `dtc:${row.service_name}:${row.vin || row.id}:${dtcKey}`,
       alertType: "dtc_received",
       severity: "urgent",
-      body: `Denmark: ${vehicle} reported ${codeLabel} from ${row.service_name}. Seen ${formatChicago(
-        lastSeen
-      )}.${firstReported}`,
-      details: row,
+      body: `Check engine: ${vehicle} • ${codeLabel} • First recorded ${formatChicago(
+        firstRecordedAt
+      )}`,
+      details: {
+        ...row,
+        vehicle,
+        codes,
+        firstRecordedAt,
+      },
     };
   });
 }

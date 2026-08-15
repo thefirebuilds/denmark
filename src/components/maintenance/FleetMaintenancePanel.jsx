@@ -475,6 +475,38 @@ function formatTelemetryCaptureDetail(reading) {
     .join(" / ");
 }
 
+function getDiagnosticReadingCodes(reading) {
+  if (!Array.isArray(reading?.codes)) return [];
+  return reading.codes
+    .map((item) => {
+      if (typeof item === "string") return item;
+      return item?.code || item?.dtc || item?.name || "";
+    })
+    .map((item) => String(item || "").trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function formatDiagnosticReading(reading) {
+  const codes = getDiagnosticReadingCodes(reading);
+  const count = Number(reading?.dtcCount);
+  if (reading?.milOn === true) return "MIL on";
+  if (reading?.milOn === false) return "MIL off";
+  if (codes.length || (Number.isFinite(count) && count > 0)) return "DTC recorded";
+  return "MIL status unknown";
+}
+
+function formatDiagnosticReadingDetail(reading) {
+  const codes = getDiagnosticReadingCodes(reading);
+  if (codes.length) return codes.join(", ");
+  const count = Number(reading?.dtcCount);
+  if (Number.isFinite(count) && count > 0) {
+    return `${count} diagnostic code${count === 1 ? "" : "s"}; codes unavailable`;
+  }
+  return reading?.milOn === true
+    ? "Check-engine light reported; no decoded code"
+    : "No active diagnostic codes";
+}
+
 function getTelemetryReadingDisplayTime(reading) {
   return reading?.source === "dimo"
     ? reading?.capturedAt || reading?.recordedAt
@@ -1654,6 +1686,8 @@ export default function FleetMaintenancePanel({
         label:
           signal === "battery_voltage"
             ? "Battery voltage"
+            : signal === "mil_status"
+            ? "MIL / diagnostic history"
             : signal === "coolant_temp"
             ? "Engine temp"
             : signal === "speed_mph"
@@ -3346,10 +3380,12 @@ export default function FleetMaintenancePanel({
                   </div>
                 </div>
 
-                <div
+                <button
+                  type="button"
                   className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
                     vehicle.mil_status?.tone || "unknown"
                   }`}
+                  onClick={() => openTelemetryHistory("mil_status")}
                 >
                   <span className="fleet-maintenance-meta-label">
                     Diagnostics
@@ -3370,7 +3406,7 @@ export default function FleetMaintenancePanel({
                         )}`
                       : ""}
                   </span>
-                </div>
+                </button>
 
                 <button
                   type="button"
@@ -4093,7 +4129,11 @@ export default function FleetMaintenancePanel({
           >
             <header className="fleet-maintenance-telemetry-history-head">
               <div>
-                <span>Last 50 readings</span>
+                <span>
+                  {telemetryHistory.signal === "mil_status"
+                    ? "Last 50 status changes"
+                    : "Last 50 readings"}
+                </span>
                 <h3>{telemetryHistory.label || "Telemetry history"}</h3>
               </div>
               <button
@@ -4120,7 +4160,34 @@ export default function FleetMaintenancePanel({
             ) : Array.isArray(telemetryHistory.readings) &&
               telemetryHistory.readings.length ? (
               <div className="fleet-maintenance-telemetry-history-list">
-                {telemetryHistory.signal === "speed_mph"
+                {telemetryHistory.signal === "mil_status"
+                  ? telemetryHistory.readings.map((reading) => (
+                      <div
+                        key={`${reading.snapshotId}-${reading.recordedAt}`}
+                        className="fleet-maintenance-telemetry-history-row fleet-maintenance-telemetry-history-row--diagnostic"
+                      >
+                        <div>
+                          <strong>{formatDiagnosticReading(reading)}</strong>
+                          <small>{formatDiagnosticReadingDetail(reading)}</small>
+                        </div>
+                        <span>
+                          {formatTelemetryReadingTime(
+                            getTelemetryReadingDisplayTime(reading)
+                          )}
+                        </span>
+                        <em>
+                          {[
+                            reading.source,
+                            reading.snapshotId
+                              ? `snapshot #${reading.snapshotId}`
+                              : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" - ")}
+                        </em>
+                      </div>
+                    ))
+                  : telemetryHistory.signal === "speed_mph"
                   ? Object.entries(
                       telemetryHistory.readings.reduce((groups, reading) => {
                         const key = formatTelemetryReadingDate(
