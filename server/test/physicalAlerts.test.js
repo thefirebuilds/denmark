@@ -1,15 +1,20 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 const { createAlertService } = require("../services/physicalAlerts/alertService");
 const { createCriticalBookingRule } = require("../services/physicalAlerts/bookingRule");
 const { isTripWithinCriticalWindow, isWithinQuietHours } = require("../services/physicalAlerts/config");
 const { createHealthService } = require("../services/physicalAlerts/healthService");
 const { MQTTTransport } = require("../services/physicalAlerts/mqttTransport");
+const { publishHeartbeats, startPhysicalAlertRuntime } = require("../services/physicalAlerts/runtime");
 
 function fakeRepository() {
   const alerts = [];
   return {
     alerts,
+    async ensureSchema() {},
+    async registerDevice(deviceId, displayName) { return { device_id: deviceId, display_name: displayName, enabled: true }; },
+    async listDevices() { return [{ device_id: "bedroom", enabled: true }]; },
     async createAlert(input) {
       const existing = alerts.find((item) => input.dedupeKey && item.dedupe_key === input.dedupeKey);
       if (existing) return { ...existing, inserted: false };
@@ -86,6 +91,23 @@ test("retained recovery state exposes unresolved critical alarm", async () => {
   assert.equal(retained.options.retain, true);
   assert.equal(retained.payload.state, "alarm");
   assert.equal(retained.payload.currentAlert.title, "Wake");
+  const desired = transport.published.filter((item) => item.topic === "denmark/devices/bedroom/desired-state").at(-1);
+  assert.equal(desired.options.retain, true);
+  assert.equal(desired.payload.alert, true);
+  assert.equal(desired.payload.alertId, repository.alerts[0].id);
+  assert.equal(desired.payload.reason, "test");
+});
+
+test("retained desired state clears after the active alert is resolved", async () => {
+  const repository = fakeRepository(); const transport = fakeTransport();
+  const service = createAlertService({ repository, transport });
+  const alert = await service.createAlert({ type: "test", severity: "critical", title: "Wake", message: "New booking", deviceId: "bedroom" });
+  await service.resolveAlert(alert.id);
+  await service.publishDeviceState("bedroom", "ready");
+  const desired = transport.published.filter((item) => item.topic === "denmark/devices/bedroom/desired-state").at(-1);
+  assert.equal(desired.options.retain, true);
+  assert.deepEqual({ alert: desired.payload.alert, alertId: desired.payload.alertId, reason: desired.payload.reason,
+    tripId: desired.payload.tripId }, { alert: false, alertId: null, reason: null, tripId: null });
 });
 
 test("ACK handling is idempotent", async () => {
@@ -122,4 +144,70 @@ test("valid inbound device status is delegated without creating a device", async
   assert.equal(accepted, true);
   assert.equal(received.device, "bedroom");
   assert.equal(received.firmware, "0.1.0");
+});
+
+test("valid MQTT ACK is still delegated", async () => {
+  let received = null;
+  const transport = new MQTTTransport({ enabled: true }, { onAck: async (payload) => { received = payload; } });
+  const accepted = await transport.handleMessage("denmark/devices/bedroom/ack", Buffer.from(
+    '{"type":"ack","device":"bedroom","alertId":"alert-1","timestamp":"2026-08-16T06:00:00Z"}'
+  ));
+  assert.equal(accepted, true);
+  assert.equal(received.alertId, "alert-1");
+  assert.equal(received.device, "bedroom");
+});
+
+test("runtime startup ensures schema, registers the device, and starts enabled MQTT", async () => {
+  const calls = [];
+  const current = {
+    config: { defaultDeviceId: "bedroom", heartbeatIntervalMs: 60_000, mqtt: { enabled: true } },
+    repository: {
+      async ensureSchema() { calls.push("schema"); },
+      async registerDevice(deviceId) { calls.push(`device:${deviceId}`); },
+    },
+    transport: { start() { calls.push("transport"); } },
+    heartbeatHandle: null,
+  };
+  await startPhysicalAlertRuntime(current);
+  assert.deepEqual(calls, ["schema", "device:bedroom", "transport"]);
+});
+
+test("heartbeat remains non-retained and republishes retained device state", async () => {
+  const repository = fakeRepository(); const transport = fakeTransport();
+  const alertService = createAlertService({ repository, transport });
+  await alertService.createAlert({ type: "test", severity: "critical", title: "Wake", message: "Booking", deviceId: "bedroom" });
+  transport.published.length = 0;
+  const current = {
+    config: { defaultDeviceId: "bedroom" }, repository, transport, alertService,
+    healthService: { async computeHealth() { return { health: "ready", timestamp: "2026-08-16T06:00:00.000Z" }; } },
+  };
+  await publishHeartbeats(current);
+  const heartbeat = transport.published.find((item) => item.topic === "denmark/devices/bedroom/heartbeat");
+  assert.ok(heartbeat);
+  assert.notEqual(heartbeat.options?.retain, true);
+  const desired = transport.published.find((item) => item.topic === "denmark/devices/bedroom/desired-state");
+  assert.equal(desired.payload.alert, true);
+  assert.equal(desired.options.retain, true);
+});
+
+test("MQTT connect recovery republishes active retained desired state", async () => {
+  const repository = fakeRepository(); const published = [];
+  const client = new EventEmitter();
+  client.subscribe = (_topics, _options, callback) => callback(null);
+  client.publish = (topic, payload, options, callback) => { published.push({ topic, payload: JSON.parse(payload), options }); callback(null); };
+  const current = {
+    config: { defaultDeviceId: "bedroom" }, repository,
+    healthService: { async computeHealth() { return { health: "ready", timestamp: "2026-08-16T06:00:00.000Z" }; } },
+  };
+  current.transport = new MQTTTransport({ enabled: true, url: "mqtt://test", clientId: "test" }, {
+    onConnect: async () => publishHeartbeats(current),
+  }, () => client);
+  current.alertService = createAlertService({ repository, transport: current.transport });
+  await repository.createAlert({ type: "test", severity: "critical", title: "Wake", message: "Booking", deviceId: "bedroom" });
+  current.transport.start();
+  client.emit("connect");
+  await new Promise((resolve) => setImmediate(resolve));
+  const desired = published.find((item) => item.topic === "denmark/devices/bedroom/desired-state");
+  assert.equal(desired.payload.alert, true);
+  assert.equal(desired.options.retain, true);
 });

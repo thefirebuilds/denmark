@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "Turo Bat Signal",
+			"path": "../../PlatformIO/Projects/Turo Bat Signal"
+		},
+		{
+			"path": "../turo bat signal"
+		}
+	],
+	"settings": {}
+}

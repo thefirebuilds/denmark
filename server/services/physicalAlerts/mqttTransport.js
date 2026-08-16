@@ -10,9 +10,10 @@ function parseJsonPayload(buffer) {
 }
 
 class MQTTTransport {
-  constructor(config, handlers = {}) {
+  constructor(config, handlers = {}, connect = mqtt.connect) {
     this.config = config;
     this.handlers = handlers;
+    this.connect = connect;
     this.client = null;
     this.connected = false;
   }
@@ -29,7 +30,7 @@ class MQTTTransport {
       console.warn("[physical-alerts] MQTT enabled but MQTT_URL is empty");
       return;
     }
-    this.client = mqtt.connect(this.config.url, {
+    this.client = this.connect(this.config.url, {
       username: this.config.username,
       password: this.config.password,
       clientId: this.config.clientId,

@@ -4,7 +4,7 @@ Denmark's physical-alert subsystem keeps alert lifecycle state in PostgreSQL and
 
 ## Configuration
 
-Set `MQTT_ENABLED=true`, `MQTT_URL`, and, when required, `MQTT_USERNAME` and `MQTT_PASSWORD`. `MQTT_CLIENT_ID` defaults to `denmark`. Booking behavior is controlled by `ALERT_DEFAULT_DEVICE_ID` (`bedroom`), `ALERT_QUIET_HOURS_START` (`21:00`), `ALERT_QUIET_HOURS_END` (`07:00`), `ALERT_CRITICAL_TRIP_WINDOW_HOURS` (`10`), and `BUSINESS_TIMEZONE` (`America/Chicago`). Credentials are never logged.
+Set `MQTT_ENABLED=true`, `MQTT_URL`, and, when required, `MQTT_USERNAME` and `MQTT_PASSWORD`. `MQTT_CLIENT_ID` defaults to `denmark`. In this Compose deployment, the app connects internally to `mqtt://mosquitto:1883`; the MVP broker endpoint for physical devices is `alerts.freshcoastgarage.com:1883`. The broker currently has no TLS or authentication, so restrict or harden it before expanding beyond the MVP. Booking behavior is controlled by `ALERT_DEFAULT_DEVICE_ID` (`bedroom`), `ALERT_QUIET_HOURS_START` (`21:00`), `ALERT_QUIET_HOURS_END` (`07:00`), `ALERT_CRITICAL_TRIP_WINDOW_HOURS` (`10`), and `BUSINESS_TIMEZONE` (`America/Chicago`). Credentials are never logged.
 
 MQTT may remain disabled; alerts are still persisted. The startup schema registers the configured default device. Device status does not create unknown devices.
 

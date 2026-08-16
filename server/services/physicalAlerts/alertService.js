@@ -55,12 +55,25 @@ function createAlertService({ repository, transport }) {
       const current = [...active].sort((a, b) =>
         (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0) || new Date(a.created_at) - new Date(b.created_at))[0] || null;
       const state = current?.severity === "critical" ? "alarm" : health === "critical" ? "offline" : health;
-      return transport.publish(`denmark/devices/${deviceId}/status`, {
-        type: "device_state", device: deviceId, state, health,
-        activeAlerts: active.length,
-        currentAlert: current ? toAlertPayload(current) : null,
-        timestamp: new Date().toISOString(),
-      }, { retain: true });
+      const updatedAt = new Date().toISOString();
+      const [statusResult, desiredStateResult] = await Promise.all([
+        transport.publish(`denmark/devices/${deviceId}/status`, {
+          type: "device_state", device: deviceId, state, health,
+          activeAlerts: active.length,
+          currentAlert: current ? toAlertPayload(current) : null,
+          timestamp: updatedAt,
+        }, { retain: true }),
+        transport.publish(`denmark/devices/${deviceId}/desired-state`, {
+          type: "desired_state",
+          device: deviceId,
+          alert: Boolean(current),
+          alertId: current?.id || null,
+          reason: current?.type || null,
+          tripId: current?.trip_id || null,
+          updatedAt,
+        }, { retain: true }),
+      ]);
+      return { status: statusResult, desiredState: desiredStateResult };
     },
   };
   return service;

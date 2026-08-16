@@ -45,8 +45,14 @@ async function initializeStartupTablesWithRetry() {
     markDatabaseReady();
     console.log("[server] startup tables ready");
 
-    const { startPhysicalAlertRuntime } = require("../services/physicalAlerts/runtime");
-    await startPhysicalAlertRuntime();
+    try {
+      const { startPhysicalAlertRuntime } = require("../services/physicalAlerts/runtime");
+      await startPhysicalAlertRuntime();
+    } catch (error) {
+      console.warn(
+        `[physical-alerts] runtime startup failed; web server will continue | error=${summarizeError(error)}`
+      );
+    }
 
     if (!state.schedulerStarted) {
       state.schedulerStarted = true;

@@ -44,8 +44,7 @@ function buildRuntime() {
   return runtime;
 }
 
-async function publishHeartbeats() {
-  const current = buildRuntime();
+async function publishHeartbeats(current = buildRuntime()) {
   const health = await current.healthService.computeHealth();
   let devices;
   try {
@@ -75,16 +74,20 @@ async function publishHeartbeats() {
   return health;
 }
 
-async function startPhysicalAlertRuntime() {
-  const current = buildRuntime();
+async function startPhysicalAlertRuntime(current = buildRuntime()) {
+  await current.repository.ensureSchema();
   await current.repository.registerDevice(current.config.defaultDeviceId, "Bedroom alert");
-  current.transport.start();
+  try {
+    current.transport.start();
+  } catch (error) {
+    console.warn(`[physical-alerts] MQTT startup failed; reconnect remains available | error=${error.message}`);
+  }
   if (!current.heartbeatHandle) {
-    current.heartbeatHandle = setInterval(() => void publishHeartbeats().catch((error) =>
+    current.heartbeatHandle = setInterval(() => void publishHeartbeats(current).catch((error) =>
       console.warn(`[physical-alerts] heartbeat publish failure | error=${error.message}`)), current.config.heartbeatIntervalMs);
     current.heartbeatHandle.unref?.();
   }
-  if (!current.config.mqtt.enabled) await publishHeartbeats();
+  if (!current.config.mqtt.enabled) await publishHeartbeats(current);
   return current;
 }
 
