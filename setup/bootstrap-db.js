@@ -87,8 +87,6 @@ const BASE_SCHEMA_TABLES = [
   "vehicle_fmv_estimates",
   "expenses",
   "fleet_alert_deliveries",
-  "alert_devices",
-  "alerts",
   "vehicle_diagnostic_suppressions",
   "google_calendar_connections",
   "maintenance_events",
@@ -121,7 +119,12 @@ const BASE_SCHEMA_TABLES = [
   "database_import_jobs",
   "service_tokens",
 ];
-const RUNTIME_ENSURED_TABLES = ["income_transactions", "maintenance_google_sync"];
+const RUNTIME_ENSURED_TABLES = [
+  "income_transactions",
+  "maintenance_google_sync",
+  "alert_devices",
+  "alerts",
+];
 const REQUIRED_TABLES = [...BASE_SCHEMA_TABLES, ...RUNTIME_ENSURED_TABLES];
 const RUNTIME_DEPENDENCY_TABLES = ["vehicles", "trips", "banking_transactions"];
 
