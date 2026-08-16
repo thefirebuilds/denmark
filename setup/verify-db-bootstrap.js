@@ -36,6 +36,8 @@ const REQUIRED_TABLES = [
   "vehicle_fmv_estimates",
   "expenses",
   "fleet_alert_deliveries",
+  "alert_devices",
+  "alerts",
   "vehicle_diagnostic_suppressions",
   "google_calendar_connections",
   "maintenance_google_sync",

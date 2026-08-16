@@ -41,6 +41,7 @@ const {
 } = require("../services/systemActivityLog");
 const { ensureIncomeTables } = require("../services/income/incomeService");
 const { ensureFleetAlertTables } = require("../services/alerts/fleetAlerts");
+const { ensureAlertDeviceSchema } = require("../services/physicalAlerts/alertRepository");
 const {
   ensureAuthPublicUrlSettings,
 } = require("../services/authPublicUrlSettings");
@@ -106,6 +107,7 @@ async function initializeStartupTables() {
     ["toll audit schema", ensureTollAuditSchema],
     ["income tables", ensureIncomeTables],
     ["fleet alerts", ensureFleetAlertTables],
+    ["physical alert devices", ensureAlertDeviceSchema],
     ["Google Calendar health columns", ensureGoogleCalendarConnectionHealthColumns],
     ["auth tables", ensureAuthTables],
     ["system activity log", ensureSystemActivityLogTable],

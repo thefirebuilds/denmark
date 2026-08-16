@@ -1506,6 +1506,39 @@ CREATE TABLE public.vehicle_odometer_history (
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE public.alert_devices (
+    id bigserial PRIMARY KEY,
+    device_id text NOT NULL UNIQUE,
+    display_name text NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    last_seen_at timestamp with time zone,
+    last_status text,
+    firmware_version text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.alerts (
+    id text PRIMARY KEY,
+    type text NOT NULL,
+    severity text NOT NULL,
+    title text NOT NULL,
+    message text NOT NULL,
+    trip_id integer,
+    device_id text REFERENCES public.alert_devices(device_id) ON UPDATE CASCADE ON DELETE SET NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    dedupe_key text UNIQUE,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    published_at timestamp with time zone,
+    acknowledged_at timestamp with time zone,
+    acknowledged_by text,
+    resolved_at timestamp with time zone
+);
+
+CREATE INDEX idx_alerts_active_device ON public.alerts (device_id, severity, created_at DESC)
+    WHERE resolved_at IS NULL;
+CREATE INDEX idx_alert_devices_enabled ON public.alert_devices (enabled, device_id);
+
 
 --
 -- Name: vehicle_odometer_rollups; Type: TABLE; Schema: public; Owner: -
@@ -3148,6 +3181,9 @@ ALTER TABLE ONLY public.vehicle_telemetry_raw_payloads
 
 ALTER TABLE ONLY public.vehicle_telemetry_snapshots
     ADD CONSTRAINT vehicle_telemetry_snapshots_trip_id_fkey FOREIGN KEY (trip_id) REFERENCES public.trips(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.alerts
+    ADD CONSTRAINT alerts_trip_id_fkey FOREIGN KEY (trip_id) REFERENCES public.trips(id) ON DELETE SET NULL;
 
 
 --

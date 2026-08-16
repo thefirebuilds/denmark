@@ -61,6 +61,7 @@ const {
 } = require("../server/services/systemActivityLog");
 const { ensureIncomeTables } = require("../server/services/income/incomeService");
 const { ensureFleetAlertTables } = require("../server/services/alerts/fleetAlerts");
+const { ensureAlertDeviceSchema } = require("../server/services/physicalAlerts/alertRepository");
 const {
   ensureAuthPublicUrlSettings,
 } = require("../server/services/authPublicUrlSettings");
@@ -86,6 +87,8 @@ const BASE_SCHEMA_TABLES = [
   "vehicle_fmv_estimates",
   "expenses",
   "fleet_alert_deliveries",
+  "alert_devices",
+  "alerts",
   "vehicle_diagnostic_suppressions",
   "google_calendar_connections",
   "maintenance_events",
@@ -375,6 +378,7 @@ async function runRuntimeEnsures() {
   await ensureSystemActivityLogTable();
   await ensureIncomeTables();
   await ensureFleetAlertTables();
+  await ensureAlertDeviceSchema();
   await ensureAuthPublicUrlSettings();
 }
 

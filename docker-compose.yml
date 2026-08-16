@@ -15,6 +15,11 @@ services:
       PGPASSWORD: ${PGPASSWORD:?set PGPASSWORD in .env}
       PGPOOL_MAX: ${PGPOOL_MAX:-6}
       PGCONNECT_TIMEOUT_MS: ${PGCONNECT_TIMEOUT_MS:-10000}
+      MQTT_ENABLED: ${MQTT_ENABLED:-false}
+      MQTT_URL: ${MQTT_URL:-mqtt://mosquitto:1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:-denmark}
     depends_on:
       - db
     ports:
@@ -38,5 +43,15 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
 
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - denmark_mosquitto_data:/mosquitto/data
+
 volumes:
   denmark_pgdata:
+  denmark_mosquitto_data:

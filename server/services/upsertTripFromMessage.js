@@ -16,6 +16,8 @@ const {
 } = require("./vehicles/vehicleAliases");
 const { transitionTripStage } = require("./trips/transitionTripStage");
 const { getEnabledLocations } = require("./locations/locationSettings");
+const { createCriticalBookingRule } = require("./physicalAlerts/bookingRule");
+const { buildRuntime } = require("./physicalAlerts/runtime");
 
 async function resolveTripLocations(savedMessage, useConfiguredDefault) {
   let pickupLocation = String(savedMessage.pickup_location || "").trim() || null;
@@ -427,6 +429,23 @@ async function upsertTripFromMessage(savedMessage) {
   ];
 
   const result = await pool.query(query, values);
+
+  if (savedMessage.message_type === "trip_booked") {
+    const evaluateCriticalBooking = createCriticalBookingRule({
+      alertService: buildRuntime().alertService,
+    });
+    try {
+      await evaluateCriticalBooking(result.rows[0], {
+        discoveredAt: savedMessage.message_timestamp || savedMessage.created_at || new Date(),
+      });
+    } catch (error) {
+      // Trip ingestion remains authoritative even when the optional alert
+      // subsystem or MQTT transport is unavailable.
+      console.warn(
+        `[physical-alerts] booking rule failed | trip=${result.rows[0]?.id || "unknown"} error=${error.message || error}`
+      );
+    }
+  }
 
   void pushPublicAvailabilitySnapshotSafe("trip status changed");
 

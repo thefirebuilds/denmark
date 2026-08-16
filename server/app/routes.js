@@ -18,6 +18,7 @@ const settingsRouter = require("../routes/settings");
 const databaseRouter = require("../routes/database");
 const systemActivityRouter = require("../routes/systemActivity");
 const googleCalendarRoutes = require("../routes/googleCalendar");
+const physicalAlertRoutes = require("../routes/physicalAlerts");
 const {
   authenticateServiceToken,
   requirePermission,
@@ -152,6 +153,12 @@ function registerApiRoutes(app) {
     defaultCors,
     requirePermission("settings.read"),
     systemActivityRouter
+  );
+  app.use(
+    "/api",
+    defaultCors,
+    requireMethodPermissions({ GET: "settings.read", POST: "settings.write" }),
+    physicalAlertRoutes
   );
   app.use(
     "/api/integrations/google-calendar",
