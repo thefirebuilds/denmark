@@ -47,6 +47,26 @@ const DEFAULT_VOLTAGE_ALERT_SETTINGS = {
   smsEnabled: true,
   lowVoltageThreshold: 11.9,
 };
+const MQTT_TEST_ALERTS = {
+  new_trip_booked: {
+    type: "new_critical_booking",
+    severity: "critical",
+    title: "New Turo Booking",
+    message: "Test booking received from Denmark Settings",
+  },
+  low_battery: {
+    type: "low_battery_voltage",
+    severity: "urgent",
+    title: "Low Battery Voltage",
+    message: "Test low-voltage alert from Denmark Settings",
+  },
+  warning: {
+    type: "manual_test",
+    severity: "warning",
+    title: "Denmark Warning",
+    message: "Test warning from Denmark Settings",
+  },
+};
 const DEFAULT_INTEGRATION_ENABLEMENT = {
   imap: true,
   bouncie: true,
@@ -1296,6 +1316,9 @@ function AlertSettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [savingSms, setSavingSms] = useState(false);
   const [sendingSmsTest, setSendingSmsTest] = useState(false);
+  const [mqttTestType, setMqttTestType] = useState("new_trip_booked");
+  const [mqttTesting, setMqttTesting] = useState(false);
+  const [activeMqttTests, setActiveMqttTests] = useState([]);
   const [message, setMessage] = useState("");
   const dirtyRef = useRef(false);
   const voltageDirtyRef = useRef(false);
@@ -1510,6 +1533,23 @@ function AlertSettingsPanel() {
     }
   }
 
+  async function loadActiveMqttTests() {
+    const res = await fetch(`${API_BASE}/api/alerts/active`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || "Failed to load MQTT test alerts");
+    setActiveMqttTests(
+      (json.alerts || []).filter(
+        (alert) => alert.metadata?.source === "settings_mqtt_test"
+      )
+    );
+  }
+
+  useEffect(() => {
+    loadActiveMqttTests().catch((err) =>
+      setMessage(err.message || "Failed to load MQTT test alerts")
+    );
+  }, []);
+
   async function sendSmsTest() {
     try {
       setSendingSmsTest(true);
@@ -1534,6 +1574,54 @@ function AlertSettingsPanel() {
     }
   }
 
+  async function sendMqttTest() {
+    try {
+      setMqttTesting(true);
+      setMessage("");
+      const preset = MQTT_TEST_ALERTS[mqttTestType];
+      const res = await fetch(`${API_BASE}/api/alerts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...preset,
+          metadata: { source: "settings_mqtt_test", preset: mqttTestType },
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to send MQTT test alert");
+      await loadActiveMqttTests();
+      if (!json.alert?.published_at) {
+        throw new Error("Test alert was saved, but MQTT is not currently connected.");
+      }
+      setMessage(`MQTT test sent: ${preset.title}.`);
+    } catch (err) {
+      setMessage(err.message || "Failed to send MQTT test alert");
+    } finally {
+      setMqttTesting(false);
+    }
+  }
+
+  async function clearMqttTests() {
+    try {
+      setMqttTesting(true);
+      setMessage("");
+      for (const alert of activeMqttTests) {
+        const res = await fetch(
+          `${API_BASE}/api/alerts/${encodeURIComponent(alert.id)}/resolve`,
+          { method: "POST" }
+        );
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.error || "Failed to clear MQTT test alert");
+      }
+      await loadActiveMqttTests();
+      setMessage("MQTT tests cleared; the device state was refreshed.");
+    } catch (err) {
+      setMessage(err.message || "Failed to clear MQTT test alerts");
+    } finally {
+      setMqttTesting(false);
+    }
+  }
+
   const smsFormLooksConfigured = Boolean(
     smsForm.accountSid &&
       (smsForm.authToken || smsForm.authTokenConfigured) &&
@@ -1554,6 +1642,51 @@ function AlertSettingsPanel() {
       </div>
 
       <div className="settings-form">
+        <div className="settings-group">
+          <div className="settings-group-title">Physical alert MQTT test</div>
+          <small className="settings-field-note">
+            Sends a real alert to the configured Bat Signal device. Clear the test
+            afterward to turn off its active alert state.
+          </small>
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Alert to test</span>
+              <select
+                value={mqttTestType}
+                disabled={mqttTesting}
+                onChange={(event) => setMqttTestType(event.target.value)}
+              >
+                <option value="new_trip_booked">New trip booked (critical)</option>
+                <option value="low_battery">Low battery voltage (urgent)</option>
+                <option value="warning">General warning</option>
+              </select>
+            </label>
+          </div>
+          <div className="settings-form-actions">
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={mqttTesting}
+              onClick={sendMqttTest}
+            >
+              {mqttTesting ? "Working..." : "Send MQTT Test"}
+            </button>
+            <button
+              type="button"
+              className="settings-action-btn secondary"
+              disabled={mqttTesting || activeMqttTests.length === 0}
+              onClick={clearMqttTests}
+            >
+              Clear Test{activeMqttTests.length === 1 ? "" : "s"}
+            </button>
+          </div>
+          <small className="settings-field-note">
+            {activeMqttTests.length
+              ? `${activeMqttTests.length} active MQTT test alert${activeMqttTests.length === 1 ? "" : "s"}.`
+              : "No active MQTT test alerts."}
+          </small>
+        </div>
+
         <form className="settings-group" onSubmit={saveSmsSettings}>
           <div className="settings-group-title">Text alerts</div>
           <label className="settings-checkbox-row">

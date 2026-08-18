@@ -20,12 +20,14 @@ router.post("/alerts", async (req, res, next) => {
   try {
     const { type = "manual_test", severity = "critical", title, message, tripId, deviceId, metadata } = req.body || {};
     if (!title || !message) return res.status(400).json({ error: "title and message are required" });
-    const alert = await buildRuntime().alertService.createAlert({
+    const current = buildRuntime();
+    const createdAlert = await current.alertService.createAlert({
       type, severity, title, message, tripId, metadata,
-      deviceId: deviceId || buildRuntime().config.defaultDeviceId,
+      deviceId: deviceId || current.config.defaultDeviceId,
       dedupeKey: req.body.dedupeKey || null,
     });
-    return res.status(alert.inserted ? 201 : 200).json({ alert });
+    const alert = await current.repository.getById(createdAlert.id) || createdAlert;
+    return res.status(createdAlert.inserted ? 201 : 200).json({ alert });
   } catch (error) { return next(error); }
 });
 

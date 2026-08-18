@@ -117,9 +117,12 @@ jobs:
               git pull --ff-only
             fi
 
-            docker compose pull app
+            docker compose pull app mosquitto
             docker compose run --rm app npm run db:bootstrap
             docker compose run --rm app npm run db:verify
+            docker compose up -d --force-recreate mosquitto
             docker compose up -d --force-recreate app
+            docker compose ps
+            docker compose ps mosquitto | grep -F '0.0.0.0:1883->1883/tcp'
 
             docker image prune -f
