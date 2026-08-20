@@ -3902,6 +3902,12 @@ export default function FleetMaintenancePanel({
                               {item.value}
                             </div>
 
+                            {item.ruleCode === "battery_test" ? (
+                              <div className="fleet-maintenance-grid-detail">
+                                Battery age {formatBatteryAge(vehicle.battery_installed_at)}
+                              </div>
+                            ) : null}
+
                             {item.ruleCode === "wiper_replacement" ? (
                               <div className="fleet-maintenance-wiper-sizes">
                                 Sizes: {[1, 2, 3]
