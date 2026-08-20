@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { createAlertService } = require("../services/physicalAlerts/alertService");
 const { createCriticalBookingRule } = require("../services/physicalAlerts/bookingRule");
+const { reconcileBookingAlerts } = require("../services/physicalAlerts/bookingAlertReconciler");
 const { isTripWithinCriticalWindow, isWithinQuietHours } = require("../services/physicalAlerts/config");
 const { createHealthService } = require("../services/physicalAlerts/healthService");
 const { MQTTTransport } = require("../services/physicalAlerts/mqttTransport");
@@ -12,6 +13,7 @@ function fakeRepository() {
   const alerts = [];
   return {
     alerts,
+    unconfirmedTrips: [],
     async ensureSchema() {},
     async registerDevice(deviceId, displayName) { return { device_id: deviceId, display_name: displayName, enabled: true }; },
     async listDevices() { return [{ device_id: "bedroom", enabled: true }]; },
@@ -28,7 +30,10 @@ function fakeRepository() {
     async acknowledge(id, by, at) { const alert = alerts.find((item) => item.id === id); if (!alert) return null;
       alert.acknowledged_at ||= at || new Date(); alert.acknowledged_by ||= by; return alert; },
     async resolve(id, at) { const alert = alerts.find((item) => item.id === id); if (!alert) return null; alert.resolved_at ||= at || new Date(); return alert; },
+    async reopenBookingAlert(tripId) { const alert = alerts.find((item) => item.type === "new_critical_booking" && item.trip_id === tripId && item.resolved_at);
+      if (!alert) return null; alert.resolved_at = null; alert.acknowledged_at = null; alert.acknowledged_by = null; alert.published_at = null; return alert; },
     async listAlerts({ active, deviceId } = {}) { return alerts.filter((item) => (!active || !item.resolved_at) && (!deviceId || item.device_id === deviceId)); },
+    async listUnconfirmedTrips() { return this.unconfirmedTrips; },
   };
 }
 
@@ -52,16 +57,32 @@ test("critical booking window only accepts future trips inside window", () => {
   assert.equal(isTripWithinCriticalWindow(discovered, "2026-08-16T21:30:00-05:00", 10), false);
 });
 
-test("qualifying booking creates and publishes exactly one alert", async () => {
+test("booked trip creates an alert at any hour regardless of lead time", async () => {
   const repository = fakeRepository(); const transport = fakeTransport();
   const alertService = createAlertService({ repository, transport });
-  const rule = createCriticalBookingRule({ alertService, now: () => new Date("2026-08-16T22:00:00-05:00"),
-    config: { quietHoursStart: "21:00", quietHoursEnd: "07:00", businessTimeZone: "America/Chicago",
-      criticalTripWindowHours: 10, defaultDeviceId: "bedroom" } });
-  const trip = { id: 1234, reservation_id: 60213620, vehicle_name: "Winnie", trip_start: "2026-08-17T05:30:00-05:00" };
+  const rule = createCriticalBookingRule({ alertService,
+    config: { businessTimeZone: "America/Chicago", defaultDeviceId: "bedroom" } });
+  const trip = { id: 1234, reservation_id: 60213620, vehicle_name: "Winnie",
+    workflow_stage: "booked", trip_start: "2026-09-17T12:30:00-05:00" };
   await rule(trip); await rule(trip);
   assert.equal(repository.alerts.length, 1);
   assert.equal(transport.published.filter((item) => item.topic.endsWith("/alert")).length, 1);
+});
+
+test("booking reconciliation clears the alarm after confirmation", async () => {
+  const repository = fakeRepository(); const transport = fakeTransport();
+  const alertService = createAlertService({ repository, transport });
+  repository.unconfirmedTrips = [{ id: 1234, reservation_id: 60213620, vehicle_name: "Winnie",
+    workflow_stage: "booked", trip_start: "2026-09-17T12:30:00-05:00" }];
+  const current = { repository, transport, alertService,
+    config: { businessTimeZone: "America/Chicago", defaultDeviceId: "bedroom" } };
+  await reconcileBookingAlerts(current);
+  assert.equal(repository.alerts.filter((alert) => !alert.resolved_at).length, 1);
+  repository.unconfirmedTrips = [];
+  await reconcileBookingAlerts(current);
+  assert.equal(repository.alerts.filter((alert) => !alert.resolved_at).length, 0);
+  const desired = transport.published.filter((item) => item.topic.endsWith("/desired-state")).at(-1);
+  assert.equal(desired.payload.alert, false);
 });
 
 test("MQTT disabled skips publication without losing persisted alert", async () => {
@@ -159,13 +180,16 @@ test("valid MQTT ACK is still delegated", async () => {
 
 test("runtime startup ensures schema, registers the device, and starts enabled MQTT", async () => {
   const calls = [];
+  const repository = fakeRepository();
+  repository.ensureSchema = async () => { calls.push("schema"); };
+  repository.registerDevice = async (deviceId) => { calls.push(`device:${deviceId}`); };
+  const transport = fakeTransport();
+  transport.start = () => { calls.push("transport"); };
   const current = {
     config: { defaultDeviceId: "bedroom", heartbeatIntervalMs: 60_000, mqtt: { enabled: true } },
-    repository: {
-      async ensureSchema() { calls.push("schema"); },
-      async registerDevice(deviceId) { calls.push(`device:${deviceId}`); },
-    },
-    transport: { start() { calls.push("transport"); } },
+    repository,
+    transport,
+    alertService: createAlertService({ repository, transport }),
     heartbeatHandle: null,
   };
   await startPhysicalAlertRuntime(current);

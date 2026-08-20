@@ -68,6 +68,12 @@ function createAlertRepository(db = pool) {
       const { rows } = await db.query("UPDATE alerts SET resolved_at=COALESCE(resolved_at,$2) WHERE id=$1 RETURNING *", [id, at]);
       return rows[0] || null;
     },
+    async reopenBookingAlert(tripId) {
+      const { rows } = await db.query(`UPDATE alerts SET resolved_at=NULL,acknowledged_at=NULL,
+        acknowledged_by=NULL,published_at=NULL WHERE type='new_critical_booking' AND trip_id=$1
+        AND resolved_at IS NOT NULL RETURNING *`, [tripId]);
+      return rows[0] || null;
+    },
     async getById(id) {
       const { rows } = await db.query("SELECT * FROM alerts WHERE id=$1", [id]);
       return rows[0] || null;
@@ -75,6 +81,12 @@ function createAlertRepository(db = pool) {
     async listAlerts({ active = false, deviceId = null, limit = 100 } = {}) {
       const { rows } = await db.query(`SELECT * FROM alerts WHERE ($1::boolean=false OR resolved_at IS NULL)
         AND ($2::text IS NULL OR device_id=$2) ORDER BY created_at DESC LIMIT $3`, [active, deviceId, limit]);
+      return rows;
+    },
+    async listUnconfirmedTrips() {
+      const { rows } = await db.query(`SELECT id,reservation_id,vehicle_name,trip_start,workflow_stage
+        FROM trips WHERE workflow_stage='booked' AND canceled_at IS NULL
+        AND COALESCE(status,'') <> 'canceled' ORDER BY trip_start`);
       return rows;
     },
     async listDevices(deviceId = null) {

@@ -10,6 +10,8 @@ const { handleTripStageEntry } = require("./handleTripStageEntry");
 const {
   syncTripToSelectedGoogleCalendars,
 } = require("../googleCalendar/googleTripSync");
+const { reconcileBookingAlerts } = require("../physicalAlerts/bookingAlertReconciler");
+const { buildRuntime } = require("../physicalAlerts/runtime");
 
 const WORKFLOW_STAGES = [
   "booked",
@@ -790,6 +792,10 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
     };
 
     runStageEntryAutomation(updatedTrip, currentStage);
+
+    void reconcileBookingAlerts(buildRuntime()).catch((err) => {
+      console.warn(`[physical-alerts] booking reconciliation failed | error=${err.message || err}`);
+    });
 
     if (shouldSyncTripCalendarAfterStageChange(normalizedNextStage)) {
       syncTripCalendarNotices(updatedTrip, normalizedNextStage);

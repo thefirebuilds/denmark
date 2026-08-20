@@ -4,6 +4,7 @@ const { createAlertService } = require("./alertService");
 const { getPhysicalAlertConfig } = require("./config");
 const { createHealthService } = require("./healthService");
 const { MQTTTransport } = require("./mqttTransport");
+const { reconcileBookingAlerts } = require("./bookingAlertReconciler");
 
 let runtime = null;
 
@@ -15,6 +16,7 @@ function buildRuntime() {
   const transport = new MQTTTransport(config.mqtt, {
     onConnect: async () => {
       try {
+        await reconcileBookingAlerts(runtime);
         await alertService.republishActiveAlerts();
         await publishHeartbeats();
       } catch (error) {
@@ -82,6 +84,7 @@ async function startPhysicalAlertRuntime(current = buildRuntime()) {
   } catch (error) {
     console.warn(`[physical-alerts] MQTT startup failed; reconnect remains available | error=${error.message}`);
   }
+  await reconcileBookingAlerts(current);
   if (!current.heartbeatHandle) {
     current.heartbeatHandle = setInterval(() => void publishHeartbeats(current).catch((error) =>
       console.warn(`[physical-alerts] heartbeat publish failure | error=${error.message}`)), current.config.heartbeatIntervalMs);
