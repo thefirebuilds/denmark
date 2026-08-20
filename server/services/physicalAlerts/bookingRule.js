@@ -3,7 +3,6 @@ const { getPhysicalAlertConfig } = require("./config");
 function createCriticalBookingRule({ alertService, config = getPhysicalAlertConfig() }) {
   return async function evaluateCriticalBooking(trip, options = {}) {
     if (!trip?.id) return null;
-    if (trip.workflow_stage && trip.workflow_stage !== "booked") return null;
     const discoveredAt = options.discoveredAt ? new Date(options.discoveredAt) : new Date();
     const vehicle = trip.vehicle_name || "Vehicle";
     const start = trip.trip_start

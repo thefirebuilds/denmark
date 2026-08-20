@@ -22,6 +22,9 @@ async function reconcileBookingAlerts(current) {
   }
 
   await current.alertService.publishDeviceState(current.config.defaultDeviceId);
+  console.log(
+    `[physical-alerts] booking reconciliation complete | unconfirmed=${trips.length} active_booking_alerts=${trips.length}`
+  );
   return { activeTrips: trips.length };
 }
 

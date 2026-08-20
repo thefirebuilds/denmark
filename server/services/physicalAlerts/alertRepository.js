@@ -85,8 +85,23 @@ function createAlertRepository(db = pool) {
     },
     async listUnconfirmedTrips() {
       const { rows } = await db.query(`SELECT id,reservation_id,vehicle_name,trip_start,workflow_stage
-        FROM trips WHERE workflow_stage='booked' AND canceled_at IS NULL
-        AND COALESCE(status,'') <> 'canceled' ORDER BY trip_start`);
+        FROM trips
+        WHERE canceled_at IS NULL
+          AND COALESCE(status,'') <> 'canceled'
+          AND (
+            workflow_stage = 'booked'
+            OR (
+              COALESCE(workflow_stage, '') NOT IN (
+                'confirmed','ready_for_handoff','in_progress','turnaround',
+                'awaiting_expenses','complete','closed','canceled'
+              )
+              AND (
+                needs_review = TRUE
+                OR status IN ('booked_unconfirmed','updated_unconfirmed')
+              )
+            )
+          )
+        ORDER BY trip_start`);
       return rows;
     },
     async listDevices(deviceId = null) {
