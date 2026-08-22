@@ -134,6 +134,8 @@ function hasMarketplaceSoldMarker(item) {
     if (!text) return false;
 
     return (
+      /(?:^|\n)\s*sold\s*(?:\u00b7|\u2022|-|:|\|)\s*/i.test(text) ||
+      /\bsold\s*(?:\u00b7|\u2022|-|:|\|)\s*(?:19\d{2}|20\d{2})\b/i.test(text) ||
       /^sold\b/i.test(text) ||
       /^sold\b[\s:|\u00b7\u2022\-–—]+\$?\d/i.test(text) ||
       /^sold\b[\s:|\u00b7\u2022\-–—]+(?:just listed|listed\b)/i.test(text) ||

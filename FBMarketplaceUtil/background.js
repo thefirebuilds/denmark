@@ -206,7 +206,8 @@ async function inspectUnavailableListingTab(tabId) {
       target: { tabId },
       func: () => {
         const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
-        const bodyText = clean(document.body?.innerText || "");
+        const rawBodyText = String(document.body?.innerText || "");
+        const bodyText = clean(rawBodyText);
         const headings = Array.from(document.querySelectorAll("h1, h2, h3"))
           .map((node) => clean(node.innerText || ""))
           .filter(Boolean)
@@ -217,11 +218,16 @@ async function inspectUnavailableListingTab(tabId) {
           /Listing Is No Longer Available/i.test(bodyText) ||
           /This listing is no longer available/i.test(bodyText) ||
           /It may have been sold or expired/i.test(bodyText);
+        const sold =
+          rawBodyText.split(/\r?\n/).some((line) => clean(line).toLowerCase() === "sold") ||
+          /\bSold\s*(?:\u00b7|\u2022|-|:|\|)\s*(?:19\d{2}|20\d{2})\b/i.test(bodyText) ||
+          /\bSold\s*(?:\u00b7|\u2022|-|:|\|)\s*[A-Za-z0-9]/i.test(bodyText);
 
         const diagnostic = {
           url: location.href,
           title: document.title,
           unavailable,
+          sold,
           headings,
           bodySample: bodyText.slice(0, 800),
         };
@@ -237,7 +243,7 @@ async function inspectUnavailableListingTab(tabId) {
   const diagnostic = results?.[0]?.result || null;
   console.log("[fcg-auto-enrich] background inspect result:", diagnostic);
 
-  if (!diagnostic?.unavailable) {
+  if (!diagnostic?.unavailable && !diagnostic?.sold) {
     if (enrichQueueState.availabilityOnly) {
       await finishCurrentEnrichTab(true, tabId);
     }
