@@ -19,6 +19,8 @@ const {
 const {
   onBankingReconciliationNoticeChanged,
 } = require("../services/banking/bankingReconciliationNotice");
+const { getEnabledLocations, getPrimaryParkingLocation } = require("../services/locations/locationSettings");
+const { getMatchedTripReturnGeoLocation } = require("../services/alerts/fleetAlerts");
 
 const bridgeEmailMismatchGraceMinutes = Number(
   process.env.BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES || 5
@@ -1594,6 +1596,8 @@ function mapRefuelNoticeRow(row) {
       threshold == null ? TURNOVER_REFUEL_THRESHOLD_PERCENT : threshold,
     refuel_next_trip_start: row.next_trip_start,
     refuel_next_guest_name: row.next_guest_name,
+    refuel_return_location_label: row.return_location_label,
+    refuel_return_distance_miles: row.return_distance_miles,
     created_at: returnedAt,
   };
 }
@@ -3776,6 +3780,7 @@ router.get("/", async (req, res) => {
           t.turo_vehicle_id,
           t.trip_start,
           t.trip_end,
+          COALESCE(NULLIF(t.return_location,''),NULLIF(t.pickup_location,'')) AS return_location,
           t.workflow_stage,
           t.status AS trip_status,
           t.closed_out,
@@ -3944,6 +3949,8 @@ router.get("/", async (req, res) => {
           t.turo_vehicle_id,
           t.trip_start,
           t.trip_end,
+          t.return_location,
+          t.pickup_location,
           t.workflow_stage,
           t.status AS trip_status,
           MAX(COALESCE(ne.posted_at, ne.received_at)) AS returned_at
@@ -4002,6 +4009,28 @@ router.get("/", async (req, res) => {
           LOWER(s.vin),
           COALESCE(s.fuel_level_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
           s.id DESC
+      ),
+      latest_location AS (
+        SELECT DISTINCT ON (LOWER(s.vin))
+          LOWER(s.vin) AS vin_key,
+          s.latitude,
+          s.longitude,
+          s.address,
+          s.service_name,
+          s.vehicle_last_updated,
+          s.location_last_updated,
+          s.captured_at
+        FROM vehicle_telemetry_snapshots s
+        JOIN candidate_vins cv
+          ON cv.vin_key = LOWER(s.vin)
+        WHERE s.latitude IS NOT NULL
+          AND s.longitude IS NOT NULL
+          AND COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at)
+            >= NOW() - INTERVAL '2 hours'
+        ORDER BY
+          LOWER(s.vin),
+          COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at) DESC NULLS LAST,
+          s.id DESC
       )
       SELECT
         c.trip_id,
@@ -4012,12 +4041,26 @@ router.get("/", async (req, res) => {
         c.vehicle_vin,
         c.trip_start,
         c.trip_end,
+        COALESCE(NULLIF(c.return_location,''),NULLIF(c.pickup_location,'')) AS return_location,
         c.workflow_stage,
         c.trip_status,
         latest_fuel.fuel_level AS latest_fuel_level,
         latest_fuel.service_name AS latest_fuel_source,
         latest_fuel.fuel_at AS latest_fuel_at,
-        COALESCE(c.returned_at, c.trip_end) AS returned_at,
+        latest_location.latitude,
+        latest_location.longitude,
+        latest_location.address,
+        latest_location.service_name AS location_service_name,
+        latest_location.vehicle_last_updated,
+        latest_location.location_last_updated,
+        latest_location.captured_at AS location_captured_at,
+        COALESCE(
+          latest_location.location_last_updated,
+          latest_location.vehicle_last_updated,
+          latest_location.captured_at,
+          c.returned_at,
+          c.trip_end
+        ) AS returned_at,
         next_trip.trip_start AS next_trip_start,
         next_trip.guest_name AS next_guest_name,
         ${TURNOVER_REFUEL_THRESHOLD_PERCENT} AS refuel_threshold
@@ -4025,6 +4068,9 @@ router.get("/", async (req, res) => {
       JOIN latest_fuel
         ON c.vehicle_vin IS NOT NULL
         AND latest_fuel.vin_key = LOWER(c.vehicle_vin)
+      JOIN latest_location
+        ON c.vehicle_vin IS NOT NULL
+        AND latest_location.vin_key = LOWER(c.vehicle_vin)
       LEFT JOIN LATERAL (
         SELECT nt.trip_start, nt.guest_name
         FROM trips nt
@@ -4234,6 +4280,24 @@ router.get("/", async (req, res) => {
     const refuelResult = fast
       ? EMPTY_QUERY_RESULT
       : await timeQueueQuery(queueTimings, "refuel", db.query(refuelSql));
+    const [returnLocations, primaryParking] = fast
+      ? [[], null]
+      : await Promise.all([getEnabledLocations(), getPrimaryParkingLocation()]);
+    const refuelReturnLocations = returnLocations.map((location) => ({
+      ...location,
+      isPrimaryParking: location.id === primaryParking?.id,
+    }));
+    const verifiedRefuelRows = refuelResult.rows.flatMap((row) => {
+      const match = getMatchedTripReturnGeoLocation(row, refuelReturnLocations, {
+        strictReturnLocation: true,
+      });
+      if (!match) return [];
+      return [{
+        ...row,
+        return_location_label: match.location.label || match.location.id || "return location",
+        return_distance_miles: match.milesAway,
+      }];
+    });
     const lateTollResult = fast
       ? EMPTY_QUERY_RESULT
       : await timeQueueQuery(queueTimings, "lateToll", db.query(lateTollSql));
@@ -4381,7 +4445,7 @@ router.get("/", async (req, res) => {
         ...attachedHandoffNotices,
         ...attachedInspectionExportNotices,
         ...closeoutResult.rows.map(mapCloseoutNoticeRow),
-        ...refuelResult.rows.map(mapRefuelNoticeRow),
+        ...verifiedRefuelRows.map(mapRefuelNoticeRow),
         ...lateTollResult.rows.map(mapLateTollNoticeRow),
         ...overlapResult.rows.map(mapTripOverlapNoticeRow),
         ...visibleMessageRows.map(mapMessageRow),

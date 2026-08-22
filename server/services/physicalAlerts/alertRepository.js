@@ -1,5 +1,9 @@
 const crypto = require("crypto");
 const pool = require("../../db");
+const {
+  SETTINGS_KEY: BOOKING_ALERT_SETTINGS_KEY,
+  normalizeBookingAlertSettings,
+} = require("./bookingAlertSettings");
 
 async function ensureAlertDeviceSchema(client = pool) {
   await client.query(`
@@ -103,6 +107,10 @@ function createAlertRepository(db = pool) {
           )
         ORDER BY trip_start`);
       return rows;
+    },
+    async getBookingAlertSettings() {
+      const { rows } = await db.query("SELECT value FROM app_settings WHERE key=$1 LIMIT 1", [BOOKING_ALERT_SETTINGS_KEY]);
+      return normalizeBookingAlertSettings(rows[0]?.value || {});
     },
     async listDevices(deviceId = null) {
       const { rows } = await db.query(`SELECT * FROM alert_devices WHERE ($1::text IS NULL OR device_id=$1)

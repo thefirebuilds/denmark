@@ -281,7 +281,7 @@ function tripReturnLocationMatchesTelemetryAddress(tripReturnLocation, address) 
   return shared.length >= 2;
 }
 
-function getMatchedTripReturnGeoLocation(row, locations) {
+function getMatchedTripReturnGeoLocation(row, locations, options = {}) {
   const lat = toNumber(row.latitude);
   const lon = toNumber(row.longitude);
   if (lat == null || lon == null) return null;
@@ -289,8 +289,9 @@ function getMatchedTripReturnGeoLocation(row, locations) {
   for (const location of locations) {
     const matchesExpectedLocation =
       tripReturnLocationMatchesNamedLocation(row.return_location, location) ||
-      tripReturnLocationMatchesPrimaryParking(row.return_location, location) ||
-      tripReturnLocationAllowsPrimaryParkingFallback(row.return_location, location) ||
+      (options.strictReturnLocation !== true &&
+        (tripReturnLocationMatchesPrimaryParking(row.return_location, location) ||
+          tripReturnLocationAllowsPrimaryParkingFallback(row.return_location, location))) ||
       tripReturnLocationMatchesTelemetryAddress(row.return_location, row.address);
     if (!matchesExpectedLocation) {
       continue;
@@ -2073,6 +2074,7 @@ async function runFleetAlerts(reason = "interval") {
 
 module.exports = {
   ensureFleetAlertTables,
+  getMatchedTripReturnGeoLocation,
   runFleetAlerts,
   sendLocationEntryAlertsForSnapshot,
   sendTripUnderwayAlert,

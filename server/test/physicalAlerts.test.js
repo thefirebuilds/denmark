@@ -4,10 +4,12 @@ const { EventEmitter } = require("node:events");
 const { createAlertService } = require("../services/physicalAlerts/alertService");
 const { createCriticalBookingRule } = require("../services/physicalAlerts/bookingRule");
 const { reconcileBookingAlerts } = require("../services/physicalAlerts/bookingAlertReconciler");
+const { isBookingAlertEligible } = require("../services/physicalAlerts/bookingAlertSettings");
 const { isTripWithinCriticalWindow, isWithinQuietHours } = require("../services/physicalAlerts/config");
 const { createHealthService } = require("../services/physicalAlerts/healthService");
 const { MQTTTransport } = require("../services/physicalAlerts/mqttTransport");
 const { publishHeartbeats, startPhysicalAlertRuntime } = require("../services/physicalAlerts/runtime");
+const { getMatchedTripReturnGeoLocation } = require("../services/alerts/fleetAlerts");
 
 function fakeRepository() {
   const alerts = [];
@@ -34,6 +36,7 @@ function fakeRepository() {
       if (!alert) return null; alert.resolved_at = null; alert.acknowledged_at = null; alert.acknowledged_by = null; alert.published_at = null; return alert; },
     async listAlerts({ active, deviceId } = {}) { return alerts.filter((item) => (!active || !item.resolved_at) && (!deviceId || item.device_id === deviceId)); },
     async listUnconfirmedTrips() { return this.unconfirmedTrips; },
+    async getBookingAlertSettings() { return { enabled: true, startTime: "21:00", endTime: "07:00", pickupLeadHours: 10 }; },
   };
 }
 
@@ -57,7 +60,7 @@ test("critical booking window only accepts future trips inside window", () => {
   assert.equal(isTripWithinCriticalWindow(discovered, "2026-08-16T21:30:00-05:00", 10), false);
 });
 
-test("booked trip creates an alert at any hour regardless of lead time", async () => {
+test("booking rule creates and deduplicates the MQTT payload", async () => {
   const repository = fakeRepository(); const transport = fakeTransport();
   const alertService = createAlertService({ repository, transport });
   const rule = createCriticalBookingRule({ alertService,
@@ -69,17 +72,34 @@ test("booked trip creates an alert at any hour regardless of lead time", async (
   assert.equal(transport.published.filter((item) => item.topic.endsWith("/alert")).length, 1);
 });
 
+test("booking alert policy requires both sleep hours and pickup lead window", () => {
+  const settings = { enabled: true, startTime: "21:00", endTime: "07:00", pickupLeadHours: 10 };
+  const trip = { trip_start: "2026-08-17T05:30:00-05:00" };
+  assert.equal(isBookingAlertEligible(trip, settings, new Date("2026-08-16T22:00:00-05:00")), true);
+  assert.equal(isBookingAlertEligible(trip, settings, new Date("2026-08-16T12:00:00-05:00")), false);
+  assert.equal(isBookingAlertEligible(trip, settings, new Date("2026-08-16T18:00:00-05:00")), false);
+});
+
+test("strict return geofence does not substitute primary parking for another address", () => {
+  const parking = [{ id: "park-my-share", label: "Park My Share", kind: "parking",
+    isPrimaryParking: true, latitude: 30.22236, longitude: -97.74532, radiusMiles: 0.15 }];
+  const row = { return_location: "135 Fletcher Bend, Buda, TX", address: "Austin, TX",
+    latitude: 30.22236, longitude: -97.74532 };
+  assert.equal(getMatchedTripReturnGeoLocation(row, parking, { strictReturnLocation: true }), null);
+  assert.ok(getMatchedTripReturnGeoLocation(row, parking));
+});
+
 test("booking reconciliation clears the alarm after confirmation", async () => {
   const repository = fakeRepository(); const transport = fakeTransport();
   const alertService = createAlertService({ repository, transport });
   repository.unconfirmedTrips = [{ id: 1234, reservation_id: 60213620, vehicle_name: "Winnie",
-    workflow_stage: "booked", trip_start: "2026-09-17T12:30:00-05:00" }];
+    workflow_stage: "booked", trip_start: "2026-08-17T05:30:00-05:00" }];
   const current = { repository, transport, alertService,
     config: { businessTimeZone: "America/Chicago", defaultDeviceId: "bedroom" } };
-  await reconcileBookingAlerts(current);
+  await reconcileBookingAlerts(current, { now: "2026-08-16T22:00:00-05:00" });
   assert.equal(repository.alerts.filter((alert) => !alert.resolved_at).length, 1);
   repository.unconfirmedTrips = [];
-  await reconcileBookingAlerts(current);
+  await reconcileBookingAlerts(current, { now: "2026-08-16T22:00:00-05:00" });
   assert.equal(repository.alerts.filter((alert) => !alert.resolved_at).length, 0);
   const desired = transport.published.filter((item) => item.topic.endsWith("/desired-state")).at(-1);
   assert.equal(desired.payload.alert, false);

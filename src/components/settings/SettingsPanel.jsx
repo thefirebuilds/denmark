@@ -47,6 +47,12 @@ const DEFAULT_VOLTAGE_ALERT_SETTINGS = {
   smsEnabled: true,
   lowVoltageThreshold: 11.9,
 };
+const DEFAULT_BOOKING_MQTT_SETTINGS = {
+  enabled: true,
+  startTime: "21:00",
+  endTime: "07:00",
+  pickupLeadHours: 10,
+};
 const MQTT_TEST_ALERTS = {
   new_trip_booked: {
     type: "new_critical_booking",
@@ -516,6 +522,18 @@ function toPayloadVehicle(form) {
         ? null
         : Number(vehicleFields.oil_capacity_liters),
     lockbox_pin_public: vehicleFields.lockbox_pin_public !== false,
+  };
+}
+
+function mergeBookingMqttSettings(settings) {
+  const pickupLeadHours = Number(settings?.pickupLeadHours);
+  return {
+    ...DEFAULT_BOOKING_MQTT_SETTINGS,
+    ...(settings || {}),
+    enabled: settings?.enabled !== false,
+    pickupLeadHours: Number.isFinite(pickupLeadHours)
+      ? Math.max(0.25, Math.min(168, pickupLeadHours))
+      : DEFAULT_BOOKING_MQTT_SETTINGS.pickupLeadHours,
   };
 }
 
@@ -1312,10 +1330,12 @@ function AlertSettingsPanel() {
   const [form, setForm] = useState(DEFAULT_BRIDGE_ALERT_SETTINGS);
   const [smsForm, setSmsForm] = useState(DEFAULT_SMS_ALERT_SETTINGS);
   const [voltageForm, setVoltageForm] = useState(DEFAULT_VOLTAGE_ALERT_SETTINGS);
+  const [bookingMqttForm, setBookingMqttForm] = useState(DEFAULT_BOOKING_MQTT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingSms, setSavingSms] = useState(false);
   const [sendingSmsTest, setSendingSmsTest] = useState(false);
+  const [savingBookingMqtt, setSavingBookingMqtt] = useState(false);
   const [mqttTestType, setMqttTestType] = useState("new_trip_booked");
   const [mqttTesting, setMqttTesting] = useState(false);
   const [activeMqttTests, setActiveMqttTests] = useState([]);
@@ -1331,14 +1351,16 @@ function AlertSettingsPanel() {
     async function loadSettings() {
       try {
         setLoading(true);
-        const [bridgeRes, smsRes, voltageRes] = await Promise.all([
+        const [bridgeRes, smsRes, voltageRes, bookingMqttRes] = await Promise.all([
           fetch(`${API_BASE}/api/settings/alerts.bridge`),
           fetch(`${API_BASE}/api/settings/alerts.sms`),
           fetch(`${API_BASE}/api/settings/alerts.voltage`),
+          fetch(`${API_BASE}/api/settings/alerts.physical_booking`),
         ]);
         const bridgeJson = await bridgeRes.json().catch(() => ({}));
         const smsJson = await smsRes.json().catch(() => ({}));
         const voltageJson = await voltageRes.json().catch(() => ({}));
+        const bookingMqttJson = await bookingMqttRes.json().catch(() => ({}));
 
         if (!bridgeRes.ok) {
           throw new Error(bridgeJson?.error || "Failed to load alert settings");
@@ -1349,6 +1371,9 @@ function AlertSettingsPanel() {
         if (!voltageRes.ok) {
           throw new Error(voltageJson?.error || "Failed to load voltage settings");
         }
+        if (!bookingMqttRes.ok) {
+          throw new Error(bookingMqttJson?.error || "Failed to load booking MQTT settings");
+        }
 
         if (cancelled) return;
         dirtyRef.current = false;
@@ -1356,6 +1381,7 @@ function AlertSettingsPanel() {
         setForm(mergeBridgeAlertSettings(bridgeJson.value));
         setSmsForm(mergeSmsAlertSettings(smsJson.value));
         setVoltageForm(mergeVoltageAlertSettings(voltageJson.value));
+        setBookingMqttForm(mergeBookingMqttSettings(bookingMqttJson.value));
         setMessage("");
       } catch (err) {
         if (!cancelled) {
@@ -1544,6 +1570,28 @@ function AlertSettingsPanel() {
     );
   }
 
+  async function saveBookingMqttSettings(event) {
+    event.preventDefault();
+    try {
+      setSavingBookingMqtt(true);
+      setMessage("");
+      const payload = mergeBookingMqttSettings(bookingMqttForm);
+      const res = await fetch(`${API_BASE}/api/settings/alerts.physical_booking`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: payload }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to save booking MQTT settings");
+      setBookingMqttForm(mergeBookingMqttSettings(json.value || payload));
+      setMessage("New booking MQTT settings saved; policy refreshes within 30 seconds.");
+    } catch (err) {
+      setMessage(err.message || "Failed to save booking MQTT settings");
+    } finally {
+      setSavingBookingMqtt(false);
+    }
+  }
+
   useEffect(() => {
     loadActiveMqttTests().catch((err) =>
       setMessage(err.message || "Failed to load MQTT test alerts")
@@ -1642,6 +1690,71 @@ function AlertSettingsPanel() {
       </div>
 
       <div className="settings-form">
+        <form className="settings-group" onSubmit={saveBookingMqttSettings}>
+          <div className="settings-group-title">New booking Bat Signal</div>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={bookingMqttForm.enabled !== false}
+              onChange={(event) =>
+                setBookingMqttForm((current) => ({ ...current, enabled: event.target.checked }))
+              }
+            />
+            <span>Enable MQTT alerts for unconfirmed bookings</span>
+          </label>
+          <small className="settings-field-note">
+            Denmark applies both conditions below. The device receives no booking
+            notice outside this schedule or pickup window.
+          </small>
+          <div className="settings-form-grid">
+            <label className="settings-field">
+              <span>Alert hours start</span>
+              <input
+                type="time"
+                value={bookingMqttForm.startTime}
+                disabled={bookingMqttForm.enabled === false}
+                onChange={(event) =>
+                  setBookingMqttForm((current) => ({ ...current, startTime: event.target.value }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span>Alert hours end</span>
+              <input
+                type="time"
+                value={bookingMqttForm.endTime}
+                disabled={bookingMqttForm.enabled === false}
+                onChange={(event) =>
+                  setBookingMqttForm((current) => ({ ...current, endTime: event.target.value }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span>Pickup lead window (hours)</span>
+              <input
+                type="number"
+                min="0.25"
+                max="168"
+                step="0.25"
+                value={bookingMqttForm.pickupLeadHours}
+                disabled={bookingMqttForm.enabled === false}
+                onChange={(event) =>
+                  setBookingMqttForm((current) => ({ ...current, pickupLeadHours: event.target.value }))
+                }
+              />
+            </label>
+          </div>
+          <small className="settings-field-note">
+            Overnight schedules are supported. Setting the same start and end time
+            allows alerts all day.
+          </small>
+          <div className="settings-form-actions">
+            <button type="submit" className="settings-action-btn" disabled={loading || savingBookingMqtt}>
+              {savingBookingMqtt ? "Saving..." : "Save Booking Alert Policy"}
+            </button>
+          </div>
+        </form>
+
         <div className="settings-group">
           <div className="settings-group-title">Physical alert MQTT test</div>
           <small className="settings-field-note">

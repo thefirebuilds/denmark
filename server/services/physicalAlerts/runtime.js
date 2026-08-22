@@ -47,6 +47,7 @@ function buildRuntime() {
 }
 
 async function publishHeartbeats(current = buildRuntime()) {
+  await reconcileBookingAlerts(current);
   const health = await current.healthService.computeHealth();
   let devices;
   try {

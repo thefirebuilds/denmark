@@ -905,7 +905,11 @@ function buildMessageBody(message) {
         : `${Math.round(Number(message.refuel_latest_fuel_level))}%`;
     const threshold = Math.round(Number(message?.refuel_threshold || 95));
 
-    return `${vehicle} is back at the parking spot${
+    const returnLocation = message?.refuel_return_location_label || "required return location";
+    const distance = Number(message?.refuel_return_distance_miles);
+    const distanceText = Number.isFinite(distance) ? ` (${distance.toFixed(2)} mi away)` : "";
+
+    return `${vehicle} is back at ${returnLocation}${distanceText}${
       returned ? ` as of ${returned}` : ""
     } with ${fuel} fuel. Plan refueling before the next handoff; threshold is ${threshold}%.`;
   }

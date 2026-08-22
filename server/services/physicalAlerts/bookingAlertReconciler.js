@@ -1,8 +1,14 @@
 const { createCriticalBookingRule } = require("./bookingRule");
+const { isBookingAlertEligible } = require("./bookingAlertSettings");
 
-async function reconcileBookingAlerts(current) {
+async function reconcileBookingAlerts(current, options = {}) {
   const trips = await current.repository.listUnconfirmedTrips();
-  const bookedTripIds = new Set(trips.map((trip) => Number(trip.id)));
+  const settings = await current.repository.getBookingAlertSettings();
+  const now = options.now ? new Date(options.now) : new Date();
+  const eligibleTrips = trips.filter((trip) =>
+    isBookingAlertEligible(trip, settings, now, current.config.businessTimeZone)
+  );
+  const bookedTripIds = new Set(eligibleTrips.map((trip) => Number(trip.id)));
   const activeAlerts = await current.repository.listAlerts({ active: true, limit: 500 });
   const bookingAlerts = activeAlerts.filter((alert) => alert.type === "new_critical_booking");
   const evaluateBooking = createCriticalBookingRule({
@@ -10,7 +16,7 @@ async function reconcileBookingAlerts(current) {
     config: current.config,
   });
 
-  for (const trip of trips) {
+  for (const trip of eligibleTrips) {
     await current.repository.reopenBookingAlert(trip.id);
     await evaluateBooking(trip);
   }
@@ -23,9 +29,9 @@ async function reconcileBookingAlerts(current) {
 
   await current.alertService.publishDeviceState(current.config.defaultDeviceId);
   console.log(
-    `[physical-alerts] booking reconciliation complete | unconfirmed=${trips.length} active_booking_alerts=${trips.length}`
+    `[physical-alerts] booking reconciliation complete | unconfirmed=${trips.length} eligible=${eligibleTrips.length}`
   );
-  return { activeTrips: trips.length };
+  return { activeTrips: eligibleTrips.length, unconfirmedTrips: trips.length };
 }
 
 module.exports = { reconcileBookingAlerts };

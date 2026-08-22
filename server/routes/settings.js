@@ -79,6 +79,11 @@ const {
   mergePromptDefaults,
 } = require("../services/aiPromptSettings");
 const { fetchTollTransactions } = require("../services/tolls/client");
+const {
+  SETTINGS_KEY: BOOKING_ALERT_SETTINGS_KEY,
+  DEFAULT_BOOKING_ALERT_SETTINGS,
+  normalizeBookingAlertSettings,
+} = require("../services/physicalAlerts/bookingAlertSettings");
 
 const router = express.Router();
 
@@ -126,6 +131,7 @@ const DEFAULT_SETTINGS = {
     categories: DEFAULT_EXPENSE_CATEGORIES,
   },
   "alerts.bridge": DEFAULT_BRIDGE_ALERT_SETTINGS,
+  [BOOKING_ALERT_SETTINGS_KEY]: DEFAULT_BOOKING_ALERT_SETTINGS,
   [VOLTAGE_ALERT_SETTINGS_KEY]: DEFAULT_VOLTAGE_ALERT_SETTINGS,
   [SMS_ALERT_SETTINGS_KEY]: DEFAULT_SMS_ALERT_SETTINGS,
   [INTEGRATION_ENABLEMENT_KEY]: DEFAULT_INTEGRATION_ENABLEMENT,
@@ -246,6 +252,10 @@ function mergeSettings(key, value) {
               DEFAULT_GOOGLE_CALLBACK_PATH
       ),
     };
+  }
+
+  if (key === BOOKING_ALERT_SETTINGS_KEY) {
+    return normalizeBookingAlertSettings(value);
   }
 
   if (key === AI_PROMPT_SETTINGS_KEY) {
