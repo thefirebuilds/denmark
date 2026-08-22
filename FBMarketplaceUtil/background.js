@@ -112,7 +112,7 @@ function buildEnrichUrl(u) {
   const flag = enrichQueueState.availabilityOnly
     ? AVAILABILITY_CHECK_FLAG
     : AUTO_ENRICH_FLAG;
-  return normalized.includes("#") ? `${normalized}&${flag}` : `${normalized}#${flag}`;
+  return `${normalized}#${flag}&fcg_source=${encodeURIComponent(normalized)}`;
 }
 
 function clearCurrentWatchdog() {

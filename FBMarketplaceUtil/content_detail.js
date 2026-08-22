@@ -175,9 +175,22 @@
   }
 
   function isSoldListingPage(text = "") {
-    const normalized = clean(text || document.body?.innerText || "");
+    const raw = String(text || document.body?.innerText || "");
+    if (raw.split(/\r?\n/).some((line) => clean(line).toLowerCase() === "sold")) {
+      return true;
+    }
+    const normalized = clean(raw);
     if (!normalized) return false;
     return SOLD_PAGE_PATTERNS.some((pattern) => pattern.test(normalized));
+  }
+
+  function getRequestedListingUrl() {
+    try {
+      const source = new URLSearchParams(location.hash.slice(1)).get("fcg_source");
+      return normalizeUrl(source) || normalizeUrl(location.href);
+    } catch {
+      return normalizeUrl(location.href);
+    }
   }
 
   function logAutoEnrichDiagnostics(stage, extra = {}) {
@@ -511,7 +524,7 @@
   }
 
   async function ignoreListing() {
-    const url = normalizeUrl(location.href);
+    const url = getRequestedListingUrl();
     if (!url) {
       toast("⚠️ Could not normalize listing URL", false);
       return false;
