@@ -650,7 +650,12 @@ async function ensureMarketplaceAvailabilityColumns() {
     ensureMarketplaceAvailabilityColumnsPromise = pool
       .query(`
         ALTER TABLE marketplace_listings
-        ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ
+        ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
+
+        UPDATE marketplace_listings
+        SET last_checked_at = enriched_at
+        WHERE last_checked_at IS NULL
+          AND enriched_at IS NOT NULL
       `)
       .catch((err) => {
         ensureMarketplaceAvailabilityColumnsPromise = null;
@@ -891,6 +896,7 @@ router.get("/listings", async (req, res) => {
         first_seen_at,
         last_seen_at,
         scraped_at,
+        last_checked_at,
         decision_status,
         decision_score,
         decision_notes,
@@ -1396,6 +1402,7 @@ router.post("/enrich", async (req, res) => {
         ignored_at,
         enriched_at,
         scraped_at,
+        last_checked_at,
         first_seen_at,
         last_seen_at,
         created_at,
@@ -1404,7 +1411,7 @@ router.post("/enrich", async (req, res) => {
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb,
-        $21, CASE WHEN $21 THEN NOW() ELSE NULL END, NOW(), $22, NOW(), NOW(), NOW(), NOW()
+        $21, CASE WHEN $21 THEN NOW() ELSE NULL END, NOW(), $22, NOW(), NOW(), NOW(), NOW(), NOW()
       )
       ON CONFLICT (url)
       DO UPDATE SET
@@ -1435,6 +1442,7 @@ router.post("/enrich", async (req, res) => {
         hidden = EXCLUDED.hidden,
         ignored_at = CASE WHEN EXCLUDED.hidden THEN NOW() ELSE NULL END,
         scraped_at = COALESCE(EXCLUDED.scraped_at, marketplace_listings.scraped_at),
+        last_checked_at = NOW(),
         last_seen_at = NOW(),
         updated_at = NOW()
       `,

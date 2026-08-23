@@ -900,6 +900,7 @@ export default function MarketplacePanel() {
 
     function handleStatus(event) {
       const detail = event.detail || null;
+      const wasRunning = Boolean(enrichVisibleStatusRef.current?.running);
       const nextStatus =
         detail && isExtensionContextInvalidatedError(detail.error)
           ? {
@@ -917,6 +918,9 @@ export default function MarketplacePanel() {
       }
       enrichVisibleStatusRef.current = nextStatus;
       setEnrichVisibleStatus(nextStatus);
+      if (wasRunning && nextStatus && !nextStatus.running) {
+        void loadListingsRef.current?.({ preserveSelection: true });
+      }
     }
 
     window.addEventListener(ENRICH_READY_EVENT, handleReady);
