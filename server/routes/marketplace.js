@@ -49,6 +49,7 @@ const DEFAULT_MARKETPLACE_INVALID_LISTING_TERMS = [
   "crédito",
 ];
 let ensureMarketplacePreferencesTablePromise = null;
+let ensureMarketplaceAvailabilityColumnsPromise = null;
 
 function marketplaceTextSource(item) {
   return [
@@ -643,6 +644,31 @@ async function ensureMarketplacePreferencesTable() {
 
   await ensureMarketplacePreferencesTablePromise;
 }
+
+async function ensureMarketplaceAvailabilityColumns() {
+  if (!ensureMarketplaceAvailabilityColumnsPromise) {
+    ensureMarketplaceAvailabilityColumnsPromise = pool
+      .query(`
+        ALTER TABLE marketplace_listings
+        ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ
+      `)
+      .catch((err) => {
+        ensureMarketplaceAvailabilityColumnsPromise = null;
+        throw err;
+      });
+  }
+
+  await ensureMarketplaceAvailabilityColumnsPromise;
+}
+
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureMarketplaceAvailabilityColumns();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get("/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -1467,6 +1493,7 @@ router.post("/listings/ignoreByUrl", async (req, res) => {
       UPDATE marketplace_listings
       SET hidden = TRUE,
           ignored_at = NOW(),
+          last_checked_at = NOW(),
           updated_at = NOW()
       WHERE url = $1
          OR ($2::text IS NOT NULL AND (
@@ -1486,16 +1513,18 @@ router.post("/listings/ignoreByUrl", async (req, res) => {
           url,
           hidden,
           ignored_at,
+          last_checked_at,
           first_seen_at,
           last_seen_at,
           created_at,
           updated_at
         )
-        VALUES ($1, TRUE, NOW(), NOW(), NOW(), NOW(), NOW())
+        VALUES ($1, TRUE, NOW(), NOW(), NOW(), NOW(), NOW(), NOW())
         ON CONFLICT (url)
         DO UPDATE SET
           hidden = TRUE,
           ignored_at = NOW(),
+          last_checked_at = NOW(),
           updated_at = NOW()
         `,
         [url]
@@ -1527,39 +1556,21 @@ router.post("/listings/availabilityBatch", async (req, res) => {
           .filter(Number.isInteger)
       )
     );
-    const limit = Math.min(Math.max(Number(req.body?.limit) || 3, 1), 10);
-
     if (!ids.length) {
       return res.status(400).json({ ok: false, error: "missing listing ids" });
     }
 
     const { rows } = await pool.query(
-      `WITH candidates AS (
-         SELECT id, url, scraped_at, last_seen_at, created_at
-         FROM marketplace_listings
-         WHERE hidden = FALSE
-           AND id = ANY($1::bigint[])
-         ORDER BY
-           scraped_at ASC NULLS FIRST,
-           last_seen_at ASC NULLS FIRST,
-           created_at ASC
-         LIMIT $2
-         FOR UPDATE SKIP LOCKED
-       ), updated AS (
-         UPDATE marketplace_listings AS listing
-         SET scraped_at = NOW(), updated_at = NOW()
-         FROM candidates
-         WHERE listing.id = candidates.id
-         RETURNING listing.id, listing.url, listing.scraped_at
-       )
-       SELECT updated.id, updated.url, updated.scraped_at
-       FROM updated
-       JOIN candidates USING (id)
+      `SELECT id, url, last_checked_at
+       FROM marketplace_listings
+       WHERE hidden = FALSE
+         AND id = ANY($1::bigint[])
+         AND (last_checked_at IS NULL OR last_checked_at <= NOW() - INTERVAL '48 hours')
        ORDER BY
-         candidates.scraped_at ASC NULLS FIRST,
-         candidates.last_seen_at ASC NULLS FIRST,
-         candidates.created_at ASC`,
-      [ids, limit]
+         last_checked_at ASC NULLS FIRST,
+         last_seen_at ASC NULLS FIRST,
+         created_at ASC`,
+      [ids]
     );
 
     return res.json({ ok: true, listings: rows });
@@ -1580,7 +1591,7 @@ router.post("/listings/availableByUrl", async (req, res) => {
 
     const { rows } = await pool.query(
       `UPDATE marketplace_listings
-       SET last_seen_at=NOW(),scraped_at=NOW(),updated_at=NOW()
+       SET last_seen_at=NOW(),last_checked_at=NOW(),updated_at=NOW()
        WHERE hidden=FALSE AND (
          url=$1
          OR ($2::text IS NOT NULL AND (
@@ -1589,7 +1600,7 @@ router.post("/listings/availableByUrl", async (req, res) => {
            OR url LIKE ('%item_id=' || $2 || '%')
          ))
        )
-       RETURNING id,url,last_seen_at,scraped_at`,
+       RETURNING id,url,last_seen_at,last_checked_at`,
       [url, listingId]
     );
 

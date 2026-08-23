@@ -916,6 +916,7 @@ CREATE TABLE public.marketplace_listings (
     first_seen_at timestamp with time zone DEFAULT now() NOT NULL,
     last_seen_at timestamp with time zone DEFAULT now() NOT NULL,
     scraped_at timestamp with time zone,
+    last_checked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     decision_status text,

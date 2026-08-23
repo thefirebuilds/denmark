@@ -30,7 +30,6 @@ const API_BASES = normalizeConfigList(
 );
 
 const AUTO_ENRICH_FLAG = "fcg_enrich=1";
-const AVAILABILITY_CHECK_FLAG = "fcg_check_available=1";
 const NEXT_ENRICH_TAB_ALARM = "fcg-marketplace-next-enrich-tab";
 const AVAILABILITY_WATCHDOG_ALARM = "fcg-marketplace-availability-watchdog";
 const HARD_TIMEOUT_ALARM = "fcg-marketplace-hard-timeout";
@@ -110,10 +109,8 @@ function normalizeListingUrl(u) {
 function buildEnrichUrl(u) {
   const normalized = normalizeListingUrl(u);
   if (!normalized) return null;
-  const flag = enrichQueueState.availabilityOnly
-    ? AVAILABILITY_CHECK_FLAG
-    : AUTO_ENRICH_FLAG;
-  return `${normalized}#${flag}&fcg_source=${encodeURIComponent(normalized)}`;
+  if (enrichQueueState.availabilityOnly) return normalized;
+  return `${normalized}#${AUTO_ENRICH_FLAG}&fcg_source=${encodeURIComponent(normalized)}`;
 }
 
 function clearCurrentWatchdog() {
@@ -204,10 +201,17 @@ async function inspectUnavailableListingTab(tabId) {
   try {
     results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
+      func: async () => {
         const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const inspect = () => {
         const rawBodyText = String(document.body?.innerText || "");
         const bodyText = clean(rawBodyText);
+        const attributeText = Array.from(
+          document.querySelectorAll('[aria-label*="Sold" i], [title*="Sold" i]')
+        )
+          .map((node) => `${node.getAttribute("aria-label") || ""} ${node.getAttribute("title") || ""}`)
+          .join("\n");
         const headings = Array.from(document.querySelectorAll("h1, h2, h3"))
           .map((node) => clean(node.innerText || ""))
           .filter(Boolean)
@@ -218,10 +222,13 @@ async function inspectUnavailableListingTab(tabId) {
           /Listing Is No Longer Available/i.test(bodyText) ||
           /This listing is no longer available/i.test(bodyText) ||
           /It may have been sold or expired/i.test(bodyText);
-        const sold =
-          rawBodyText.split(/\r?\n/).some((line) => clean(line).toLowerCase() === "sold") ||
-          /\bSold\s*(?:\u00b7|\u2022|-|:|\|)\s*(?:19\d{2}|20\d{2})\b/i.test(bodyText) ||
-          /\bSold\s*(?:\u00b7|\u2022|-|:|\|)\s*[A-Za-z0-9]/i.test(bodyText);
+        const sold = `${rawBodyText}\n${attributeText}`
+          .split(/\r?\n/)
+          .map(clean)
+          .filter(Boolean)
+          .some((line) =>
+            /^Sold(?:\s*$|\s*[\u00b7\u2022|:\-\u2013\u2014]\s*\S|\s+(?:19\d{2}|20\d{2})\b)/i.test(line)
+          );
 
         const diagnostic = {
           url: location.href,
@@ -231,6 +238,15 @@ async function inspectUnavailableListingTab(tabId) {
           headings,
           bodySample: bodyText.slice(0, 800),
         };
+        return diagnostic;
+        };
+
+        let diagnostic = inspect();
+        const deadline = Date.now() + 10000;
+        while (!diagnostic.unavailable && !diagnostic.sold && Date.now() < deadline) {
+          await sleep(750);
+          diagnostic = inspect();
+        }
         console.log("[fcg-auto-enrich-background-inspect]", diagnostic);
         return diagnostic;
       },

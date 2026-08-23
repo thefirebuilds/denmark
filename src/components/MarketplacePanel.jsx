@@ -46,7 +46,7 @@ const DEFAULT_FILTERS = {
 };
 const MARKETPLACE_FETCH_LIMIT = 1000;
 const MARKETPLACE_VISIBLE_LIMIT = 100;
-const MARKETPLACE_AVAILABILITY_REFRESH_LIMIT = 3;
+const MARKETPLACE_AVAILABILITY_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const MARKETPLACE_AVAILABILITY_MIN_DELAY_MS = 6000;
 const MARKETPLACE_AVAILABILITY_MAX_DELAY_MS = 12000;
 const MARKETPLACE_FULL_ENRICH_MIN_DELAY_MS = 18000;
@@ -1314,7 +1314,12 @@ async function loadListings({ preserveSelection = true } = {}) {
     [displayListings]
   );
   const availabilityRefreshCount = useMemo(
-    () => displayListings.filter((item) => item?.url && !item.hidden).length,
+    () =>
+      displayListings.filter((item) => {
+        if (!item?.url || item.hidden) return false;
+        const checkedAt = new Date(item.last_checked_at || 0).getTime();
+        return !Number.isFinite(checkedAt) || Date.now() - checkedAt >= MARKETPLACE_AVAILABILITY_MAX_AGE_MS;
+      }).length,
     [displayListings]
   );
 
@@ -1647,7 +1652,7 @@ async function loadListings({ preserveSelection = true } = {}) {
     });
   }
 
-  async function refreshLimitedAvailability() {
+  async function refreshStaleAvailability() {
     if (!extensionReady) {
       startMarketplaceExtensionBatch({
         urls: [],
@@ -1670,7 +1675,6 @@ async function loadListings({ preserveSelection = true } = {}) {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
           ids: candidates.map((item) => Number(item.id)),
-          limit: MARKETPLACE_AVAILABILITY_REFRESH_LIMIT,
         }),
       });
       const data = await readJsonOrThrow(res);
@@ -2150,24 +2154,21 @@ async function loadListings({ preserveSelection = true } = {}) {
               <button
                 type="button"
                 className="marketplace-action"
-                onClick={refreshLimitedAvailability}
+                onClick={refreshStaleAvailability}
                 disabled={
                   Boolean(enrichVisibleStatus?.running) ||
                   availabilityRefreshCount === 0
                 }
                 title={
                   extensionReady
-                    ? `Open up to ${MARKETPLACE_AVAILABILITY_REFRESH_LIMIT} visible listings one at a time to confirm whether Facebook still shows them.`
+                    ? "Open every visible listing that has not been checked in the last 48 hours, one at a time."
                     : "Chrome extension bridge not detected yet. Reload the extension and refresh this page."
                 }
               >
                 {enrichVisibleStatus?.running
                   ? "Checking..."
                   : extensionReady
-                    ? `Check available (${Math.min(
-                        availabilityRefreshCount,
-                        MARKETPLACE_AVAILABILITY_REFRESH_LIMIT
-                      )})`
+                    ? `Check available (${availabilityRefreshCount})`
                     : "Check available (setup)"}
               </button>
 
