@@ -710,6 +710,7 @@ export default function MarketplacePanel() {
   const eventSourceRef = useRef(null);
   const enrichVisibleStatusRef = useRef(null);
   const enrichStartSeqRef = useRef(0);
+  const lastAvailabilityBatchRef = useRef(new Set());
   const ignoreKeywordsHydratedRef = useRef(false);
   const ignoreKeywordsTextRef = useRef(DEFAULT_IGNORE_KEYWORDS);
   const ignoreKeywordsSaveSeqRef = useRef(0);
@@ -1648,23 +1649,19 @@ async function loadListings({ preserveSelection = true } = {}) {
   }
 
   function refreshLimitedAvailability() {
-    const selectedItem =
-      selected && selected.url && !selected.hidden ? [selected] : [];
-    const candidates = [...selectedItem, ...displayListings]
+    const candidates = displayListings
       .filter((item) => item?.url && !item.hidden)
       .sort((a, b) => {
-        if (selected && a.id === selected.id) return -1;
-        if (selected && b.id === selected.id) return 1;
-
         const aLastSeen = parseDateValue(a.last_seen_at || a.created_at);
         const bLastSeen = parseDateValue(b.last_seen_at || b.created_at);
         return aLastSeen - bLastSeen;
       });
-
-    const urls = Array.from(new Set(candidates.map((item) => item.url))).slice(
-      0,
-      MARKETPLACE_AVAILABILITY_REFRESH_LIMIT
-    );
+    const previousBatch = lastAvailabilityBatchRef.current;
+    const uniqueUrls = Array.from(new Set(candidates.map((item) => item.url)));
+    const unselectedUrls = uniqueUrls.filter((url) => !previousBatch.has(url));
+    const previousUrls = uniqueUrls.filter((url) => previousBatch.has(url));
+    const urls = [...unselectedUrls, ...previousUrls].slice(0, MARKETPLACE_AVAILABILITY_REFRESH_LIMIT);
+    lastAvailabilityBatchRef.current = new Set(urls);
 
     startMarketplaceExtensionBatch({
       urls,
