@@ -1569,15 +1569,27 @@ router.post("/listings/availabilityBatch", async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      `SELECT id, url, last_checked_at
-       FROM marketplace_listings
-       WHERE hidden = FALSE
-         AND id = ANY($1::bigint[])
-         AND (last_checked_at IS NULL OR last_checked_at <= NOW() - INTERVAL '48 hours')
+      `WITH candidates AS (
+         SELECT id, url, last_checked_at, last_seen_at, created_at
+         FROM marketplace_listings
+         WHERE hidden = FALSE
+           AND id = ANY($1::bigint[])
+           AND (last_checked_at IS NULL OR last_checked_at <= NOW() - INTERVAL '48 hours')
+         FOR UPDATE SKIP LOCKED
+       ), claimed AS (
+         UPDATE marketplace_listings AS listing
+         SET last_checked_at = NOW(), updated_at = NOW()
+         FROM candidates
+         WHERE listing.id = candidates.id
+         RETURNING listing.id, listing.url, listing.last_checked_at
+       )
+       SELECT claimed.id, claimed.url, claimed.last_checked_at
+       FROM claimed
+       JOIN candidates USING (id)
        ORDER BY
-         last_checked_at ASC NULLS FIRST,
-         last_seen_at ASC NULLS FIRST,
-         created_at ASC`,
+         candidates.last_checked_at ASC NULLS FIRST,
+         candidates.last_seen_at ASC NULLS FIRST,
+         candidates.created_at ASC`,
       [ids]
     );
 

@@ -1682,7 +1682,18 @@ async function loadListings({ preserveSelection = true } = {}) {
         }),
       });
       const data = await readJsonOrThrow(res);
-      const urls = (data?.listings || []).map((item) => item.url).filter(Boolean);
+      const claimedListings = data?.listings || [];
+      const urls = claimedListings.map((item) => item.url).filter(Boolean);
+      const claimedById = new Map(
+        claimedListings.map((item) => [String(item.id), item.last_checked_at])
+      );
+      setListings((prev) =>
+        prev.map((item) =>
+          claimedById.has(String(item.id))
+            ? { ...item, last_checked_at: claimedById.get(String(item.id)) }
+            : item
+        )
+      );
 
       startMarketplaceExtensionBatch({
         urls,
