@@ -710,7 +710,6 @@ export default function MarketplacePanel() {
   const eventSourceRef = useRef(null);
   const enrichVisibleStatusRef = useRef(null);
   const enrichStartSeqRef = useRef(0);
-  const lastAvailabilityBatchRef = useRef(new Set());
   const ignoreKeywordsHydratedRef = useRef(false);
   const ignoreKeywordsTextRef = useRef(DEFAULT_IGNORE_KEYWORDS);
   const ignoreKeywordsSaveSeqRef = useRef(0);
@@ -1648,30 +1647,54 @@ async function loadListings({ preserveSelection = true } = {}) {
     });
   }
 
-  function refreshLimitedAvailability() {
+  async function refreshLimitedAvailability() {
+    if (!extensionReady) {
+      startMarketplaceExtensionBatch({
+        urls: [],
+        minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
+        maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
+        availabilityOnly: true,
+        setupError:
+          "Reload the Chrome extension and refresh this page to enable availability checks.",
+      });
+      return;
+    }
+
     const candidates = displayListings
       .filter((item) => item?.url && !item.hidden)
-      .sort((a, b) => {
-        const aLastSeen = parseDateValue(a.last_seen_at || a.created_at);
-        const bLastSeen = parseDateValue(b.last_seen_at || b.created_at);
-        return aLastSeen - bLastSeen;
-      });
-    const previousBatch = lastAvailabilityBatchRef.current;
-    const uniqueUrls = Array.from(new Set(candidates.map((item) => item.url)));
-    const unselectedUrls = uniqueUrls.filter((url) => !previousBatch.has(url));
-    const previousUrls = uniqueUrls.filter((url) => previousBatch.has(url));
-    const urls = [...unselectedUrls, ...previousUrls].slice(0, MARKETPLACE_AVAILABILITY_REFRESH_LIMIT);
-    lastAvailabilityBatchRef.current = new Set(urls);
+      .filter((item) => Number.isInteger(Number(item.id)));
 
-    startMarketplaceExtensionBatch({
-      urls,
-      minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
-      maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
-      availabilityOnly: true,
-      emptyError: "No visible listings are available to check.",
-      setupError:
-        "Reload the Chrome extension and refresh this page to enable availability checks.",
-    });
+    try {
+      const res = await fetch(`${API_BASE}/api/marketplace/listings/availabilityBatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          ids: candidates.map((item) => Number(item.id)),
+          limit: MARKETPLACE_AVAILABILITY_REFRESH_LIMIT,
+        }),
+      });
+      const data = await readJsonOrThrow(res);
+      const urls = (data?.listings || []).map((item) => item.url).filter(Boolean);
+
+      startMarketplaceExtensionBatch({
+        urls,
+        minDelayMs: MARKETPLACE_AVAILABILITY_MIN_DELAY_MS,
+        maxDelayMs: MARKETPLACE_AVAILABILITY_MAX_DELAY_MS,
+        availabilityOnly: true,
+        emptyError: "No visible listings are available to check.",
+        setupError:
+          "Reload the Chrome extension and refresh this page to enable availability checks.",
+      });
+    } catch (err) {
+      console.error("Marketplace availability batch failed:", err);
+      setEnrichVisibleStatus({
+        running: false,
+        total: 0,
+        completed: 0,
+        failed: 0,
+        error: err.message || "Failed to select listings for availability checks.",
+      });
+    }
   }
 
   async function recordListingOpen(id) {

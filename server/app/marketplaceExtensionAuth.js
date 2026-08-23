@@ -5,6 +5,7 @@ const marketplaceExtensionWritePaths = new Set([
   "/enrich",
   "/ingest",
   "/listings/ignoreByUrl",
+  "/listings/availableByUrl",
 ]);
 
 function isMarketplaceExtensionWriteRequest(req) {
