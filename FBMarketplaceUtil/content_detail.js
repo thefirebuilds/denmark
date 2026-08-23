@@ -547,6 +547,21 @@
     return true;
   }
 
+  async function markListingAvailable() {
+    const url = getRequestedListingUrl();
+    if (!url) return false;
+    const result = await postJsonWithFallback(
+      "/api/marketplace/listings/availableByUrl",
+      { url }
+    );
+    if (!result.ok) {
+      console.warn("[availability-check] fresh status update failed:", result.errors);
+      return false;
+    }
+    console.log("[availability-check] listing freshness refreshed:", result.data);
+    return true;
+  }
+
   async function enrichListing() {
     try {
       if (isUnavailableListingPage() || isSoldListingPage()) {
@@ -621,11 +636,6 @@
   async function maybeAutoAvailabilityCheck() {
     if (!isAvailabilityCheckMode()) return;
 
-    const key = `fcg_availability_check:${normalizeUrl(location.href)}`;
-    if (sessionStorage.getItem(key) === "done") return;
-
-    sessionStorage.setItem(key, "done");
-
     await waitForListingReady(7000);
     stopExtraPageLoading();
     await sleep(500);
@@ -636,6 +646,7 @@
       ok = await ignoreListing();
     } else {
       logAutoEnrichDiagnostics("availability-check-still-available");
+      ok = await markListingAvailable();
     }
 
     const cleanHash = location.hash

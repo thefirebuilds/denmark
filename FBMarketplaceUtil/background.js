@@ -32,6 +32,7 @@ const API_BASES = normalizeConfigList(
 const AUTO_ENRICH_FLAG = "fcg_enrich=1";
 const AVAILABILITY_CHECK_FLAG = "fcg_check_available=1";
 const NEXT_ENRICH_TAB_ALARM = "fcg-marketplace-next-enrich-tab";
+const AVAILABILITY_WATCHDOG_ALARM = "fcg-marketplace-availability-watchdog";
 const HARD_TIMEOUT_ALARM = "fcg-marketplace-hard-timeout";
 const APP_URL_PATTERNS = normalizeConfigList(
   MARKETPLACE_CONFIG.appUrlPatterns,
@@ -116,8 +117,7 @@ function buildEnrichUrl(u) {
 }
 
 function clearCurrentWatchdog() {
-  if (!enrichQueueState.currentWatchdogTimer) return;
-  clearTimeout(enrichQueueState.currentWatchdogTimer);
+  chrome.alarms.clear(AVAILABILITY_WATCHDOG_ALARM);
   enrichQueueState.currentWatchdogTimer = null;
 }
 
@@ -245,7 +245,12 @@ async function inspectUnavailableListingTab(tabId) {
 
   if (!diagnostic?.unavailable && !diagnostic?.sold) {
     if (enrichQueueState.availabilityOnly) {
-      await finishCurrentEnrichTab(true, tabId);
+      const refreshed = await postJsonWithFallback(
+        "/api/marketplace/listings/availableByUrl",
+        { url: enrichQueueState.currentUrl || diagnostic.url }
+      );
+      console.log("[fcg-auto-enrich] available freshness result:", refreshed);
+      await finishCurrentEnrichTab(Boolean(refreshed.ok), tabId);
     }
     return;
   }
@@ -260,9 +265,8 @@ async function inspectUnavailableListingTab(tabId) {
 
 function armCurrentTabWatchdog(tabId) {
   clearCurrentWatchdog();
-  enrichQueueState.currentWatchdogTimer = setTimeout(() => {
-    void inspectUnavailableListingTab(tabId);
-  }, 4500);
+  enrichQueueState.currentWatchdogTimer = tabId;
+  chrome.alarms.create(AVAILABILITY_WATCHDOG_ALARM, { when: Date.now() + 4500 });
 }
 
 function armCurrentTabHardTimeout(tabId) {
@@ -625,7 +629,24 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
 });
 
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (
+    tabId !== enrichQueueState.currentTabId ||
+    enrichQueueState.availabilityOnly !== true ||
+    changeInfo.status !== "complete"
+  ) return;
+  armCurrentTabWatchdog(tabId);
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === AVAILABILITY_WATCHDOG_ALARM) {
+    const tabId = enrichQueueState.currentTabId;
+    if (tabId && tabId === enrichQueueState.currentWatchdogTimer) {
+      void inspectUnavailableListingTab(tabId);
+    }
+    return;
+  }
+
   if (alarm.name === NEXT_ENRICH_TAB_ALARM) {
     enrichQueueState.nextOpenAt = null;
     void openNextEnrichTab();

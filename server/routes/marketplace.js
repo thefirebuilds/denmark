@@ -1518,4 +1518,45 @@ router.post("/listings/ignoreByUrl", async (req, res) => {
   }
 });
 
+router.post("/listings/availableByUrl", async (req, res) => {
+  try {
+    const url = normalizeMarketplaceUrl(req.body?.url);
+    const listingId = getMarketplaceListingId(req.body?.url);
+    if (!url) return res.status(400).json({ ok: false, error: "missing url" });
+
+    const { rows } = await pool.query(
+      `UPDATE marketplace_listings
+       SET last_seen_at=NOW(),scraped_at=NOW(),updated_at=NOW()
+       WHERE hidden=FALSE AND (
+         url=$1
+         OR ($2::text IS NOT NULL AND (
+           url LIKE ('%/marketplace/item/' || $2 || '%')
+           OR url LIKE ('%/marketplace/' || $2 || '%')
+           OR url LIKE ('%item_id=' || $2 || '%')
+         ))
+       )
+       RETURNING id,url,last_seen_at,scraped_at`,
+      [url, listingId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ ok: false, error: "visible listing not found" });
+    }
+
+    broadcastMarketplaceUpdate({
+      source: "availableByUrl",
+      url,
+      listingId,
+      last_seen_at: rows[0].last_seen_at,
+    });
+    return res.json({ ok: true, ...rows[0] });
+  } catch (err) {
+    console.error("[marketplace.availableByUrl] failed:", err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "availability refresh failed",
+    });
+  }
+});
+
 module.exports = router;
