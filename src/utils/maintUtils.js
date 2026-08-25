@@ -1132,15 +1132,45 @@ export function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
     : [];
   const lastUpdated = mil.last_updated || null;
   const firstReportedAt = mil.first_reported_at || null;
+  const isDimoReading = String(mil.source || liveDiagnostics?.source || "").startsWith(
+    "dimo"
+  );
+  const lastUpdatedMs = lastUpdated ? new Date(lastUpdated).getTime() : NaN;
+  const stale =
+    mil.stale === true ||
+    (isDimoReading &&
+      (!Number.isFinite(lastUpdatedMs) || Date.now() - lastUpdatedMs > 15 * 60 * 1000));
+
+  if (stale) {
+    const observedState =
+      mil.mil_on === true || codes.length || count > 0
+        ? codes.length
+          ? `Last report contained ${codes.join(", ")}`
+          : "Last report contained an active DTC"
+        : mil.mil_on === false
+        ? "Last report contained no active DTC"
+        : "No usable diagnostic state was reported";
+    return {
+      tone: "unknown",
+      label: "Diagnostic status stale",
+      detail: sourcedDetail(`${observedState}; current state is unconfirmed`),
+      lastUpdated,
+      firstReportedAt,
+      sourceLabel,
+      stale: true,
+    };
+  }
 
   if (mil.mil_on === true) {
     return {
       tone: "fail",
-      label: codes.length ? `MIL on: ${codes.join(", ")}` : "MIL on",
+      label: codes.length
+        ? `Active DTC reported: ${codes.join(", ")}`
+        : "Active DTC reported",
       detail: sourcedDetail(
         codes.length
           ? `${codes.length} decoded DTC${codes.length === 1 ? "" : "s"} reported`
-          : "Check-engine light is on, but no decoded DTCs were reported yet"
+          : "A positive DTC count was reported; dashboard lamp state is not verified"
       ),
       lastUpdated,
       firstReportedAt,
@@ -1151,7 +1181,9 @@ export function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
   if (codes.length || count > 0) {
     return {
       tone: "fail",
-      label: codes.length ? `DTC: ${codes.join(", ")}` : `${count} DTC active`,
+      label: codes.length
+        ? `Active DTC reported: ${codes.join(", ")}`
+        : `${count} active DTC reported`,
       detail: sourcedDetail("Diagnostic trouble code reported by telematics"),
       lastUpdated,
       firstReportedAt,
@@ -1162,8 +1194,8 @@ export function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
   if (mil.mil_on === false) {
     return {
       tone: "pass",
-      label: "MIL clear",
-      detail: sourcedDetail("No active check-engine light reported"),
+      label: "No active DTC reported",
+      detail: sourcedDetail("Fresh provider report contained a zero DTC count"),
       lastUpdated,
       firstReportedAt,
       sourceLabel,

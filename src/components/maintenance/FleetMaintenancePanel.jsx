@@ -286,15 +286,45 @@ function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
     : [];
   const lastUpdated = mil.last_updated || null;
   const firstReportedAt = mil.first_reported_at || null;
+  const isDimoReading = String(mil.source || liveDiagnostics?.source || "").startsWith(
+    "dimo"
+  );
+  const lastUpdatedMs = lastUpdated ? new Date(lastUpdated).getTime() : NaN;
+  const stale =
+    mil.stale === true ||
+    (isDimoReading &&
+      (!Number.isFinite(lastUpdatedMs) || Date.now() - lastUpdatedMs > 15 * 60 * 1000));
+
+  if (stale) {
+    const observedState =
+      mil.mil_on === true || codes.length || count > 0
+        ? codes.length
+          ? `Last report contained ${codes.join(", ")}`
+          : "Last report contained an active DTC"
+        : mil.mil_on === false
+        ? "Last report contained no active DTC"
+        : "No usable diagnostic state was reported";
+    return {
+      tone: "unknown",
+      label: "Diagnostic status stale",
+      detail: sourcedDetail(`${observedState}; current state is unconfirmed`),
+      lastUpdated,
+      firstReportedAt,
+      sourceLabel,
+      stale: true,
+    };
+  }
 
   if (mil.mil_on === true) {
     return {
       tone: "fail",
-      label: codes.length ? `MIL on: ${codes.join(", ")}` : "MIL on",
+      label: codes.length
+        ? `Active DTC reported: ${codes.join(", ")}`
+        : "Active DTC reported",
       detail: sourcedDetail(
         codes.length
           ? `${codes.length} decoded DTC${codes.length === 1 ? "" : "s"} reported`
-          : "Check-engine light is on, but no decoded DTCs were reported yet"
+          : "A positive DTC count was reported; dashboard lamp state is not verified"
       ),
       lastUpdated,
       firstReportedAt,
@@ -305,7 +335,9 @@ function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
   if (codes.length || count > 0) {
     return {
       tone: "fail",
-      label: codes.length ? `DTC: ${codes.join(", ")}` : `${count} DTC active`,
+      label: codes.length
+        ? `Active DTC reported: ${codes.join(", ")}`
+        : `${count} active DTC reported`,
       detail: sourcedDetail("Diagnostic trouble code reported by telematics"),
       lastUpdated,
       firstReportedAt,
@@ -316,8 +348,8 @@ function buildMilStatus(fleetVehicle = null, liveDiagnostics = null) {
   if (mil.mil_on === false) {
     return {
       tone: "pass",
-      label: "MIL clear",
-      detail: sourcedDetail("No active check-engine light reported"),
+      label: "No active DTC reported",
+      detail: sourcedDetail("Fresh provider report contained a zero DTC count"),
       lastUpdated,
       firstReportedAt,
       sourceLabel,
@@ -489,10 +521,11 @@ function getDiagnosticReadingCodes(reading) {
 function formatDiagnosticReading(reading) {
   const codes = getDiagnosticReadingCodes(reading);
   const count = Number(reading?.dtcCount);
-  if (reading?.milOn === true) return "MIL on";
-  if (reading?.milOn === false) return "MIL off";
-  if (codes.length || (Number.isFinite(count) && count > 0)) return "DTC recorded";
-  return "MIL status unknown";
+  if (reading?.milOn === true || codes.length || (Number.isFinite(count) && count > 0)) {
+    return "Active DTC reported";
+  }
+  if (reading?.milOn === false) return "No active DTC reported";
+  return "Diagnostic status unknown";
 }
 
 function formatDiagnosticReadingDetail(reading) {
@@ -505,6 +538,49 @@ function formatDiagnosticReadingDetail(reading) {
   return reading?.milOn === true
     ? "Check-engine light reported; no decoded code"
     : "No active diagnostic codes";
+}
+
+function formatDiagnosticIncidentContext(reading) {
+  const context = reading?.context || {};
+  const parts = [];
+  if (typeof context.ignitionOn === "boolean") {
+    parts.push(context.ignitionOn ? "ignition on" : "ignition off");
+  }
+  if (context.speedMph != null && Number.isFinite(Number(context.speedMph))) {
+    parts.push(`${Math.round(Number(context.speedMph))} mph`);
+  }
+  if (context.engineRpm != null && Number.isFinite(Number(context.engineRpm))) {
+    parts.push(`${Math.round(Number(context.engineRpm)).toLocaleString("en-US")} RPM`);
+  }
+  if (
+    context.throttlePosition != null &&
+    Number.isFinite(Number(context.throttlePosition))
+  ) {
+    parts.push(`${Number(context.throttlePosition).toFixed(1)} throttle`);
+  }
+  if (
+    context.batteryVoltage != null &&
+    Number.isFinite(Number(context.batteryVoltage))
+  ) {
+    parts.push(`${Number(context.batteryVoltage).toFixed(2)}v`);
+  }
+  if (
+    context.latitude != null &&
+    context.longitude != null &&
+    Number.isFinite(Number(context.latitude)) &&
+    Number.isFinite(Number(context.longitude))
+  ) {
+    parts.push(
+      `GPS ${Number(context.latitude).toFixed(5)}, ${Number(context.longitude).toFixed(5)}`
+    );
+  }
+  if (
+    context.altitudeMeters != null &&
+    Number.isFinite(Number(context.altitudeMeters))
+  ) {
+    parts.push(`${Math.round(Number(context.altitudeMeters))} m altitude`);
+  }
+  return parts.join(" / ");
 }
 
 function getTelemetryReadingDisplayTime(reading) {
@@ -4145,6 +4221,12 @@ export default function FleetMaintenancePanel({
                     : "Last 50 readings"}
                 </span>
                 <h3>{telemetryHistory.label || "Telemetry history"}</h3>
+                {telemetryHistory.signal === "mil_status" ? (
+                  <small>
+                    Derived from provider DTC count; not direct verification of the
+                    dashboard lamp.
+                  </small>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -4195,6 +4277,25 @@ export default function FleetMaintenancePanel({
                             .filter(Boolean)
                             .join(" - ")}
                         </em>
+                        {reading.milOn === true || Number(reading.dtcCount) > 0 ? (
+                          <div className="fleet-maintenance-diagnostic-context">
+                            <strong>Observed vehicle context</strong>
+                            <span>
+                              {formatDiagnosticIncidentContext(reading) ||
+                                "No same-snapshot operating context was available"}
+                            </span>
+                            <small>
+                              {[reading.context?.previousSnapshot?.id
+                                ? `before #${reading.context.previousSnapshot.id}`
+                                : "",
+                              reading.context?.nextSnapshot?.id
+                                ? `after #${reading.context.nextSnapshot.id}`
+                                : ""]
+                                .filter(Boolean)
+                                .join(" / ")}
+                            </small>
+                          </div>
+                        ) : null}
                       </div>
                     ))
                   : telemetryHistory.signal === "speed_mph"

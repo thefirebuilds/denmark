@@ -419,6 +419,7 @@ async function loadDimoStatusFeed() {
             : null,
         },
         mil: {
+          source: "dimo_snapshot",
           mil_on: row.mil_on,
           last_updated: normalizeDisplayTimestamp(
             row.mil_last_updated || row.vehicle_last_updated,
@@ -427,6 +428,12 @@ async function loadDimoStatusFeed() {
           qualified_dtc_list: row.qualified_dtc_list || [],
           dtc_count: row.dtc_count,
           distance_with_mil: row.distance_with_mil,
+          stale: !isFreshLiveSignal(
+            normalizeDisplayTimestamp(
+              row.mil_last_updated || row.vehicle_last_updated,
+              row.captured_at
+            )
+          ),
           first_reported_at: normalizeDisplayTimestamp(
             row.diagnostic_first_reported_at,
             row.captured_at

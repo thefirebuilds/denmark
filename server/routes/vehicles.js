@@ -665,12 +665,33 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
               COALESCE(s.qualified_dtc_list, '[]'::jsonb) AS qualified_dtc_list,
               COALESCE(s.mil_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at,
               s.captured_at,
+              s.is_running,
+              s.speed,
+              s.latitude,
+              s.longitude,
+              s.heading,
+              s.odometer,
+              s.fuel_level,
+              s.battery_voltage,
+              s.coolant_temp,
+              s.engine_rpm,
+              s.throttle_position,
+              s.runtime_minutes,
+              s.distance_with_mil,
+              s.obd_plugged_in,
+              s.speed_last_updated,
+              s.location_last_updated,
+              s.ignition_last_updated,
+              s.battery_voltage_last_updated,
+              COALESCE(raw.raw_payload, s.raw_payload) AS raw_payload,
               CONCAT_WS('|',
                 COALESCE(s.mil_on::text, 'unknown'),
                 COALESCE(s.dtc_count::text, 'unknown'),
                 COALESCE(s.qualified_dtc_list::text, '[]')
               ) AS diagnostic_state
             FROM vehicle_telemetry_snapshots s
+            LEFT JOIN vehicle_telemetry_raw_payloads raw
+              ON raw.snapshot_id = s.id
             WHERE (
                 s.mil_on IS NOT NULL
                 OR s.dtc_count IS NOT NULL
@@ -691,7 +712,23 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
               LAG(diagnostic_state) OVER (
                 PARTITION BY service_name
                 ORDER BY captured_at ASC, snapshot_id ASC
-              ) AS previous_diagnostic_state
+              ) AS previous_diagnostic_state,
+              LAG(snapshot_id) OVER (
+                PARTITION BY service_name
+                ORDER BY captured_at ASC, snapshot_id ASC
+              ) AS previous_snapshot_id,
+              LAG(captured_at) OVER (
+                PARTITION BY service_name
+                ORDER BY captured_at ASC, snapshot_id ASC
+              ) AS previous_snapshot_at,
+              LEAD(snapshot_id) OVER (
+                PARTITION BY service_name
+                ORDER BY captured_at ASC, snapshot_id ASC
+              ) AS next_snapshot_id,
+              LEAD(captured_at) OVER (
+                PARTITION BY service_name
+                ORDER BY captured_at ASC, snapshot_id ASC
+              ) AS next_snapshot_at
             FROM candidates
           )
           SELECT
@@ -712,7 +749,30 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
                 THEN captured_at AT TIME ZONE 'UTC'
               ELSE captured_at::timestamptz
             END AS captured_at,
-            previous_diagnostic_state
+            is_running,
+            speed,
+            latitude,
+            longitude,
+            heading,
+            odometer,
+            fuel_level,
+            battery_voltage,
+            coolant_temp,
+            engine_rpm,
+            throttle_position,
+            runtime_minutes,
+            distance_with_mil,
+            obd_plugged_in,
+            speed_last_updated,
+            location_last_updated,
+            ignition_last_updated,
+            battery_voltage_last_updated,
+            raw_payload,
+            previous_diagnostic_state,
+            previous_snapshot_id,
+            previous_snapshot_at,
+            next_snapshot_id,
+            next_snapshot_at
           FROM sequenced
           WHERE previous_diagnostic_state IS DISTINCT FROM diagnostic_state
           ORDER BY captured_at DESC, snapshot_id DESC
@@ -746,6 +806,52 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
             : [],
           recordedAt: row.recorded_at || row.captured_at || null,
           capturedAt: row.captured_at || null,
+          context: {
+            ignitionOn: row.is_running,
+            speedMph: row.speed == null ? null : Number(row.speed),
+            latitude: row.latitude == null ? null : Number(row.latitude),
+            longitude: row.longitude == null ? null : Number(row.longitude),
+            altitudeMeters:
+              row.raw_payload?.raw?.data?.signalsLatest?.currentLocationAltitude
+                ?.value ?? null,
+            heading: row.heading == null ? null : Number(row.heading),
+            odometerMiles: row.odometer == null ? null : Number(row.odometer),
+            fuelLevel: row.fuel_level == null ? null : Number(row.fuel_level),
+            batteryVoltage:
+              row.battery_voltage == null ? null : Number(row.battery_voltage),
+            coolantTemp:
+              row.coolant_temp == null ? null : Number(row.coolant_temp),
+            engineRpm: row.engine_rpm == null ? null : Number(row.engine_rpm),
+            throttlePosition:
+              row.throttle_position == null
+                ? null
+                : Number(row.throttle_position),
+            runtimeMinutes:
+              row.runtime_minutes == null ? null : Number(row.runtime_minutes),
+            distanceWithMil:
+              row.distance_with_mil == null
+                ? null
+                : Number(row.distance_with_mil),
+            obdPluggedIn: row.obd_plugged_in,
+            timestamps: {
+              speed: row.speed_last_updated || null,
+              location: row.location_last_updated || null,
+              ignition: row.ignition_last_updated || null,
+              batteryVoltage: row.battery_voltage_last_updated || null,
+            },
+            previousSnapshot: row.previous_snapshot_id
+              ? {
+                  id: row.previous_snapshot_id,
+                  capturedAt: row.previous_snapshot_at || null,
+                }
+              : null,
+            nextSnapshot: row.next_snapshot_id
+              ? {
+                  id: row.next_snapshot_id,
+                  capturedAt: row.next_snapshot_at || null,
+                }
+              : null,
+          },
         })),
       });
     }
