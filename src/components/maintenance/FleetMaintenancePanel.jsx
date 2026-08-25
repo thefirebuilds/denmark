@@ -513,6 +513,10 @@ function getTelemetryReadingDisplayTime(reading) {
     : reading?.recordedAt || reading?.capturedAt;
 }
 
+function getDiagnosticReadingDisplayTime(reading) {
+  return reading?.recordedAt || reading?.capturedAt;
+}
+
 function formatEngineOnContext(reading) {
   const event = reading?.engineOnNearReading;
   if (!event?.at) return "";
@@ -4178,7 +4182,7 @@ export default function FleetMaintenancePanel({
                         </div>
                         <span>
                           {formatTelemetryReadingTime(
-                            getTelemetryReadingDisplayTime(reading)
+                            getDiagnosticReadingDisplayTime(reading)
                           )}
                         </span>
                         <em>

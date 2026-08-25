@@ -694,7 +694,25 @@ router.get("/:selector/telemetry-readings", async (req, res) => {
               ) AS previous_diagnostic_state
             FROM candidates
           )
-          SELECT *
+          SELECT
+            snapshot_id,
+            service_name,
+            mil_on,
+            dtc_count,
+            qualified_dtc_list,
+            CASE
+              WHEN service_name = 'dimo' AND recorded_at = captured_at
+                THEN recorded_at AT TIME ZONE 'UTC'
+              WHEN service_name = 'dimo'
+                THEN recorded_at AT TIME ZONE 'America/Chicago'
+              ELSE recorded_at::timestamptz
+            END AS recorded_at,
+            CASE
+              WHEN service_name = 'dimo'
+                THEN captured_at AT TIME ZONE 'UTC'
+              ELSE captured_at::timestamptz
+            END AS captured_at,
+            previous_diagnostic_state
           FROM sequenced
           WHERE previous_diagnostic_state IS DISTINCT FROM diagnostic_state
           ORDER BY captured_at DESC, snapshot_id DESC
