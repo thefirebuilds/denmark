@@ -330,19 +330,21 @@ function normalizeLocationText(value) {
 
 function getConfiguredReturnLocation(activeTrip, locations) {
   const bookedText = normalizeLocationText(activeTrip?.returnLocation);
-  if (!bookedText || !Array.isArray(locations)) return null;
+  if (!Array.isArray(locations)) return null;
 
-  const namedMatch = locations.find((location) => {
-    const candidates = [location?.label, location?.address, location?.id]
-      .map(normalizeLocationText)
-      .filter(Boolean);
-    return candidates.some(
-      (candidate) =>
-        candidate === bookedText ||
-        (candidate.length >= 6 && bookedText.includes(candidate)) ||
-        (bookedText.length >= 6 && candidate.includes(bookedText))
-    );
-  });
+  const namedMatch = bookedText
+    ? locations.find((location) => {
+        const candidates = [location?.label, location?.address, location?.id]
+          .map(normalizeLocationText)
+          .filter(Boolean);
+        return candidates.some(
+          (candidate) =>
+            candidate === bookedText ||
+            (candidate.length >= 6 && bookedText.includes(candidate)) ||
+            (bookedText.length >= 6 && candidate.includes(bookedText))
+        );
+      })
+    : null;
   if (namedMatch) return namedMatch;
 
   const explicitlyAlternate =

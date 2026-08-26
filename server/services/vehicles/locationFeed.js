@@ -349,8 +349,14 @@ async function getStoredVehicleLocations(client = pool) {
         AND t.canceled_at IS NULL
         AND COALESCE(t.closed_out, false) = false
         AND t.returned_at IS NULL
-        AND t.trip_start <= NOW()
-        AND t.trip_end >= NOW() - INTERVAL '12 hours'
+        AND (
+          t.workflow_stage = 'in_progress'
+          OR (
+            t.trip_start IS NOT NULL
+            AND t.trip_start <= NOW()
+            AND t.trip_end >= NOW() - INTERVAL '12 hours'
+          )
+        )
         AND (
           (t.turo_vehicle_id IS NOT NULL AND t.turo_vehicle_id = v.turo_vehicle_id)
           OR (
