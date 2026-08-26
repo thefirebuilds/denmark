@@ -321,6 +321,94 @@ function distanceMiles(a, b) {
   return 2 * radiusMiles * Math.asin(Math.sqrt(h));
 }
 
+function normalizeLocationText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getConfiguredReturnLocation(activeTrip, locations) {
+  const bookedText = normalizeLocationText(activeTrip?.returnLocation);
+  if (!bookedText || !Array.isArray(locations)) return null;
+
+  const namedMatch = locations.find((location) => {
+    const candidates = [location?.label, location?.address, location?.id]
+      .map(normalizeLocationText)
+      .filter(Boolean);
+    return candidates.some(
+      (candidate) =>
+        candidate === bookedText ||
+        (candidate.length >= 6 && bookedText.includes(candidate)) ||
+        (bookedText.length >= 6 && candidate.includes(bookedText))
+    );
+  });
+  if (namedMatch) return namedMatch;
+
+  const explicitlyAlternate =
+    /(?:^| )(?:airport|terminal|hotel|delivery|delivered|station|garage)(?: |$)/.test(
+      bookedText
+    );
+  if (explicitlyAlternate) return null;
+
+  return (
+    locations.find((location) =>
+      /(?:^|\b)(?:park my share|garlic creek|home|buda|78610)(?:\b|$)/i.test(
+        `${location?.label || ""} ${location?.address || ""}`
+      )
+    ) ||
+    locations.find(
+      (location) => String(location?.kind || "").toLowerCase() === "parking"
+    ) ||
+    null
+  );
+}
+
+function getReturnProgress(vehicle, locations) {
+  const trip = vehicle?.activeTrip;
+  if (!trip) return null;
+  const normalizedTrip = {
+    ...trip,
+    tripEnd: trip.tripEnd || trip.trip_end || null,
+    returnLocation: trip.returnLocation || trip.return_location || null,
+  };
+  const destination = getConfiguredReturnLocation(normalizedTrip, locations);
+  if (!destination) return null;
+  const miles = distanceMiles(vehicle, destination);
+  if (!Number.isFinite(miles)) return null;
+
+  const driveMinutes = Math.max(1, Math.round((miles / 50) * 60));
+  const dueAtMs = normalizedTrip.tripEnd
+    ? new Date(normalizedTrip.tripEnd).getTime()
+    : NaN;
+  const dueInMinutes = Number.isFinite(dueAtMs)
+    ? Math.round((dueAtMs - Date.now()) / 60000)
+    : null;
+  const milesLabel = miles < 10 ? miles.toFixed(1) : Math.round(miles);
+  const estimatedArrivalLabel = new Date(
+    Date.now() + driveMinutes * 60 * 1000
+  ).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/Chicago",
+  });
+  const dueLabel =
+    dueInMinutes == null
+      ? ""
+      : dueInMinutes < 0
+        ? `${Math.abs(dueInMinutes)} min overdue`
+        : `due in ${dueInMinutes} min`;
+
+  return {
+    destination,
+    miles,
+    driveMinutes,
+    label: `≈${driveMinutes} min drive / ${milesLabel} mi straight-line from ${destination.label}`,
+    estimatedArrivalLabel: `ETA ${estimatedArrivalLabel}`,
+    dueLabel,
+  };
+}
+
 function coerceCoordinate(value, maxAbs) {
   if (value == null || value === "") return null;
   const number = Number(value);
@@ -451,6 +539,7 @@ function mapStatusVehicleToLocation(vehicle) {
         : null,
     speed:
       vehicle?.telemetry?.speed == null ? null : Number(vehicle.telemetry.speed),
+    activeTrip: vehicle?.activeTrip || vehicle?.active_trip || vehicle?.telemetry?.active_trip || null,
     googleMapsUrl: buildGoogleMapsUrl(lat, lon),
   };
 }
@@ -534,6 +623,7 @@ async function fetchNamedLocations() {
         radiusMeters: radiusMiles * 1609.344,
         radiusMiles,
         kind: String(location?.kind || "custom"),
+        address: String(location?.address || ""),
         alertOnEntry: location?.alertOnEntry !== false,
       };
     })
@@ -1087,6 +1177,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 const headingLabel = formatHeading(vehicle.heading);
                 const speedLabel = formatSpeedMph(vehicle.speed);
                 const telemetryIssue = formatTelemetryIssue(vehicle);
+                const returnProgress = getReturnProgress(vehicle, namedLocations);
                 const containingGeoLocation = geoLocationsVisible
                   ? getContainingGeoLocation(vehicle, namedLocations)
                   : null;
@@ -1128,6 +1219,14 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                         ) : null}
                         {containingGeoLocation ? (
                           <span>Inside {containingGeoLocation.label}</span>
+                        ) : null}
+                        {returnProgress ? (
+                          <em className="fleet-map-return-progress">
+                            {returnProgress.label}
+                            {returnProgress.dueLabel
+                              ? ` · ${returnProgress.estimatedArrivalLabel} · ${returnProgress.dueLabel}`
+                              : ` · ${returnProgress.estimatedArrivalLabel}`}
+                          </em>
                         ) : null}
                         <span>
                           {formatLastSeenLabel(vehicle.lastSeenType)}{" "}
@@ -1201,6 +1300,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
               const headingLabel = formatHeading(vehicle.heading);
               const speedLabel = formatSpeedMph(vehicle.speed);
               const telemetryIssue = formatTelemetryIssue(vehicle);
+              const returnProgress = getReturnProgress(vehicle, namedLocations);
               const containingGeoLocation = geoLocationsVisible
                 ? getContainingGeoLocation(vehicle, namedLocations)
                 : null;
@@ -1223,6 +1323,14 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                       {containingGeoLocation ? (
                         <span className="fleet-map-location-pill">
                           {containingGeoLocation.label}
+                        </span>
+                      ) : null}
+                      {returnProgress ? (
+                        <span className="fleet-map-return-progress">
+                          {returnProgress.label}
+                          {returnProgress.dueLabel
+                            ? ` · ${returnProgress.estimatedArrivalLabel} · ${returnProgress.dueLabel}`
+                            : ` · ${returnProgress.estimatedArrivalLabel}`}
                         </span>
                       ) : null}
                     </small>

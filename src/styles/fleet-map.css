@@ -188,6 +188,14 @@
   display: block;
 }
 
+.fleet-map-list-item .fleet-map-return-progress {
+  display: block;
+  margin-top: 5px;
+  color: #7dd3fc;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .fleet-map-list-item strong {
   color: #f8fbff;
   font-size: 0.98rem;
@@ -509,6 +517,10 @@
 
 .fleet-map-popup .fleet-map-running-label {
   color: #047857;
+}
+
+.fleet-map-popup .fleet-map-return-progress {
+  color: #0369a1;
 }
 
 @keyframes fleet-map-running-pulse {

@@ -85,6 +85,14 @@ function mapLocationRow(row) {
     runningLastSeen,
     speed: toNumber(row.speed),
     googleMapsUrl: buildGoogleMapsUrl(lat, lon),
+    activeTrip: row.active_trip_id
+      ? {
+          id: Number(row.active_trip_id),
+          tripEnd: row.active_trip_end || null,
+          returnLocation: row.active_trip_return_location || null,
+          guestName: row.active_trip_guest_name || null,
+        }
+      : null,
     telemetryDiagnostics: {
       provider: row.source || null,
       latestPollAt: row.latest_poll_at || null,
@@ -173,7 +181,11 @@ async function getStoredVehicleLocations(client = pool) {
         WHEN latest.vehicle_last_updated IS NOT NULL THEN 'vehicle_update'
         WHEN latest.captured_at IS NOT NULL THEN 'telemetry_snapshot'
         ELSE NULL
-      END AS last_seen_type
+      END AS last_seen_type,
+      active_trip.trip_id AS active_trip_id,
+      active_trip.trip_end AS active_trip_end,
+      active_trip.return_location AS active_trip_return_location,
+      active_trip.guest_name AS active_trip_guest_name
     FROM vehicles v
     LEFT JOIN LATERAL (
       SELECT va.alias
@@ -326,6 +338,43 @@ async function getStoredVehicleLocations(client = pool) {
       ORDER BY candidates.sort_seen_at DESC NULLS LAST, candidates.id DESC
       LIMIT 1
     ) latest ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        t.id AS trip_id,
+        t.trip_end,
+        COALESCE(NULLIF(t.return_location, ''), NULLIF(t.pickup_location, '')) AS return_location,
+        t.guest_name
+      FROM trips t
+      WHERE t.deleted_at IS NULL
+        AND t.canceled_at IS NULL
+        AND COALESCE(t.closed_out, false) = false
+        AND t.returned_at IS NULL
+        AND t.trip_start <= NOW()
+        AND t.trip_end >= NOW() - INTERVAL '12 hours'
+        AND (
+          (t.turo_vehicle_id IS NOT NULL AND t.turo_vehicle_id = v.turo_vehicle_id)
+          OR (
+            COALESCE(t.vehicle_name, '') <> ''
+            AND LOWER(t.vehicle_name) IN (
+              LOWER(COALESCE(v.nickname, '')),
+              LOWER(COALESCE(v.turo_vehicle_name, ''))
+            )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM vehicle_aliases trip_alias
+            WHERE trip_alias.vehicle_id = v.id
+              AND trip_alias.active = true
+              AND COALESCE(t.vehicle_name, '') <> ''
+              AND LOWER(trip_alias.alias) = LOWER(t.vehicle_name)
+          )
+        )
+      ORDER BY
+        CASE WHEN t.workflow_stage = 'in_progress' THEN 0 ELSE 1 END,
+        t.trip_end ASC,
+        t.id ASC
+      LIMIT 1
+    ) active_trip ON true
     WHERE v.is_active = true
     ORDER BY v.nickname NULLS LAST, v.make NULLS LAST, v.model NULLS LAST, v.id ASC
   `);
