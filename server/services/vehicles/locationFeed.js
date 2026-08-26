@@ -349,21 +349,32 @@ async function getStoredVehicleLocations(client = pool) {
         AND t.canceled_at IS NULL
         AND COALESCE(t.closed_out, false) = false
         AND t.returned_at IS NULL
-        AND (
-          t.workflow_stage = 'in_progress'
-          OR (
-            t.trip_start IS NOT NULL
-            AND t.trip_start <= NOW()
-            AND t.trip_end >= NOW() - INTERVAL '12 hours'
-          )
+        AND t.trip_end IS NOT NULL
+        AND t.trip_end >= (
+          date_trunc('day', NOW() AT TIME ZONE 'America/Chicago')
+          AT TIME ZONE 'America/Chicago'
+        )
+        AND t.trip_end <= GREATEST(
+          (
+            date_trunc('day', NOW() AT TIME ZONE 'America/Chicago')
+            + INTERVAL '1 day'
+          ) AT TIME ZONE 'America/Chicago',
+          NOW() + INTERVAL '5 hours'
         )
         AND (
           (t.turo_vehicle_id IS NOT NULL AND t.turo_vehicle_id = v.turo_vehicle_id)
           OR (
             COALESCE(t.vehicle_name, '') <> ''
-            AND LOWER(t.vehicle_name) IN (
-              LOWER(COALESCE(v.nickname, '')),
-              LOWER(COALESCE(v.turo_vehicle_name, ''))
+            AND (
+              regexp_replace(LOWER(t.vehicle_name), '[^a-z0-9]+', '', 'g') IN (
+                regexp_replace(LOWER(COALESCE(v.nickname, '')), '[^a-z0-9]+', '', 'g'),
+                regexp_replace(LOWER(COALESCE(v.turo_vehicle_name, '')), '[^a-z0-9]+', '', 'g')
+              )
+              OR (
+                LENGTH(regexp_replace(LOWER(COALESCE(v.nickname, '')), '[^a-z0-9]+', '', 'g')) >= 4
+                AND regexp_replace(LOWER(t.vehicle_name), '[^a-z0-9]+', '', 'g') LIKE
+                  '%' || regexp_replace(LOWER(v.nickname), '[^a-z0-9]+', '', 'g') || '%'
+              )
             )
           )
           OR EXISTS (
@@ -372,7 +383,15 @@ async function getStoredVehicleLocations(client = pool) {
             WHERE trip_alias.vehicle_id = v.id
               AND trip_alias.active = true
               AND COALESCE(t.vehicle_name, '') <> ''
-              AND LOWER(trip_alias.alias) = LOWER(t.vehicle_name)
+              AND (
+                regexp_replace(LOWER(trip_alias.alias), '[^a-z0-9]+', '', 'g') =
+                  regexp_replace(LOWER(t.vehicle_name), '[^a-z0-9]+', '', 'g')
+                OR (
+                  LENGTH(regexp_replace(LOWER(trip_alias.alias), '[^a-z0-9]+', '', 'g')) >= 4
+                  AND regexp_replace(LOWER(t.vehicle_name), '[^a-z0-9]+', '', 'g') LIKE
+                    '%' || regexp_replace(LOWER(trip_alias.alias), '[^a-z0-9]+', '', 'g') || '%'
+                )
+              )
           )
         )
       ORDER BY
