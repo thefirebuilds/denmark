@@ -10,7 +10,10 @@ async function reconcileBookingAlerts(current, options = {}) {
   );
   const bookedTripIds = new Set(eligibleTrips.map((trip) => Number(trip.id)));
   const activeAlerts = await current.repository.listAlerts({ active: true, limit: 500 });
-  const bookingAlerts = activeAlerts.filter((alert) => alert.type === "new_critical_booking");
+  const bookingAlerts = activeAlerts.filter((alert) =>
+    alert.type === "new_critical_booking" &&
+    alert.metadata?.source !== "settings_mqtt_test"
+  );
   const evaluateBooking = createCriticalBookingRule({
     alertService: current.alertService,
     config: current.config,

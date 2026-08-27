@@ -24,7 +24,7 @@ function fakeRepository() {
       if (existing) return { ...existing, inserted: false };
       const alert = { id: `alert-${alerts.length + 1}`, created_at: new Date().toISOString(),
         type: input.type, severity: input.severity, title: input.title, message: input.message,
-        trip_id: input.tripId, device_id: input.deviceId, dedupe_key: input.dedupeKey,
+        trip_id: input.tripId, device_id: input.deviceId, metadata: input.metadata || {}, dedupe_key: input.dedupeKey,
         published_at: null, acknowledged_at: null, resolved_at: null, inserted: true };
       alerts.push(alert); return alert;
     },
@@ -103,6 +103,25 @@ test("booking reconciliation clears the alarm after confirmation", async () => {
   assert.equal(repository.alerts.filter((alert) => !alert.resolved_at).length, 0);
   const desired = transport.published.filter((item) => item.topic.endsWith("/desired-state")).at(-1);
   assert.equal(desired.payload.alert, false);
+});
+
+test("booking reconciliation preserves an active Settings MQTT test override", async () => {
+  const repository = fakeRepository(); const transport = fakeTransport();
+  const alertService = createAlertService({ repository, transport });
+  const testAlert = await alertService.createAlert({
+    type: "new_critical_booking", severity: "critical", title: "New Turo Booking",
+    message: "Test booking received from Denmark Settings", deviceId: "bedroom",
+    metadata: { source: "settings_mqtt_test", preset: "new_trip_booked" },
+  });
+  const current = { repository, transport, alertService,
+    config: { businessTimeZone: "America/Chicago", defaultDeviceId: "bedroom" } };
+
+  await reconcileBookingAlerts(current, { now: "2026-08-16T22:00:00-05:00" });
+
+  assert.equal(repository.alerts.find((alert) => alert.id === testAlert.id).resolved_at, null);
+  const desired = transport.published.filter((item) => item.topic.endsWith("/desired-state")).at(-1);
+  assert.equal(desired.payload.alert, true);
+  assert.equal(desired.payload.alertId, testAlert.id);
 });
 
 test("MQTT disabled skips publication without losing persisted alert", async () => {
