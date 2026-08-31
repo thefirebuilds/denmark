@@ -12,6 +12,9 @@ const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
 const { evaluateCloseoutCompleteness } = require("../services/trips/closeoutState");
 const {
+  TOLL_COLLECTION_WAIT_HOURS,
+} = require("../services/metrics/metricHelpers");
+const {
   ensureTelemetryTripAttributionSchema,
   telemetryEventAtExpression,
 } = require("../services/telemetry/tripAttribution");
@@ -389,11 +392,20 @@ function isActionableBookingMessage(item) {
 }
 
 function enrichTrip(trip) {
+  const tripEndMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+  const tollCollectionDueAt = Number.isFinite(tripEndMs)
+    ? new Date(
+        tripEndMs + TOLL_COLLECTION_WAIT_HOURS * 60 * 60 * 1000
+      ).toISOString()
+    : null;
+
   return {
     ...trip,
     display_status: computeDisplayStatus(trip),
     queue_bucket: computeQueueBucket(trip),
     allowed_next_stages: getAllowedNextStages(trip.workflow_stage),
+    toll_collection_wait_hours: TOLL_COLLECTION_WAIT_HOURS,
+    toll_collection_due_at: tollCollectionDueAt,
   };
 }
 

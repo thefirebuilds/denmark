@@ -21,6 +21,9 @@ const {
 } = require("../services/banking/bankingReconciliationNotice");
 const { getEnabledLocations, getPrimaryParkingLocation } = require("../services/locations/locationSettings");
 const { getMatchedTripReturnGeoLocation } = require("../services/alerts/fleetAlerts");
+const {
+  TOLL_COLLECTION_WAIT_HOURS,
+} = require("../services/metrics/metricHelpers");
 
 const bridgeEmailMismatchGraceMinutes = Number(
   process.env.BRIDGE_EMAIL_MISMATCH_GRACE_MINUTES || 5
@@ -383,7 +386,7 @@ const OPEN_MAINTENANCE_TASK_STATUSES = [
   "in_progress",
   "deferred",
 ];
-const MESSAGE_QUEUE_CACHE_MS = Number(process.env.MESSAGE_QUEUE_CACHE_MS || 10000);
+const MESSAGE_QUEUE_CACHE_MS = Number(process.env.MESSAGE_QUEUE_CACHE_MS || 1500);
 const MESSAGE_QUEUE_LIGHT_CACHE_MS = Number(
   process.env.MESSAGE_QUEUE_LIGHT_CACHE_MS || 60000
 );
@@ -392,9 +395,75 @@ const MESSAGE_QUEUE_CACHE_MAX_KEYS = Number(
 );
 const MESSAGE_STATS_CACHE_MS = Number(process.env.MESSAGE_STATS_CACHE_MS || 10000);
 const EMPTY_QUERY_RESULT = Object.freeze({ rows: [] });
+const FLEET_ALERT_CACHE_MS = Number(
+  process.env.MESSAGE_FLEET_ALERT_CACHE_MS || 5 * 60 * 1000
+);
+const URGENT_FLEET_ALERT_CACHE_MS = Number(
+  process.env.MESSAGE_URGENT_FLEET_ALERT_CACHE_MS || 60 * 1000
+);
+const TOLL_CLOSEOUT_CACHE_MS = Number(
+  process.env.MESSAGE_TOLL_CLOSEOUT_CACHE_MS || 15 * 60 * 1000
+);
 
 const messageQueueCache = new Map();
+const fleetAlertQueryCache = new Map();
 let messageStatsCache = null;
+let fleetAlertRefreshChain = Promise.resolve();
+let urgentFleetAlertRefreshChain = Promise.resolve();
+
+function getCachedFleetAlertQuery(
+  key,
+  loader,
+  ttlMs = FLEET_ALERT_CACHE_MS,
+  priority = "normal"
+) {
+  const now = Date.now();
+  let entry = fleetAlertQueryCache.get(key);
+
+  if (!entry) {
+    entry = {
+      result: EMPTY_QUERY_RESULT,
+      refreshedAt: 0,
+      refreshPending: false,
+    };
+    fleetAlertQueryCache.set(key, entry);
+  }
+
+  if (!entry.refreshPending && now - entry.refreshedAt >= ttlMs) {
+    entry.refreshPending = true;
+    const previousRefresh =
+      priority === "urgent" ? urgentFleetAlertRefreshChain : fleetAlertRefreshChain;
+    const nextRefresh = previousRefresh
+      .catch(() => null)
+      .then(async () => {
+        const startedAt = Date.now();
+        try {
+          const result = await loader();
+          entry.result = result || EMPTY_QUERY_RESULT;
+          entry.refreshedAt = Date.now();
+          if (Date.now() - startedAt >= Number(process.env.MESSAGE_QUEUE_SLOW_MS || 1000)) {
+            console.log(`[messages] refreshed fleet alert cache ${key} in ${Date.now() - startedAt}ms`);
+          }
+        } catch (error) {
+          // Back off until the next normal refresh window instead of retrying
+          // a failing analytical query on every browser poll.
+          entry.refreshedAt = Date.now();
+          console.warn(
+            `[messages] fleet alert cache refresh failed | key=${key} error=${error.message || error}`
+          );
+        } finally {
+          entry.refreshPending = false;
+        }
+      });
+    if (priority === "urgent") {
+      urgentFleetAlertRefreshChain = nextRefresh;
+    } else {
+      fleetAlertRefreshChain = nextRefresh;
+    }
+  }
+
+  return entry.result;
+}
 
 function getCachedPayload(cache, key, ttlMs) {
   const entry = cache?.get?.(key);
@@ -3264,47 +3333,53 @@ router.get("/", async (req, res) => {
       FROM vehicles v
       CROSS JOIN voltage_settings settings
       JOIN LATERAL (
-        SELECT
-          s.id,
-          s.service_name,
-          s.vin,
-          s.nickname,
-          s.battery_voltage,
-          s.battery_voltage_last_updated,
-          s.vehicle_last_updated,
-          s.captured_at,
-          COALESCE(
-            s.battery_voltage_last_updated,
-            s.vehicle_last_updated,
-            s.captured_at
-          ) AS recorded_at
-        FROM vehicle_telemetry_snapshots s
-        WHERE s.battery_voltage IS NOT NULL
-          AND s.battery_voltage BETWEEN 5 AND 16
-          AND (
-            (
-              v.vin IS NOT NULL
+        SELECT candidate.*
+        FROM (
+          (
+            SELECT
+              s.id, s.service_name, s.vin, s.nickname, s.battery_voltage,
+              s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at,
+              COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at
+            FROM vehicle_telemetry_snapshots s
+            WHERE v.vin IS NOT NULL
               AND v.vin <> ''
-              AND s.vin IS NOT NULL
-              AND s.vin <> ''
               AND LOWER(s.vin) = LOWER(v.vin)
-            )
-            OR (
-              v.dimo_token_id IS NOT NULL
+              AND s.battery_voltage IS NOT NULL
+              AND s.battery_voltage BETWEEN 5 AND 16
+            ORDER BY COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+            LIMIT 1
+          )
+          UNION ALL
+          (
+            SELECT
+              s.id, s.service_name, s.vin, s.nickname, s.battery_voltage,
+              s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at,
+              COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at
+            FROM vehicle_telemetry_snapshots s
+            WHERE v.dimo_token_id IS NOT NULL
               AND s.dimo_token_id = v.dimo_token_id
-            )
-            OR (
-              v.external_vehicle_key IS NOT NULL
+              AND s.battery_voltage IS NOT NULL
+              AND s.battery_voltage BETWEEN 5 AND 16
+            ORDER BY COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+            LIMIT 1
+          )
+          UNION ALL
+          (
+            SELECT
+              s.id, s.service_name, s.vin, s.nickname, s.battery_voltage,
+              s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at,
+              COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at) AS recorded_at
+            FROM vehicle_telemetry_snapshots s
+            WHERE v.external_vehicle_key IS NOT NULL
               AND v.external_vehicle_key <> ''
               AND s.external_vehicle_key = v.external_vehicle_key
-            )
+              AND s.battery_voltage IS NOT NULL
+              AND s.battery_voltage BETWEEN 5 AND 16
+            ORDER BY COALESCE(s.battery_voltage_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+            LIMIT 1
           )
-        ORDER BY COALESCE(
-          s.battery_voltage_last_updated,
-          s.vehicle_last_updated,
-          s.captured_at
-        ) DESC NULLS LAST,
-        s.id DESC
+        ) candidate
+        ORDER BY candidate.recorded_at DESC NULLS LAST, candidate.id DESC
         LIMIT 1
       ) latest ON true
       WHERE COALESCE(v.is_active, true) = true
@@ -3767,7 +3842,7 @@ router.get("/", async (req, res) => {
 
     const closeoutSql = `
       WITH toll_arrival_window AS (
-        SELECT 100::integer AS delay_hours
+        SELECT $1::integer AS delay_hours
       ),
       closeout_candidates AS (
         SELECT
@@ -4264,25 +4339,63 @@ router.get("/", async (req, res) => {
 
     const bridgeSettings = await getBridgeAlertSettings();
     const androidBridgeEnabled = bridgeSettings.enabled !== false;
-    const handoffResult = await timeQueueQuery(
+    // Guest communication is the real-time lane. Always load it before any
+    // derived fleet work; fleet alerts are served stale-while-refresh below.
+    const messagesResult = await timeQueueQuery(
       queueTimings,
-      "handoff",
-      db.query(handoffSql)
+      fast ? "messagesFast" : "messages",
+      db.query(fast ? fastMessagesSql : messagesSql, [candidateLimit])
     );
-    const inspectionExportResult = await timeQueueQuery(
-      queueTimings,
-      "inspectionExport",
-      db.query(inspectionExportSql)
-    );
+
+    // Low voltage is urgent, so enqueue it first and refresh it more often.
+    // Refreshes are serialized globally and never block this HTTP response.
+    const lowVoltageResult = light
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery(
+          "lowVoltage",
+          () => db.query(lowVoltageSql),
+          URGENT_FLEET_ALERT_CACHE_MS,
+          "urgent"
+        );
+    const handoffResult = fast
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery("handoff", () => db.query(handoffSql));
+    const inspectionExportResult = fast
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery("inspectionExport", () => db.query(inspectionExportSql));
     const closeoutResult = fast
       ? EMPTY_QUERY_RESULT
-      : await timeQueueQuery(queueTimings, "closeout", db.query(closeoutSql));
+      : getCachedFleetAlertQuery(
+          "closeout",
+          async () => {
+            const eligibility = await db.query(
+              `
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM trips t
+                  WHERE t.trip_end <= NOW() - make_interval(hours => $1::integer)
+                    AND t.trip_end >= NOW() - INTERVAL '45 days'
+                    AND COALESCE(t.closed_out, false) = false
+                    AND COALESCE(t.workflow_stage, '') <> 'canceled'
+                    AND COALESCE(t.status, '') <> 'canceled'
+                ) AS has_candidates
+              `,
+              [TOLL_COLLECTION_WAIT_HOURS]
+            );
+            if (eligibility.rows[0]?.has_candidates !== true) {
+              return EMPTY_QUERY_RESULT;
+            }
+            return db.query(closeoutSql, [TOLL_COLLECTION_WAIT_HOURS]);
+          },
+          TOLL_CLOSEOUT_CACHE_MS
+        );
     const refuelResult = fast
       ? EMPTY_QUERY_RESULT
-      : await timeQueueQuery(queueTimings, "refuel", db.query(refuelSql));
-    const [returnLocations, primaryParking] = fast
-      ? [[], null]
-      : await Promise.all([getEnabledLocations(), getPrimaryParkingLocation()]);
+      : getCachedFleetAlertQuery("refuel", () => db.query(refuelSql));
+    const [returnLocations, primaryParking] =
+      fast || refuelResult.rows.length === 0
+        ? [[], null]
+        : await Promise.all([getEnabledLocations(), getPrimaryParkingLocation()]);
     const refuelReturnLocations = returnLocations.map((location) => ({
       ...location,
       isPrimaryParking: location.id === primaryParking?.id,
@@ -4300,54 +4413,40 @@ router.get("/", async (req, res) => {
     });
     const lateTollResult = fast
       ? EMPTY_QUERY_RESULT
-      : await timeQueueQuery(queueTimings, "lateToll", db.query(lateTollSql));
+      : getCachedFleetAlertQuery("lateToll", () => db.query(lateTollSql));
     const overlapResult = fast
       ? EMPTY_QUERY_RESULT
-      : await timeQueueQuery(queueTimings, "overlap", db.query(overlapSql));
-    const messagesResult = await timeQueueQuery(
-      queueTimings,
-      fast ? "messagesFast" : "messages",
-      db.query(fast ? fastMessagesSql : messagesSql, [candidateLimit])
-    );
-    const unmatchedNotificationsResult = await timeQueueQuery(
-      queueTimings,
-      "unmatchedNotifications",
-      androidBridgeEnabled
-        ? db.query(unmatchedNotificationsSql)
-        : Promise.resolve(EMPTY_QUERY_RESULT)
-    );
-    const diagnosticResult = await timeQueueQuery(
-      queueTimings,
-      "diagnostics",
-      light ? Promise.resolve(EMPTY_QUERY_RESULT) : db.query(diagnosticSql)
-    );
-    const lowVoltageResult = await timeQueueQuery(
-      queueTimings,
-      "lowVoltage",
-      light ? Promise.resolve(EMPTY_QUERY_RESULT) : db.query(lowVoltageSql)
-    );
-    const deviceConnectivityResult = await timeQueueQuery(
-      queueTimings,
-      "deviceConnectivity",
-      light
-        ? Promise.resolve(EMPTY_QUERY_RESULT)
-        : db.query(deviceConnectivitySql, [DEVICE_CONNECTIVITY_STALE_HOURS])
-    );
-    const maintenanceResult = await timeQueueQuery(
-      queueTimings,
-      "maintenance",
-      db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
-    );
-    const googleCalendarReconnectResult = await timeQueueQuery(
-      queueTimings,
-      "googleCalendarReconnect",
-      db.query(googleCalendarReconnectSql)
-    );
-    const dailyBriefResult = await timeQueueQuery(
-      queueTimings,
-      "dailyBrief",
-      db.query(dailyBriefSql)
-    );
+      : getCachedFleetAlertQuery("overlap", () => db.query(overlapSql));
+    const unmatchedNotificationsResult = androidBridgeEnabled && !fast
+      ? getCachedFleetAlertQuery(
+          "unmatchedNotifications",
+          () => db.query(unmatchedNotificationsSql)
+        )
+      : EMPTY_QUERY_RESULT;
+    const diagnosticResult = light
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery("diagnostics", () => db.query(diagnosticSql));
+    const deviceConnectivityResult = light
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery(
+          "deviceConnectivity",
+          () => db.query(deviceConnectivitySql, [DEVICE_CONNECTIVITY_STALE_HOURS])
+        );
+    const maintenanceResult = fast
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery(
+          "maintenance",
+          () => db.query(maintenanceSql, [OPEN_MAINTENANCE_TASK_STATUSES])
+        );
+    const googleCalendarReconnectResult = fast
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery(
+          "googleCalendarReconnect",
+          () => db.query(googleCalendarReconnectSql)
+        );
+    const dailyBriefResult = fast
+      ? EMPTY_QUERY_RESULT
+      : getCachedFleetAlertQuery("dailyBrief", () => db.query(dailyBriefSql));
 
     messagesResult.rows.forEach((row) => {
       row.pickup_location = extractPickupLocationFromNoticeText(

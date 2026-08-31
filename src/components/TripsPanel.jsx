@@ -178,6 +178,29 @@ function isBucketVisible(trip, settings) {
   return settings.visibleBuckets?.[bucket] !== false;
 }
 
+function isNeedsExpensesTrip(trip) {
+  return String(trip?.workflow_stage || "").toLowerCase() === "awaiting_expenses";
+}
+
+function isReadyForCloseout(trip) {
+  const dueAt = trip?.toll_collection_due_at
+    ? new Date(trip.toll_collection_due_at).getTime()
+    : NaN;
+  return Number.isFinite(dueAt) && Date.now() >= dueAt;
+}
+
+function formatTollWait(trip) {
+  const dueAt = trip?.toll_collection_due_at
+    ? new Date(trip.toll_collection_due_at).getTime()
+    : NaN;
+  if (!Number.isFinite(dueAt)) return "Toll window pending";
+
+  const remainingHours = Math.max(1, Math.ceil((dueAt - Date.now()) / (60 * 60 * 1000)));
+  return remainingHours <= 24
+    ? `Toll window ends in ${remainingHours} hr`
+    : `Toll window ends in ${Math.ceil(remainingHours / 24)} days`;
+}
+
 function isCancellationReviewTrip(trip) {
   return (
     isCanceledTrip(trip) &&
@@ -555,6 +578,12 @@ if (urgency.dependencyNote) {
         return true;
     }
   });
+  const groupedExpenseTrips = filteredActiveTrips.filter(
+    (trip) => isNeedsExpensesTrip(trip) && !isReadyForCloseout(trip)
+  );
+  const displayedActiveTrips = filteredActiveTrips.filter(
+    (trip) => !isNeedsExpensesTrip(trip) || isReadyForCloseout(trip)
+  );
 
   function toggleSummaryFilter(nextFilter) {
     setSummaryFilter((current) => (current === nextFilter ? null : nextFilter));
@@ -706,8 +735,10 @@ if (urgency.dependencyNote) {
       </div>
 
       <div className="list">
-        {filteredActiveTrips.map((trip) => {
+        {displayedActiveTrips.map((trip) => {
           const isSelected = trip.id === selectedTrip?.id;
+          const readyForCloseout = isNeedsExpensesTrip(trip) && isReadyForCloseout(trip);
+          const visibleStatus = readyForCloseout ? "Ready to close out?" : trip.statusLabel;
 
           return (
             <article
@@ -724,18 +755,20 @@ if (urgency.dependencyNote) {
                   </div>
                   {isSelected ? (
                     <>
-                      <div className="trip-sub">{trip.cardVehicleLine} - {trip.statusLabel}</div>
+                      <div className="trip-sub">{trip.cardVehicleLine} - {visibleStatus}</div>
                       <div className="trip-sub">{trip.reservationText}</div>
                     </>
                   ) : trip.alertCount > 0 ? (
-                    <div className="trip-sub">{trip.statusLabel}</div>
+                    <div className="trip-sub">{visibleStatus}</div>
                   ) : null}
                 </div>
 
                 {trip.alertCount > 0 ? (
                   <div className="alert-badge">{trip.alertCount} new</div>
                 ) : (
-                  <div className="chip">{trip.statusLabel.toLowerCase()}</div>
+                  <div className={`chip ${readyForCloseout ? "ready-closeout-chip" : ""}`}>
+                    {visibleStatus.toLowerCase()}
+                  </div>
                 )}
               </div>
 
@@ -797,6 +830,35 @@ if (urgency.dependencyNote) {
             </article>
           );
         })}
+
+        {groupedExpenseTrips.length > 0 && (
+          <section className="expense-trip-group" aria-label="Needs expenses trips">
+            <div className="expense-trip-group-header">
+              <div>
+                <div className="trip-title">Needs expenses</div>
+                <div className="trip-sub">
+                  Waiting for the {groupedExpenseTrips[0]?.toll_collection_wait_hours || 100}-hour toll window
+                </div>
+              </div>
+              <div className="chip">{groupedExpenseTrips.length}</div>
+            </div>
+            <div className="expense-trip-list">
+              {groupedExpenseTrips.map((trip) => (
+                <button
+                  key={trip.id}
+                  type="button"
+                  className={`expense-trip-row ${trip.id === selectedTrip?.id ? "selected" : ""}`}
+                  onClick={() => onSelectTrip(trip.id === selectedTrip?.id ? null : trip)}
+                >
+                  <span>
+                    <strong>{trip.cardGuestName}</strong> - {trip.cardNickname}
+                  </span>
+                  <small>{formatTollWait(trip)}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {!filteredActiveTrips.length && summaryFilter && (
           <article className="trip-card compact">

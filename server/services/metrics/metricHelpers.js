@@ -339,6 +339,7 @@ function sumBy(array, valueFn) {
 }
 
 module.exports = {
+  TOLL_COLLECTION_WAIT_HOURS,
   clampNonNegative,
   getCalendarDaysInRange,
   getDateRange,
