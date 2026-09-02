@@ -325,6 +325,7 @@ function isExplicitTripCancellation(text) {
 function classifyTuroNotification(event) {
   const text = buildSearchText(event);
   const source = cleanString(event?.source).toLowerCase();
+  const bodyText = cleanString(event?.body || event?.big_text || event?.sub_text);
 
   if (source === "android_bridge_heartbeat") {
     return "bridge_heartbeat";
@@ -438,6 +439,12 @@ function classifyTuroNotification(event) {
     return "trip_returned";
   }
 
+  // Turo's Android guest-message push is commonly just "Guest: message"
+  // and does not contain the word "message" anywhere in the payload.
+  if (/^[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,2}:\s+\S/.test(bodyText)) {
+    return "message";
+  }
+
   if (includesAny(text, ["message", "sent you a message"])) {
     return "message";
   }
@@ -514,6 +521,7 @@ function extractGuestName(text) {
   if (!source) return null;
 
   const patterns = [
+    /^([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,2}):\s+\S/,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+has returned your\b/i,
     /^Your trip with\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+starts soon\b/i,
     /\b([A-Z][A-Za-z.'-]+)['’]s trip with your\b/i,
@@ -575,6 +583,7 @@ function buildStoredEvent(payload = {}) {
   }) || buildFallbackEventHash(raw);
 
   const searchText = [title, body, bigText, subText].filter(Boolean).join(" ");
+  const guestSearchText = [body, bigText, subText, title].filter(Boolean).join(" ");
   const classification = classifyTuroNotification(raw);
 
   return {
@@ -595,7 +604,7 @@ function buildStoredEvent(payload = {}) {
       classification,
       reservationId: extractReservationId(searchText),
       vehicleName: extractVehicleName(searchText),
-      guestName: extractGuestName(searchText),
+      guestName: extractGuestName(guestSearchText),
     },
   };
 }

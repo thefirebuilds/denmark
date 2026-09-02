@@ -932,6 +932,39 @@ async function persistBridgeEmailMatches() {
               )
             )
             OR (
+              ne.classification = 'unknown'
+              AND m.message_type = 'guest_message'
+              AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '24 hours'
+                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '24 hours'
+              AND COALESCE(
+                substring(ne.body from '^\\s*([A-Z][A-Za-z.''-]+(?:\\s+[A-Z][A-Za-z.''-]+){0,2}):'),
+                substring(ne.big_text from '^\\s*([A-Z][A-Za-z.''-]+(?:\\s+[A-Z][A-Za-z.''-]+){0,2}):'),
+                substring(ne.sub_text from '^\\s*([A-Z][A-Za-z.''-]+(?:\\s+[A-Z][A-Za-z.''-]+){0,2}):')
+              ) IS NOT NULL
+              AND LOWER(CONCAT_WS(' ', m.guest_name, m.subject, m.normalized_text_body))
+                LIKE '%' || LOWER(
+                  COALESCE(
+                  substring(ne.body from '^\\s*([A-Z][A-Za-z.''-]+(?:\\s+[A-Z][A-Za-z.''-]+){0,2}):'),
+                  substring(ne.big_text from '^\\s*([A-Z][A-Za-z.''-]+(?:\\s+[A-Z][A-Za-z.''-]+){0,2}):'),
+                  substring(ne.sub_text from '^\\s*([A-Z][A-Za-z.''-]+(?:\\s+[A-Z][A-Za-z.''-]+){0,2}):')
+                  )
+                ) || '%'
+            )
+            OR (
+              ne.classification = 'reimbursement_invoice'
+              AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '24 hours'
+                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '24 hours'
+              AND LOWER(CONCAT_WS(' ', m.subject, m.normalized_text_body))
+                LIKE '%reimbursement%invoice%'
+              AND (
+                COALESCE(ne.guest_name, '') = ''
+                OR LOWER(CONCAT_WS(' ', m.guest_name, m.subject, m.normalized_text_body))
+                  LIKE '%' || LOWER(ne.guest_name) || '%'
+              )
+            )
+            OR (
               ne.classification IN (
                 'trip_booked',
                 'trip_changed',
