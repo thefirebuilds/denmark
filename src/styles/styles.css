@@ -1208,6 +1208,19 @@ body {
   gap: 12px;
 }
 
+.message-topic {
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.message-topic--guest_messages {
+  color: #93c5fd;
+}
+
 .message-maintenance-brief--collapsed {
   gap: 0;
 }

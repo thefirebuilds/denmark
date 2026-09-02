@@ -498,6 +498,9 @@ function setMessageStatsCache(payload) {
 
 function invalidateMessageCaches() {
   messageQueueCache.clear();
+  // Derived rows are cached separately. Clear them after queue actions so a
+  // successfully handled alert cannot reappear from a stale snapshot.
+  fleetAlertQueryCache.clear();
   messageStatsCache = null;
 }
 
@@ -1281,6 +1284,46 @@ function messageQueueRank(item) {
   return 3;
 }
 
+function messageQueueTopic(item) {
+  if (isGuestMessageItem(item) || item.type === "guest_message_thread") {
+    return "guest_messages";
+  }
+  if (
+    item.type === "notification_unmatched" ||
+    item.type === "return_location_check" ||
+    item.type === "turo_notification" ||
+    [
+      "trip_booked",
+      "trip_changed",
+      "trip_canceled",
+      "trip_cancelled",
+      "trip_rated",
+    ].includes(item.type)
+  ) {
+    return "turo_updates";
+  }
+  if (
+    [
+      "maintenance_required",
+      "maintenance_brief",
+      "vehicle_diagnostic_alert",
+      "refuel_required",
+    ].includes(item.type)
+  ) {
+    return "vehicle_maintenance";
+  }
+  return "business_operations";
+}
+
+function messageQueueTopicRank(item) {
+  return {
+    guest_messages: 0,
+    turo_updates: 1,
+    vehicle_maintenance: 2,
+    business_operations: 3,
+  }[messageQueueTopic(item)] ?? 3;
+}
+
 function attachMaintenanceToPrepNotices(prepNotices, maintenanceNotices) {
   const maintenanceByTripId = new Map(
     maintenanceNotices
@@ -1307,6 +1350,9 @@ function attachMaintenanceToPrepNotices(prepNotices, maintenanceNotices) {
 }
 
 function compareQueueItems(a, b) {
+  const topicRankDiff = messageQueueTopicRank(a) - messageQueueTopicRank(b);
+  if (topicRankDiff !== 0) return topicRankDiff;
+
   const rankDiff = messageQueueRank(a) - messageQueueRank(b);
   if (rankDiff !== 0) return rankDiff;
 
@@ -3109,6 +3155,33 @@ router.get("/", async (req, res) => {
               AND ne.event_at + INTERVAL '24 hours'
             AND m.guest_search_text LIKE '%' || LOWER(ne.guest_name) || '%'
             AND m.vehicle_search_text LIKE '%' || LOWER(ne.vehicle_name) || '%'
+          )
+          OR (
+            ne.classification IN ('message', 'guest_message')
+            AND m.message_type = 'guest_message'
+            AND m.message_at BETWEEN
+              ne.event_at - INTERVAL '15 minutes'
+              AND ne.event_at + INTERVAL '15 minutes'
+            AND (
+              COALESCE(ne.guest_name, '') = ''
+              OR m.guest_search_text LIKE '%' || LOWER(ne.guest_name) || '%'
+            )
+          )
+          OR (
+            ne.classification IN ('trip_booked', 'trip_changed', 'trip_canceled', 'trip_cancelled', 'trip_rated')
+            AND m.message_at BETWEEN
+              ne.event_at - INTERVAL '24 hours'
+              AND ne.event_at + INTERVAL '24 hours'
+            AND (
+              (ne.classification = 'trip_booked' AND m.message_type = 'trip_booked')
+              OR (ne.classification = 'trip_changed' AND m.message_type IN ('trip_changed', 'turo_notification'))
+              OR (ne.classification IN ('trip_canceled', 'trip_cancelled') AND m.message_type IN ('trip_canceled', 'trip_cancelled', 'turo_notification'))
+              OR (ne.classification = 'trip_rated' AND m.message_type IN ('trip_rated', 'turo_notification'))
+            )
+            AND (
+              COALESCE(ne.guest_name, '') = ''
+              OR m.guest_search_text LIKE '%' || LOWER(ne.guest_name) || '%'
+            )
           )
           OR (
             (

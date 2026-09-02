@@ -7,7 +7,7 @@
 // --------------------------------------------------------------------------
 
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import GuestSafetySnapshotCard from "./maintenance/GuestSafetySnapshotCard";
 import PreflightCard from "./maintenance/PreflightCard";
@@ -36,6 +36,9 @@ const FULL_QUEUE_ONLY_TYPES = new Set([
   "refuel_required",
   "late_toll_unbilled",
   "trip_overlap_detected",
+  "daily_brief",
+  "maintenance_brief",
+  "google_calendar_reconnect_required",
 ]);
 const RAW_FEED_TYPES = [
   { id: "emails", label: "Emails" },
@@ -286,6 +289,38 @@ function saveMaintenanceBriefDisplayState(state) {
 function isFullQueueOnlyItem(message) {
   const type = message?.type || message?.message_type;
   return FULL_QUEUE_ONLY_TYPES.has(type);
+}
+
+function getMessageQueueTopic(message) {
+  const type = message?.type || message?.message_type;
+  if (type === "guest_message" || type === "guest_message_thread") {
+    return { id: "guest_messages", label: "Guest messages" };
+  }
+  if (
+    type === "notification_unmatched" ||
+    type === "return_location_check" ||
+    type === "turo_notification" ||
+    [
+      "trip_booked",
+      "trip_changed",
+      "trip_canceled",
+      "trip_cancelled",
+      "trip_rated",
+    ].includes(type)
+  ) {
+    return { id: "turo_updates", label: "Turo & Android updates" };
+  }
+  if (
+    [
+      "maintenance_required",
+      "maintenance_brief",
+      "vehicle_diagnostic_alert",
+      "refuel_required",
+    ].includes(type)
+  ) {
+    return { id: "vehicle_maintenance", label: "Vehicle maintenance" };
+  }
+  return { id: "business_operations", label: "Business operations" };
 }
 
 function buildReplyUrl(message) {
@@ -3429,7 +3464,7 @@ async function handleExportGuestInspectionSheet(message) {
 
         {!loading &&
           !error &&
-          messages.map((message) => {
+          messages.map((message, messageIndex) => {
             const isUnread = message.status === "unread";
             const isNew = newMessageIds.includes(message.id);
             const canAdvanceHandoff = isHandoffReadyTask(message);
@@ -3548,9 +3583,22 @@ async function handleExportGuestInspectionSheet(message) {
               return null;
             }
 
+            const queueTopic = getMessageQueueTopic(message);
+            const previousQueueTopic =
+              messageIndex > 0
+                ? getMessageQueueTopic(messages[messageIndex - 1])
+                : null;
+            const showQueueTopic =
+              !showingTripMessages && queueTopic.id !== previousQueueTopic?.id;
+
             return (
-              <article
-                key={message.id}
+              <Fragment key={message.id}>
+                {showQueueTopic ? (
+                  <div className={`message-topic message-topic--${queueTopic.id}`}>
+                    {queueTopic.label}
+                  </div>
+                ) : null}
+                <article
                 className={`message ${isUnread ? "unread" : ""} ${
                   isNew ? "message-new" : ""
                 } ${canFocusTrip ? "message-focusable" : ""} ${
@@ -4646,7 +4694,8 @@ async function handleExportGuestInspectionSheet(message) {
                     )}
                   </div>
                 )}
-              </article>
+                </article>
+              </Fragment>
             );
           })}
       </div>
