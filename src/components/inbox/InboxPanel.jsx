@@ -10,8 +10,17 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const VEHICLES_API = `${API_BASE}/api/vehicles`;
 const BANKING_RECONCILIATION_UPDATED_EVENT = "banking:reconciliation-updated";
 
-function notifyBankingReconciliationUpdated() {
-  window.dispatchEvent(new CustomEvent(BANKING_RECONCILIATION_UPDATED_EVENT));
+function notifyBankingReconciliationUpdated(pendingCount = null) {
+  window.dispatchEvent(
+    new CustomEvent(BANKING_RECONCILIATION_UPDATED_EVENT, {
+      detail: {
+        pending:
+          Number.isFinite(Number(pendingCount)) && pendingCount !== null
+            ? Number(pendingCount)
+            : null,
+      },
+    })
+  );
   window.dispatchEvent(new CustomEvent("messages:stats-updated"));
 }
 
@@ -1086,11 +1095,13 @@ export default function InboxPanel() {
       if (!res.ok) throw new Error(`Summary request failed: ${res.status}`);
       const data = await res.json();
       if (!signalCancelled()) setSummary(data);
+      return data;
     } catch (err) {
       if (!signalCancelled()) {
         setSummaryError(err.message || "Failed to load summary.");
         setSummary({});
       }
+      return null;
     }
   }, []);
 
@@ -1575,9 +1586,9 @@ export default function InboxPanel() {
         throw new Error(message);
       }
 
-      await loadSummary();
+      const nextSummary = await loadSummary();
       await loadTransactions(() => false, rawMatchValue);
-      notifyBankingReconciliationUpdated();
+      notifyBankingReconciliationUpdated(nextSummary?.pending);
     } catch (err) {
       setActionError(err.message || "Failed to ignore similar transactions.");
     } finally {
@@ -1586,8 +1597,8 @@ export default function InboxPanel() {
   }
 
   async function refreshAfterAction(indexHint) {
-    await loadSummary();
-    notifyBankingReconciliationUpdated();
+    const nextSummary = await loadSummary();
+    notifyBankingReconciliationUpdated(nextSummary?.pending);
 
     const params = new URLSearchParams({
       page: String(page),

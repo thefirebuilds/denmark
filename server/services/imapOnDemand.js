@@ -6,6 +6,8 @@ const DEFAULT_DEBOUNCE_MS = 90 * 1000;
 let pollInProgress = false;
 let lastStartedAt = 0;
 let queuedReason = null;
+let scheduledPollTimer = null;
+let scheduledPollAt = 0;
 
 async function runOnDemandPoll(reason = "on-demand") {
   if (!(await isIntegrationEnabled("imap"))) {
@@ -49,6 +51,7 @@ async function runOnDemandPoll(reason = "on-demand") {
 function triggerImapPoll(reason = "on-demand", options = {}) {
   const debounceMs = Number(options.debounceMs ?? DEFAULT_DEBOUNCE_MS);
   const now = Date.now();
+  const delayMs = Math.max(0, Number(options.delayMs || 0));
 
   if (pollInProgress) {
     queuedReason = reason;
@@ -59,9 +62,20 @@ function triggerImapPoll(reason = "on-demand", options = {}) {
     return { skipped: true, reason: "debounced" };
   }
 
-  setTimeout(() => {
+  const requestedAt = now + delayMs;
+  if (scheduledPollTimer) {
+    if (requestedAt >= scheduledPollAt) {
+      return { queued: true, reason: "already_scheduled" };
+    }
+    clearTimeout(scheduledPollTimer);
+  }
+
+  scheduledPollAt = requestedAt;
+  scheduledPollTimer = setTimeout(() => {
+    scheduledPollTimer = null;
+    scheduledPollAt = 0;
     void runOnDemandPoll(reason);
-  }, Number(options.delayMs || 0));
+  }, delayMs);
 
   return { queued: true, reason: "scheduled" };
 }

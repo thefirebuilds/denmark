@@ -621,8 +621,33 @@ function shouldTriggerImapForNotification(classification) {
     "bridge_heartbeat",
     "bridge_test",
     "partner_offer",
-    "unknown",
   ].includes(String(classification || ""));
+}
+
+function triggerNotificationImapChecks(classification) {
+  const reason = `android-notification:${classification}`;
+  const attempts = [
+    { suffix: "immediate", delayMs: 0 },
+    { suffix: "follow-up-20s", delayMs: 20 * 1000 },
+    { suffix: "follow-up-60s", delayMs: 60 * 1000 },
+  ];
+
+  return attempts.map(({ suffix, delayMs }) => {
+    if (delayMs === 0) {
+      return triggerImapPoll(`${reason}:${suffix}`, { debounceMs: 10 * 1000 });
+    }
+
+    setTimeout(() => {
+      const result = triggerImapPoll(`${reason}:${suffix}`, {
+        debounceMs: 10 * 1000,
+      });
+      console.log(
+        `[notifications/turo] imap retry class=${classification} attempt=${suffix} ${JSON.stringify(result)}`
+      );
+    }, delayMs);
+
+    return { queued: true, reason: `scheduled:${suffix}` };
+  });
 }
 
 async function ensureNotificationEventsTable() {
@@ -1034,10 +1059,7 @@ router.post("/turo", async (req, res) => {
     const result = await upsertTuroNotificationEvent(event);
 
     if (result.inserted && shouldTriggerImapForNotification(result.classification)) {
-      const pollResult = triggerImapPoll(`android-notification:${result.classification}`, {
-        delayMs: 2500,
-        debounceMs: 60 * 1000,
-      });
+      const pollResult = triggerNotificationImapChecks(result.classification);
       console.log(
         `[notifications/turo] imap trigger class=${result.classification} ${JSON.stringify(pollResult)}`
       );

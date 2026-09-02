@@ -960,8 +960,8 @@ async function persistBridgeEmailMatches() {
                 'turo_notification'
               )
               AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '72 hours'
-                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '72 hours'
+                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '15 minutes'
+                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '6 hours'
               AND LOWER(CONCAT_WS(' ', m.subject, m.normalized_text_body))
                 LIKE '%reimbursement%invoice%'
               AND (
@@ -3351,8 +3351,8 @@ router.get("/", async (req, res) => {
               'turo_notification'
             )
             AND m.message_at BETWEEN
-              ne.event_at - INTERVAL '72 hours'
-              AND ne.event_at + INTERVAL '72 hours'
+              ne.event_at - INTERVAL '15 minutes'
+              AND ne.event_at + INTERVAL '6 hours'
             AND (
               (
                 COALESCE(ne.guest_name, ne.paid_now_guest_name, '') <> ''

@@ -3157,7 +3157,25 @@ async function handleExportGuestInspectionSheet(message) {
   }, [selectedTrip?.id, selectedTrip?.closed_out, messageMode]);
 
   useEffect(() => {
-    const handleBankingReconciliationUpdated = () => {
+    const handleBankingReconciliationUpdated = (event) => {
+      const pending = Number(event?.detail?.pending);
+      if (Number.isFinite(pending) && pending >= 0) {
+        setMessages((current) =>
+          pending === 0
+            ? current.filter((message) => !isBankingReconciliationNotice(message))
+            : current.map((message) =>
+                isBankingReconciliationNotice(message)
+                  ? {
+                      ...message,
+                      subject:
+                        pending === 1
+                          ? "1 transaction is pending reconciliation"
+                          : `${pending} transactions are pending reconciliation`,
+                    }
+                  : message
+              )
+        );
+      }
       try {
         window.sessionStorage?.removeItem(LIVE_MESSAGE_CACHE_STORAGE_KEY);
       } catch {
@@ -3547,7 +3565,8 @@ async function handleExportGuestInspectionSheet(message) {
               !canCloseoutTrip &&
               !canReviewRefuel &&
               !canConfirmBooking &&
-              !canShowMaintenance;
+              !canShowMaintenance &&
+              !canReviewBanking;
             const maintenanceExpanded =
               canShowMaintenance && expandedMaintenanceIds.has(message.id);
             const maintenanceDetailsExpanded =
