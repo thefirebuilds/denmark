@@ -909,6 +909,17 @@ async function persistBridgeEmailMatches() {
               AND m.reservation_id = ne.reservation_id
             )
             OR (
+              COALESCE(ne.guest_name, '') <> ''
+              AND COALESCE(ne.vehicle_name, '') <> ''
+              AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '24 hours'
+                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '24 hours'
+              AND LOWER(CONCAT_WS(' ', m.guest_name, m.subject, m.normalized_text_body))
+                LIKE '%' || LOWER(ne.guest_name) || '%'
+              AND LOWER(CONCAT_WS(' ', m.vehicle_name, m.subject, m.normalized_text_body))
+                LIKE '%' || LOWER(ne.vehicle_name) || '%'
+            )
+            OR (
               ne.classification IN ('message', 'guest_message')
               AND m.message_type = 'guest_message'
               AND COALESCE(m.message_timestamp, m.created_at) BETWEEN

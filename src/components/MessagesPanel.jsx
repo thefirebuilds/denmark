@@ -36,6 +36,8 @@ const FULL_QUEUE_ONLY_TYPES = new Set([
   "refuel_required",
   "late_toll_unbilled",
   "trip_overlap_detected",
+  "notification_unmatched",
+  "return_location_check",
   "daily_brief",
   "maintenance_brief",
   "google_calendar_reconnect_required",
