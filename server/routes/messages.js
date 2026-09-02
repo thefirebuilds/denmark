@@ -953,9 +953,15 @@ async function persistBridgeEmailMatches() {
             )
             OR (
               ne.classification = 'reimbursement_invoice'
+              AND m.message_type IN (
+                'reimbursement_invoice',
+                'renter_activity',
+                'guest_message',
+                'turo_notification'
+              )
               AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
-                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '24 hours'
-                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '24 hours'
+                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '72 hours'
+                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '72 hours'
               AND LOWER(CONCAT_WS(' ', m.subject, m.normalized_text_body))
                 LIKE '%reimbursement%invoice%'
               AND (
@@ -3338,10 +3344,15 @@ router.get("/", async (req, res) => {
               OR ne.notification_text LIKE '%reimbursement invoice%'
               OR ne.notification_text LIKE '%paid now%'
             )
-            AND m.message_type IN ('reimbursement_invoice', 'guest_message')
+            AND m.message_type IN (
+              'reimbursement_invoice',
+              'renter_activity',
+              'guest_message',
+              'turo_notification'
+            )
             AND m.message_at BETWEEN
-              ne.event_at - INTERVAL '24 hours'
-              AND ne.event_at + INTERVAL '24 hours'
+              ne.event_at - INTERVAL '72 hours'
+              AND ne.event_at + INTERVAL '72 hours'
             AND (
               (
                 COALESCE(ne.guest_name, ne.paid_now_guest_name, '') <> ''
