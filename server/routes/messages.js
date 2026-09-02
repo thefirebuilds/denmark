@@ -883,6 +883,82 @@ async function ensureNotificationAckColumns() {
   await ensureNotificationAckColumnsPromise;
 }
 
+async function persistBridgeEmailMatches() {
+  await ensureNotificationAckColumns();
+
+  const result = await db.query(`
+    UPDATE notification_events ne
+    SET
+      acknowledged_at = NOW(),
+      acknowledged_by = 'bridge-email-reconciler',
+      acknowledged_reason = 'Matched to imported Turo email/message'
+    WHERE ne.acknowledged_at IS NULL
+      AND ne.received_at >= NOW() - INTERVAL '48 hours'
+      AND COALESCE(ne.classification, '') NOT IN (
+        'bridge_heartbeat',
+        'bridge_test',
+        'partner_offer'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM messages m
+        WHERE COALESCE(m.message_timestamp, m.created_at) >= NOW() - INTERVAL '9 days'
+          AND (
+            (
+              ne.reservation_id IS NOT NULL
+              AND m.reservation_id = ne.reservation_id
+            )
+            OR (
+              ne.classification IN ('message', 'guest_message')
+              AND m.message_type = 'guest_message'
+              AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '15 minutes'
+                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '15 minutes'
+              AND (
+                COALESCE(ne.guest_name, '') = ''
+                OR LOWER(CONCAT_WS(' ', m.guest_name, m.subject, m.normalized_text_body))
+                  LIKE '%' || LOWER(ne.guest_name) || '%'
+              )
+            )
+            OR (
+              ne.classification IN (
+                'trip_booked',
+                'trip_changed',
+                'trip_canceled',
+                'trip_cancelled',
+                'trip_rated'
+              )
+              AND COALESCE(m.message_timestamp, m.created_at) BETWEEN
+                COALESCE(ne.posted_at, ne.received_at) - INTERVAL '24 hours'
+                AND COALESCE(ne.posted_at, ne.received_at) + INTERVAL '24 hours'
+              AND (
+                (ne.classification = 'trip_booked' AND m.message_type = 'trip_booked')
+                OR (ne.classification = 'trip_changed' AND m.message_type IN ('trip_changed', 'turo_notification'))
+                OR (ne.classification IN ('trip_canceled', 'trip_cancelled') AND m.message_type IN ('trip_canceled', 'trip_cancelled', 'turo_notification'))
+                OR (ne.classification = 'trip_rated' AND m.message_type IN ('trip_rated', 'turo_notification'))
+              )
+              AND (
+                COALESCE(ne.guest_name, '') = ''
+                OR LOWER(CONCAT_WS(' ', m.guest_name, m.subject, m.normalized_text_body))
+                  LIKE '%' || LOWER(ne.guest_name) || '%'
+              )
+            )
+          )
+      )
+    RETURNING ne.id
+  `);
+
+  if (result.rowCount > 0) {
+    // Do not serve the pre-reconciliation list while its background cache is
+    // waiting for the next normal refresh window.
+    fleetAlertQueryCache.delete("unmatchedNotifications");
+    messageQueueCache.clear();
+    messageStatsCache = null;
+  }
+
+  return result.rowCount;
+}
+
 const AFTER_RETURN_PROJECTION_RULE_CODES = new Set([
   "cleaning",
   "fluid_leak_check",
@@ -4490,6 +4566,13 @@ router.get("/", async (req, res) => {
     const overlapResult = fast
       ? EMPTY_QUERY_RESULT
       : getCachedFleetAlertQuery("overlap", () => db.query(overlapSql));
+    if (androidBridgeEnabled && !fast) {
+      await timeQueueQuery(
+        queueTimings,
+        "bridgeEmailReconciliation",
+        persistBridgeEmailMatches()
+      );
+    }
     const unmatchedNotificationsResult = androidBridgeEnabled && !fast
       ? getCachedFleetAlertQuery(
           "unmatchedNotifications",
