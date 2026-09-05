@@ -182,6 +182,24 @@ function isNeedsExpensesTrip(trip) {
   return String(trip?.workflow_stage || "").toLowerCase() === "awaiting_expenses";
 }
 
+function isRoutineInProgressTrip(trip) {
+  const maxSpeed = Number(trip?.max_speed_mph);
+  const speedViolationCount = Number(trip?.speed_over_80_count);
+  const hasSpeedAlert =
+    (Number.isFinite(maxSpeed) && maxSpeed > 80) ||
+    (Number.isFinite(speedViolationCount) && speedViolationCount > 0);
+
+  return (
+    isQueueBucket(trip, "in_progress") &&
+    !isPickupConfirmationOverdue(trip) &&
+    !isOverdueTrip(trip) &&
+    !isReturnSoonTrip(trip) &&
+    !trip?.turnaroundRisk &&
+    !hasSpeedAlert &&
+    Number(trip?.alertCount || 0) === 0
+  );
+}
+
 function isReadyForCloseout(trip) {
   const dueAt = trip?.toll_collection_due_at
     ? new Date(trip.toll_collection_due_at).getTime()
@@ -581,8 +599,11 @@ if (urgency.dependencyNote) {
   const groupedExpenseTrips = filteredActiveTrips.filter(
     (trip) => isNeedsExpensesTrip(trip) && !isReadyForCloseout(trip)
   );
+  const groupedInProgressTrips = filteredActiveTrips.filter(isRoutineInProgressTrip);
   const displayedActiveTrips = filteredActiveTrips.filter(
-    (trip) => !isNeedsExpensesTrip(trip) || isReadyForCloseout(trip)
+    (trip) =>
+      (!isNeedsExpensesTrip(trip) || isReadyForCloseout(trip)) &&
+      !isRoutineInProgressTrip(trip)
   );
 
   function toggleSummaryFilter(nextFilter) {
@@ -830,6 +851,33 @@ if (urgency.dependencyNote) {
             </article>
           );
         })}
+
+        {groupedInProgressTrips.length > 0 && (
+          <section className="expense-trip-group in-trip-group" aria-label="Trips in progress">
+            <div className="expense-trip-group-header">
+              <div>
+                <div className="trip-title">In trip</div>
+                <div className="trip-sub">Vehicles currently out with guests</div>
+              </div>
+              <div className="chip">{groupedInProgressTrips.length}</div>
+            </div>
+            <div className="expense-trip-list">
+              {groupedInProgressTrips.map((trip) => (
+                <button
+                  key={trip.id}
+                  type="button"
+                  className={`expense-trip-row ${trip.id === selectedTrip?.id ? "selected" : ""}`}
+                  onClick={() => onSelectTrip(trip.id === selectedTrip?.id ? null : trip)}
+                >
+                  <span>
+                    <strong>{trip.cardGuestName}</strong> - {trip.cardNickname}
+                  </span>
+                  <small>{getCompactNextActivityText(trip)}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {groupedExpenseTrips.length > 0 && (
           <section className="expense-trip-group" aria-label="Needs expenses trips">

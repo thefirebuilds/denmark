@@ -129,6 +129,15 @@
   gap: 10px;
 }
 
+.trips-panel .expense-trip-group.in-trip-group {
+  border-color: rgba(59, 130, 246, 0.34);
+  background: linear-gradient(
+    180deg,
+    rgba(24, 74, 135, 0.16),
+    rgba(16, 24, 44, 0.96)
+  );
+}
+
 .trips-panel .expense-trip-group-header {
   display: flex;
   align-items: flex-start;
