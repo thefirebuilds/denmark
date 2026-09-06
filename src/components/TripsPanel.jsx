@@ -605,6 +605,32 @@ if (urgency.dependencyNote) {
       (!isNeedsExpensesTrip(trip) || isReadyForCloseout(trip)) &&
       !isRoutineInProgressTrip(trip)
   );
+  const representedFleetVehicles = new Set(
+    vehicles
+      .filter((vehicle) =>
+        mappedTrips.some(
+          (trip) =>
+            !isCanceledTrip(trip) &&
+            !isClosedTrip(trip) &&
+            Boolean(findVehicleForTrip(trip, [vehicle]))
+        )
+      )
+      .map((vehicle) => vehicle.id ?? vehicle.vin ?? vehicle.nickname)
+  );
+  const unbookedVehicles = vehicles
+    .filter(
+      (vehicle) =>
+        vehicle?.is_active !== false &&
+        vehicle?.in_service !== false &&
+        !representedFleetVehicles.has(vehicle.id ?? vehicle.vin ?? vehicle.nickname)
+    )
+    .sort((a, b) =>
+      String(a?.nickname || a?.vehicle_name || a?.vin || "").localeCompare(
+        String(b?.nickname || b?.vehicle_name || b?.vin || ""),
+        undefined,
+        { sensitivity: "base" }
+      )
+    );
 
   function toggleSummaryFilter(nextFilter) {
     setSummaryFilter((current) => (current === nextFilter ? null : nextFilter));
@@ -904,6 +930,40 @@ if (urgency.dependencyNote) {
                   <small>{formatTollWait(trip)}</small>
                 </button>
               ))}
+            </div>
+          </section>
+        )}
+
+        {unbookedVehicles.length > 0 && !summaryFilter && (
+          <section
+            className="expense-trip-group unbooked-vehicle-group"
+            aria-label="Vehicles without an open booking"
+          >
+            <div className="expense-trip-group-header">
+              <div>
+                <div className="trip-title">Not currently booked</div>
+                <div className="trip-sub">Active vehicles with no open trip</div>
+              </div>
+              <div className="chip">{unbookedVehicles.length}</div>
+            </div>
+            <div className="expense-trip-list">
+              {unbookedVehicles.map((vehicle) => {
+                const vehicleKey = vehicle.id ?? vehicle.vin ?? vehicle.nickname;
+                const vehicleName =
+                  vehicle.nickname || vehicle.vehicle_name || vehicle.vin || "Unknown vehicle";
+                const vehicleDetails = [vehicle.year, vehicle.make, vehicle.model]
+                  .filter(Boolean)
+                  .join(" ");
+
+                return (
+                  <div key={vehicleKey} className="expense-trip-row unbooked-vehicle-row">
+                    <span>
+                      <strong>{vehicleName}</strong>
+                    </span>
+                    <small>{vehicleDetails || "No open booking"}</small>
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}

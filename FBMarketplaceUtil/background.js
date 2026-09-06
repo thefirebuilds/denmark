@@ -30,6 +30,7 @@ const API_BASES = normalizeConfigList(
 );
 
 const AUTO_ENRICH_FLAG = "fcg_enrich=1";
+const AVAILABILITY_CHECK_FLAG = "fcg_check_available=1";
 const NEXT_ENRICH_TAB_ALARM = "fcg-marketplace-next-enrich-tab";
 const AVAILABILITY_WATCHDOG_ALARM = "fcg-marketplace-availability-watchdog";
 const HARD_TIMEOUT_ALARM = "fcg-marketplace-hard-timeout";
@@ -109,8 +110,22 @@ function normalizeListingUrl(u) {
 function buildEnrichUrl(u) {
   const normalized = normalizeListingUrl(u);
   if (!normalized) return null;
-  if (enrichQueueState.availabilityOnly) return normalized;
+  if (enrichQueueState.availabilityOnly) {
+    return `${normalized}#${AVAILABILITY_CHECK_FLAG}&fcg_source=${encodeURIComponent(normalized)}`;
+  }
   return `${normalized}#${AUTO_ENRICH_FLAG}&fcg_source=${encodeURIComponent(normalized)}`;
+}
+
+async function ignoreCurrentUnavailableRedirect(tabId) {
+  if (!tabId || tabId !== enrichQueueState.currentTabId) return;
+  const originalUrl = enrichQueueState.currentUrl;
+  if (!originalUrl) return;
+
+  const ignored = await postJsonWithFallback("/api/marketplace/listings/ignoreByUrl", {
+    url: originalUrl,
+  });
+  console.log("[fcg-auto-enrich] unavailable redirect ignore result:", ignored);
+  await finishCurrentEnrichTab(Boolean(ignored.ok), tabId);
 }
 
 function clearCurrentWatchdog() {
@@ -646,6 +661,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (
+    tabId === enrichQueueState.currentTabId &&
+    enrichQueueState.availabilityOnly === true &&
+    String(changeInfo.url || "").includes("unavailable_product=1")
+  ) {
+    void ignoreCurrentUnavailableRedirect(tabId);
+    return;
+  }
+
   if (
     tabId !== enrichQueueState.currentTabId ||
     enrichQueueState.availabilityOnly !== true ||

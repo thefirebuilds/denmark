@@ -138,6 +138,20 @@
   );
 }
 
+.trips-panel .expense-trip-group.unbooked-vehicle-group {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: linear-gradient(
+    180deg,
+    rgba(71, 85, 105, 0.1),
+    rgba(16, 24, 44, 0.88)
+  );
+}
+
+.trips-panel .unbooked-vehicle-row {
+  cursor: default;
+  opacity: 0.82;
+}
+
 .trips-panel .expense-trip-group-header {
   display: flex;
   align-items: flex-start;
