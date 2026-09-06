@@ -606,15 +606,10 @@ if (urgency.dependencyNote) {
       !isRoutineInProgressTrip(trip)
   );
   const representedFleetVehicles = new Set(
-    vehicles
-      .filter((vehicle) =>
-        mappedTrips.some(
-          (trip) =>
-            !isCanceledTrip(trip) &&
-            !isClosedTrip(trip) &&
-            Boolean(findVehicleForTrip(trip, [vehicle]))
-        )
-      )
+    mappedTrips
+      .filter((trip) => !isCanceledTrip(trip) && !isClosedTrip(trip))
+      .map((trip) => findVehicleForTrip(trip, vehicles))
+      .filter(Boolean)
       .map((vehicle) => vehicle.id ?? vehicle.vin ?? vehicle.nickname)
   );
   const unbookedVehicles = vehicles
