@@ -546,13 +546,28 @@ export function findVehicleForTrip(trip, vehicles) {
     const tripYear = String(tripObj.vehicle_year || tripObj.year || "").trim();
 
     return (
-      vehiclesArr.find((vehicle) => normalize(vehicle?.turo_vehicle_id) === tripTuroVehicleId) ||
-      vehiclesArr.find((vehicle) => normalize(vehicle?.vin) === tripVin) ||
-      vehiclesArr.find((vehicle) => normalize(vehicle?.nickname) === tripNickname) ||
+      (tripTuroVehicleId
+        ? vehiclesArr.find(
+            (vehicle) => normalize(vehicle?.turo_vehicle_id) === tripTuroVehicleId
+          )
+        : null) ||
+      (tripVin
+        ? vehiclesArr.find((vehicle) => normalize(vehicle?.vin) === tripVin)
+        : null) ||
+      (tripNickname
+        ? vehiclesArr.find(
+            (vehicle) => normalize(vehicle?.nickname) === tripNickname
+          )
+        : null) ||
       vehiclesArr.find((vehicle) => {
         return (
-          normalize(`${vehicle?.make || ""} ${vehicle?.model || ""}`) === tripVehicleName ||
+          (tripVehicleName &&
+            normalize(`${vehicle?.make || ""} ${vehicle?.model || ""}`) ===
+              tripVehicleName) ||
           (
+            tripMake &&
+            tripModel &&
+            tripYear &&
             normalize(vehicle?.make) === tripMake &&
             normalize(vehicle?.model) === tripModel &&
             String(vehicle?.year || "").trim() === tripYear

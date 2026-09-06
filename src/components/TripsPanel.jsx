@@ -622,6 +622,8 @@ if (urgency.dependencyNote) {
       (vehicle) =>
         vehicle?.is_active !== false &&
         vehicle?.in_service !== false &&
+        vehicle?.trip_eligible !== false &&
+        vehicle?.tripEligible !== false &&
         !representedFleetVehicles.has(vehicle.id ?? vehicle.vin ?? vehicle.nickname)
     )
     .sort((a, b) =>
