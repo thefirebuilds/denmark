@@ -1716,6 +1716,40 @@ async function loadListings({ preserveSelection = true } = {}) {
     }
   }
 
+  async function restoreListing(item) {
+    if (!item) return;
+
+    setSavingId(item.id);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/marketplace/listings/${item.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ hidden: false }),
+      });
+
+      const data = await readJsonOrThrow(res);
+      if (data?.ok && data.listing) {
+        setListings((prev) =>
+          prev.map((listing) =>
+            String(listing.id) === String(item.id)
+              ? { ...listing, ...data.listing, hidden: false, ignored_at: null }
+              : listing
+          )
+        );
+      }
+    } catch (err) {
+      console.error("Marketplace restore failed:", err);
+      setError(err.message || "Failed to restore listing");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function recordListingOpen(id) {
     if (!id) return;
 
@@ -1971,14 +2005,15 @@ async function loadListings({ preserveSelection = true } = {}) {
           </button>
           <button
             type="button"
-            className="marketplace-row-quick-action marketplace-row-quick-action--danger"
+            className={`marketplace-row-quick-action${item.hidden ? "" : " marketplace-row-quick-action--danger"}`}
             onClick={(e) => {
               e.stopPropagation();
-              ignoreListing(item);
+              if (item.hidden) restoreListing(item);
+              else ignoreListing(item);
             }}
             disabled={savingId === item.id}
           >
-            Ignore
+            {savingId === item.id ? (item.hidden ? "Restoring..." : "Ignoring...") : item.hidden ? "Un-ignore" : "Ignore"}
           </button>
         </span>
       </div>
@@ -2465,15 +2500,16 @@ async function loadListings({ preserveSelection = true } = {}) {
                       </button>
                       <button
                         type="button"
-                        className="marketplace-row-quick-action marketplace-row-quick-action--danger"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          ignoreListing(item);
-                        }}
-                        disabled={savingId === item.id}
-                      >
-                        Ignore
-                      </button>
+                      className={`marketplace-row-quick-action${item.hidden ? "" : " marketplace-row-quick-action--danger"}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (item.hidden) restoreListing(item);
+                        else ignoreListing(item);
+                      }}
+                      disabled={savingId === item.id}
+                    >
+                      {savingId === item.id ? (item.hidden ? "Restoring..." : "Ignoring...") : item.hidden ? "Un-ignore" : "Ignore"}
+                    </button>
                     </span>
                   </div>
                 );
@@ -2519,11 +2555,19 @@ async function loadListings({ preserveSelection = true } = {}) {
                     </button>
                     <button
                       type="button"
-                      className="marketplace-link-btn marketplace-link-btn--danger"
-                      onClick={() => ignoreListing(selected)}
+                      className={`marketplace-link-btn${selected.hidden ? "" : " marketplace-link-btn--danger"}`}
+                      onClick={() =>
+                        selected.hidden ? restoreListing(selected) : ignoreListing(selected)
+                      }
                       disabled={savingId === selected.id}
                     >
-                      {savingId === selected.id ? "Ignoring..." : "Ignore"}
+                      {savingId === selected.id
+                        ? selected.hidden
+                          ? "Restoring..."
+                          : "Ignoring..."
+                        : selected.hidden
+                          ? "Un-ignore"
+                          : "Ignore"}
                     </button>
                   </div>
                 </div>
@@ -2650,11 +2694,19 @@ async function loadListings({ preserveSelection = true } = {}) {
 
                   <button
                     type="button"
-                    className="marketplace-action marketplace-action--danger"
-                    onClick={() => ignoreListing(selected)}
+                    className={`marketplace-action${selected.hidden ? "" : " marketplace-action--danger"}`}
+                    onClick={() =>
+                      selected.hidden ? restoreListing(selected) : ignoreListing(selected)
+                    }
                     disabled={savingId === selected.id}
                   >
-                    {savingId === selected.id ? "Ignoring..." : "Ignore"}
+                    {savingId === selected.id
+                      ? selected.hidden
+                        ? "Restoring..."
+                        : "Ignoring..."
+                      : selected.hidden
+                        ? "Un-ignore"
+                        : "Ignore"}
                   </button>
 
                   <button
