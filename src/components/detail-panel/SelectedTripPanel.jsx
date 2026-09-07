@@ -224,6 +224,7 @@ export default function SelectedTripPanel({
     ending_odometer: "",
     mileage_verified: false,
     expense_status: "pending",
+    extras_collected: "",
     fuel_reimbursement_total: "",
     ticket_reimbursed: "",
     has_tolls: false,
@@ -267,6 +268,7 @@ export default function SelectedTripPanel({
       ),
       mileage_verified: Boolean(selectedTrip?.mileage_verified),
       expense_status: selectedTrip?.expense_status || "pending",
+      extras_collected: toFieldValue(selectedTrip?.extras_collected),
       fuel_reimbursement_total: toFieldValue(selectedTrip?.fuel_reimbursement_total),
       ticket_reimbursed: toFieldValue(selectedTrip?.ticket_reimbursed),
       has_tolls: Boolean(selectedTrip?.has_tolls),
@@ -501,6 +503,7 @@ export default function SelectedTripPanel({
       ending_odometer: toNullableNumber(merged.ending_odometer),
       mileage_verified: Boolean(merged.mileage_verified),
       expense_status: merged.expense_status || "pending",
+      extras_collected: toNullableNumber(merged.extras_collected),
       fuel_reimbursement_total: toNullableNumber(merged.fuel_reimbursement_total),
       ticket_reimbursed: toNullableNumber(merged.ticket_reimbursed),
       has_tolls: hasTollsPayload,
@@ -540,6 +543,9 @@ export default function SelectedTripPanel({
         ),
         expense_status:
           savedTrip.expense_status || optimisticForm.expense_status || "pending",
+        extras_collected: toFieldValue(
+          savedTrip.extras_collected ?? optimisticForm.extras_collected
+        ),
         fuel_reimbursement_total: toFieldValue(
           savedTrip.fuel_reimbursement_total ??
             optimisticForm.fuel_reimbursement_total
@@ -950,6 +956,20 @@ function renderLocationLink(vehicle) {
                     </option>
                   ))}
                 </select>
+              </label>
+
+              <label className="detail-closeout-field">
+                <span>Expenses / claims</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={closeoutForm.extras_collected}
+                  onChange={(event) =>
+                    updateCloseoutField("extras_collected", event.target.value)
+                  }
+                  placeholder="0.00"
+                />
               </label>
 
               <label className="detail-closeout-field">

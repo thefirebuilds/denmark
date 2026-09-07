@@ -468,6 +468,7 @@ const TRIP_SELECT = `
     t.toll_charged_total,
     t.toll_review_status,
     t.fuel_reimbursement_total,
+    tf.extras_collected,
     tf.ticket_reimbursed,
     t.max_engine_rpm,
     t.max_speed_mph,
@@ -948,6 +949,7 @@ router.patch("/:id", async (req, res) => {
     toll_total,
     toll_review_status,
     fuel_reimbursement_total,
+    extras_collected,
     ticket_reimbursed,
     expense_status,
     guest_rating_received,
@@ -984,9 +986,14 @@ router.patch("/:id", async (req, res) => {
   const normalizedGuestRatingReceived = toNullableBoolean(guest_rating_received);
   const normalizedMileageVerified = toNullableBoolean(mileage_verified);
   const normalizedTicketReimbursed = toNullableNumber(ticket_reimbursed);
+  const normalizedExtrasCollected = toNullableNumber(extras_collected);
   const ticketFieldWasProvided = Object.prototype.hasOwnProperty.call(
     req.body || {},
     "ticket_reimbursed"
+  );
+  const extrasFieldWasProvided = Object.prototype.hasOwnProperty.call(
+    req.body || {},
+    "extras_collected"
   );
   const normalizedExpenseStatus =
     typeof expense_status === "string" && expense_status.trim() !== ""
@@ -1188,13 +1195,14 @@ router.patch("/:id", async (req, res) => {
       return res.status(404).json({ error: "Trip not found" });
     }
 
-    if (ticketFieldWasProvided) {
+    if (ticketFieldWasProvided || extrasFieldWasProvided) {
       await client.query(
         `
           INSERT INTO trip_financial_facts (
             trip_id,
             reservation_id,
             vehicle_id,
+            extras_collected,
             ticket_reimbursed,
             source_payload,
             created_at,
@@ -1205,6 +1213,7 @@ router.patch("/:id", async (req, res) => {
             t.reservation_id,
             v.id,
             $2::numeric,
+            $3::numeric,
             jsonb_build_object(
               'manual_ticket_update', true,
               'source', 'trip_reconciliation',
@@ -1218,13 +1227,26 @@ router.patch("/:id", async (req, res) => {
           WHERE t.id = $1
           ON CONFLICT (trip_id)
           DO UPDATE SET
-            ticket_reimbursed = EXCLUDED.ticket_reimbursed,
+            extras_collected = CASE
+              WHEN $4::boolean THEN EXCLUDED.extras_collected
+              ELSE trip_financial_facts.extras_collected
+            END,
+            ticket_reimbursed = CASE
+              WHEN $5::boolean THEN EXCLUDED.ticket_reimbursed
+              ELSE trip_financial_facts.ticket_reimbursed
+            END,
             source_payload =
               COALESCE(trip_financial_facts.source_payload, '{}'::jsonb) ||
               EXCLUDED.source_payload,
             updated_at = NOW()
         `,
-        [tripId, normalizedTicketReimbursed]
+        [
+          tripId,
+          normalizedExtrasCollected,
+          normalizedTicketReimbursed,
+          extrasFieldWasProvided,
+          ticketFieldWasProvided,
+        ]
       );
     }
 
