@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const VEHICLES_API = `${API_BASE}/api/vehicles`;
+const TRIPS_API = `${API_BASE}/api/trips?scope=all`;
 const SUGGESTIONS_API = `${API_BASE}/api/expenses/suggestions`;
 const DEFAULT_TAX_RATE = 0.0825;
 
@@ -24,6 +25,18 @@ function buildVehicleLabel(vehicle) {
   if (vehicle?.nickname) return vehicle.nickname;
   const bits = [vehicle?.year, vehicle?.make, vehicle?.model].filter(Boolean);
   return bits.length ? bits.join(" ") : `Vehicle ${vehicle?.id}`;
+}
+
+function buildTripLabel(trip) {
+  const guest = trip?.guest_name || "Unknown guest";
+  const vehicle = trip?.vehicle_nickname || trip?.vehicle_name || "Unknown vehicle";
+  const tripDate = trip?.trip_end || trip?.trip_start;
+  const parsedDate = tripDate ? new Date(tripDate) : null;
+  const dateLabel =
+    parsedDate && !Number.isNaN(parsedDate.getTime())
+      ? parsedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : "Date unavailable";
+  return `${guest} — ${vehicle} — ${dateLabel}`;
 }
 
 function getInitialForm(expense, selectedVehicleId) {
@@ -58,6 +71,7 @@ export default function ExpenseModal({
   onSaved,
 }) {
   const [vehicles, setVehicles] = useState([]);
+  const [recentTrips, setRecentTrips] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -169,13 +183,48 @@ export default function ExpenseModal({
 
     let ignore = false;
 
-    async function loadVehicles() {
+    async function loadVehiclesAndTrips() {
       try {
-        const res = await fetch(VEHICLES_API);
-        if (!res.ok) throw new Error(`Failed to load vehicles (${res.status})`);
-        const data = await res.json();
-        const rows = Array.isArray(data) ? data : data?.data || [];
-        if (!ignore) setVehicles(rows);
+        const [vehiclesRes, tripsRes] = await Promise.all([
+          fetch(VEHICLES_API),
+          fetch(TRIPS_API),
+        ]);
+        if (!vehiclesRes.ok) {
+          throw new Error(`Failed to load vehicles (${vehiclesRes.status})`);
+        }
+        const vehiclesData = await vehiclesRes.json();
+        const vehicleRows = Array.isArray(vehiclesData)
+          ? vehiclesData
+          : vehiclesData?.data || [];
+
+        let tripRows = [];
+        if (tripsRes.ok) {
+          const tripsData = await tripsRes.json();
+          const now = Date.now();
+          tripRows = (Array.isArray(tripsData) ? tripsData : [])
+            .filter((trip) => {
+              const status = String(trip?.status || "").toLowerCase();
+              const stage = String(trip?.workflow_stage || "").toLowerCase();
+              const endedAt = new Date(trip?.trip_end || trip?.trip_start || 0).getTime();
+              return (
+                Number.isFinite(endedAt) &&
+                endedAt <= now &&
+                !["canceled", "cancelled"].includes(status) &&
+                !["canceled", "cancelled"].includes(stage)
+              );
+            })
+            .sort(
+              (a, b) =>
+                new Date(b.trip_end || b.trip_start || 0).getTime() -
+                new Date(a.trip_end || a.trip_start || 0).getTime()
+            )
+            .slice(0, 5);
+        }
+
+        if (!ignore) {
+          setVehicles(vehicleRows);
+          setRecentTrips(tripRows);
+        }
       } catch (err) {
         if (!ignore) {
           setError(err.message || "Failed to load vehicles");
@@ -183,7 +232,7 @@ export default function ExpenseModal({
       }
     }
 
-    loadVehicles();
+    loadVehiclesAndTrips();
 
     return () => {
       ignore = true;
@@ -351,15 +400,26 @@ export default function ExpenseModal({
               </label>
 
               <label>
-                <span>Trip ID</span>
-                <input
-                  type="number"
+                <span>Trip</span>
+                <select
                   value={form.trip_id}
                   onChange={(e) =>
                     setForm((prev) => ({ ...prev, trip_id: e.target.value }))
                   }
-                  placeholder="Optional"
-                />
+                >
+                  <option value="">No trip</option>
+                  {form.trip_id &&
+                  !recentTrips.some(
+                    (trip) => String(trip.id) === String(form.trip_id)
+                  ) ? (
+                    <option value={form.trip_id}>Current trip #{form.trip_id}</option>
+                  ) : null}
+                  {recentTrips.map((trip) => (
+                    <option key={trip.id} value={trip.id}>
+                      {buildTripLabel(trip)}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
 
