@@ -2,7 +2,7 @@ const express = require("express");
 const {
   buildLoginRequest,
   exchangeCodeForTokens,
-  fetchUserInfo,
+  resolveLoginProfile,
   getOidcConfig,
 } = require("../auth/oidcProvider");
 const { isAuthEnforced } = require("../auth/config");
@@ -166,8 +166,8 @@ router.get("/auth/callback", async (req, res) => {
       codeVerifier: pendingAuth.codeVerifier,
       redirectUri,
     });
-    stage = "fetch_user_info";
-    const userInfo = await fetchUserInfo(tokens.access_token);
+    stage = "verify_login_identity";
+    const userInfo = await resolveLoginProfile(tokens, pendingAuth.nonce);
     const provider = getOidcConfig();
 
     stage = "save_user";

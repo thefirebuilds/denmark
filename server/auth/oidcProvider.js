@@ -214,6 +214,37 @@ async function fetchUserInfo(accessToken) {
   return response.data;
 }
 
+async function resolveLoginProfile(tokens, nonce) {
+  const config = getOidcConfig();
+  if (config.issuerUrl !== "https://accounts.google.com") {
+    return fetchUserInfo(tokens.access_token);
+  }
+  if (typeof tokens.id_token !== "string" || !tokens.id_token) {
+    throw authDiagnosticError("missing_id_token");
+  }
+  if (typeof nonce !== "string" || !nonce) {
+    throw authDiagnosticError("missing_login_nonce");
+  }
+  // googleapis is already a runtime dependency. Verify, never just decode.
+  const { google } = require("googleapis");
+  const verifier = new google.auth.OAuth2();
+  const ticket = await verifier.verifyIdToken({
+    idToken: tokens.id_token,
+    audience: config.clientId,
+  });
+  const profile = ticket.getPayload();
+  if (!profile || !["accounts.google.com", "https://accounts.google.com"].includes(profile.iss)) {
+    throw authDiagnosticError("invalid_id_token_issuer");
+  }
+  if (profile.nonce !== nonce) {
+    throw authDiagnosticError("id_token_nonce_mismatch");
+  }
+  if (!profile.sub || !profile.email || profile.email_verified !== true) {
+    throw authDiagnosticError("unverified_google_identity");
+  }
+  return profile;
+}
+
 module.exports = {
   getOidcConfig,
   assertOidcConfigured,
@@ -221,4 +252,5 @@ module.exports = {
   buildLoginRequest,
   exchangeCodeForTokens,
   fetchUserInfo,
+  resolveLoginProfile,
 };

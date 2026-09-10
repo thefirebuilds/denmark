@@ -4,12 +4,16 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const path = require("node:path");
 
-function provider(http) {
+function provider(http, verifyIdToken, issuer = "https://example.com") {
   const context = {
     module: { exports: {} },
-    require: (name) => name === "axios" ? { create: () => http } : require(name),
+    require: (name) => {
+      if (name === "axios") return { create: () => http };
+      if (name === "googleapis") return { google: { auth: { OAuth2: class { verifyIdToken = verifyIdToken; } } } };
+      return require(name);
+    },
     process: { env: {
-      OIDC_ISSUER_URL: "https://example.com",
+      OIDC_ISSUER_URL: issuer,
       GOOGLE_CLIENT_ID: "test-client",
       GOOGLE_CLIENT_SECRET: "test-secret",
     } },
@@ -25,6 +29,25 @@ test("rejects missing and malformed access tokens before sending requests", asyn
   for (const token of [undefined, "", "token with spaces", "token\r\nheader"]) {
     await assert.rejects(auth.fetchUserInfo(token), /access_token/);
   }
+});
+
+test("Google login uses verified ID token with intended audience without userinfo", async () => {
+  const profile = { iss: "https://accounts.google.com", sub: "user", email: "user@example.com", email_verified: true, nonce: "expected" };
+  const auth = provider({ get: () => assert.fail("must not call userinfo") }, async (options) => {
+    assert.equal(options.idToken, "signed-token");
+    assert.equal(options.audience, "test-client");
+    return { getPayload: () => profile };
+  }, "https://accounts.google.com");
+  assert.equal(await auth.resolveLoginProfile({ id_token: "signed-token" }, "expected"), profile);
+  await assert.rejects(auth.resolveLoginProfile({ id_token: "signed-token" }, "wrong"), /nonce_mismatch/);
+  await assert.rejects(auth.resolveLoginProfile({}, "expected"), /missing_id_token/);
+  profile.email_verified = false;
+  await assert.rejects(auth.resolveLoginProfile({ id_token: "signed-token" }, "expected"), /unverified_google_identity/);
+});
+
+test("Google login propagates signature, audience, or expiry verification failures", async () => {
+  const auth = provider({}, async () => { throw new Error("verification rejected"); }, "https://accounts.google.com");
+  await assert.rejects(auth.resolveLoginProfile({ id_token: "invalid" }, "expected"), /verification rejected/);
 });
 
 test("rejects a successful token response without an access token", async () => {
