@@ -607,7 +607,14 @@ if (urgency.dependencyNote) {
   );
   const representedFleetVehicles = new Set(
     mappedTrips
-      .filter((trip) => !isCanceledTrip(trip) && !isClosedTrip(trip))
+      // A returned trip waiting on expense/toll reconciliation is still open
+      // operationally, but it is no longer a booking that occupies the vehicle.
+      .filter(
+        (trip) =>
+          !isCanceledTrip(trip) &&
+          !isClosedTrip(trip) &&
+          !isNeedsExpensesTrip(trip)
+      )
       .map((trip) => findVehicleForTrip(trip, vehicles))
       .filter(Boolean)
       .map((vehicle) => vehicle.id ?? vehicle.vin ?? vehicle.nickname)
@@ -939,7 +946,7 @@ if (urgency.dependencyNote) {
             <div className="expense-trip-group-header">
               <div>
                 <div className="trip-title">Not currently booked</div>
-                <div className="trip-sub">Active vehicles with no open trip</div>
+                <div className="trip-sub">Active vehicles with no current booking</div>
               </div>
               <div className="chip">{unbookedVehicles.length}</div>
             </div>
