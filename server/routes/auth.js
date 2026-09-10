@@ -116,6 +116,7 @@ router.get("/login", async (req, res) => {
 
 router.get("/auth/callback", async (req, res) => {
   const auditMeta = getAuditRequestMeta(req);
+  let stage = "ensure_auth_tables";
   try {
     await ensureAuthTables();
     const { code, state } = req.query;
@@ -155,17 +156,21 @@ router.get("/auth/callback", async (req, res) => {
       return res.redirect(`${redirectBase}/?authError=state_mismatch`);
     }
 
+    stage = "resolve_redirect_uri";
     const publicUrl = await resolveAuthPublicUrlSettings(req);
     const redirectUri = pendingAuth.redirectUri || publicUrl.googleRedirectUri;
     console.log(`[auth] google redirect uri: ${redirectUri}`);
+    stage = "exchange_code_for_tokens";
     const tokens = await exchangeCodeForTokens({
       code: String(code),
       codeVerifier: pendingAuth.codeVerifier,
       redirectUri,
     });
+    stage = "fetch_user_info";
     const userInfo = await fetchUserInfo(tokens.access_token);
     const provider = getOidcConfig();
 
+    stage = "save_user";
     const user = await upsertUserFromOidcProfile({
       provider: provider.providerName,
       providerSubject: userInfo.sub,
@@ -191,6 +196,7 @@ router.get("/auth/callback", async (req, res) => {
       return res.redirect(`${redirectBase}/?authError=inactive_user`);
     }
 
+    stage = "regenerate_session";
     await sessionRegenerate(req);
     req.session.auth = {
       userId: user.id,
@@ -198,8 +204,10 @@ router.get("/auth/callback", async (req, res) => {
       providerSubject: user.provider_subject,
       loggedInAt: new Date().toISOString(),
     };
+    stage = "save_session";
     await sessionSave(req);
 
+    stage = "audit_login_success";
     await createAuthAuditLog({
       userId: user.id,
       eventType: "login_success",
@@ -210,16 +218,29 @@ router.get("/auth/callback", async (req, res) => {
       },
     });
 
+    stage = "redirect_to_frontend";
     const redirectBase = await getFrontendRedirectBase(req);
     return res.redirect(`${redirectBase}/?auth=success`);
   } catch (error) {
+    // Never log Axios errors wholesale: request data contains credentials/codes.
+    const providerError = error.response?.data?.error;
+    const details = {
+      reason: "callback_error",
+      stage,
+      message: error.response
+        ? `Provider request failed with status ${error.response.status}`
+        : "Callback operation failed",
+      http_status: error.response?.status || null,
+      provider_error:
+        typeof providerError === "string" && /^[a-z_]{1,80}$/.test(providerError)
+          ? providerError
+          : null,
+    };
+    console.error("[auth] login callback failed", details);
     await createAuthAuditLog({
       eventType: "login_failure",
       ...auditMeta,
-      details: {
-        reason: "callback_error",
-        message: error.message || "unknown error",
-      },
+      details,
     }).catch(() => null);
     const redirectBase = await getFrontendRedirectBase(req).catch(() => "");
     return res.redirect(`${redirectBase}/?authError=callback_failed`);
