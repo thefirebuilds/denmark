@@ -231,6 +231,8 @@ router.get("/auth/callback", async (req, res) => {
         ? `Provider request failed with status ${error.response.status}`
         : "Callback operation failed",
       http_status: error.response?.status || null,
+      diagnostic_code: error.authDiagnosticCode || null,
+      provider_description: error.authProviderDescription || null,
       provider_error:
         typeof providerError === "string" && /^[a-z_]{1,80}$/.test(providerError)
           ? providerError

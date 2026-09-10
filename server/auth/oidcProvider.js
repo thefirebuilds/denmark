@@ -5,7 +5,24 @@ let discoveryPromise = null;
 
 const oidcHttp = axios.create({
   proxy: false,
+  responseType: "json",
+  transitional: { silentJSONParsing: false },
 });
+
+function authDiagnosticError(code) {
+  const error = new Error(code);
+  error.authDiagnosticCode = code;
+  return error;
+}
+
+function validateAccessToken(token) {
+  if (typeof token !== "string" || !token) {
+    throw authDiagnosticError("missing_access_token");
+  }
+  if (!/^[A-Za-z0-9._~+\/-]+=*$/.test(token)) {
+    throw authDiagnosticError("malformed_access_token");
+  }
+}
 
 function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/, "");
@@ -150,10 +167,19 @@ async function exchangeCodeForTokens({ code, codeVerifier, redirectUri }) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
   });
 
+  console.info("[auth] token response metadata", {
+    has_access_token: typeof response.data?.access_token === "string" && Boolean(response.data.access_token),
+    bearer_token_type: String(response.data?.token_type || "").toLowerCase() === "bearer",
+    identity_scopes: String(response.data?.scope || "").split(/\s+/).filter(
+      (scope) => ["openid", "email", "profile", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"].includes(scope)
+    ),
+  });
+  validateAccessToken(response.data?.access_token);
   return response.data;
 }
 
 async function fetchUserInfo(accessToken) {
+  validateAccessToken(accessToken);
   const discovery = await getDiscoveryDocument();
   if (!discovery.userinfo_endpoint) {
     const error = new Error("OIDC provider did not advertise a userinfo endpoint");
@@ -161,13 +187,29 @@ async function fetchUserInfo(accessToken) {
     throw error;
   }
 
-  const response = await oidcHttp.get(discovery.userinfo_endpoint, {
+  let response;
+  try {
+    response = await oidcHttp.get(discovery.userinfo_endpoint, {
     timeout: 10000,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
     },
-  });
+    });
+  } catch (error) {
+    const description = error.response?.data?.error_description;
+    if (typeof description === "string") {
+      let safeDescription = description;
+      for (const secret of [accessToken, getClientSecret(), getClientId()]) {
+        if (secret) safeDescription = safeDescription.split(secret).join("[redacted]");
+      }
+      error.authProviderDescription = safeDescription
+        .replace(/[A-Za-z0-9._~+\/-]{24,}=*/g, "[redacted]")
+        .replace(/[\r\n\t]/g, " ")
+        .slice(0, 300);
+    }
+    throw error;
+  }
 
   return response.data;
 }
