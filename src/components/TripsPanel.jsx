@@ -29,6 +29,7 @@ import {
   isCanceledTrip,
   isPickupConfirmationOverdue,
   isTripInProgress,
+  isVehicleCurrentlyBooked,
   isOverdueTrip,
   sortTrips,
 } from "../utils/tripUtils";
@@ -607,14 +608,7 @@ if (urgency.dependencyNote) {
   );
   const representedFleetVehicles = new Set(
     mappedTrips
-      // A returned trip waiting on expense/toll reconciliation is still open
-      // operationally, but it is no longer a booking that occupies the vehicle.
-      .filter(
-        (trip) =>
-          !isCanceledTrip(trip) &&
-          !isClosedTrip(trip) &&
-          !isNeedsExpensesTrip(trip)
-      )
+      .filter((trip) => isVehicleCurrentlyBooked(trip))
       .map((trip) => findVehicleForTrip(trip, vehicles))
       .filter(Boolean)
       .map((vehicle) => vehicle.id ?? vehicle.vin ?? vehicle.nickname)

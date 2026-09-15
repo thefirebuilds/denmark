@@ -6,6 +6,23 @@
 
 const RETURNING_SOON_HOURS = 2;
 
+export function isVehicleCurrentlyBooked(trip, now = Date.now()) {
+  const stage = String(trip?.workflow_stage || "").trim().toLowerCase();
+  if (
+    isCanceledTrip(trip) ||
+    isClosedTrip(trip) ||
+    stage === "awaiting_expenses" ||
+    stage === "returned"
+  ) {
+    return false;
+  }
+  // An overdue trip still occupies the car until its return is recorded.
+  if (isTripInProgress(trip)) return true;
+  const start = trip?.trip_start ? new Date(trip.trip_start).getTime() : NaN;
+  const end = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+  return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end;
+}
+
 export function isTripInProgress(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
   const status = String(trip?.status || "").toLowerCase();
