@@ -511,6 +511,16 @@ export default function VehicleComparisonRow({
                 <div className="vehicle-compare__detail-value">
                   {formatNumber(vehicle?.trip_miles)}
                 </div>
+                {vehicle?.trip_mileage_estimated ? (
+                  <div className="vehicle-compare__detail-hint">
+                    Includes estimated mileage for open or partially overlapping trips
+                  </div>
+                ) : null}
+                {vehicle?.trip_mileage_missing_count > 0 ? (
+                  <div className="vehicle-compare__detail-hint">
+                    {vehicle.trip_mileage_missing_count} trip(s) missing usable odometer readings
+                  </div>
+                ) : null}
               </div>
 
               <div className="vehicle-compare__detail-stat">

@@ -32,3 +32,12 @@ test('missing birth data preserves existing range anchors without inventing zero
   assert.deepEqual(resolveMileageStart({ start_in_range_odometer: 89000 }),
     { odometer: 89000, source: 'in_range' });
 });
+
+test('a monthly range cannot fall back to lifetime mileage', () => {
+  assert.deepEqual(resolveMileageStart({ first_trip_start_odometer: 80183,
+    first_trip_start: '2026-02-21', start_before_odometer: 0 }, new Date('2026-09-01')),
+  { odometer: null, source: 'missing' });
+  assert.deepEqual(resolveMileageStart({ first_trip_start_odometer: 80183,
+    first_trip_start: '2026-02-21' }, new Date('2026-02-01')),
+  { odometer: 80183, source: 'first_trip' });
+});

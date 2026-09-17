@@ -4,6 +4,7 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const { getTripMileageInRange } = require("./tripMileage");
 const { resolveMileageStart, applyMileageBaseline } = require("./mileageBaseline");
 const { ensureVehicleRuntimeSchema } = require("../vehicles/vehicleRuntimeSchema");
 const {
@@ -13,7 +14,6 @@ const {
   getExpenseTotal,
   getOverlapDays,
   getTripFuelReimbursementValue,
-  getTripMiles,
   getTripProratedAmount,
   getTripProratedCount,
   getTripProratedValue,
@@ -65,6 +65,7 @@ async function fetchActiveVehicles(client) {
         model,
         year,
         turo_vehicle_id,
+        turo_vehicle_name,
         current_odometer_miles,
         onboarding_date,
         acquisition_cost,
@@ -374,6 +375,7 @@ async function fetchVehicleOdometerAnchors(client, startDate, endDate) {
       SELECT
         v.id AS vehicle_id,
         first_trip.starting_odometer AS first_trip_start_odometer,
+        first_trip.trip_start AS first_trip_start,
 
         start_before.odometer_miles AS start_before_odometer,
         start_before.recorded_at AS start_before_recorded_at,
@@ -387,7 +389,7 @@ async function fetchVehicleOdometerAnchors(client, startDate, endDate) {
       FROM vehicles v
 
       LEFT JOIN LATERAL (
-        SELECT t.starting_odometer
+        SELECT t.starting_odometer, t.trip_start
         FROM trips t
         WHERE t.canceled_at IS NULL
           AND t.trip_start <= $2::timestamp
@@ -505,7 +507,12 @@ function buildTripVehicleKeyMaps(vehicles) {
       byTuroVehicleId.set(String(vehicle.turo_vehicle_id), String(vehicle.id));
     }
 
-    const names = [vehicle.nickname, ...(Array.isArray(vehicle.aliases) ? vehicle.aliases : [])];
+    const names = [
+      vehicle.nickname,
+      vehicle.stored_nickname,
+      vehicle.turo_vehicle_name,
+      ...(Array.isArray(vehicle.aliases) ? vehicle.aliases : []),
+    ];
     for (const name of names) {
       const normalized = String(name || "").trim().toLowerCase();
       if (normalized) byVehicleName.set(normalized, String(vehicle.id));
@@ -1162,8 +1169,8 @@ function calculateAccountedOffTripMiles(
   };
 }
 
-function resolveAnchorStart(anchor) {
-  return resolveMileageStart(anchor);
+function resolveAnchorStart(anchor, rangeStart) {
+  return resolveMileageStart(anchor, rangeStart);
 }
 
 function calculateFleetOperatingMileageBasis({
@@ -1190,7 +1197,7 @@ function calculateFleetOperatingMileageBasis({
   return vehicles.reduce((sum, vehicle) => {
     const vehicleId = String(vehicle.id);
     const anchor = odometerMap.get(vehicleId) || {};
-    const resolvedStart = resolveAnchorStart(anchor);
+    const resolvedStart = resolveAnchorStart(anchor, startDate);
     const resolvedEnd =
       anchor?.end_odometer != null ? toNumber(anchor.end_odometer) : null;
 
@@ -1473,7 +1480,7 @@ async function getVehicleMetrics(rangeKey = "30d") {
       vehicleTrips.set(vehicleId, []);
 
       const anchor = odometerMap.get(vehicleId) || {};
-      const resolvedStart = resolveAnchorStart(anchor);
+      const resolvedStart = resolveAnchorStart(anchor, startDate);
       const resolvedEnd =
         anchor?.end_odometer != null ? toNumber(anchor.end_odometer) : null;
 
@@ -1717,18 +1724,17 @@ async function getVehicleMetrics(rangeKey = "30d") {
         rangeEnd: endDate,
       });
 
-      metrics.trip_miles = tripsForVehicle.reduce(
-        (sum, trip) =>
-          sum +
-          getTripProratedValue(
-            getTripMiles(trip),
-            trip.trip_start,
-            trip.trip_end,
-            startDate,
-            endDate
-          ),
-        0
-      );
+      const tripMileage = tripsForVehicle.map((trip) => getTripMileageInRange(
+        trip, odometerMap.get(vehicleId), startDate, endDate
+      ));
+      metrics.trip_miles = tripMileage.reduce((sum, result) => sum + result.miles, 0);
+      metrics.trip_mileage_estimated = tripMileage.some((result) => result.estimated);
+      metrics.trip_mileage_missing_count = tripMileage.filter((result) => result.missing).length;
+      if (metrics.trip_mileage_missing_count > 0) {
+        metrics.mileage_confidence = "low";
+      } else if (metrics.trip_mileage_estimated && metrics.mileage_confidence === "high") {
+        metrics.mileage_confidence = "medium";
+      }
 
       const minimumKnownMiles =
         toNumber(metrics.trip_miles) + toNumber(metrics.closed_trip_off_trip_miles);
