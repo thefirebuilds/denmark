@@ -1065,7 +1065,9 @@ function buildMessageBody(message) {
   }
 
   if (isReimbursementInvoiceMessage(message)) {
-    return "Reimbursement invoice received";
+    return message?.reimbursement_invoice?.payment_status === "disputed" || /\bdisput(?:e|ed|es|ing)\b/i.test(message?.subject || "")
+      ? "Reimbursement disputed — payment not confirmed"
+      : "Reimbursement invoice received — payment not confirmed";
   }
 
   if (type === "trip_changed") {
@@ -1673,7 +1675,9 @@ function ReimbursementInvoiceSummary({ message }) {
       <div className="message-booking-title">
         Invoice audit
         <span>
-          {message.reimbursement_invoice_has_discrepancy ? "Review" : "Matched"}
+          {message.reimbursement_invoice?.payment_status === "disputed"
+            ? "Disputed — payment not confirmed"
+            : message.reimbursement_invoice_has_discrepancy ? "Review" : "Amounts matched"}
         </span>
       </div>
       <div className="message-invoice-rows">

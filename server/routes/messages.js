@@ -1,6 +1,7 @@
 ﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const { isDisputedReimbursement } = require("../services/reimbursementStatus");
 const { getDeploymentInfo } = require("../deploymentInfo");
 const {
   getBridgeAlertSettings,
@@ -224,6 +225,7 @@ function buildReimbursementInvoiceSummary(row) {
 
   return {
     tolls,
+    payment_status: isDisputedReimbursement(subject, text) ? "disputed" : "unconfirmed",
     refueling,
     refueling_convenience_fee: refuelingFee,
     fuel_total: fuelTotal,
@@ -261,6 +263,7 @@ async function reconcileReadReimbursementInvoices(messageIds = []) {
         m.id,
         m.trip_id,
         m.reservation_id,
+        m.subject,
         m.normalized_text_body,
         t.id AS matched_trip_id
       FROM messages m
@@ -281,6 +284,7 @@ async function reconcileReadReimbursementInvoices(messageIds = []) {
   let updatedTrips = 0;
 
   for (const row of rows) {
+    if (isDisputedReimbursement(row.subject, row.normalized_text_body)) continue;
     const tolls = extractInvoiceAmount(row.normalized_text_body, "Tolls");
     const refueling = extractInvoiceAmount(row.normalized_text_body, "Refueling");
     const refuelingFee = extractInvoiceAmount(

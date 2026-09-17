@@ -121,6 +121,7 @@ function classifyMessageType(subject, normalizedTextBody = "") {
 
   if (
     /^reimbursement invoice$/i.test(s) ||
+    /^.+ disputed your reimbursement invoice$/i.test(s) ||
     /^.+ has been charged for your reimbursement invoice$/i.test(s) ||
     /^.+ has not responded to your reimbursement invoice$/i.test(s)
   ) {
@@ -703,6 +704,8 @@ function extractFuelReimbursementFromText(normalizedTextBody) {
   };
 }
 
+const { isDisputedReimbursement } = require("./reimbursementStatus");
+
 function reimbursementLooksLikeTollInvoice(normalizedTextBody) {
   return /tolls?\s*-\s*\$[0-9]/i.test(String(normalizedTextBody || ""));
 }
@@ -710,6 +713,7 @@ function reimbursementLooksLikeTollInvoice(normalizedTextBody) {
 async function applyTripCloseoutSignalsFromMessage({
   tripId,
   messageType,
+  subject = "",
   normalizedTextBody,
   invoiceMessageId = null,
   invoiceTimestamp = null,
@@ -721,6 +725,8 @@ async function applyTripCloseoutSignalsFromMessage({
   if (messageType !== "reimbursement_invoice") {
     return;
   }
+
+  if (isDisputedReimbursement(subject, normalizedTextBody)) return;
 
   const tollAmount = extractTollAmountFromText(normalizedTextBody);
   const tollInvoice = reimbursementLooksLikeTollInvoice(normalizedTextBody);
@@ -1234,6 +1240,7 @@ async function saveMessage(message) {
     await applyTripCloseoutSignalsFromMessage({
       tripId: trip.id,
       messageType,
+      subject: message.subject,
       normalizedTextBody,
       invoiceMessageId: savedMessage.id,
       invoiceTimestamp:

@@ -4,6 +4,7 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const { resolveMileageStart, applyMileageBaseline } = require("./mileageBaseline");
 const { ensureVehicleRuntimeSchema } = require("../vehicles/vehicleRuntimeSchema");
 const {
   clampNonNegative,
@@ -372,6 +373,7 @@ async function fetchVehicleOdometerAnchors(client, startDate, endDate) {
     `
       SELECT
         v.id AS vehicle_id,
+        first_trip.starting_odometer AS first_trip_start_odometer,
 
         start_before.odometer_miles AS start_before_odometer,
         start_before.recorded_at AS start_before_recorded_at,
@@ -383,6 +385,25 @@ async function fetchVehicleOdometerAnchors(client, startDate, endDate) {
         end_row.recorded_at AS end_recorded_at
 
       FROM vehicles v
+
+      LEFT JOIN LATERAL (
+        SELECT t.starting_odometer
+        FROM trips t
+        WHERE t.canceled_at IS NULL
+          AND t.trip_start <= $2::timestamp
+          AND (
+            t.turo_vehicle_id = v.turo_vehicle_id
+            OR LOWER(TRIM(t.vehicle_name)) = LOWER(TRIM(v.nickname))
+            OR LOWER(TRIM(t.vehicle_name)) = LOWER(TRIM(v.turo_vehicle_name))
+            OR EXISTS (
+              SELECT 1 FROM vehicle_aliases va
+              WHERE va.vehicle_id = v.id AND va.active = true
+                AND LOWER(TRIM(va.alias)) = LOWER(TRIM(t.vehicle_name))
+            )
+          )
+        ORDER BY t.trip_start ASC, t.id ASC
+        LIMIT 1
+      ) first_trip ON true
 
       LEFT JOIN LATERAL (
         SELECT h.odometer_miles, h.recorded_at
@@ -1142,24 +1163,7 @@ function calculateAccountedOffTripMiles(
 }
 
 function resolveAnchorStart(anchor) {
-  if (anchor?.start_before_odometer != null) {
-    return {
-      odometer: toNumber(anchor.start_before_odometer),
-      source: "before_range",
-    };
-  }
-
-  if (anchor?.start_in_range_odometer != null) {
-    return {
-      odometer: toNumber(anchor.start_in_range_odometer),
-      source: "in_range",
-    };
-  }
-
-  return {
-    odometer: null,
-    source: "missing",
-  };
+  return resolveMileageStart(anchor);
 }
 
 function calculateFleetOperatingMileageBasis({
@@ -1605,7 +1609,9 @@ async function getVehicleMetrics(rangeKey = "30d") {
         vehicleTrips.set(vehicleId, []);
       }
 
-      vehicleTrips.get(vehicleId).push(trip);
+      vehicleTrips.get(vehicleId).push(applyMileageBaseline(
+        trip, odometerMap.get(vehicleId)?.first_trip_start_odometer
+      ));
     }
 
     for (const vehicle of vehicles) {

@@ -29,6 +29,7 @@ async function main() {
     await applyTripCloseoutSignalsFromMessage({
       tripId: row.trip_id,
       messageType: "reimbursement_invoice",
+      subject: row.subject,
       normalizedTextBody: row.normalized_text_body,
     });
     applied += 1;
