@@ -1065,7 +1065,7 @@ function buildMessageBody(message) {
   }
 
   if (isReimbursementInvoiceMessage(message)) {
-    return message?.reimbursement_invoice?.payment_status === "disputed" || /\bdisput(?:e|ed|es|ing)\b/i.test(message?.subject || "")
+    return message?.reimbursement_invoice?.payment_status === "disputed"
       ? "Reimbursement disputed — payment not confirmed"
       : "Reimbursement invoice received — payment not confirmed";
   }
