@@ -12,9 +12,19 @@ test("returned trips awaiting expenses release the car even with stale started s
   assert.equal(isVehicleCurrentlyBooked({ ...trip, workflow_stage: "awaiting_expenses", status: "started" }, now), false);
 });
 
-test("future reservations do not occupy a car now", () => {
-  assert.equal(isVehicleCurrentlyBooked({ ...trip, trip_start: "2026-09-14T10:00:00Z", trip_end: "2026-09-14T14:00:00Z" }, now), false);
+test("reservations starting within 24 hours count as booked", () => {
+  assert.equal(isVehicleCurrentlyBooked({ ...trip, trip_start: "2026-09-14T10:00:00Z", trip_end: "2026-09-14T14:00:00Z" }, now), true);
   assert.equal(isVehicleCurrentlyBooked(trip, now), true);
+});
+
+test("the booking window includes exactly 24 hours but excludes later starts", () => {
+  assert.equal(isVehicleCurrentlyBooked({ ...trip, trip_start: "2026-09-14T12:00:00Z", trip_end: "2026-09-14T14:00:00Z" }, now), true);
+  assert.equal(isVehicleCurrentlyBooked({ ...trip, trip_start: "2026-09-14T12:00:01Z", trip_end: "2026-09-14T14:00:00Z" }, now), false);
+});
+
+test("canceled upcoming bookings and ended trips do not reserve the car", () => {
+  assert.equal(isVehicleCurrentlyBooked({ ...trip, status: "canceled", trip_start: "2026-09-14T10:00:00Z", trip_end: "2026-09-14T14:00:00Z" }, now), false);
+  assert.equal(isVehicleCurrentlyBooked({ ...trip, trip_end: "2026-09-13T12:00:00Z" }, now), false);
 });
 
 test("in-progress trips remain booked after their scheduled return", () => {

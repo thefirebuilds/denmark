@@ -20,7 +20,9 @@ export function isVehicleCurrentlyBooked(trip, now = Date.now()) {
   if (isTripInProgress(trip)) return true;
   const start = trip?.trip_start ? new Date(trip.trip_start).getTime() : NaN;
   const end = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
-  return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end;
+  const bookingHorizon = now + 24 * 60 * 60 * 1000;
+  return Number.isFinite(start) && Number.isFinite(end) &&
+    end > start && start <= bookingHorizon && now < end;
 }
 
 export function isTripInProgress(trip) {

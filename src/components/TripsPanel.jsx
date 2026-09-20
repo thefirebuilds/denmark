@@ -939,8 +939,8 @@ if (urgency.dependencyNote) {
           >
             <div className="expense-trip-group-header">
               <div>
-                <div className="trip-title">Not currently booked</div>
-                <div className="trip-sub">Active vehicles with no current booking</div>
+                <div className="trip-title">No booking within 24 hours</div>
+                <div className="trip-sub">Active vehicles with no current trip or booking starting in the next 24 hours</div>
               </div>
               <div className="chip">{unbookedVehicles.length}</div>
             </div>

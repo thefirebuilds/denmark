@@ -75,11 +75,11 @@ function classifyMessageType(subject, normalizedTextBody = "") {
     return "secondary_driver_added";
   }
 
-  if (/^.+ has cancelled their trip with your .+$/i.test(s)) {
+  if (/^.+ has cancell?ed their trip(?: with your .+)?[.!]?$/i.test(s)) {
     return "trip_canceled";
   }
 
-  if (/^turo has cancelled .+ trip with your .+$/i.test(s)) {
+  if (/^turo has cancell?ed .+ trip with your .+$/i.test(s)) {
     return "trip_canceled";
   }
 
@@ -596,7 +596,7 @@ function baseExtractFields(normalizedTextBody, subject = "", htmlBody = "") {
     extractMatch(subject, /^(.+?) has sent you a message about your /i) ||
     extractMatch(subject, /^(.+?) has added another driver to their trip with your /i) ||
     extractMatch(subject, /^(.+?) has changed their trip with your /i) ||
-    extractMatch(subject, /^(.+?) has cancelled their trip with your /i) ||
+    extractMatch(subject, /^(.+?) has cancell?ed their trip(?: with your .+)?[.!]?$/i) ||
     extractMatch(subject, /^(.+?)[’']s trip with your /i) ||
     extractMatch(subject, /^(.+?) has just rated their trip/i) ||
     extractMatch(subject, /^(.+?) has been charged for your reimbursement invoice/i) ||
