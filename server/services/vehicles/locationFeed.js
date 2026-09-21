@@ -474,7 +474,7 @@ async function getVehicleLocationTrail(vehicleId, options = {}, client = pool) {
     WITH vehicle AS (
       SELECT id, vin, dimo_token_id, external_vehicle_key
       FROM vehicles
-      WHERE id = $1
+      WHERE id = $1 AND is_active = true
       LIMIT 1
     ),
     latest AS (
@@ -594,7 +594,7 @@ async function getVehicleLocationHeatmap(vehicleId, options = {}, client = pool)
     WITH vehicle AS (
       SELECT id, vin, dimo_token_id, external_vehicle_key
       FROM vehicles
-      WHERE id = $1
+      WHERE id = $1 AND is_active = true
       LIMIT 1
     ),
     points AS (

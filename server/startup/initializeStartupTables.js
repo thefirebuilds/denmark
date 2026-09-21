@@ -1,4 +1,5 @@
 const { ensureAuthTables } = require("../auth/store");
+const { retireTransferredTrackerVehicles } = require("../services/vehicles/retireTransferredTrackerVehicles");
 const {
   ensureNotificationEventsTable,
 } = require("../routes/notificationRoutes");
@@ -119,6 +120,10 @@ async function initializeStartupTables() {
     console.log(`[server] ensuring ${label}`);
     await withStartupEnsureTimeout(label, ensureFn());
   }
+  await withStartupEnsureTimeout(
+    "retire transferred tracker vehicles",
+    retireTransferredTrackerVehicles()
+  );
   console.log("[server] backfilling trip pickup/return locations");
   await withStartupEnsureTimeout(
     "trip location backfill",
