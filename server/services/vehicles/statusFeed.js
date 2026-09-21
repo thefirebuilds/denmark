@@ -178,39 +178,13 @@ function getTelemetryProvider(vehicle) {
   return null;
 }
 
-function buildLiveVehicleKey(vehicle) {
-  return (
-    normalizeKey(vehicle?.turo_vehicle_id) ||
-    normalizeKey(vehicle?.vin) ||
-    normalizeKey(vehicle?.nickname) ||
-    normalizeKey(vehicle?.dimo_token_id) ||
-    normalizeKey(vehicle?.bouncie_vehicle_id) ||
-    normalizeKey(vehicle?.imei)
-  );
-}
-
-function buildLookupKeys(vehicle) {
-  return [
-    vehicle?.turo_vehicle_id,
-    vehicle?.vin,
-    vehicle?.nickname,
-    vehicle?.dimo_token_id,
-    vehicle?.bouncie_vehicle_id,
-    vehicle?.imei,
-  ]
-    .map(normalizeKey)
-    .filter(Boolean);
-}
-
+// Trackers can be transferred between vehicles; only the VIN identifies the car.
 function indexVehicles(vehicles) {
   const index = new Map();
-
   for (const vehicle of vehicles || []) {
-    for (const key of buildLookupKeys(vehicle)) {
-      if (!index.has(key)) index.set(key, vehicle);
-    }
+    const vin = normalizeKey(vehicle?.vin);
+    if (vin && !index.has(vin)) index.set(vin, vehicle);
   }
-
   return index;
 }
 
@@ -431,34 +405,11 @@ async function loadCombinedVehicleStatusFeed() {
 
   const bouncieIndex = indexVehicles(bouncieVehicles);
   const dimoIndex = indexVehicles(dimoVehicles);
-  const usedKeys = new Set();
-
+  // Provider discovery does not enroll a vehicle in the managed fleet.
   const rows = dbVehiclesResult.rows.map((vehicle) => {
-    const keys = buildLookupKeys(vehicle);
-    const bouncieVehicle = keys.map((key) => bouncieIndex.get(key)).find(Boolean);
-    const dimoVehicle = keys.map((key) => dimoIndex.get(key)).find(Boolean);
-
-    if (bouncieVehicle) {
-      buildLookupKeys(bouncieVehicle).forEach((key) => usedKeys.add(`b:${key}`));
-    }
-    if (dimoVehicle) {
-      buildLookupKeys(dimoVehicle).forEach((key) => usedKeys.add(`d:${key}`));
-    }
-
-    return mergeVehicleTelemetry(vehicle, bouncieVehicle, dimoVehicle);
+    const vin = normalizeKey(vehicle.vin);
+    return mergeVehicleTelemetry(vehicle, bouncieIndex.get(vin), dimoIndex.get(vin));
   });
-
-  for (const vehicle of bouncieVehicles || []) {
-    const key = buildLiveVehicleKey(vehicle);
-    if (!key || usedKeys.has(`b:${key}`)) continue;
-    rows.push(mergeVehicleTelemetry(null, vehicle, null));
-  }
-
-  for (const vehicle of dimoVehicles || []) {
-    const key = buildLiveVehicleKey(vehicle);
-    if (!key || usedKeys.has(`d:${key}`)) continue;
-    rows.push(mergeVehicleTelemetry(null, null, vehicle));
-  }
 
   return rows;
 }

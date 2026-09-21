@@ -29,12 +29,13 @@ async function getVehicleLookupByVin() {
       year,
       bouncie_vehicle_id
     FROM vehicles
+    WHERE is_active = true
   `);
 
   const lookup = new Map();
 
   for (const row of rows) {
-    lookup.set(row.vin, row);
+    if (row.vin) lookup.set(String(row.vin).trim().toUpperCase(), row);
   }
 
   return lookup;
@@ -116,9 +117,10 @@ async function getBouncieStatusFeed() {
     throw new Error("Bouncie vehicles response was not an array");
   }
 
-  return vehicles.map((vehicle) => {
-    const dbVehicle = vehicle?.vin ? vehicleLookup.get(vehicle.vin) : null;
-    return mapVehicleStatus(vehicle, dbVehicle);
+  return vehicles.flatMap((vehicle) => {
+    const vin = String(vehicle?.vin || "").trim().toUpperCase();
+    const dbVehicle = vin ? vehicleLookup.get(vin) : null;
+    return dbVehicle ? [mapVehicleStatus(vehicle, dbVehicle)] : [];
   });
 }
 
