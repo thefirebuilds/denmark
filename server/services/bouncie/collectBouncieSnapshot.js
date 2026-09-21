@@ -1,4 +1,5 @@
 const pool = require("../../db");
+const { findManagedTelemetryVehicle } = require("../telemetry/managedVehicle");
 const { getVehicles } = require("./client");
 const {
   maybeAutoStartReadyTripFromTelemetry,
@@ -499,6 +500,9 @@ async function main() {
         continue;
       }
 
+      const managedVehicle = await findManagedTelemetryVehicle(dbClient, snapshot.vin);
+      if (!managedVehicle) continue;
+      snapshot.vin = managedVehicle.vin;
       await upsertVehicle(dbClient, snapshot);
       const stagedOdometerResult = await maybeStageStartingOdometer(
         dbClient,

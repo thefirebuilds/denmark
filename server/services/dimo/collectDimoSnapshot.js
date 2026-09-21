@@ -932,6 +932,14 @@ async function persistDimoTelemetry({ normalized, raw }) {
   await client.query("BEGIN");
 
   try {
+    const { findManagedTelemetryVehicle } = require("../telemetry/managedVehicle");
+    const managedVehicle = await findManagedTelemetryVehicle(client, normalized.vin);
+    if (!managedVehicle) {
+      await client.query("COMMIT");
+      return { skipped: true, reason: "not_in_managed_fleet", snapshotId: null,
+        vehicleRows: 0, maintenanceRuleRows: 0, odometerRows: 0, rawSignalRows: 0 };
+    }
+    normalized.vin = managedVehicle.vin;
     const vehicleResult = await upsertDimoVehicle(normalized, client);
     const stagedOdometerResult = await stageStartingOdometerFromTelemetry(client, {
       serviceName: "dimo",
@@ -1088,6 +1096,8 @@ async function collectDimoVehicleSnapshot(vehicleConfig) {
     skippedSignals: normalized.raw_payload.skippedSignals,
     missingPrivileges: normalized.raw_payload.missingPrivileges,
     snapshotId: persistResult.snapshotId,
+    skipped: persistResult.skipped === true,
+    skipReason: persistResult.reason || null,
     vehicleRows: persistResult.vehicleRows,
     maintenanceRuleRows: persistResult.maintenanceRuleRows,
     odometerRows: persistResult.odometerRows,
