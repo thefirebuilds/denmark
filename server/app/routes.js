@@ -31,6 +31,10 @@ const {
 } = require("./marketplaceExtensionAuth");
 
 function registerApiRoutes(app) {
+  app.use('/api/business-questions', defaultCors,
+    requirePermission('expenses.read'), requirePermission('maintenance.read'),
+    requirePermission('vehicles.read'), requirePermission('trips.read'),
+    require('../routes/businessQuestions'));
   app.use(
     "/api/marketplace",
     marketplaceCors,

@@ -612,10 +612,13 @@ async function getVehicleMaintenanceSummary(
   const client = maybeVin ? clientOrVin : pool;
   const selector = String(maybeVin || clientOrVin || "").trim();
   const normalizedSelector = selector.toLowerCase();
-  const refreshOdometerRollup = options.refreshOdometerRollup !== false;
+  const readOnly = options.readOnly === true;
+  const refreshOdometerRollup = !readOnly && options.refreshOdometerRollup !== false;
 
-  await ensureVehicleAliasesTable(client);
-  await ensureMaintenanceRuntimeSchema(client);
+  if (!readOnly) {
+    await ensureVehicleAliasesTable(client);
+    await ensureMaintenanceRuntimeSchema(client);
+  }
 
   const vehicleResult = await client.query(
     `
@@ -772,7 +775,7 @@ async function getVehicleMaintenanceSummary(
     }
   }
 
-  await ensureDefaultMaintenanceRulesForVehicle(client, vehicle.vin);
+  if (!readOnly) await ensureDefaultMaintenanceRulesForVehicle(client, vehicle.vin);
 
   const rulesResult = await client.query(
     `
@@ -875,10 +878,11 @@ async function getVehicleMaintenanceSummary(
     })
   );
   const batteryVoltageHealth = await getBatteryVoltageHealth(client, vin);
-  await ensureBatteryVoltageInspectionTask(client, vin, batteryVoltageHealth);
-
-  await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
-  await cancelDuplicateRuleTasks(client, vin);
+  if (!readOnly) {
+    await ensureBatteryVoltageInspectionTask(client, vin, batteryVoltageHealth);
+    await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
+    await cancelDuplicateRuleTasks(client, vin);
+  }
 
   const [
     tasksResult,

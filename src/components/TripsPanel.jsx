@@ -5,6 +5,7 @@
 // ------------------------------------------------------
 
 import { useEffect, useMemo, useState } from "react";
+import BusinessQuestions from "./BusinessQuestions";
 import TripSpeedNote from "./TripSpeedNote";
 import {
   findVehicleForTrip,
@@ -701,6 +702,7 @@ if (urgency.dependencyNote) {
         </span>
       </div>
 
+      <BusinessQuestions />
       <div className="panel-subbar">
         {latePickupCount > 0 && (
           <button
