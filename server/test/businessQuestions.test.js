@@ -9,6 +9,108 @@ const reply = (output) => ({ ok: true, json: async () => ({ status: 'completed',
 const textReply = (text) => reply([{ type: 'message', content: [{ type: 'output_text', text }] }]);
 const toolReply = (name, args) => reply([{ type: 'function_call', name, arguments: JSON.stringify(args), call_id: 'call-1' }]);
 
+test('database-wide queries allow arbitrary tables and columns in a read-only single-statement wrapper', async () => {
+  const queries = [];
+  const execute = createDataTools({ pool: { connect: async () => ({
+    query: async query => {
+      queries.push(query);
+      return { rows: typeof query === 'object' ? Array.from({ length: 101 }, (_, id) => ({ id })) : [] };
+    }, release() {},
+  }) } });
+  const result = await execute('database_query', { sql: 'SELECT private_column FROM custom_schema.any_table ORDER BY id;', offset: 100 });
+  assert.equal(queries[0], 'BEGIN READ ONLY');
+  const query = queries.find(query => typeof query === 'object');
+  assert.equal(query.queryMode, 'extended');
+  assert.deepEqual(query.values, [100]);
+  assert.match(query.text, /SELECT private_column FROM custom_schema.any_table ORDER BY id\n\) AS/);
+  assert.equal(result.returned_count, 100);
+  assert.equal(result.next_offset, 200);
+  assert.equal(queries.at(-1), 'COMMIT');
+});
+
+test('schema discovery has no application schema allowlist and binds filters', async () => {
+  const execute = createDataTools({ pool: { connect: async () => ({
+    query: async (sql, values) => {
+      if (sql.includes('information_schema.columns')) {
+        assert.deepEqual(values, [null, 'custom_table', 0]);
+        assert.doesNotMatch(sql, /table_schema = 'public'/);
+        return { rows: [{ table_schema: 'custom', table_name: 'custom_table', column_name: 'anything' }] };
+      }
+      return { rows: [] };
+    }, release() {},
+  }) } });
+  const result = await execute('database_schema', { schema_name: null, table_name: 'custom_table', offset: 0 });
+  assert.equal(result.columns[0].column_name, 'anything');
+  assert.equal(result.next_offset, null);
+  assert.throws(() => validateArgs('database_query', { sql: '', offset: 0 }));
+  assert.throws(() => validateArgs('database_query', { sql: 'SELECT 1', offset: -1 }));
+});
+
+test('failed arbitrary SQL rolls back and releases its connection', async () => {
+  const queries = [];
+  let released = false;
+  const execute = createDataTools({ pool: { connect: async () => ({
+    query: async query => {
+      queries.push(query);
+      if (typeof query === 'object') throw new Error('read-only transaction');
+      return { rows: [] };
+    }, release() { released = true; },
+  }) } });
+  await assert.rejects(execute('database_query', { sql: 'DELETE FROM trips RETURNING *', offset: 0 }));
+  assert.equal(queries.at(-1), 'ROLLBACK');
+  assert.equal(released, true);
+});
+
+test('FAQ request retrieves guest messages and passes evidence to the answer', async () => {
+  const args = { start_date: null, end_date: null, terms: [], offset: 0 };
+  let calls = 0;
+  const answer = createQuestionAnswerer({ apiKey: () => 'test',
+    execute: async (name, received) => {
+      assert.equal(name, 'search_guest_messages');
+      assert.deepEqual(received, args);
+      return { matched_count: 1, records: [{ id: 8, text: 'Where should I return the car?' }], next_offset: null };
+    },
+    fetchImpl: async (_url, options) => {
+      const payload = JSON.parse(options.body);
+      assert.ok(payload.tools.some(tool => tool.name === 'search_guest_messages'));
+      if (++calls === 1) {
+        assert.equal(payload.tool_choice, 'required');
+        return toolReply('search_guest_messages', args);
+      }
+      assert.match(payload.input.find(item => item.type === 'function_call_output').output, /Where should I return/);
+      return textReply('FAQ: Where do I return the car? Confirm the return instructions before publishing. [S1]');
+    },
+  });
+  const result = await answer({ question: 'Create website FAQs based on all my guest messages.' });
+  assert.equal(result.sources[0].tool, 'search_guest_messages');
+  assert.equal(result.sources[0].data.matched_count, 1);
+});
+
+test('guest message lookup supports all history, bound search terms, and honest pagination', async () => {
+  const queries = [];
+  const records = Array.from({ length: 50 }, (_, id) => ({ id, text: 'Pickup?' }));
+  const execute = createDataTools({ pool: { connect: async () => ({
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [{ matched_count: 51, records }] };
+    }, release() {},
+  }) } });
+  const args = { start_date: null, end_date: null, terms: ["guest's pickup"], offset: 0 };
+  const result = await execute('search_guest_messages', args);
+  assert.equal(result.next_offset, 50);
+  assert.equal(result.matched_count, 51);
+  assert.equal(queries[0].sql, 'BEGIN READ ONLY');
+  assert.equal(queries.at(-1).sql, 'COMMIT');
+  const select = queries.find(query => query.sql.includes('FROM messages'));
+  assert.deepEqual(select.params, [null, null, ["guest's pickup"], 0]);
+  assert.match(select.sql, /m.message_type = 'guest_message'/);
+  assert.match(select.sql, /m.guest_message/);
+  assert.doesNotMatch(select.sql, /m.status|guest_name|reply_url|reservation_id/);
+  for (const invalid of [{ offset: -1 }, { terms: [''] }, { start_date: '2026-02-30' }]) {
+    assert.throws(() => validateArgs('search_guest_messages', { ...args, ...invalid }));
+  }
+});
+
 test('answer is based on database-wide totals, and exposes the exact evidence', async () => {
   const payloads = [];
   const evidence = { total_including_tax: '1200.25', matched_count: 101, records: [{ id: 12, total: 20 }] };

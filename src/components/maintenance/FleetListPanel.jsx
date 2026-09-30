@@ -7,6 +7,7 @@
 // ------------------------------------------------------------
 
 import { useEffect, useState } from "react";
+import { fetchMaintenanceFleet, mapMaintenanceRequests } from "../../utils/maintenanceRequests";
 import {
   normalizeVehicleKey,
   getActiveTrip,
@@ -296,7 +297,7 @@ export default function FleetListPanel({
           setLoadError("");
         }
 
-        const vehicleRes = await fetch("/api/vehicles");
+        const vehicleRes = await fetchMaintenanceFleet();
 
         if (!vehicleRes.ok) {
           throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
@@ -304,8 +305,15 @@ export default function FleetListPanel({
 
         const vehicleData = await vehicleRes.json();
         const vehicles = Array.isArray(vehicleData) ? vehicleData : [];
-        const tripsRes = await fetch("/api/trips?scope=open");
-        const openTrips = tripsRes.ok ? await tripsRes.json() : [];
+        if (!isMounted) return;
+        setFleet(vehicles.map(vehicle => ({ ...buildLiveFleetCard(vehicle),
+          status: "Checking trip status", tone: "warn", nextOffTrip: "Checking availability",
+          maintenanceEligible: false,
+        })));
+        setLoading(false);
+        const tripsRes = await fetch("/api/trips?scope=open", { signal: AbortSignal.timeout(20000) });
+        if (!tripsRes.ok) throw new Error(`Trip status HTTP ${tripsRes.status}`);
+        const openTrips = await tripsRes.json();
         const relevantTrips = Array.isArray(openTrips) ? openTrips : [];
 
         const initialFleet = vehicles
@@ -358,8 +366,8 @@ export default function FleetListPanel({
             console.warn("Cached fleet telemetry enrichment failed:", err);
           });
 
-        await Promise.all(
-          vehicles.map(async (vehicle) => {
+        await mapMaintenanceRequests(
+          vehicles, async (vehicle) => {
             const routeKey = getVehicleRouteKey(vehicle);
             const maintenanceSelector = vehicle?.vin || routeKey;
             const tripsForVehicle = relevantTrips.filter((trip) =>
@@ -372,7 +380,8 @@ export default function FleetListPanel({
                   ? fetch(
                       `/api/vehicles/${encodeURIComponent(
                         maintenanceSelector
-                      )}/maintenance-summary`
+                      )}/maintenance-summary?refreshOdometer=0`,
+                      { signal: AbortSignal.timeout(20000) }
                     )
                   : Promise.resolve(null),
               ]);
@@ -396,13 +405,12 @@ export default function FleetListPanel({
             } catch (err) {
               console.error(`Failed to load trips for ${routeKey}:`, err);
             }
-          })
+          }, () => !isMounted
         );
       } catch (err) {
         console.error("Failed to load live fleet status:", err);
 
         if (isMounted) {
-          setFleet([]);
           setLoadError(err.message || "Failed to load fleet");
         }
       } finally {

@@ -3,6 +3,7 @@
 // Fleet maintenance snapshot + planning + inspection editing.
 // --------------------------------------------------------------
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchMaintenanceFleet, mapMaintenanceRequests } from "../../utils/maintenanceRequests";
 import { toPng } from "html-to-image";
 import GuestSafetySnapshotCard from "./GuestSafetySnapshotCard";
 import InspectionItemDrawer from "./InspectionItemDrawer";
@@ -1228,7 +1229,7 @@ export default function FleetMaintenancePanel({
           setFleetLoadError("");
         }
 
-        const res = await fetch("/api/vehicles");
+        const res = await fetchMaintenanceFleet();
 
         if (!res.ok) {
           const errorBody = await res.json().catch(() => null);
@@ -1460,14 +1461,14 @@ export default function FleetMaintenancePanel({
           setFleetPlanningError("");
         }
 
-        const vehicleRes = await fetch("/api/vehicles");
+        const vehicleRes = await fetchMaintenanceFleet();
         if (!vehicleRes.ok) throw new Error(`Vehicle list HTTP ${vehicleRes.status}`);
 
         const vehicleData = await vehicleRes.json();
         const vehicles = Array.isArray(vehicleData) ? vehicleData : [];
 
-        const vehicleTripPairs = await Promise.all(
-          vehicles.map(async (vehicle) => {
+        const vehicleTripPairs = await mapMaintenanceRequests(
+          vehicles, async (vehicle) => {
             const vehicleId = normalizeVehicleKey(
               vehicle.turo_vehicle_id ||
                 vehicle.nickname ||
@@ -1490,15 +1491,15 @@ export default function FleetMaintenancePanel({
               console.error(`Failed to load trips for ${vehicleId}:`, err);
               return { vehicle, trips: [] };
             }
-          })
+          }, () => cancelled
         );
 
         if (!cancelled) {
           setFleetPlanningCards([]);
         }
 
-        await Promise.all(
-          vehicleTripPairs.map(async ({ vehicle, trips }) => {
+        await mapMaintenanceRequests(
+          vehicleTripPairs.filter(Boolean), async ({ vehicle, trips }) => {
             try {
               const summaryRes = await fetch(
                 `/api/vehicles/${encodeURIComponent(
@@ -1527,7 +1528,7 @@ export default function FleetMaintenancePanel({
                 err
               );
             }
-          })
+          }, () => cancelled
         );
       } catch (err) {
         console.error("Failed to load fleet planning cards:", err);

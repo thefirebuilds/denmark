@@ -4,7 +4,7 @@ import '../styles/business-questions.css';
 type Source = { id: string; tool: string; retrievedAt: string; filters: Record<string, unknown>; data: unknown };
 type Answer = { question: string; answer: string; sources: Source[]; generatedAt: string };
 const examples = ['How much did I spend on tires this year?', 'What maintenance items are due for Delavan?'];
-const labels: Record<string, string> = { list_fleet: 'Fleet', search_expenses: 'Expenses', vehicle_maintenance: 'Maintenance', trip_summary: 'Trips' };
+const labels: Record<string, string> = { database_schema: 'Database schema', database_query: 'Database query', list_fleet: 'Fleet', search_expenses: 'Expenses', vehicle_maintenance: 'Maintenance', trip_summary: 'Trips', search_guest_messages: 'Guest messages' };
 const MINIMIZED_KEY = 'denmark.businessQuestions.minimized';
 
 export default function BusinessQuestions() {
