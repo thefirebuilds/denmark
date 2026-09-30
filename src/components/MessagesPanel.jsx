@@ -30,6 +30,7 @@ const MAINTENANCE_BRIEF_DISPLAY_STORAGE_KEY = "denmark.maintenanceBriefDisplay";
 const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
 const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 180 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
+  "home_maintenance",
   "vehicle_diagnostic_alert",
   "maintenance_required",
   "closeout_required",
@@ -316,6 +317,7 @@ function getMessageQueueTopic(message) {
     [
       "maintenance_required",
       "maintenance_brief",
+      "home_maintenance",
       "vehicle_diagnostic_alert",
       "refuel_required",
     ].includes(type)
@@ -873,6 +875,7 @@ function getMaintenanceVehicleKey(message) {
 
 function buildMessageBody(message) {
   const type = message?.type || message?.message_type;
+  if (type === "home_maintenance") return "";
   if (type === "daily_brief") {
     const generated = formatTripTime(message?.daily_brief_generated_at);
     const parts = [];
@@ -955,11 +958,7 @@ function buildMessageBody(message) {
   if (type === "late_toll_unbilled") {
     const count = Number(message?.late_toll_count || 0);
     const total = formatMoney(message?.late_toll_total) || "$0.00";
-    const lag = formatHoursDuration(message?.late_toll_hours_after_trip_end);
-
-    return `${count} toll${count === 1 ? "" : "s"} totaling ${total} were recorded after trip end${
-      lag ? ` (${lag} later)` : ""
-    } and still need Turo billing.`;
+    return `${count} toll${count === 1 ? "" : "s"} arrived after this trip was closed out. ${total} remains above the recorded billed total. Send the guest an additional toll invoice and update the billed total on the trip.`;
   }
 
   if (type === "trip_overlap_detected") {
@@ -1193,6 +1192,7 @@ function buildMessageTitle(message) {
 
 function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
+  if (type === "home_maintenance") return "Maintenance at home";
 
   if (type === "daily_brief") return "AM briefing";
   if (type === "maintenance_brief") return "Fleet maintenance rollup";
@@ -1200,7 +1200,7 @@ function buildMessageSub(message) {
   if (type === "inspection_export_required") return "Guest inspection export";
   if (type === "closeout_required") return "Trip closeout needed";
   if (type === "refuel_required") return "Turnover refuel needed";
-  if (type === "late_toll_unbilled") return "Late toll billing needed";
+  if (type === "late_toll_unbilled") return "Additional toll invoice needed";
   if (type === "trip_overlap_detected") return "Trip overlap detected";
   if (type === "return_location_check") return "Verify return GPS";
   if (type === "vehicle_diagnostic_alert") return "Diagnostic alert";
@@ -1468,7 +1468,7 @@ function getVehicleOperationalStatus(message) {
 }
 
 function isCompletableSyntheticTask(message) {
-  return isInspectionExportTask(message);
+  return isInspectionExportTask(message) || isLateTollTask(message);
 }
 
 function boolOrReason(message, field, reason) {
@@ -3496,6 +3496,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canCloseoutTrip = isCloseoutTask(message);
             const canReviewRefuel = isRefuelTask(message);
             const canReviewLateToll = isLateTollTask(message);
+            const canShowHomeMaintenance = message.type === "home_maintenance";
             const canReviewOverlap = isTripOverlapTask(message);
             const canEditTripValues =
               isReimbursementInvoiceMessage(message) && Boolean(message.trip_id);
@@ -3542,7 +3543,7 @@ async function handleExportGuestInspectionSheet(message) {
               ((hasMaintenanceDetails &&
                 (canShowMaintenance || canAdvanceHandoff || canExportInspection)) ||
                 canExportInspection ||
-                canReviewDiagnostic);
+                canReviewDiagnostic || canShowHomeMaintenance);
             const canReply =
               !!buildReplyUrl(message) &&
               !canCompleteSyntheticTask &&
@@ -4267,28 +4268,24 @@ async function handleExportGuestInspectionSheet(message) {
                   </div>
                 )}
 
-                {canReviewLateToll && (
-                  <div className="message-booking-task">
-                    <div className="message-booking-title">
-                      Late tolls received
-                      <span>
-                        {formatMoney(message.late_toll_total) || "$0.00"} unbilled
-                      </span>
-                    </div>
-                    <div className="message-maintenance-plan-date">
-                      <span>Recorded</span>
-                      <strong>
-                        {formatTripTime(message.late_toll_latest_recorded_at) ||
-                          "Unknown"}
-                      </strong>
-                    </div>
-                    <div className="message-closeout-hint">
-                      {Number(message.late_toll_count || 0)} toll
-                      {Number(message.late_toll_count || 0) === 1 ? "" : "s"} landed
-                      after this trip ended. Bill the guest in Turo, then set toll
-                      status to billed on the trip.
-                    </div>
-                  </div>
+                {canShowHomeMaintenance && (
+                  <details className="message-booking-task" open={!expandedMaintenanceIds.has(message.id)}>
+                    <summary onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      toggleMaintenanceNotice(message.id);
+                    }}>
+                      Garlic Creek — {message.maintenance_task_count} pending maintenance tasks
+                    </summary>
+                    {message.maintenance_tasks?.length ? (
+                      <ul>
+                        {message.maintenance_tasks.map(task => (
+                          <li key={task.id}>{task.title} — {task.status.replaceAll("_", " ")}</li>
+                        ))}
+                      </ul>
+                    ) : <p>No pending maintenance tasks.</p>}
+                    <small>Location reported {formatTripTime(message.timestamp)}</small>
+                  </details>
                 )}
 
                 {canReviewOverlap && (
@@ -4701,7 +4698,7 @@ async function handleExportGuestInspectionSheet(message) {
                           completeSyntheticTask(message);
                         }}
                       >
-                        Complete
+                        {canReviewLateToll ? "Dismiss" : "Complete"}
                       </button>
                     )}
 

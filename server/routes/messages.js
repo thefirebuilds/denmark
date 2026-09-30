@@ -1,6 +1,7 @@
 ﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const { getHomeMaintenanceNotices } = require("../services/maintenance/homeMaintenanceNotices");
 const { isDisputedReimbursement } = require("../services/reimbursementStatus");
 const { getDeploymentInfo } = require("../deploymentInfo");
 const {
@@ -1850,11 +1851,14 @@ function mapRefuelNoticeRow(row) {
 function mapLateTollNoticeRow(row) {
   const vehicleName = row.vehicle_nickname || row.vehicle_name || "vehicle";
   const guestName = row.guest_name || "guest";
+  // A dismissal applies to this batch only; newly imported tolls get a new ID.
+  const batch = `${new Date(row.latest_recorded_at).toISOString()}:${row.late_toll_count}:${row.late_toll_total}`;
+  const noticeId = `late-toll:${row.trip_id}:${batch}`;
 
   return {
-    id: `late-toll:${row.trip_id}`,
-    messageId: `late-toll:${row.trip_id}`,
-    subject: `Late tolls need billing for ${vehicleName}`,
+    id: noticeId,
+    messageId: noticeId,
+    subject: `Additional toll invoice needed for ${vehicleName}`,
     status: "read",
     timestamp: row.latest_recorded_at,
     notification_created_at: row.latest_recorded_at,
@@ -4404,8 +4408,8 @@ router.get("/", async (req, res) => {
         t.status AS trip_status,
         t.toll_review_status,
         t.toll_charged_total,
-        COUNT(tc.id)::integer AS late_toll_count,
-        COALESCE(SUM(tc.amount), 0)::numeric(10,2) AS late_toll_total,
+        COUNT(tc.id) FILTER (WHERE tc.created_at > COALESCE(t.closed_out_at, t.trip_end))::integer AS late_toll_count,
+        GREATEST(COALESCE(SUM(tc.amount), 0) - COALESCE(t.toll_charged_total, 0), 0)::numeric(10,2) AS late_toll_total,
         MIN(tc.created_at) AS first_recorded_at,
         MAX(tc.created_at) AS latest_recorded_at,
         MIN(tc.trxn_at) AS first_transaction_at,
@@ -4425,10 +4429,11 @@ router.get("/", async (req, res) => {
         )
       WHERE t.trip_end < NOW()
         AND t.trip_end >= NOW() - INTERVAL '90 days'
-        AND tc.created_at > t.trip_end
+        AND t.closed_out = true
+        AND t.deleted_at IS NULL
         AND COALESCE(t.workflow_stage, '') <> 'canceled'
         AND COALESCE(t.status, '') <> 'canceled'
-        AND COALESCE(t.toll_review_status, '') NOT IN ('billed', 'waived')
+        AND COALESCE(t.toll_review_status, '') <> 'waived'
       GROUP BY
         t.id,
         t.reservation_id,
@@ -4441,7 +4446,8 @@ router.get("/", async (req, res) => {
         t.toll_review_status,
         t.toll_charged_total,
         v.nickname
-      HAVING COALESCE(SUM(tc.amount), 0) > 0
+      HAVING COALESCE(SUM(tc.amount), 0) > COALESCE(t.toll_charged_total, 0)
+        AND COUNT(tc.id) FILTER (WHERE tc.created_at > COALESCE(t.closed_out_at, t.trip_end)) > 0
       ORDER BY MAX(tc.created_at) DESC NULLS LAST, t.trip_end DESC NULLS LAST
       LIMIT 25
     `;
@@ -4672,6 +4678,7 @@ router.get("/", async (req, res) => {
     const inspectionExportNotices = inspectionExportResult.rows.map(
       mapInspectionExportNoticeRow
     );
+    const homeMaintenanceNotices = fast ? [] : await getHomeMaintenanceNotices();
     const maintenanceNotices = maintenanceResult.rows.map(mapMaintenanceNoticeRow);
     const prepTaskTripIds = new Set(
       [...handoffNotices, ...inspectionExportNotices]
@@ -4765,6 +4772,7 @@ router.get("/", async (req, res) => {
         ...visibleMessageRows.map(mapMessageRow),
         ...unmatchedNotificationsResult.rows.map(mapUnmatchedNotificationRow),
         ...visibleDiagnosticNotices,
+        ...homeMaintenanceNotices,
         ...(maintenanceBriefNotice ? [maintenanceBriefNotice] : []),
       ])
     )
