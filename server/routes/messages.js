@@ -1,6 +1,7 @@
 ﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
+const guestReplyMemory = require('../services/guestReplyMemory');
 const { getHomeMaintenanceNotices } = require("../services/maintenance/homeMaintenanceNotices");
 const { isDisputedReimbursement } = require("../services/reimbursementStatus");
 const { getDeploymentInfo } = require("../deploymentInfo");
@@ -4795,6 +4796,22 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get('/guest-reply-profile', async (req, res) => {
+  try { res.set('Cache-Control', 'no-store'); res.json(await guestReplyMemory.getProfile()); }
+  catch { res.status(500).json({ error: 'Could not load reply profile' }); }
+});
+router.put('/guest-reply-profile', async (req, res) => {
+  try { res.json(await guestReplyMemory.saveProfile(req.body)); }
+  catch (error) { res.status(error.statusCode || 500).json({ error: 'Could not save reply profile' }); }
+});
+router.post('/guest-reply-examples', async (req, res) => {
+  try { res.json(await guestReplyMemory.saveExample(req.body)); }
+  catch (error) { res.status(error.statusCode || 500).json({ error: 'Could not save reply example' }); }
+});
+router.delete('/guest-reply-examples/:id', async (req, res) => {
+  try { await guestReplyMemory.deleteExample(Number(req.params.id)); res.json({ ok: true }); }
+  catch (error) { res.status(error.statusCode || 500).json({ error: 'Could not delete reply example' }); }
+});
 router.post("/guest-reply-suggestion", async (req, res) => {
   try {
     const latestMessage =
@@ -4815,6 +4832,8 @@ router.post("/guest-reply-suggestion", async (req, res) => {
       latestMessage,
       messages,
       trip: req.body?.trip,
+      category: req.body?.category,
+      guidance: req.body?.guidance,
     });
 
     res.json(result);

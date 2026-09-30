@@ -8,6 +8,7 @@
 
 
 import { Fragment, useEffect, useRef, useState } from "react";
+import GuestReplyComposer from "./GuestReplyComposer";
 import { toPng } from "html-to-image";
 import GuestSafetySnapshotCard from "./maintenance/GuestSafetySnapshotCard";
 import PreflightCard from "./maintenance/PreflightCard";
@@ -4016,52 +4017,10 @@ async function handleExportGuestInspectionSheet(message) {
                   </div>
                 )}
 
-                {canSuggestGuestReply && (replySuggestion || replySuggestionError) && (
-                  <div
-                    className="message-guest-reply"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="message-booking-title">
-                      Suggested reply
-                      <span>
-                        {replySuggestionError
-                          ? "Review"
-                          : copiedReplySuggestionId === replySuggestionKey
-                          ? "Copied"
-                          : "Draft"}
-                      </span>
-                    </div>
-                    {replySuggestion ? (
-                      <>
-                        <p className="message-guest-reply-text">
-                          {replySuggestion}
-                        </p>
-                        <div className="message-guest-reply-actions">
-                          <button
-                            type="button"
-                            className="message-action"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleCopyGuestReplySuggestion(
-                                message,
-                                replySuggestion
-                              );
-                            }}
-                          >
-                            {copiedReplySuggestionId === replySuggestionKey
-                              ? "Copied"
-                              : "Copy text"}
-                          </button>
-                        </div>
-                      </>
-                    ) : null}
-                    {replySuggestionError ? (
-                      <div className="message-guest-reply-error">
-                        {replySuggestionError}
-                      </div>
-                    ) : null}
-                  </div>
-                )}
+                {canSuggestGuestReply && <GuestReplyComposer
+                  messageKey={replySuggestionKey}
+                  context={buildGuestReplySuggestionPayload(message)}
+                />}
 
                 {canShowOperationalTripNotice && (
                   <div className="message-booking-task">
@@ -4668,24 +4627,6 @@ async function handleExportGuestInspectionSheet(message) {
                         }}
                       >
                         Reply
-                      </button>
-                    )}
-
-                    {canSuggestGuestReply && (
-                      <button
-                        type="button"
-                        className="message-action"
-                        disabled={replySuggestingMessageId === replySuggestionKey}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleSuggestGuestReply(message);
-                        }}
-                      >
-                        {replySuggestingMessageId === replySuggestionKey
-                          ? "Drafting..."
-                          : replySuggestion
-                          ? "Refresh suggestion"
-                          : "Suggest reply"}
                       </button>
                     )}
 
