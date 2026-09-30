@@ -50,13 +50,6 @@ function toDate(value) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function firstPresent(row, keys) {
-  for (const key of keys) {
-    if (row[key] !== undefined && row[key] !== null) return row[key];
-  }
-  return null;
-}
-
 function formatPublicDate(date) {
   if (!date) return null;
 
@@ -226,63 +219,40 @@ function isLongTermTrip(trip) {
   return diffDays(trip.start, trip.end) >= LONG_TERM_DAYS;
 }
 
-function chooseVehicleTripKey(trip) {
-  return firstPresent(trip, [
-    "vehicle_id",
-    "turo_vehicle_id",
-    "trip_vehicle_id",
-    "vehicle_turo_id",
-    "car_id",
-    "unit_id",
-    "vehicle",
-  ]);
-}
-
 function normalizeVehicleLookupValue(value) {
-  const text = String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-  return text || null;
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function compactLookupKeys(keys) {
-  return Array.from(
-    new Set(
-      keys
-        .map((key) => (key == null || key === "" ? null : String(key)))
-        .filter(Boolean)
-    )
-  );
-}
-
-function getVehicleLookupKeys(vehicle) {
-  const nickname = normalizeVehicleLookupValue(vehicle?.nickname);
-  const turoName = normalizeVehicleLookupValue(vehicle?.turo_vehicle_name);
-  const displayName = normalizeVehicleLookupValue(getVehicleDisplayName(vehicle));
-
-  return compactLookupKeys([
-    vehicle?.id,
-    vehicle?.turo_vehicle_id,
-    nickname ? `name:${nickname}` : null,
-    turoName ? `name:${turoName}` : null,
-    displayName ? `name:${displayName}` : null,
-  ]);
-}
-
-function getTripLookupKeys(trip) {
-  const vehicleName = normalizeVehicleLookupValue(trip?.vehicle_name);
-  const resolvedName = normalizeVehicleLookupValue(trip?.resolved_vehicle_name);
-  const resolvedTuroName = normalizeVehicleLookupValue(trip?.resolved_turo_vehicle_name);
-
-  return compactLookupKeys([
-    chooseVehicleTripKey(trip),
-    trip?.vehicle_id,
-    trip?.turo_vehicle_id,
-    vehicleName ? `name:${vehicleName}` : null,
-    resolvedName ? `name:${resolvedName}` : null,
-    resolvedTuroName ? `name:${resolvedTuroName}` : null,
-  ]);
+// A trip belongs to at most one vehicle. Turo model names can be shared;
+// never broaden an authoritative ID match with name matches.
+function groupTripsByVehicle(vehicles, trips) {
+  const byTuroId = new Map();
+  const byName = new Map();
+  const add = (index, value, vehicle) => {
+    const key = normalizeVehicleLookupValue(value);
+    if (!key) return;
+    if (!index.has(key)) index.set(key, new Set());
+    index.get(key).add(vehicle);
+  };
+  for (const vehicle of vehicles) {
+    add(byTuroId, vehicle.turo_vehicle_id, vehicle);
+    for (const name of [vehicle.nickname, vehicle.turo_vehicle_name,
+      ...(vehicle.aliases || [])]) {
+      add(byName, name, vehicle);
+    }
+  }
+  const grouped = new Map();
+  for (const trip of trips) {
+    const turoId = normalizeVehicleLookupValue(trip.turo_vehicle_id);
+    const matches = turoId
+      ? byTuroId.get(turoId)
+      : byName.get(normalizeVehicleLookupValue(trip.vehicle_name));
+    if (matches?.size !== 1) continue;
+    const [vehicle] = matches;
+    if (!grouped.has(vehicle.id)) grouped.set(vehicle.id, []);
+    grouped.get(vehicle.id).push(trip);
+  }
+  return grouped;
 }
 
 function slugify(value) {
@@ -679,6 +649,7 @@ function buildVehicleStatus(vehicle, trips, now) {
 
 async function getVehicles() {
   await ensureVehicleRuntimeSchema();
+  await ensureVehicleAliasesTable();
 
   const sql = `
     SELECT
@@ -691,9 +662,10 @@ async function getVehicles() {
       make,
       model,
       in_service,
-      COALESCE(trip_eligible, true) AS trip_eligible
+      COALESCE(trip_eligible, true) AS trip_eligible,
+      ARRAY(SELECT va.alias FROM vehicle_aliases va
+        WHERE va.vehicle_id = vehicles.id AND va.active = true) AS aliases
     FROM vehicles
-    WHERE COALESCE(trip_eligible, true) = true
     ORDER BY nickname NULLS LAST, id
   `;
 
@@ -702,12 +674,9 @@ async function getVehicles() {
 }
 
 async function getRelevantTrips() {
-  await ensureVehicleAliasesTable();
-
   const sql = `
     SELECT
       t.id,
-      resolved_vehicle.id AS vehicle_id,
       t.guest_name,
       t.status,
       t.workflow_stage,
@@ -720,42 +689,8 @@ async function getRelevantTrips() {
       t.completed_at,
       t.canceled_at,
       t.deleted_at,
-      resolved_vehicle.nickname AS resolved_vehicle_name,
-      resolved_vehicle.turo_vehicle_name AS resolved_turo_vehicle_name,
-      COALESCE(t.turo_vehicle_id, resolved_vehicle.turo_vehicle_id) AS turo_vehicle_id
+      t.turo_vehicle_id
     FROM trips t
-    LEFT JOIN LATERAL (
-      SELECT v.id, v.turo_vehicle_id, v.nickname, v.turo_vehicle_name
-      FROM vehicles v
-      WHERE (
-        t.turo_vehicle_id IS NOT NULL
-        AND v.turo_vehicle_id = t.turo_vehicle_id
-      )
-      OR (
-        COALESCE(t.vehicle_name, '') <> ''
-        AND LOWER(v.nickname) = LOWER(t.vehicle_name)
-      )
-      OR (
-        COALESCE(t.vehicle_name, '') <> ''
-        AND LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER(t.vehicle_name)
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM vehicle_aliases va
-        WHERE va.vehicle_id = v.id
-          AND va.active = true
-          AND COALESCE(t.vehicle_name, '') <> ''
-          AND LOWER(va.alias) = LOWER(t.vehicle_name)
-      )
-      ORDER BY
-        CASE
-          WHEN t.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = t.turo_vehicle_id THEN 1
-          WHEN COALESCE(t.vehicle_name, '') <> '' AND LOWER(v.nickname) = LOWER(t.vehicle_name) THEN 2
-          WHEN COALESCE(t.vehicle_name, '') <> '' AND LOWER(COALESCE(v.turo_vehicle_name, '')) = LOWER(t.vehicle_name) THEN 3
-          ELSE 4
-        END
-      LIMIT 1
-    ) resolved_vehicle ON true
     WHERE t.deleted_at IS NULL
       AND (
         t.trip_end >= NOW() - INTERVAL '7 days'
@@ -777,31 +712,10 @@ async function getPublicAvailability() {
     getRelevantTrips(),
   ]);
 
-  const tripsByVehicle = new Map();
-
-  for (const trip of trips) {
-    const keys = getTripLookupKeys(trip);
-    if (!keys.length) continue;
-
-    for (const key of keys) {
-      if (!tripsByVehicle.has(key)) {
-        tripsByVehicle.set(key, []);
-      }
-      tripsByVehicle.get(key).push(trip);
-    }
-  }
+  const tripsByVehicle = groupTripsByVehicle(vehicles, trips);
 
   return vehicles
-    .map((vehicle) => {
-      const vehicleTripsById = new Map();
-      for (const key of getVehicleLookupKeys(vehicle)) {
-        for (const trip of tripsByVehicle.get(key) || []) {
-          vehicleTripsById.set(trip.id, trip);
-        }
-      }
-
-      return buildVehicleStatus(vehicle, [...vehicleTripsById.values()], now);
-    })
+    .map((vehicle) => buildVehicleStatus(vehicle, tripsByVehicle.get(vehicle.id) || [], now))
     .filter(Boolean);
 }
 

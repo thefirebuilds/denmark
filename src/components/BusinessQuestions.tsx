@@ -5,8 +5,17 @@ type Source = { id: string; tool: string; retrievedAt: string; filters: Record<s
 type Answer = { question: string; answer: string; sources: Source[]; generatedAt: string };
 const examples = ['How much did I spend on tires this year?', 'What maintenance items are due for Delavan?'];
 const labels: Record<string, string> = { list_fleet: 'Fleet', search_expenses: 'Expenses', vehicle_maintenance: 'Maintenance', trip_summary: 'Trips' };
+const MINIMIZED_KEY = 'denmark.businessQuestions.minimized';
 
 export default function BusinessQuestions() {
+  const [minimized, setMinimized] = useState(() => {
+    try { return localStorage.getItem(MINIMIZED_KEY) === 'true'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(MINIMIZED_KEY, String(minimized)); }
+    catch { /* The panel still works when browser storage is unavailable. */ }
+  }, [minimized]);
   const [question, setQuestion] = useState('');
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [busy, setBusy] = useState(false);
@@ -53,8 +62,11 @@ export default function BusinessQuestions() {
   return <section className="business-questions" aria-labelledby="business-questions-title">
     <div className="business-questions__heading">
       <h3 id="business-questions-title">Ask about your business</h3>
-      {answers.length > 0 && <button type="button" disabled={busy} onClick={() => { setAnswers([]); setError(''); }}>New conversation</button>}
+      <button type="button" aria-expanded={!minimized} aria-controls="business-questions-content"
+        onClick={() => setMinimized((value) => !value)}>{minimized ? 'Expand' : 'Minimize'}</button>
     </div>
+    <div id="business-questions-content" hidden={minimized}>
+    {answers.length > 0 && <button type="button" disabled={busy} onClick={() => { setAnswers([]); setError(''); }}>New conversation</button>}
     <p className="business-questions__hint">Answers from your recorded expenses, maintenance, fleet and trips. Questions and relevant records are sent to OpenAI when you ask.</p>
     {answers.length === 0 && <div className="business-questions__examples">
       {examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => setQuestion(example)}>{example}</button>)}
@@ -81,5 +93,6 @@ export default function BusinessQuestions() {
       <button type="submit" disabled={busy || !question.trim()}>{busy ? 'Checking your records…' : 'Ask'}</button>
     </form>
     {error && <p role="alert" className="business-questions__error">{error}</p>}
+    </div>
   </section>;
 }

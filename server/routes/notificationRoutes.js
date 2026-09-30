@@ -13,6 +13,7 @@ const {
 } = require("../services/trips/transitionTripStage");
 
 const router = express.Router();
+const { applyRatingNotification } = require("../services/trips/applyRatingNotification");
 
 let ensureNotificationEventsTablePromise = null;
 let hasWarnedAboutMissingBridgeSecret = false;
@@ -494,6 +495,7 @@ function extractVehicleName(text) {
   if (!source) return null;
 
   const patterns = [
+    /\btrip with your\s+(.+?)(?=[.!?](?:\s|$)|[\r\n]|$)/i,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+has returned your\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\b/i,
     /^([A-Z0-9][A-Za-z0-9 .'\-]{1,80}?)\s+has returned to\s+/i,
     /\babout\s+([A-Z0-9][A-Za-z0-9 .'\-]{1,80})\s+from\s+[A-Z][A-Za-z.'-]+/i,
@@ -521,6 +523,7 @@ function extractGuestName(text) {
   if (!source) return null;
 
   const patterns = [
+    /^(.+?)\s+(?:(?:has\s+)?just\s+|has\s+)?rated their trip\b/i,
     /^([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,2}):\s+\S/,
     /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+has returned your\b/i,
     /^Your trip with\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z.'-]+){0,2})\s+starts soon\b/i,
@@ -1068,7 +1071,7 @@ router.post("/turo", async (req, res) => {
     if (
       result.inserted &&
       result.id &&
-      ["trip_returned", "trip_rated"].includes(result.classification)
+      result.classification === "trip_returned"
     ) {
       if (result.classification === "trip_returned") {
         syncReturnedTripCalendarNotice(event, result.id);
@@ -1079,6 +1082,12 @@ router.post("/turo", async (req, res) => {
           err.message || err
         );
       });
+    }
+
+    if (result.id && result.classification === "trip_rated") {
+      // Await this write, including duplicate deliveries, so failed processing
+      // can be retried without waiting for a corresponding email.
+      result.rating = await applyRatingNotification(pool, event, result.id);
     }
 
     if (
@@ -1120,4 +1129,25 @@ module.exports = {
   extractGuestName,
   buildFallbackEventHash,
   upsertTuroNotificationEvent,
+  backfillRatingNotifications,
 };
+
+async function backfillRatingNotifications() {
+  const { rows } = await pool.query(`SELECT id, title, body, big_text, sub_text,
+    reservation_id, posted_at, received_at
+    FROM notification_events WHERE classification = 'trip_rated'
+      AND acknowledged_at IS NULL
+      AND COALESCE(posted_at, received_at) >= NOW() - INTERVAL '30 days'
+    ORDER BY COALESCE(posted_at, received_at), id`);
+  let applied = 0;
+  for (const row of rows) {
+    const body = [row.body, row.big_text, row.sub_text, row.title].filter(Boolean).join(' ');
+    const result = await applyRatingNotification(pool, {
+      classification: 'trip_rated', reservationId: row.reservation_id,
+      postedAt: row.posted_at || row.received_at,
+      guestName: extractGuestName(body), vehicleName: extractVehicleName(body),
+    }, row.id);
+    if (result) applied++;
+  }
+  return { scanned: rows.length, applied };
+}

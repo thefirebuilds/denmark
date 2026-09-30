@@ -2,6 +2,7 @@ const { ensureAuthTables } = require("../auth/store");
 const { retireTransferredTrackerVehicles } = require("../services/vehicles/retireTransferredTrackerVehicles");
 const {
   ensureNotificationEventsTable,
+  backfillRatingNotifications,
 } = require("../routes/notificationRoutes");
 const {
   ensureGoogleCalendarConnectionHealthColumns,
@@ -125,6 +126,7 @@ async function initializeStartupTables() {
     retireTransferredTrackerVehicles()
   );
   console.log("[server] backfilling trip pickup/return locations");
+  await withStartupEnsureTimeout("app notification guest ratings", backfillRatingNotifications());
   await withStartupEnsureTimeout(
     "trip location backfill",
     backfillTripLocationsFromStoredMessages()
