@@ -333,49 +333,7 @@ function parseTuroDateTime(value) {
 }
 
 function extractVehicleListingUrlFromHtml(html) {
-  if (!html) {
-    return { url: null, id: null };
-  }
-
-  const vehicleImageMatch = String(html).match(
-    /<img\b(?=[^>]*\bclass=(["'])[^"']*\bvehicle-image\b[^"']*\1)[^>]*>/i
-  );
-
-  if (vehicleImageMatch) {
-    const start = Math.max(0, vehicleImageMatch.index - 1500);
-    const end = Math.min(
-      String(html).length,
-      vehicleImageMatch.index + vehicleImageMatch[0].length + 1500
-    );
-    const vehicleImageBlock = String(html).slice(start, end);
-    const blockMatch = vehicleImageBlock.match(
-      /(https?:\/\/turo\.com\/us\/en\/car-rental\/[^"'<>\s]+\/(\d+))/i
-    );
-
-    if (blockMatch) {
-      return {
-        url: blockMatch[1],
-        id: blockMatch[2] ? Number(blockMatch[2]) : null,
-      };
-    }
-  }
-
-  const patterns = [
-    /<a[^>]+href="(https?:\/\/turo\.com\/us\/en\/car-rental\/[^"]+\/(\d+))"[^>]*>\s*[\s\S]*?<img[^>]+class="vehicle-image"/i,
-    /<a[^>]+href="(https?:\/\/turo\.com\/us\/en\/car-rental\/[^"]+\/(\d+))"[^>]*>\s*[\s\S]*?<\/a>/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = String(html).match(pattern);
-    if (match) {
-      return {
-        url: match[1],
-        id: match[2] ? Number(match[2]) : null,
-      };
-    }
-  }
-
-  return { url: null, id: null };
+  return require('./vehicles/extractTuroVehicle').extractTuroVehicle(html);
 }
 
 function extractVehicleImageUrlFromHtml(html) {

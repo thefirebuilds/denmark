@@ -126,6 +126,8 @@ async function initializeStartupTables() {
     retireTransferredTrackerVehicles()
   );
   console.log("[server] backfilling trip pickup/return locations");
+  await withStartupEnsureTimeout('trip vehicle identity backfill',
+    require('../services/vehicles/backfillTripVehicleIds').backfillTripVehicleIds());
   await withStartupEnsureTimeout("app notification guest ratings", backfillRatingNotifications());
   await withStartupEnsureTimeout(
     "trip location backfill",

@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const parser = vm.createContext({
-  require: (name) => name === 'luxon' ? require('luxon') : {},
+  require: (name) => name === 'luxon' ? require('luxon') : name === './vehicles/extractTuroVehicle' ? require('../services/vehicles/extractTuroVehicle') : {},
   module: { exports: {} },
 });
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../services/saveMessage.js'), 'utf8'), parser);

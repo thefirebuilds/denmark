@@ -6,6 +6,7 @@
 // -------------------------------- 
 
 const pool = require("../db");
+const { extractTuroVehicle } = require('./vehicles/extractTuroVehicle');
 const { pushPublicAvailabilitySnapshotSafe } = require("./pushPublicAvailability");
 const { deriveWorkflowStage } = require("./trips/deriveWorkflowStage");
 const {
@@ -59,6 +60,7 @@ async function resolveTuroVehicleId(savedMessage) {
   const explicitVehicleId =
     savedMessage.vehicle_listing_id ||
     savedMessage.turo_vehicle_id ||
+    extractTuroVehicle(savedMessage.html_body || savedMessage.htmlBody).id ||
     null;
 
   if (explicitVehicleId) {
