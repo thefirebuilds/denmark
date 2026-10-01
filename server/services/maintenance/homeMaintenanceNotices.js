@@ -48,10 +48,10 @@ async function getHomeMaintenanceNotices() {
       SELECT s.latitude, s.longitude,
         COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
       FROM vehicle_telemetry_snapshots s
-      WHERE UPPER(TRIM(s.vin)) = UPPER(TRIM(v.vin))
+      WHERE LOWER(s.vin) = LOWER(v.vin)
         AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
-      ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
-        s.captured_at DESC
+        AND COALESCE(s.vehicle_last_updated, s.captured_at) >= NOW() - INTERVAL '24 hours'
+      ORDER BY COALESCE(s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
       LIMIT 1
     ) gps ON true
     LEFT JOIN LATERAL (

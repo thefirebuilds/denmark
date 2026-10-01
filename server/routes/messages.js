@@ -4679,7 +4679,9 @@ router.get("/", async (req, res) => {
     const inspectionExportNotices = inspectionExportResult.rows.map(
       mapInspectionExportNoticeRow
     );
-    const homeMaintenanceNotices = fast ? [] : await getHomeMaintenanceNotices();
+    const homeMaintenanceNotices = fast ? [] : getCachedFleetAlertQuery(
+      'homeMaintenance', async () => ({ rows: await getHomeMaintenanceNotices() })
+    ).rows;
     const maintenanceNotices = maintenanceResult.rows.map(mapMaintenanceNoticeRow);
     const prepTaskTripIds = new Set(
       [...handoffNotices, ...inspectionExportNotices]
