@@ -184,12 +184,15 @@ function isNeedsExpensesTrip(trip) {
 }
 
 function isRoutineInProgressTrip(trip) {
-  // Keep active trips together; contextual warnings belong inside the rollup.
-  // Only an overdue return or unconfirmed pickup needs a standalone card.
+  // Surface imminent returns without expanding trips for unrelated warnings.
+  const hoursUntilReturn = getHoursUntilTripEnd(trip);
+  const returningWithinEightHours =
+    hoursUntilReturn !== null && hoursUntilReturn >= 0 && hoursUntilReturn <= 8;
   return (
     isQueueBucket(trip, "in_progress") &&
     !isPickupConfirmationOverdue(trip) &&
-    !isOverdueTrip(trip)
+    !isOverdueTrip(trip) &&
+    !returningWithinEightHours
   );
 }
 
