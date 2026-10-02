@@ -6,7 +6,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import BusinessQuestions from "./BusinessQuestions";
-import TripSpeedNote from "./TripSpeedNote";
 import {
   findVehicleForTrip,
   getVehicleLocationLabel,
@@ -185,20 +184,12 @@ function isNeedsExpensesTrip(trip) {
 }
 
 function isRoutineInProgressTrip(trip) {
-  const maxSpeed = Number(trip?.max_speed_mph);
-  const speedViolationCount = Number(trip?.speed_over_80_count);
-  const hasSpeedAlert =
-    (Number.isFinite(maxSpeed) && maxSpeed > 80) ||
-    (Number.isFinite(speedViolationCount) && speedViolationCount > 0);
-
+  // Keep active trips together; contextual warnings belong inside the rollup.
+  // Only an overdue return or unconfirmed pickup needs a standalone card.
   return (
     isQueueBucket(trip, "in_progress") &&
     !isPickupConfirmationOverdue(trip) &&
-    !isOverdueTrip(trip) &&
-    !isReturnSoonTrip(trip) &&
-    !trip?.turnaroundRisk &&
-    !hasSpeedAlert &&
-    Number(trip?.alertCount || 0) === 0
+    !isOverdueTrip(trip)
   );
 }
 
@@ -873,7 +864,7 @@ if (urgency.dependencyNote) {
                   </div>
                 </div>
               )}
-              <TripSpeedNote trip={trip} violationsOnly />
+
             </article>
           );
         })}
@@ -897,8 +888,12 @@ if (urgency.dependencyNote) {
                 >
                   <span>
                     <strong>{trip.cardGuestName}</strong> - {trip.cardNickname}
+                    {isReturnSoonTrip(trip) && <small>Returning soon</small>}
+                    {trip.turnaroundRisk && <small>{trip.operationalNote || "Tight turnaround"}</small>}
+                    {Number(trip.alertCount || 0) > 0 && <small>{trip.alertCount} alerts</small>}
                   </span>
                   <small>{getCompactNextActivityText(trip)}</small>
+
                 </button>
               ))}
             </div>
@@ -1029,7 +1024,7 @@ if (urgency.dependencyNote) {
     <span className="trip-fact-value">{trip.meta4Value}</span>
   </div>
 </div>
-            <TripSpeedNote trip={trip} violationsOnly />
+
           </article>
         ))}
       </div>

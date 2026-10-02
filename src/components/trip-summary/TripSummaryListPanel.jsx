@@ -6,7 +6,6 @@
 // ------------------------------------------------------------
 
 import { useMemo } from "react";
-import TripSpeedNote from "../TripSpeedNote";
 import {
   getMilesDriven,
   isTripInProgress,
@@ -354,7 +353,6 @@ export default function TripSummaryListPanel({
                   </div>
                 </div>
 
-                <TripSpeedNote trip={trip} />
 
                 {canceled ? (
                   <div className="trip-ledger-card-actions">

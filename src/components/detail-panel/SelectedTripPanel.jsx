@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import "../../styles/selected-trip.css";
+import TripSpeedNote from "../TripSpeedNote";
 import {
   buildBouncieVehicleDetailsUrl,
   buildReplyUrl,
@@ -1224,6 +1225,7 @@ function renderLocationLink(vehicle) {
 
           <div className="detail-card detail-card--section">
             <div className="detail-label">Vehicle & Telemetry</div>
+            <TripSpeedNote trip={selectedTrip} violationsOnly />
 
             <div className="detail-row">
               <span>Vehicle status</span>
