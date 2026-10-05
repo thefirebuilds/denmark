@@ -260,6 +260,47 @@ function RevenueExpenseSparkline({ trends, summary }) {
   );
 }
 
+function OccupancyChart({ trends }) {
+  const points = trends?.occupancy?.points || [];
+  const [selectedIndex, setSelectedIndex] = useState(null);
+  const selected = points[selectedIndex] || points[points.length - 1];
+  const width = 900, height = 160, left = 42, top = 12;
+  const x = index => left + index / Math.max(points.length - 1, 1) * (width - left - 12);
+  const y = rate => top + (1 - Number(rate)) * (height - top - 20);
+  let connected = false;
+  const path = points.map((point, index) => {
+    if (point.occupancy_rate == null) { connected = false; return ''; }
+    const command = connected ? 'L' : 'M'; connected = true;
+    return `${command} ${x(index)} ${y(point.occupancy_rate)}`;
+  }).join(' ');
+  return <section className="metrics-trend-strip">
+    <div className="metrics-trend-strip__header">
+      <div>
+        <div className="metrics-section-title">Fleet Occupancy</div>
+        <div className="metrics-section-subtitle">{trends?.occupancy?.granularity === 'month' ? 'Monthly' : 'Daily'} booked vehicle-days / available vehicle-days</div>
+      </div>
+      {selected && <span>{formatShortDate(selected.label)}: {selected.occupancy_rate == null ? 'No available vehicles' : formatPercent(selected.occupancy_rate, 1)}</span>}
+    </div>
+    {!points.length ? <p>No occupancy data for this range.</p> : <>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Fleet occupancy over time, zero to one hundred percent" style={{ width: '100%' }}>
+        {[0, .5, 1].map(rate => <g key={rate}>
+          <text x="0" y={y(rate) + 4} fill="currentColor" fontSize="11">{rate * 100}%</text>
+          <line x1={left} x2={width} y1={y(rate)} y2={y(rate)} stroke="currentColor" opacity="0.15" />
+        </g>)}
+        <path d={path} fill="none" stroke="#7dd3fc" strokeWidth="2.5" />
+        {points.map((point, index) => point.occupancy_rate == null ? null : <circle key={point.label}
+          cx={x(index)} cy={y(point.occupancy_rate)} r={selectedIndex === index ? 5 : 3} fill="#7dd3fc"
+          tabIndex={0} onFocus={() => setSelectedIndex(index)} onMouseEnter={() => setSelectedIndex(index)}
+          aria-label={`${point.label}: ${formatPercent(point.occupancy_rate, 1)}, ${point.booked_vehicle_days} of ${point.available_vehicle_days} vehicle-days`}>
+          <title>{point.label}: {formatPercent(point.occupancy_rate, 1)} — {point.booked_vehicle_days} / {point.available_vehicle_days} vehicle-days</title>
+        </circle>)}
+      </svg>
+      <div className="metrics-trend-strip__axis"><span>{formatShortDate(points[0].label)}</span><span>{formatShortDate(points.at(-1).label)}</span></div>
+      <small>{trends.occupancy.basis}</small>
+    </>}
+  </section>;
+}
+
 function MonthlyProfitLossChart({ trends }) {
   const points = Array.isArray(trends?.monthly_profit_loss?.points)
     ? trends.monthly_profit_loss.points
@@ -2483,6 +2524,7 @@ const mileageStats = useMemo(() => {
           </div>
 
           <RevenueExpenseSparkline trends={trends} summary={summary} />
+          <OccupancyChart trends={trends} />
           <MonthlyProfitLossChart trends={trends} />
 
           <BusinessHeartbeat

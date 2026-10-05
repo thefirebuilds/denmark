@@ -71,7 +71,7 @@ export default function ExpenseModal({
   onSaved,
 }) {
   const [vehicles, setVehicles] = useState([]);
-  const [recentTrips, setRecentTrips] = useState([]);
+  const [completedTrips, setCompletedTrips] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -162,6 +162,7 @@ export default function ExpenseModal({
       ...prev,
       vehicle_id: nextVehicleId,
       expense_scope: nextVehicleId ? "direct" : "shared",
+      trip_id: "",
     }));
   }
 
@@ -217,13 +218,12 @@ export default function ExpenseModal({
               (a, b) =>
                 new Date(b.trip_end || b.trip_start || 0).getTime() -
                 new Date(a.trip_end || a.trip_start || 0).getTime()
-            )
-            .slice(0, 5);
+            );
         }
 
         if (!ignore) {
           setVehicles(vehicleRows);
-          setRecentTrips(tripRows);
+          setCompletedTrips(tripRows);
         }
       } catch (err) {
         if (!ignore) {
@@ -238,6 +238,23 @@ export default function ExpenseModal({
       ignore = true;
     };
   }, [open]);
+
+  const recentTrips = useMemo(() => {
+    if (!form.vehicle_id) return completedTrips.slice(0, 5);
+    const selected = vehicles.find(vehicle => String(vehicle.id) === String(form.vehicle_id));
+    if (!selected) return [];
+    const normalize = value => String(value || "").trim().toLowerCase();
+    const names = vehicle => [vehicle.nickname, vehicle.turo_vehicle_name, ...(vehicle.aliases || [])]
+      .map(normalize).filter(Boolean);
+    return completedTrips.filter(trip => {
+      if (trip.turo_vehicle_id) return String(trip.turo_vehicle_id) === String(selected.turo_vehicle_id);
+      if (trip.vehicle_id) return String(trip.vehicle_id) === String(selected.id);
+      if (trip.vehicle_vin) return normalize(trip.vehicle_vin) === normalize(selected.vin);
+      const tripNames = [trip.vehicle_nickname, trip.vehicle_name].map(normalize).filter(Boolean);
+      const matches = vehicles.filter(vehicle => names(vehicle).some(name => tripNames.includes(name)));
+      return matches.length === 1 && String(matches[0].id) === String(selected.id);
+    }).slice(0, 5);
+  }, [completedTrips, vehicles, form.vehicle_id]);
 
   const drawerTitle = useMemo(() => {
     return expense?.id ? `Edit Expense #${expense.id}` : "Add Expense";
@@ -420,6 +437,9 @@ export default function ExpenseModal({
                     </option>
                   ))}
                 </select>
+                <div className="expense-form-help">
+                  {form.vehicle_id ? "Last 5 trips for the selected car" : "Last 5 trips across the fleet"}
+                </div>
               </label>
             </div>
 

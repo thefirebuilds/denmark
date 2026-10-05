@@ -31,6 +31,8 @@ const MAINTENANCE_BRIEF_DISPLAY_STORAGE_KEY = "denmark.maintenanceBriefDisplay";
 const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
 const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 180 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
+  "handoff_ready_required",
+  "inspection_export_required",
   "home_maintenance",
   "vehicle_diagnostic_alert",
   "maintenance_required",
@@ -1065,6 +1067,12 @@ function buildMessageBody(message) {
   }
 
   if (isReimbursementInvoiceMessage(message)) {
+    if (message?.reimbursement_invoice?.payment_status === "credited") {
+      return "Reimbursement confirmed — Turo credited your account";
+    }
+    if (message?.reimbursement_invoice?.payment_status === "charged") {
+      return "Reimbursement confirmed — guest charged";
+    }
     return message?.reimbursement_invoice?.payment_status === "disputed"
       ? "Reimbursement disputed — payment not confirmed"
       : "Reimbursement invoice received — payment not confirmed";
@@ -1678,6 +1686,10 @@ function ReimbursementInvoiceSummary({ message }) {
         <span>
           {message.reimbursement_invoice?.payment_status === "disputed"
             ? "Disputed — payment not confirmed"
+            : message.reimbursement_invoice?.payment_status === "credited"
+            ? "Confirmed — account credited"
+            : message.reimbursement_invoice?.payment_status === "charged"
+            ? "Confirmed — guest charged"
             : message.reimbursement_invoice_has_discrepancy ? "Review" : "Amounts matched"}
         </span>
       </div>
@@ -1942,6 +1954,7 @@ export default function MessagesPanel({
   );
 
   const seenIdsRef = useRef(new Set());
+  const messageRequestRef = useRef(null);
   const knownQueueItemIdsRef = useRef(new Set());
   const queueChimeWatermarkRef = useRef(Date.now());
   const messagesRef = useRef([]);
@@ -2885,6 +2898,10 @@ async function handleExportGuestInspectionSheet(message) {
   }
 
   async function loadMessages(isInitialLoad = false) {
+    const scope = `${messageMode}:${selectedTrip?.id || ""}:${selectedTrip?.closed_out || false}`;
+    if (messageRequestRef.current?.scope === scope) return;
+    const request = { scope };
+    messageRequestRef.current = request;
     let statusLabel = "";
     try {
       if (isInitialLoad) {
@@ -2923,6 +2940,7 @@ async function handleExportGuestInspectionSheet(message) {
       }
 
       const data = await res.json();
+      if (messageRequestRef.current !== request) return;
       const messageItems = Array.isArray(data) ? data : data?.items;
       const debugTiming = Array.isArray(data) ? null : data?.debugTiming;
       const totalMs = Math.round(performance.now() - requestStartedAt);
@@ -2989,7 +3007,6 @@ async function handleExportGuestInspectionSheet(message) {
       if (isInitialLoad) {
         seenIds.clear();
         nextIds.forEach((id) => seenIds.add(id));
-        knownQueueItemIds.clear();
         nextIdKeys.forEach((id) => knownQueueItemIds.add(id));
         queueChimeWatermarkRef.current = Date.now();
       } else {
@@ -3043,13 +3060,15 @@ async function handleExportGuestInspectionSheet(message) {
             }`
       );
     } catch (err) {
+      if (messageRequestRef.current !== request) return;
       setError(err.message || "Failed to load messages");
       setQueueStatus(
         statusLabel ? `${statusLabel.replace(/\.\.\.$/, "")} failed` : ""
       );
     } finally {
-      if (isInitialLoad) {
-        setLoading(false);
+      if (messageRequestRef.current === request) {
+        messageRequestRef.current = null;
+        if (isInitialLoad) setLoading(false);
       }
     }
   }
@@ -3116,6 +3135,7 @@ async function handleExportGuestInspectionSheet(message) {
           !completedSyntheticTaskIdsRef.current.has(message.id))
     );
 
+    messagesRef.current = visibleSeededMessages;
     setMessages(visibleSeededMessages);
     if (cachedLiveQueue?.createdAt) {
       setLastMessagesCheckedAt(new Date(cachedLiveQueue.createdAt).toISOString());
@@ -3125,7 +3145,6 @@ async function handleExportGuestInspectionSheet(message) {
     setNewMessageIds([]);
     seenIdsRef.current.clear();
     visibleSeededMessages.forEach((message) => seenIdsRef.current.add(message.id));
-    knownQueueItemIdsRef.current.clear();
     visibleSeededMessages.forEach((message) =>
       knownQueueItemIdsRef.current.add(String(message.id))
     );
@@ -3154,6 +3173,7 @@ async function handleExportGuestInspectionSheet(message) {
 
     return () => {
       clearInterval(intervalId);
+      messageRequestRef.current = null;
 
       if (highlightTimeoutRef.current) {
         clearTimeout(highlightTimeoutRef.current);

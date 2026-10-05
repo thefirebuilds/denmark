@@ -14,4 +14,15 @@ function isDisputedReimbursement(subject = "", body = "") {
   });
 }
 
-module.exports = { isDisputedReimbursement };
+function getReimbursementPaymentStatus(subject = '', body = '') {
+  // A no-response subject accompanies Turo's automatic charge email. The
+  // affirmative account-credit statement in the body is the payment evidence.
+  const text = String(body || '').replace(/\s+/g, ' ').trim();
+  if (/\bTuro has credited your account for (?:the )?invoice balance\b/i.test(text)) return 'credited';
+  if (isDisputedReimbursement(subject, body)) return 'disputed';
+  if (/^.+? has been charged for your reimbursement invoice[.!]?$/i.test(String(subject).trim()) ||
+    /^.+? has been charged for your reimbursement invoice[.!]?$/im.test(String(body))) return 'charged';
+  return 'unconfirmed';
+}
+
+module.exports = { isDisputedReimbursement, getReimbursementPaymentStatus };

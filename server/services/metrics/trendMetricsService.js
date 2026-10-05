@@ -4,6 +4,7 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const { getOccupancyTrend } = require('./occupancyTrend');
 const {
   endOfDay,
   getDateRange,
@@ -324,6 +325,7 @@ async function getTrendMetrics(rangeKey = "90d") {
       range: key,
       granularity,
       points,
+      occupancy: await getOccupancyTrend(client, effectiveStartDate, endDate, granularity),
       monthly_profit_loss: {
         months: 12,
         granularity: "month",

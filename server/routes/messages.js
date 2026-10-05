@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require("../db");
 const guestReplyMemory = require('../services/guestReplyMemory');
 const { getHomeMaintenanceNotices } = require("../services/maintenance/homeMaintenanceNotices");
-const { isDisputedReimbursement } = require("../services/reimbursementStatus");
+const { isDisputedReimbursement, getReimbursementPaymentStatus } = require("../services/reimbursementStatus");
 const { getDeploymentInfo } = require("../deploymentInfo");
 const {
   getBridgeAlertSettings,
@@ -227,7 +227,7 @@ function buildReimbursementInvoiceSummary(row) {
 
   return {
     tolls,
-    payment_status: isDisputedReimbursement(subject, text) ? "disputed" : "unconfirmed",
+    payment_status: getReimbursementPaymentStatus(subject, text),
     refueling,
     refueling_convenience_fee: refuelingFee,
     fuel_total: fuelTotal,
@@ -2932,10 +2932,12 @@ router.get("/", async (req, res) => {
                 FROM messages sibling
                 WHERE sibling.id <> m.id
                   AND sibling.message_type = 'reimbursement_invoice'
-                  AND LOWER(COALESCE(sibling.subject, '')) NOT LIKE '%has not responded to your reimbursement invoice%'
+                  AND LOWER(COALESCE(sibling.subject, '')) LIKE '%has been charged for your reimbursement invoice%'
+                  AND substring(COALESCE(sibling.normalized_text_body, '') FROM '(?i)Total charge[[:space:]-]*[$]([0-9,]+[.][0-9]{2})')
+                    = substring(COALESCE(m.normalized_text_body, '') FROM '(?i)Total charge[[:space:]-]*[$]([0-9,]+[.][0-9]{2})')
                   AND COALESCE(sibling.message_timestamp, sibling.created_at) BETWEEN
-                    COALESCE(m.message_timestamp, m.created_at) - INTERVAL '10 minutes'
-                    AND COALESCE(m.message_timestamp, m.created_at) + INTERVAL '10 minutes'
+                    COALESCE(m.message_timestamp, m.created_at) - INTERVAL '24 hours'
+                    AND COALESCE(m.message_timestamp, m.created_at) + INTERVAL '24 hours'
                   AND (
                     (
                       m.trip_id IS NOT NULL

@@ -2,6 +2,32 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
+const { getReimbursementPaymentStatus } = require('../services/reimbursementStatus');
+
+test('Marleen automatic-charge emails confirm account credit regardless of no-response subject', () => {
+  const body = `Marleen has been charged for your reimbursement invoice
+Turo has credited your account for the invoice balance from Marleen’s trip with your Hyundai Veloster 2016.
+Tolls\n$102.29\nTotal charge\n$102.29`;
+  for (const subject of ['Marleen has been charged for your reimbursement invoice',
+    'Marleen has not responded to your reimbursement invoice']) {
+    assert.equal(getReimbursementPaymentStatus(subject, body), 'credited');
+  }
+  assert.equal(getReimbursementPaymentStatus('Marleen has been charged for your reimbursement invoice', ''), 'charged');
+  assert.equal(getReimbursementPaymentStatus('Marleen has not responded to your reimbursement invoice', 'Please wait for payment.'), 'unconfirmed');
+  assert.equal(getReimbursementPaymentStatus('Reimbursement invoice', 'Turo will credit your account after payment.'), 'unconfirmed');
+  assert.equal(getReimbursementPaymentStatus('Reimbursement invoice', 'Turo has not credited your account.'), 'unconfirmed');
+});
+
+test('no-response duplicate suppression requires a charged sibling, matching trip and matching total', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../routes/messages.js'), 'utf8');
+  const start = source.indexOf("LOWER(COALESCE(m.subject, '')) LIKE '%has not responded");
+  const block = source.slice(start, start + 2300);
+  assert.match(block, /has been charged for your reimbursement invoice/);
+  assert.match(block, /substring\(COALESCE\(sibling.normalized_text_body/);
+  assert.match(block, /= substring\(COALESCE\(m.normalized_text_body/);
+  assert.match(block, /sibling.reservation_id = m.reservation_id/);
+  assert.match(block, /INTERVAL '24 hours'/);
+});
 const path = require("node:path");
 const { isDisputedReimbursement } = require("../services/reimbursementStatus");
 
