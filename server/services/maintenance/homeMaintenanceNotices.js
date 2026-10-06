@@ -1,4 +1,5 @@
 const pool = require('../../db');
+const { getVehicleMaintenanceSummary } = require('./getVehicleMaintenanceSummary');
 const { getEnabledLocations } = require('../locations/locationSettings');
 
 function insideLocation(row, location) {
@@ -42,7 +43,7 @@ async function getHomeMaintenanceNotices() {
   if (!locations.some(location => /garlic[\s_-]*creek/i.test(`${location.id} ${location.label}`))) return [];
   const { rows } = await pool.query(`
     SELECT v.id, v.nickname, v.vin, gps.latitude, gps.longitude, gps.seen_at,
-      COALESCE(tasks.items, '[]'::jsonb) AS tasks
+      '[]'::jsonb AS tasks
     FROM vehicles v
     JOIN LATERAL (
       SELECT s.latitude, s.longitude,
@@ -54,28 +55,23 @@ async function getHomeMaintenanceNotices() {
       ORDER BY COALESCE(s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
       LIMIT 1
     ) gps ON true
-    LEFT JOIN LATERAL (
-      SELECT jsonb_agg(jsonb_build_object('id', mt.id, 'title', mt.title,
-        'status', mt.status, 'priority', mt.priority)
-        ORDER BY CASE mt.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1
-          WHEN 'medium' THEN 2 ELSE 3 END, mt.created_at) AS items
-      FROM maintenance_tasks mt
-      WHERE UPPER(TRIM(mt.vehicle_vin)) = UPPER(TRIM(v.vin))
-        AND mt.status IN ('open', 'scheduled', 'in_progress', 'deferred')
-        AND NOT EXISTS (
-          SELECT 1 FROM maintenance_events me JOIN maintenance_rules mr ON mr.id = me.rule_id
-          WHERE me.vehicle_vin = mt.vehicle_vin
-            AND me.result IN ('pass', 'performed', 'measured', 'not_applicable')
-            AND COALESCE(me.performed_at, me.created_at) >= mt.created_at
-            AND (me.rule_id = mt.rule_id OR
-              (COALESCE(mt.trigger_context->>'ruleCode', '') <> ''
-                AND mr.rule_code = mt.trigger_context->>'ruleCode'))
-        )
-    ) tasks ON true
     WHERE COALESCE(v.is_active, true) = true AND NULLIF(TRIM(v.vin), '') IS NOT NULL
     ORDER BY v.nickname, v.id
   `);
-  return buildHomeMaintenanceNotices(rows, locations);
+  const notices = buildHomeMaintenanceNotices(rows, locations);
+  const { buildQueueItemsFromSummary, buildInspectionHistoryMap } = await import('../../../shared/maintenanceQueue.mjs');
+  // Only load summaries for cars actually at home, serially inside the existing
+  // background cache refresh. Never refresh telemetry or mutate tasks here.
+  for (const notice of notices) {
+    const summary = await getVehicleMaintenanceSummary(pool, notice.vehicle_vin, { readOnly: true });
+    const items = buildQueueItemsFromSummary(summary, buildInspectionHistoryMap(summary));
+    notice.maintenance_tasks = items.map(item => ({
+      id: item.id, title: item.title, priority: item.priority,
+      status: item.task?.status || item.ruleStatus || 'open',
+    }));
+    notice.maintenance_task_count = notice.maintenance_tasks.length;
+  }
+  return notices;
 }
 
 module.exports = { getHomeMaintenanceNotices, buildHomeMaintenanceNotices };
