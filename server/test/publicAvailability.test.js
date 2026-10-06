@@ -5,8 +5,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const fleet = [
-  { id: '2', turo_vehicle_id: '3284235', nickname: 'Juneau', turo_vehicle_name: 'Hyundai Accent 2017', aliases: ['Old Juneau'] },
-  { id: '3', turo_vehicle_id: '999', nickname: 'Other', turo_vehicle_name: 'Hyundai Accent 2017', aliases: [] },
+  { id: '2', is_active: true, turo_vehicle_id: '3284235', nickname: 'Juneau', turo_vehicle_name: 'Hyundai Accent 2017', aliases: ['Old Juneau'] },
+  { id: '3', is_active: true, turo_vehicle_id: '999', nickname: 'Other', turo_vehicle_name: 'Hyundai Accent 2017', aliases: [] },
 ];
 const currentTrip = { id: 1, turo_vehicle_id: '999', vehicle_name: 'Hyundai Accent 2017',
   status: 'booked', trip_start: '2026-09-29T15:00:00Z', trip_end: '2026-10-04T15:00:00Z' };
@@ -20,6 +20,7 @@ async function availability(trips, vehicles = fleet) {
       if (name === '../db') return { query: async (sql) => {
         if (sql.includes('FROM trips t')) return { rows: trips };
         assert.match(sql, /va.active = true/);
+        assert.match(sql, /\bis_active\b/);
         return { rows: vehicles };
       } };
       return { ensureVehicleAliasesTable: async () => {}, ensureVehicleRuntimeSchema: async () => {} };
@@ -62,6 +63,25 @@ test('non-public vehicles still prevent ambiguous name attribution', async () =>
     [fleet[0], { ...fleet[1], trip_eligible: false }]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'available_now');
+});
+
+test('inactive transferred tracker cars never appear in the website export', async () => {
+  const vehicles = [fleet[0], ...['Yogi', 'Phantom', 'Cocaina'].map((nickname, index) => ({
+    ...fleet[1], id: String(index + 10), nickname, is_active: false,
+    in_service: true, trip_eligible: true,
+  }))];
+  const rows = await availability([currentTrip], vehicles);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].nickname, 'Juneau');
+  assert.equal(rows[0].status, 'available_now');
+});
+
+test('only explicitly active cars are published; maintenance mode remains visible as unavailable', async () => {
+  for (const is_active of [false, null, undefined]) {
+    assert.equal((await availability([], [{ ...fleet[0], is_active }])).length, 0);
+  }
+  const rows = await availability([], [{ ...fleet[0], in_service: false }]);
+  assert.equal(rows[0].status, 'unavailable');
 });
 
 test('canceled, closed and deleted trips do not block the correct vehicle', async () => {

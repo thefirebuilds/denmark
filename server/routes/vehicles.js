@@ -1451,8 +1451,10 @@ router.patch("/:selector", async (req, res) => {
 
     await client.query("COMMIT");
 
-    if (existing.in_service !== updatedVehicle.in_service) {
-      void pushPublicAvailabilitySnapshotSafe("vehicle service status changed");
+    if (existing.in_service !== updatedVehicle.in_service ||
+        existing.is_active !== updatedVehicle.is_active ||
+        existing.trip_eligible !== updatedVehicle.trip_eligible) {
+      void pushPublicAvailabilitySnapshotSafe("vehicle website eligibility changed");
     }
 
     return res.json(updatedVehicle);

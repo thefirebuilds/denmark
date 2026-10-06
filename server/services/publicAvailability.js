@@ -526,7 +526,7 @@ function buildVehicleStatus(vehicle, trips, now) {
   const window = getDateWindow();
   const fullWindowUnavailableDates = getDateKeysBetweenInclusive(window.start, window.end);
 
-  if (vehicle.trip_eligible === false) {
+  if (vehicle.is_active !== true || vehicle.trip_eligible === false) {
     return null;
   }
 
@@ -662,6 +662,7 @@ async function getVehicles() {
       make,
       model,
       in_service,
+      is_active,
       COALESCE(trip_eligible, true) AS trip_eligible,
       ARRAY(SELECT va.alias FROM vehicle_aliases va
         WHERE va.vehicle_id = vehicles.id AND va.active = true) AS aliases
