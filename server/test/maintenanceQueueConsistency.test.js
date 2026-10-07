@@ -1,6 +1,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+test('recurring Delavan checks remain in queue despite old passing history and absent mileage thresholds', async () => {
+  const { buildQueueItemsFromSummary, buildInspectionHistoryMap } = await import('../../shared/maintenanceQueue.mjs');
+  const codes = ['lights_check', 'fluid_leak_inspection', 'tire_pressure_check', 'cleaning'];
+  const summary = {
+    ruleStatuses: codes.map((ruleCode, i) => ({ ruleId: i + 1, ruleCode, title: ruleCode,
+      status: 'due', nextDueMiles: null, nextDueDate: '2099-01-01',
+      lastEvent: { result: 'pass', performedAt: '2026-09-01', odometerMiles: 90000 } })),
+    ruleHistory: Object.fromEntries(codes.map(code => [code, [
+      { result: 'pass', performedAt: '2026-09-01', odometerMiles: 90000 },
+    ]])),
+    tasks: [],
+  };
+  assert.equal(buildQueueItemsFromSummary(summary, buildInspectionHistoryMap(summary)).length, 4);
+});
+
 test('dispatch and maintenance share filtering for satisfied oil checks and duplicate tasks', async () => {
   const shared = await import('../../shared/maintenanceQueue.mjs');
   const frontend = await import('../../src/utils/maintUtils.js');

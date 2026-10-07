@@ -216,26 +216,10 @@ export function formatDotCodeForGuest(dotCode) {
   return `${madeLabel} • ${ageLabel}`;
 }
 
-export function isRuleActionableForQueue(rule, now = new Date()) {
-  const status = String(rule?.status || "").toLowerCase();
-
-  if (
-    status === "failed" ||
-    status === "overdue" ||
-    status === "due_soon" ||
-    status === "unknown"
-  ) {
-    return true;
-  }
-
-  if (status === "due") {
-    if (!rule?.nextDueDate) return true;
-    const dueDate = new Date(rule.nextDueDate);
-    if (Number.isNaN(dueDate.getTime())) return false;
-    return dueDate <= now;
-  }
-
-  return false;
+export function isRuleActionableForQueue(rule) {
+  return ["due", "failed", "overdue", "due_soon", "unknown"].includes(
+    String(rule?.status || "").toLowerCase()
+  );
 }
 
 export function getActionableQueueRules(rules = [], now = new Date()) {
@@ -623,36 +607,10 @@ function getLatestSatisfyingHistoryEntry(historyMap, ruleCode) {
     })[0] || null;
 }
 
-function isRuleSatisfiedByHistory(rule, historyMap) {
-  const latest = getLatestSatisfyingHistoryEntry(historyMap, rule?.ruleCode);
-  if (!latest) return false;
-
-  const performedRaw =
-    latest?.performedAt ||
-    latest?.performed_at ||
-    latest?.createdAt ||
-    latest?.created_at;
-  const performedAt = performedRaw ? new Date(performedRaw) : null;
-  const nextDueDate = rule?.nextDueDate ? new Date(rule.nextDueDate) : null;
-
-  if (
-    performedAt &&
-    !Number.isNaN(performedAt.getTime()) &&
-    nextDueDate &&
-    !Number.isNaN(nextDueDate.getTime()) &&
-    performedAt >= nextDueDate
-  ) {
-    return true;
-  }
-
-  const odometer = Number(latest?.odometerMiles ?? latest?.odometer_miles);
-  const nextDueMiles = Number(rule?.nextDueMiles);
-
-  return (
-    Number.isFinite(odometer) &&
-    Number.isFinite(nextDueMiles) &&
-    odometer >= nextDueMiles
-  );
+function isRuleSatisfiedByHistory(rule) {
+  // Current rule evaluation accounts for recurrence. Old passes cannot hide
+  // a new due item, and missing mileage thresholds must not become zero.
+  return String(rule?.status || "").toLowerCase() === "ok";
 }
 
 export function isTaskSatisfiedByRule(task, summary) {
@@ -673,6 +631,8 @@ export function isTaskSatisfiedByRule(task, summary) {
     if (ruleStatus === "ok") {
       return true;
     }
+
+    if (isRuleActionableForQueue(rule)) return false;
 
     // For projection / due-risk tasks, if the rule is currently OK, the task is satisfied.
     if (
