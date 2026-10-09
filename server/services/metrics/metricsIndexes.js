@@ -6,6 +6,12 @@ async function ensureMetricsIndexes(client = pool) {
   if (!ensureMetricsIndexesPromise) {
     ensureMetricsIndexesPromise = (async () => {
       await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_vts_dimo_status_latest
+        ON public.vehicle_telemetry_snapshots (dimo_token_id, captured_at DESC, id DESC)
+        WHERE service_name = 'dimo'
+      `);
+
+      await client.query(`
         CREATE INDEX IF NOT EXISTS idx_vts_battery_lower_vin_latest
         ON public.vehicle_telemetry_snapshots (
           lower(vin),

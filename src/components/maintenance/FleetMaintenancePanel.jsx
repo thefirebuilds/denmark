@@ -34,7 +34,7 @@ import {
   getEarliestAvailableLabel,
   getNextUpcomingTrip,
 } from "../../utils/maintUtils";
-import { notifyMaintenanceTasksUpdated } from "../../utils/maintenanceEvents";
+import { MAINTENANCE_TASKS_UPDATED_EVENT, notifyMaintenanceTasksUpdated } from "../../utils/maintenanceEvents";
 
 function pickFirstFilled(...values) {
   for (const value of values) {
@@ -1099,6 +1099,13 @@ export default function FleetMaintenancePanel({
   const preflightRef = useRef(null);
 
   const [vehicleTrips, setVehicleTrips] = useState([]);
+  const [maintenanceRevision, setMaintenanceRevision] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setMaintenanceRevision((value) => value + 1);
+    window.addEventListener(MAINTENANCE_TASKS_UPDATED_EVENT, refresh);
+    return () => window.removeEventListener(MAINTENANCE_TASKS_UPDATED_EVENT, refresh);
+  }, []);
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [savingInspection, setSavingInspection] = useState(false);
@@ -1440,7 +1447,7 @@ export default function FleetMaintenancePanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedFleetVehicle?.vin, selectedVehicleId]);
+  }, [selectedFleetVehicle?.vin, selectedVehicleId, maintenanceRevision]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1548,7 +1555,7 @@ export default function FleetMaintenancePanel({
     return () => {
       cancelled = true;
     };
-  }, [isFleetPlanningMode]);
+  }, [isFleetPlanningMode, maintenanceRevision]);
 
   useEffect(() => {
     let cancelled = false;

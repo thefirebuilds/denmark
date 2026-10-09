@@ -1020,6 +1020,10 @@ export default function MaintenanceQueuePanel({
       }
 
       await saveRes.json();
+      notifyMaintenanceTasksUpdated({
+        vin: targetVin,
+        source: "maintenance_queue_inspection",
+      });
 
       if (selectedFleetVehicle?.vin && targetVin === selectedFleetVehicle.vin) {
         await loadSummaryForSelectedVehicle(selectedFleetVehicle.vin);
@@ -1031,7 +1035,9 @@ export default function MaintenanceQueuePanel({
         );
       }
 
-      handleCloseInspectionDrawer();
+      setInspectionDrawerOpen(false);
+      setSelectedInspectionItem(null);
+      setDrawerVehicle(null);
     } catch (err) {
       console.error("Failed to save inspection item from queue:", err);
       window.alert(err.message || "Could not save inspection item.");

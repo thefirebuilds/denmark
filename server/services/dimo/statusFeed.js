@@ -165,8 +165,19 @@ async function loadDimoStatusFeed() {
   }
 
   const sql = `
-    WITH latest AS (
-      SELECT DISTINCT ON (dimo_token_id)
+    WITH latest_snapshots AS MATERIALIZED (
+      SELECT snapshot.*
+      FROM (SELECT DISTINCT unnest($1::bigint[]) AS token_id) fleet
+      CROSS JOIN LATERAL (
+        SELECT s.*
+        FROM vehicle_telemetry_snapshots s
+        WHERE s.service_name = 'dimo'
+          AND s.dimo_token_id = fleet.token_id
+        ORDER BY s.captured_at DESC, s.id DESC
+        LIMIT 1
+      ) snapshot
+    ), latest AS (
+      SELECT
         id,
         service_name,
         vin,
@@ -210,7 +221,7 @@ async function loadDimoStatusFeed() {
         runtime_minutes,
         def_level,
         first_seen.diagnostic_first_reported_at
-      FROM vehicle_telemetry_snapshots s
+      FROM latest_snapshots s
       LEFT JOIN vehicle_telemetry_raw_payloads raw
         ON raw.snapshot_id = s.id
       LEFT JOIN LATERAL (
@@ -228,10 +239,6 @@ async function loadDimoStatusFeed() {
             )
           )
       ) first_seen ON true
-      WHERE s.service_name = 'dimo'
-        AND s.dimo_token_id IS NOT NULL
-        AND s.dimo_token_id = ANY($1::bigint[])
-      ORDER BY dimo_token_id, captured_at DESC
     ),
     engine_temp AS (
       SELECT

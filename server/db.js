@@ -127,7 +127,7 @@ function wrapConnectedClient(client, stack) {
 
   const finishClient = startClientTracking(stack);
   const originalRelease = client.release.bind(client);
-  const originalQuery = client.query.bind(client);
+  const originalQuery = client.query;
   let released = false;
 
   client.query = wrapQueryFunction(originalQuery, "client.query");
@@ -135,12 +135,17 @@ function wrapConnectedClient(client, stack) {
     if (!released) {
       released = true;
       finishClient();
+      // A pooled client is reused by both pool.query and later checkouts.
+      // Keep instrumentation scoped to this checkout, not its lifetime.
+      client.query = originalQuery;
+      delete client.__denmarkTrackedClient;
     }
     return originalRelease(...args);
   };
   Object.defineProperty(client, "__denmarkTrackedClient", {
     value: true,
     enumerable: false,
+    configurable: true,
   });
 
   return client;
