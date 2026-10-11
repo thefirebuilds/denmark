@@ -4545,14 +4545,6 @@ router.get("/", async (req, res) => {
       LIMIT 1
     `;
 
-    const dailyBriefSql = `
-      SELECT value, updated_at
-      FROM app_settings
-      WHERE key = 'ai.dailyBrief.latest'
-        AND COALESCE(NULLIF(value->>'brief', ''), '') <> ''
-        AND updated_at >= NOW() - INTERVAL '36 hours'
-      LIMIT 1
-    `;
 
     const bridgeSettings = await getBridgeAlertSettings();
     const androidBridgeEnabled = bridgeSettings.enabled !== false;
@@ -4668,9 +4660,7 @@ router.get("/", async (req, res) => {
           "googleCalendarReconnect",
           () => db.query(googleCalendarReconnectSql)
         );
-    const dailyBriefResult = fast
-      ? EMPTY_QUERY_RESULT
-      : getCachedFleetAlertQuery("dailyBrief", () => db.query(dailyBriefSql));
+
 
     messagesResult.rows.forEach((row) => {
       row.pickup_location = extractPickupLocationFromNoticeText(
@@ -4766,7 +4756,6 @@ router.get("/", async (req, res) => {
 
     const queueItems = compactTripChangedNotices(
       compactGuestMessageThreads([
-        ...dailyBriefResult.rows.map(mapDailyBriefNoticeRow),
         ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
         ...attachedHandoffNotices,
         ...attachedInspectionExportNotices,

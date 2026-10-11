@@ -3,6 +3,7 @@
 //----------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import FleetTrendChart from "./metrics/FleetTrendChart";
 import ExpenseModal from "./expenses/ExpenseModal";
 import MetricCard from "./metrics/MetricCard";
 import OffTripMilesDrawer from "./metrics/OffTripMilesDrawer";
@@ -165,140 +166,25 @@ function getInclusiveDateDays(startDate, endDate) {
   return Math.max(1, Math.floor((last.getTime() - first.getTime()) / 86400000) + 1);
 }
 
-function buildSparklinePath(points, key, width, height, maxValue) {
-  if (!Array.isArray(points) || points.length === 0) return "";
-
-  const safeMax = Math.max(Number(maxValue || 0), 1);
-  const lastIndex = Math.max(points.length - 1, 1);
-
-  return points
-    .map((point, index) => {
-      const x = (index / lastIndex) * width;
-      const raw = Number(point?.[key] ?? 0);
-      const y = height - (Math.max(raw, 0) / safeMax) * height;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
-}
-
 function RevenueExpenseSparkline({ trends, summary }) {
   const points = Array.isArray(trends?.points) ? trends.points : [];
-
-  if (!points.length) {
-    return null;
-  }
-
-  const width = 960;
-  const height = 118;
-  const padding = 10;
-  const chartWidth = width - padding * 2;
-  const chartHeight = height - padding * 2;
-  const maxValue = points.reduce(
-    (max, point) =>
-      Math.max(max, Number(point.revenue ?? 0), Number(point.expenses ?? 0)),
-    0
-  );
-  const revenuePath = buildSparklinePath(points, "revenue", chartWidth, chartHeight, maxValue);
-  const expensePath = buildSparklinePath(points, "expenses", chartWidth, chartHeight, maxValue);
-  const latest = points[points.length - 1] || {};
-  const firstLabel = formatShortDate(points[0]?.label);
-  const lastLabel = formatShortDate(latest.label);
-
-  return (
-    <section className="metrics-trend-strip">
-      <div className="metrics-trend-strip__header">
-        <div>
-          <div className="metrics-section-title">Daily Flow</div>
-          <div className="metrics-section-subtitle">
-            Revenue and expenses across this range
-          </div>
-        </div>
-        <div className="metrics-trend-strip__legend">
-          <span className="metrics-trend-strip__legend-item revenue">
-            Revenue {formatCurrencyCompact(summary?.revenue)}
-          </span>
-          <span className="metrics-trend-strip__legend-item expense">
-            Expenses {formatCurrencyCompact(summary?.expenses)}
-          </span>
-        </div>
-      </div>
-
-      <div className="metrics-trend-strip__chart" aria-label="Daily revenue and expense line graph">
-        <svg viewBox={`0 0 ${width} ${height}`} role="img">
-          <defs>
-            <linearGradient id="metricsRevenueGlow" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="0%" stopColor="#54f0b0" stopOpacity="0.4" />
-              <stop offset="100%" stopColor="#7dd3fc" stopOpacity="0.95" />
-            </linearGradient>
-            <linearGradient id="metricsExpenseGlow" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.45" />
-              <stop offset="100%" stopColor="#fb7185" stopOpacity="0.95" />
-            </linearGradient>
-          </defs>
-          <g transform={`translate(${padding} ${padding})`}>
-            <line
-              x1="0"
-              x2={chartWidth}
-              y1={chartHeight}
-              y2={chartHeight}
-              className="metrics-trend-strip__baseline"
-            />
-            <path className="metrics-trend-strip__path expense" d={expensePath} />
-            <path className="metrics-trend-strip__path revenue" d={revenuePath} />
-          </g>
-        </svg>
-        <div className="metrics-trend-strip__axis">
-          <span>{firstLabel}</span>
-          <span>
-            Latest: {formatCurrencyCompact(latest.revenue)} rev /{" "}
-            {formatCurrencyCompact(latest.expenses)} exp
-          </span>
-          <span>{lastLabel}</span>
-        </div>
-      </div>
-    </section>
-  );
+  if (!points.length) return null;
+  return <FleetTrendChart title="Daily Flow" subtitle="Revenue and expenses across this range" points={points}
+    definition="Daily revenue and expenses for the selected reporting range. Straight lines connect recorded values; no smoothing is applied."
+    series={[
+      { key: 'revenue', label: 'Revenue', color: '#86deca', format: formatCurrencyCompact },
+      { key: 'expenses', label: 'Expenses', color: '#bfb0ee', format: formatCurrencyCompact },
+    ]}
+    footer={`Period total: ${formatCurrencyCompact(summary?.revenue)} revenue ? ${formatCurrencyCompact(summary?.expenses)} expenses`} />;
 }
 
 function OccupancyChart({ trends }) {
-  const points = trends?.occupancy?.points || [];
-  const [selectedIndex, setSelectedIndex] = useState(null);
-  const selected = points[selectedIndex] || points[points.length - 1];
-  const width = 900, height = 160, left = 42, top = 12;
-  const x = index => left + index / Math.max(points.length - 1, 1) * (width - left - 12);
-  const y = rate => top + (1 - Number(rate)) * (height - top - 20);
-  let connected = false;
-  const path = points.map((point, index) => {
-    if (point.occupancy_rate == null) { connected = false; return ''; }
-    const command = connected ? 'L' : 'M'; connected = true;
-    return `${command} ${x(index)} ${y(point.occupancy_rate)}`;
-  }).join(' ');
-  return <section className="metrics-trend-strip">
-    <div className="metrics-trend-strip__header">
-      <div>
-        <div className="metrics-section-title">Fleet Occupancy</div>
-        <div className="metrics-section-subtitle">{trends?.occupancy?.granularity === 'month' ? 'Monthly' : 'Daily'} booked vehicle-days / available vehicle-days</div>
-      </div>
-      {selected && <span>{formatShortDate(selected.label)}: {selected.occupancy_rate == null ? 'No available vehicles' : formatPercent(selected.occupancy_rate, 1)}</span>}
-    </div>
-    {!points.length ? <p>No occupancy data for this range.</p> : <>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Fleet occupancy over time, zero to one hundred percent" style={{ width: '100%' }}>
-        {[0, .5, 1].map(rate => <g key={rate}>
-          <text x="0" y={y(rate) + 4} fill="currentColor" fontSize="11">{rate * 100}%</text>
-          <line x1={left} x2={width} y1={y(rate)} y2={y(rate)} stroke="currentColor" opacity="0.15" />
-        </g>)}
-        <path d={path} fill="none" stroke="#7dd3fc" strokeWidth="2.5" />
-        {points.map((point, index) => point.occupancy_rate == null ? null : <circle key={point.label}
-          cx={x(index)} cy={y(point.occupancy_rate)} r={selectedIndex === index ? 5 : 3} fill="#7dd3fc"
-          tabIndex={0} onFocus={() => setSelectedIndex(index)} onMouseEnter={() => setSelectedIndex(index)}
-          aria-label={`${point.label}: ${formatPercent(point.occupancy_rate, 1)}, ${point.booked_vehicle_days} of ${point.available_vehicle_days} vehicle-days`}>
-          <title>{point.label}: {formatPercent(point.occupancy_rate, 1)} — {point.booked_vehicle_days} / {point.available_vehicle_days} vehicle-days</title>
-        </circle>)}
-      </svg>
-      <div className="metrics-trend-strip__axis"><span>{formatShortDate(points[0].label)}</span><span>{formatShortDate(points.at(-1).label)}</span></div>
-      <small>{trends.occupancy.basis}</small>
-    </>}
-  </section>;
+  return <FleetTrendChart title="Fleet Occupancy" subtitle={`${trends?.occupancy?.granularity === 'month' ? 'Monthly' : 'Daily'} fleet utilization`}
+    points={trends?.occupancy?.points || []} fixedMax={1} monthly={trends?.occupancy?.granularity === 'month'}
+    definition={trends?.occupancy?.basis || 'Booked vehicle-days divided by available vehicle-days for the selected reporting range.'}
+    series={[{ key: 'occupancy_rate', label: 'Occupancy', color: '#86deca', format: v => formatPercent(v, 1) }]}
+    detail={p => p.booked_vehicle_days != null && p.available_vehicle_days != null ? `${formatNumber(p.booked_vehicle_days)} booked / ${formatNumber(p.available_vehicle_days)} available vehicle-days` : ''}
+    footer="Booked / available vehicle-days" />;
 }
 
 function MonthlyProfitLossChart({ trends }) {

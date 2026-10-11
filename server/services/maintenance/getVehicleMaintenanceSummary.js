@@ -192,13 +192,12 @@ async function getBatteryVoltageHealth(client, vin) {
     if (
       !needsInspection &&
       lowerNorm != null &&
-      upperNorm != null &&
-      (currentVoltage < lowerNorm || currentVoltage > upperNorm)
+      currentVoltage < lowerNorm
     ) {
       tone = "attention";
-      status = "Current voltage is outside 30-day norm";
+      status = `Current voltage is below 30-day norm floor (${lowerNorm.toFixed(2)}v)`;
       needsInspection = true;
-      inspectionReason = "outside_30_day_norm";
+      inspectionReason = "below_30_day_norm";
     }
   }
 

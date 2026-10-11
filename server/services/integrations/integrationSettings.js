@@ -11,7 +11,6 @@ const DEFAULT_INTEGRATION_ENABLEMENT = Object.freeze({
   googleCalendar: true,
   fmv: true,
   businessMetrics: true,
-  dailyBrief: true,
   publicAvailability: true,
 });
 

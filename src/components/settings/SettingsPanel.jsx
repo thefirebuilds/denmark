@@ -3918,7 +3918,7 @@ function AiPromptSettingsPanel() {
       <div className="panel-header">
         <div>
           <h2>AI Prompts</h2>
-          <span>daily brief, purchase review, and fleet valuation</span>
+          <span>purchase review and fleet valuation</span>
         </div>
       </div>
 
@@ -3927,43 +3927,6 @@ function AiPromptSettingsPanel() {
           <div className="settings-empty-state">Loading AI prompts...</div>
         ) : (
           <>
-            <div className="settings-group">
-              <div className="settings-group-title">Daily briefing</div>
-              <div className="settings-form-grid">
-                <label className="settings-field">
-                  <span>Version</span>
-                  <input
-                    value={form.dailyBrief.version}
-                    onChange={(event) =>
-                      updatePrompt("dailyBrief", "version", event.target.value)
-                    }
-                  />
-                </label>
-                <label className="settings-field settings-field-wide">
-                  <span>System prompt</span>
-                  <textarea
-                    className="settings-textarea"
-                    rows={4}
-                    value={form.dailyBrief.systemPrompt}
-                    onChange={(event) =>
-                      updatePrompt("dailyBrief", "systemPrompt", event.target.value)
-                    }
-                  />
-                </label>
-                <label className="settings-field settings-field-wide">
-                  <span>Brief instructions</span>
-                  <textarea
-                    className="settings-textarea"
-                    rows={14}
-                    value={form.dailyBrief.instructionsText}
-                    onChange={(event) =>
-                      updatePrompt("dailyBrief", "instructionsText", event.target.value)
-                    }
-                  />
-                </label>
-              </div>
-            </div>
-
             <div className="settings-group">
               <div className="settings-group-title">Vehicle purchase review</div>
               <div className="settings-form-grid">
@@ -6677,7 +6640,7 @@ function SettingsHelpPanel({ activeSection }) {
       return {
         title: "Prompt control",
         body:
-          "These prompts are stored in app settings and are read by the daily briefing, AI vehicle purchase review, and weekly fleet valuation jobs when they run.",
+          "These prompts are stored in app settings and are read by the AI vehicle purchase review and weekly fleet valuation jobs when they run.",
       };
     }
 

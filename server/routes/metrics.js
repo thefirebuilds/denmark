@@ -29,11 +29,7 @@ const {
 const {
   getHomeParkingTransfers,
 } = require("../services/metrics/parkingTransferService");
-const {
-  collectDailyBriefContext,
-  generateAndSaveDailyBrief,
-  getLatestDailyBrief,
-} = require("../services/dailyBriefService");
+
 
 const router = express.Router();
 const METRICS_MAX_CONCURRENT = Number(process.env.METRICS_MAX_CONCURRENT || 1);
@@ -209,43 +205,10 @@ router.get("/parking/home-transfers", limitMetricRead(async (req, res) => {
   }
 }));
 
-router.get("/daily-brief/context", limitMetricRead(async (req, res) => {
-  try {
-    const data = await collectDailyBriefContext({
-      date: req.query.date,
-      timeZone: req.query.timeZone,
-    });
-    return res.json(data);
-  } catch (err) {
-    console.error("GET /api/metrics/daily-brief/context failed:", err);
-    return res.status(500).json({ error: "Failed to load daily brief context" });
-  }
-}));
-
-router.get("/daily-brief/latest", async (req, res) => {
-  try {
-    const data = await getLatestDailyBrief();
-    return res.json({ latest: data });
-  } catch (err) {
-    console.error("GET /api/metrics/daily-brief/latest failed:", err);
-    return res.status(500).json({ error: "Failed to load latest daily brief" });
-  }
+// Retired: never generate AI briefings, including from stale clients.
+router.all(['/daily-brief', '/daily-brief/context', '/daily-brief/latest'], (req, res) => {
+  res.status(410).json({ error: 'Daily business briefings have been retired.' });
 });
-
-router.post("/daily-brief", limitMetricRead(async (req, res) => {
-  try {
-    const data = await generateAndSaveDailyBrief({
-      date: req.body?.date,
-      timeZone: req.body?.timeZone,
-    });
-    return res.json(data);
-  } catch (err) {
-    console.error("POST /api/metrics/daily-brief failed:", err);
-    return res.status(err.statusCode || 500).json({
-      error: err.statusCode === 503 ? err.message : "Failed to generate daily brief",
-    });
-  }
-}));
 
 router.put("/tolls/charges/:tollChargeId/assign-trip", async (req, res) => {
   const tollChargeId = Number(req.params.tollChargeId);

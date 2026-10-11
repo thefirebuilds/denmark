@@ -1,0 +1,31 @@
+.fleet-trend { min-width:0; padding:24px; border:1px solid #849bc51f; border-radius:20px; background:linear-gradient(145deg,#132139,#0e192c); color:#e5edf8; }
+.fleet-trend__header { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:22px; }
+.fleet-trend__title-row { display:flex; align-items:center; gap:9px; }
+.fleet-trend h3 { font-size:16px; font-weight:650; margin:0; letter-spacing:-.02em; }
+.fleet-trend p { margin:6px 0 0; color:#a7b6cd; font-size:12px; line-height:1.6; }
+.fleet-trend__info-button { border:1px solid #899bbc55; background:transparent; border-radius:50%; color:#b6c5de; width:24px; height:24px; cursor:pointer; }
+.fleet-trend__latest { text-align:right; flex-shrink:0; }
+.fleet-trend__latest>span { color:#a7b6cd; font-size:11px; }
+.fleet-trend__latest>div { display:flex; gap:16px; margin-top:5px; }
+.fleet-trend__latest strong { font-size:23px; font-weight:600; }
+.fleet-trend__latest small { font-size:11px; font-weight:400; }
+.fleet-trend__info { border:1px solid #baacf83b; background:#1c2941; padding:12px 16px; border-radius:12px; margin-bottom:16px; }
+.fleet-trend__info button { background:transparent; border:0; color:#cec3ff; cursor:pointer; padding:8px 0; }
+.fleet-trend__plot { position:relative; border-radius:8px; outline-offset:5px; }
+.fleet-trend__plot svg { width:100%; display:block; overflow:visible; }
+.fleet-trend__plot text { fill:#a7b6cd; font-size:10px; font-family:inherit; }
+.fleet-trend__grid { stroke:#a4bad31c; stroke-width:1; }
+.fleet-trend__cursor { stroke:#c4d7ef55; stroke-dasharray:3 4; }
+.fleet-trend__tooltip { box-sizing:border-box; position:absolute; top:0; width:240px; max-width:100%; pointer-events:none; padding:12px 14px; background:#1b2942f5; border:1px solid #8bacc544; border-radius:12px; box-shadow:0 8px 28px #0004; font-size:12px; }
+.fleet-trend__tooltip>span { color:#dbe5f6; display:block; margin-bottom:8px; }
+.fleet-trend__tooltip strong { display:flex; justify-content:space-between; gap:12px; font-weight:400; margin:4px 0; }
+.fleet-trend__tooltip small { display:block; color:#b6c4db; margin-top:8px; line-height:1.5; }
+.fleet-trend__footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; color:#a7b6cd; font-size:10px; margin-top:12px; }
+.fleet-trend :focus-visible { outline:2px solid #bfb0ee; outline-offset:4px; }
+.fleet-trend__sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+@media(max-width:600px) { .fleet-trend { padding:18px 14px; border-radius:16px; } .fleet-trend__header { flex-direction:column; gap:14px; } .fleet-trend__latest { text-align:left; } .fleet-trend__latest strong { font-size:21px; } }
+.fleet-trend { position:relative; }
+.fleet-trend__info { position:absolute; z-index:5; top:62px; left:24px; right:24px; box-shadow:0 12px 32px #0005; }
+@media(max-width:600px) { .fleet-trend__info { left:14px; right:14px; } }
+.fleet-trend__average-toggle { display:flex; align-items:center; gap:8px; color:#c6b7f4; font-size:12px; margin:0 0 14px; cursor:pointer; }
+.fleet-trend__average-toggle input { accent-color:#bfb0ee; width:16px; height:16px; }
