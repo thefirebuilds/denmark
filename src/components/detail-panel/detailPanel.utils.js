@@ -116,7 +116,7 @@ export function getNextWorkflowStage(trip) {
     "confirmed",
     "ready_for_handoff",
     "in_progress",
-    "turnaround",
+    "check_in",
     "awaiting_expenses",
     "complete",
     "canceled",

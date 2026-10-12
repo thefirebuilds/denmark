@@ -96,8 +96,7 @@ function createAlertRepository(db = pool) {
             workflow_stage = 'booked'
             OR (
               COALESCE(workflow_stage, '') NOT IN (
-                'confirmed','ready_for_handoff','in_progress','turnaround',
-                'awaiting_expenses','complete','closed','canceled'
+                'confirmed','ready_for_handoff','in_progress','check_in','awaiting_expenses','complete','closed','canceled'
               )
               AND (
                 needs_review = TRUE

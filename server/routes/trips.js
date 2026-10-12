@@ -43,7 +43,8 @@ function isOverdueTrip(trip) {
   const end = trip?.trip_end ? new Date(trip.trip_end) : null;
 
   if (
-    stage === "turnaround" ||
+    stage === "check_in" ||
+    stage === "check_in" ||
     stage === "awaiting_expenses" ||
     stage === "complete" ||
     stage === "closed" ||
@@ -251,7 +252,7 @@ function computeQueueBucket(trip) {
     "confirmed",
     "ready_for_handoff",
     "in_progress",
-    "turnaround",
+    "check_in",
     "awaiting_expenses",
     "complete",
     "closed",
@@ -289,7 +290,7 @@ function computeQueueBucket(trip) {
     return "needs_closeout";
   }
 
-  if (workflowStage === "turnaround") {
+  if (workflowStage === "check_in") {
     return "needs_closeout";
   }
 
@@ -372,7 +373,7 @@ function isActionableBookingMessage(item) {
     "confirmed",
     "ready_for_handoff",
     "in_progress",
-    "turnaround",
+    "check_in",
     "awaiting_expenses",
     "complete",
     "closed",
@@ -1536,7 +1537,7 @@ router.get("/:id/messages", async (req, res) => {
                   'confirmed',
                   'ready_for_handoff',
                   'in_progress',
-                  'turnaround',
+                  'check_in',
                   'awaiting_expenses',
                   'complete',
                   'closed',

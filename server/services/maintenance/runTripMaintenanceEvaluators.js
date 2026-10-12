@@ -10,7 +10,7 @@ function isUpcomingTripStatus(trip) {
   if (
     [
       "in_progress",
-      "turnaround",
+      "check_in",
       "awaiting_expenses",
       "complete",
       "closed",

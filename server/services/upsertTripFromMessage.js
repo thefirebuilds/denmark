@@ -191,19 +191,11 @@ async function upsertTripFromMessage(savedMessage) {
     if (
       existingTrip?.id &&
       savedMessage.message_type === "trip_rated" &&
-      ["in_progress", "turnaround"].includes(existingTrip.workflow_stage)
+      ["in_progress", "check_in"].includes(existingTrip.workflow_stage)
     ) {
       const reason = "Turo rating confirms the guest completed the trip";
 
-      if (existingTrip.workflow_stage === "in_progress") {
-        existingTrip = await transitionTripStage(existingTrip.id, "turnaround", {
-          changedBy: "system:trip-rated-message",
-          reason,
-          changedAt: savedMessage.message_timestamp || savedMessage.created_at,
-        });
-      }
-
-      existingTrip = await transitionTripStage(existingTrip.id, "awaiting_expenses", {
+      existingTrip = await transitionTripStage(existingTrip.id, "check_in", {
         changedBy: "system:trip-rated-message",
         reason,
         changedAt: savedMessage.message_timestamp || savedMessage.created_at,
@@ -335,7 +327,7 @@ async function upsertTripFromMessage(savedMessage) {
             'confirmed',
             'ready_for_handoff',
             'in_progress',
-            'turnaround',
+            'check_in',
             'awaiting_expenses',
             'complete',
             'closed'
@@ -356,7 +348,7 @@ async function upsertTripFromMessage(savedMessage) {
             'confirmed',
             'ready_for_handoff',
             'in_progress',
-            'turnaround',
+            'check_in',
             'awaiting_expenses',
             'complete',
             'closed'

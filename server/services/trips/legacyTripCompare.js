@@ -312,7 +312,7 @@ function getStagePriority(trip) {
       return 5;
     case "awaiting_expenses":
       return 4;
-    case "turnaround":
+    case "check_in":
       return 3;
     case "in_progress":
       return 2;

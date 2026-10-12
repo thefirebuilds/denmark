@@ -20,7 +20,7 @@ async function handleTripStageEntry(client, trip, previousStage = null) {
   // Only run automation for the lifecycle entry points we care about right now.
   if (
     trip.workflow_stage !== "confirmed" &&
-    trip.workflow_stage !== "turnaround"
+    trip.workflow_stage !== "check_in"
   ) {
     return {
       skipped: true,
@@ -60,7 +60,7 @@ async function handleTripStageEntry(client, trip, previousStage = null) {
     });
   }
 
-  if (trip.workflow_stage === "turnaround") {
+  if (trip.workflow_stage === "check_in") {
     results.postTrip = await evaluatePostTripMaintenance(client, {
       vehicle,
       trip,

@@ -388,7 +388,7 @@ async function reconcileTripReturnAtCurrentLocation(row, locations, primaryParki
   if (!match) return { returned: false, reason: "outside_return_geofence" };
 
   const observation = await recordTripReturnObservation(row, match);
-  await transitionTripStage(row.id, "turnaround", {
+  await transitionTripStage(row.id, "check_in", {
     changedBy: "system:return-geo-location",
     changedAt: observation.returned_at,
     force: String(row.workflow_stage || "").toLowerCase() !== "in_progress",
@@ -1341,7 +1341,7 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       t.guest_name,
       t.trip_start,
       t.trip_end,
-      COALESCE(NULLIF(t.return_location,''),NULLIF(t.pickup_location,'')) AS return_location,
+      COALESCE(NULLIF(t.pickup_location,''),NULLIF(t.return_location,'')) AS return_location,
       latest.service_name,
       latest.latitude,
       latest.longitude,

@@ -11,6 +11,7 @@ export function isVehicleCurrentlyBooked(trip, now = Date.now()) {
   if (
     isCanceledTrip(trip) ||
     isClosedTrip(trip) ||
+    stage === "check_in" ||
     stage === "awaiting_expenses" ||
     stage === "returned"
   ) {
@@ -270,7 +271,8 @@ export function isOverdueTrip(trip) {
   const status = String(trip?.display_status || "").toLowerCase();
 
   if (
-    stage === "turnaround" ||
+    stage === "check_in" ||
+    stage === "check_in" ||
     stage === "awaiting_expenses"
   ) {
     return false;
@@ -396,6 +398,7 @@ function isTomorrowLocalDay(target, now = Date.now()) {
 }
 
 export function deriveStatusLabel(trip) {
+  if (trip?.workflow_stage === "check_in" && !isClosedTrip(trip) && !isCanceledTrip(trip)) return "Check In";
   const now = Date.now();
   const startMs = getTripStartMs(trip);
   const endMs = getTripEndMs(trip);
@@ -411,6 +414,7 @@ export function deriveStatusLabel(trip) {
   const isReadyForCustomer = stage === "ready_for_handoff" || inProgress;
 
   const needsCloseout =
+    stage === "check_in" ||
     stage === "awaiting_expenses" ||
     (tripEnded && expenseStatus === "pending") ||
     (tripEnded && expenseStatus === "needs_review") ||
@@ -452,6 +456,7 @@ export function deriveStatusLabel(trip) {
 }
 
 export function deriveMeta4(trip) {
+  if (trip?.workflow_stage === "check_in" && !isClosedTrip(trip) && !isCanceledTrip(trip)) return { label: "Next step", value: "Check in vehicle" };
   const now = Date.now();
   const startMs = getTripStartMs(trip);
   const endMs = getTripEndMs(trip);
@@ -515,7 +520,7 @@ export function deriveMeta4(trip) {
       };
     }
 
-    if (stage === "turnaround") {
+    if (stage === "check_in") {
       return {
         label: "Next step",
         value: "Turn around vehicle",
@@ -524,6 +529,7 @@ export function deriveMeta4(trip) {
   }
 
   if (
+    stage === "check_in" ||
     stage === "awaiting_expenses" ||
     (tripEnded && expenseStatus === "pending") ||
     (tripEnded && expenseStatus === "needs_review")
@@ -674,6 +680,7 @@ export function deriveOperationalUrgency(trip, previousTrip, nextTrip) {
     turnGapToNext <= 72;
 
   const needsCloseout =
+    stage === "check_in" ||
     stage === "awaiting_expenses" ||
     (tripEnded && expenseStatus === "pending") ||
     (tripEnded && expenseStatus === "needs_review") ||

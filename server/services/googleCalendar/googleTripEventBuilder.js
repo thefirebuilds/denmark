@@ -259,7 +259,7 @@ function shouldKeepPickupNotice(trip) {
     "ready_for_handoff",
     "ready_for_guest",
     "in_progress",
-    "turnaround",
+    "check_in",
     "awaiting_expenses",
     "waiting expenses",
     "complete",
@@ -268,7 +268,7 @@ function shouldKeepPickupNotice(trip) {
 
 function shouldKeepReturnNotice(trip) {
   const stage = getNormalizedStage(trip);
-  return !["awaiting_expenses", "waiting expenses", "complete"].includes(stage);
+  return !["check_in", "awaiting_expenses", "waiting expenses", "complete"].includes(stage);
 }
 
 function getDesiredGoogleEventsForTrip(trip) {

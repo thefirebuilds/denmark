@@ -145,7 +145,7 @@ async function evaluatePostTripMaintenance(client, { vehicle, trip, summary }) {
       "trip",
       trip.id,
       "stage",
-      "turnaround",
+      "check_in",
       "rule",
       rule.ruleId,
       config.taskType,

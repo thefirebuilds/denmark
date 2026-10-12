@@ -18,7 +18,7 @@ const WORKFLOW_STAGES = [
   "confirmed",
   "ready_for_handoff",
   "in_progress",
-  "turnaround",
+  "check_in",
   "awaiting_expenses",
   "complete",
   "canceled",
@@ -28,9 +28,9 @@ const ALLOWED_TRANSITIONS = {
   booked: ["confirmed", "canceled"],
   confirmed: ["booked", "ready_for_handoff", "in_progress", "canceled"],
   ready_for_handoff: ["confirmed", "in_progress", "canceled"],
-  in_progress: ["turnaround", "canceled"],
-  turnaround: ["awaiting_expenses", "complete"],
-  awaiting_expenses: ["turnaround", "complete"],
+  in_progress: ["check_in", "canceled"],
+  check_in: ["awaiting_expenses"],
+  awaiting_expenses: ["check_in", "complete"],
   complete: [],
   canceled: [],
 };
@@ -114,7 +114,7 @@ function runStageEntryAutomation(trip, previousStage = null) {
 }
 
 function shouldSyncTripCalendarAfterStageChange(stage) {
-  return ["ready_for_handoff", "awaiting_expenses", "complete", "canceled"].includes(stage);
+  return ["ready_for_handoff", "check_in", "awaiting_expenses", "complete", "canceled"].includes(stage);
 }
 
 let vehiclesColumnCache = null;
@@ -640,7 +640,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
           'confirmed',
           'ready_for_handoff',
           'in_progress',
-          'turnaround',
+          'check_in',
           'awaiting_expenses',
           'complete',
           'closed'
@@ -656,7 +656,7 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
           'confirmed',
           'ready_for_handoff',
           'in_progress',
-          'turnaround',
+          'check_in',
           'awaiting_expenses',
           'complete',
           'closed'

@@ -48,7 +48,7 @@ function getReturnLocationConfig() {
     (rule) =>
       rule?.enabled !== false &&
       String(rule?.fromStage || "") === "in_progress" &&
-      String(rule?.toStage || "") === "turnaround" &&
+      String(rule?.toStage || "") === "check_in" &&
       Array.isArray(rule?.conditions) &&
       rule.conditions.some((condition) => condition?.type === "location")
   );
@@ -253,15 +253,7 @@ async function autoVerifyReturnedNotificationByGps(event, notificationId) {
     : "Turo returned notification matched to trip";
 
   if (currentStage === "in_progress") {
-    await transitionTripStage(trip.id, "turnaround", {
-      changedBy: "system:return-location-notification",
-      reason,
-      changedAt: eventAt,
-    });
-  }
-
-  if (["in_progress", "turnaround"].includes(currentStage)) {
-    await transitionTripStage(trip.id, "awaiting_expenses", {
+    await transitionTripStage(trip.id, "check_in", {
       changedBy: "system:return-location-notification",
       reason,
       changedAt: eventAt,

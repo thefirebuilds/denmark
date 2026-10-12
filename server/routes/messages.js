@@ -1,3 +1,4 @@
+const { mapCheckInNotice } = require('../services/trips/checkInNotice');
 ﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
@@ -633,7 +634,7 @@ function getReturnLocationConfig() {
     (rule) =>
       rule?.enabled !== false &&
       String(rule?.fromStage || "") === "in_progress" &&
-      String(rule?.toStage || "") === "turnaround" &&
+      String(rule?.toStage || "") === "check_in" &&
       Array.isArray(rule?.conditions) &&
       rule.conditions.some((condition) => condition?.type === "location")
   );
@@ -826,7 +827,7 @@ async function advanceTripAfterReturnNotification(row, location) {
   if (["awaiting_expenses", "complete", "closed", "canceled"].includes(stage)) {
     return null;
   }
-  if (!["in_progress", "turnaround"].includes(stage)) {
+  if (!["in_progress", "check_in"].includes(stage)) {
     return null;
   }
 
@@ -854,14 +855,7 @@ async function advanceTripAfterReturnNotification(row, location) {
     [row.trip_id, row.event_at || new Date(), locationLabel, Number.isFinite(gpsMiles) ? gpsMiles : null]
   );
 
-  if (stage === "in_progress") {
-    await transitionTripStage(row.trip_id, "turnaround", {
-      changedBy: "system:return-notification-auto-closeout",
-      reason,
-    });
-  }
-
-  return transitionTripStage(row.trip_id, "awaiting_expenses", {
+  return transitionTripStage(row.trip_id, "check_in", {
     changedBy: "system:return-notification-auto-closeout",
     reason,
   });
@@ -1121,7 +1115,7 @@ function isActionableBookingMessage(row) {
     "confirmed",
     "ready_for_handoff",
     "in_progress",
-    "turnaround",
+    "check_in",
     "awaiting_expenses",
     "complete",
     "closed",
@@ -1388,6 +1382,7 @@ function compactTripChangedNotices(items) {
 }
 
 function messageQueueRank(item) {
+  if (item.type === "check_in_required") return item.check_in_overdue ? -2 : -1;
   if (
     item.type === "maintenance_required" &&
     Number(item.maintenance_queue_rank) === 0
@@ -2968,7 +2963,7 @@ router.get("/", async (req, res) => {
                   'confirmed',
                   'ready_for_handoff',
                   'in_progress',
-                  'turnaround',
+                  'check_in',
                   'awaiting_expenses',
                   'complete',
                   'closed',
@@ -3009,7 +3004,7 @@ router.get("/", async (req, res) => {
                   'confirmed',
                   'ready_for_handoff',
                   'in_progress',
-                  'turnaround',
+                  'check_in',
                   'awaiting_expenses',
                   'complete',
                   'closed',
@@ -4264,7 +4259,7 @@ router.get("/", async (req, res) => {
           AND COALESCE(t.status, '') <> 'canceled'
           AND (
             t.trip_end <= NOW()
-            OR COALESCE(t.workflow_stage, '') IN ('turnaround', 'awaiting_expenses', 'complete', 'closed')
+            OR COALESCE(t.workflow_stage, '') IN ('check_in', 'awaiting_expenses', 'complete', 'closed')
             OR ne.id IS NOT NULL
           )
         GROUP BY
@@ -4754,9 +4749,16 @@ router.get("/", async (req, res) => {
       );
     }
 
+    const checkInResult = await db.query(`
+      SELECT id, reservation_id, guest_name, vehicle_name, trip_end, workflow_stage,
+             stage_updated_at, status, closed_out
+      FROM trips WHERE workflow_stage = 'check_in' AND deleted_at IS NULL
+        AND COALESCE(closed_out, false) = false AND COALESCE(status, '') <> 'canceled'
+    `);
     const queueItems = compactTripChangedNotices(
       compactGuestMessageThreads([
         ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
+        ...checkInResult.rows.map(row => mapCheckInNotice(row)).filter(Boolean),
         ...attachedHandoffNotices,
         ...attachedInspectionExportNotices,
         ...closeoutResult.rows.map(mapCloseoutNoticeRow),

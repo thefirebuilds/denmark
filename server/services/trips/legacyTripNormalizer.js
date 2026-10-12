@@ -69,7 +69,7 @@ function normalizeLegacyStatus(rawStatus, expenseReportDone) {
   if (status === "active" || status === "in_progress") return "in_progress";
   if (status === "confirmed") return "confirmed";
   if (status === "ready_for_handoff") return "ready_for_handoff";
-  if (status === "turnaround") return "turnaround";
+  if (status === "check_in") return "check_in";
   if (status === "awaiting_expenses") return "awaiting_expenses";
   if (status === "booked") return "booked";
 

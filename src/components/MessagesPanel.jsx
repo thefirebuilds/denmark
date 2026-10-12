@@ -928,6 +928,9 @@ function buildMessageBody(message) {
     }. Export it before sending handoff instructions.`;
   }
 
+  if (type === "check_in_required") {
+    return `Check in this vehicle by ${formatTripTime(message.check_in_deadline)} (24 hours after the official trip end). ${message.check_in_overdue ? 'Check-in is overdue. ' : ''}After checking it in, advance the trip to Awaiting expenses.`;
+  }
   if (type === "closeout_required") {
     const end = formatTripTime(message?.trip_end);
     const reasons = Array.isArray(message?.closeout_reasons)
@@ -1149,6 +1152,7 @@ function formatQueueTimingSummary(debugTiming) {
 }
 
 function buildMessageTitle(message) {
+  if (message?.type === "check_in_required") return message.check_in_overdue ? "Check In overdue" : "Check In required";
   const type = message?.type || message?.message_type;
   if (type === "daily_brief") {
     return "Daily fleet brief";
@@ -1265,7 +1269,7 @@ function isBookingConfirmationTask(message) {
     "confirmed",
     "ready_for_handoff",
     "in_progress",
-    "turnaround",
+    "check_in",
     "awaiting_expenses",
     "complete",
     "closed",
@@ -3572,7 +3576,7 @@ async function handleExportGuestInspectionSheet(message) {
               !canExportInspection &&
               !canShowMaintenance;
             const canFocusTrip =
-              (canAdvanceHandoff ||
+              (message.type === "check_in_required" || canAdvanceHandoff ||
                 canExportInspection ||
                 canCloseoutTrip ||
                 canReviewRefuel ||
@@ -4426,6 +4430,8 @@ async function handleExportGuestInspectionSheet(message) {
                       >
                         {focusingMessageId === message.id
                           ? "Loading..."
+                          : message.type === "check_in_required"
+                          ? "Check in trip"
                           : canCloseoutTrip
                           ? "Close out trip"
                           : canReviewRefuel

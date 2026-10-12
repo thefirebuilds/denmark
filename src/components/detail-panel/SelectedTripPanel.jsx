@@ -44,7 +44,7 @@ function formatStageLabel(value) {
 }
 
 function formatStageActionLabel(value) {
-  if (value === "turnaround") return "Vehicle returned";
+  if (value === "check_in") return "Check In";
   return `Advance to ${value ? formatStageLabel(value) : "Next Stage"}`;
 }
 
@@ -374,7 +374,7 @@ export default function SelectedTripPanel({
   const mapUrl = telemetryPoint
     ? `https://www.openstreetmap.org/export/embed.html?bbox=${telemetryPoint.lon - 0.08}%2C${telemetryPoint.lat - 0.06}%2C${telemetryPoint.lon + 0.08}%2C${telemetryPoint.lat + 0.06}&layer=mapnik&marker=${telemetryPoint.lat}%2C${telemetryPoint.lon}`
     : "";
-  const closeoutStages = new Set(["turnaround", "awaiting_expenses", "complete"]);
+  const closeoutStages = new Set(["check_in", "awaiting_expenses", "complete"]);
   const isCloseoutStage = closeoutStages.has(selectedTrip?.workflow_stage);
   const hasTollExposure =
     Boolean(selectedTrip?.has_tolls) || tollCount > 0 || tollTotal > 0;
@@ -384,7 +384,7 @@ export default function SelectedTripPanel({
 
   const showFuelFields =
     selectedTrip?.workflow_stage === "awaiting_expenses" ||
-    selectedTrip?.workflow_stage === "turnaround" ||
+    selectedTrip?.workflow_stage === "check_in" ||
     selectedTrip?.workflow_stage === "complete";
 
   const tripTitle = `${vehicleLabel} • Trip #${

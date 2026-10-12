@@ -15,7 +15,7 @@ const STAGE_ORDER = [
   "confirmed",
   "ready_for_handoff",
   "in_progress",
-  "turnaround",
+  "check_in",
   "awaiting_expenses",
   "complete",
   "canceled",
@@ -52,7 +52,7 @@ function normalizeTollReviewStatus(value) {
 }
 
 function formatStageActionLabel(value) {
-  if (value === "turnaround") return "Vehicle returned";
+  if (value === "check_in") return "Check In";
   return `Advance to ${value ? formatStageLabel(value) : "Next Stage"}`;
 }
 
@@ -535,7 +535,7 @@ export default function TripEditModal({
   const tollTotal = Number(form.toll_total || 0);
   const tollCount = Number(form.toll_count || 0);
   const hasTollExposure = Boolean(form.has_tolls) || tollTotal > 0 || tollCount > 0;
-  const closeoutStages = new Set(["turnaround", "awaiting_expenses", "complete"]);
+  const closeoutStages = new Set(["check_in", "awaiting_expenses", "complete"]);
   const showTollFields =
     hasTollExposure || closeoutStages.has(trip.workflow_stage) || tripHasEnded(trip);
 
@@ -800,7 +800,7 @@ export default function TripEditModal({
           ) : null}
 
           {trip?.workflow_stage === "awaiting_expenses" ||
-          trip?.workflow_stage === "turnaround" ||
+          trip?.workflow_stage === "check_in" ||
           trip?.workflow_stage === "complete" ? (
             <>
               <label>

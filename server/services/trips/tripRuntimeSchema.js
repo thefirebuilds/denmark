@@ -45,6 +45,19 @@ async function ensureTripRuntimeSchema(client = pool) {
           AND t.guest_rating_received = FALSE
       `);
 
+      await client.query(`
+        DO $ BEGIN
+          IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.trips'::regclass
+            AND conname = 'trips_workflow_stage_check'
+            AND pg_get_constraintdef(oid) LIKE '%turnaround%') THEN
+            ALTER TABLE public.trips DROP CONSTRAINT trips_workflow_stage_check;
+            UPDATE public.trips SET workflow_stage = 'check_in' WHERE workflow_stage = 'turnaround';
+            ALTER TABLE public.trips ADD CONSTRAINT trips_workflow_stage_check
+              CHECK (workflow_stage IN ('booked','confirmed','ready_for_handoff','in_progress',
+                'check_in','awaiting_expenses','complete','canceled'));
+          END IF;
+        END $;
+      `);
       await ensureDimoSpeedStoredAsMph(client);
       await normalizeLegacyUnconfirmedTripStatuses(client);
     })().catch((err) => {

@@ -19,7 +19,7 @@ function isTripTollRecovered(trip) {
   if (["complete", "completed", "closed"].includes(workflowStage)) return true;
   if (["billed", "waived"].includes(tollReviewStatus)) return true;
   if (tollTotal > 0 && tollChargedTotal + 0.01 >= tollTotal) return true;
-  if (workflowStage === "turnaround" && tollReviewStatus !== "pending") return true;
+  if (workflowStage === "check_in" && tollReviewStatus !== "pending") return true;
 
   return false;
 }

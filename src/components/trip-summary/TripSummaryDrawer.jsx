@@ -19,7 +19,7 @@ const WORKFLOW_STAGE_OPTIONS = [
   { value: "confirmed", label: "Confirmed" },
   { value: "ready_for_handoff", label: "Ready for Handoff" },
   { value: "in_progress", label: "In Progress" },
-  { value: "turnaround", label: "Turnaround" },
+  { value: "check_in", label: "Check In" },
   { value: "awaiting_expenses", label: "Awaiting Expenses" },
   { value: "complete", label: "Complete" },
   { value: "canceled", label: "Canceled" },

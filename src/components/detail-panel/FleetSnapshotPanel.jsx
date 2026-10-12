@@ -239,7 +239,7 @@ export default function FleetSnapshotPanel({
 
     if (
       [
-        "turnaround",
+        "check_in",
         "awaiting_expenses",
         "complete",
         "completed",
@@ -433,14 +433,15 @@ export default function FleetSnapshotPanel({
       .filter((trip) => {
         if (!tripMatchesVehicle(vehicle, trip) || isCanceledTrip(trip)) return false;
         const workflowStage = String(trip?.workflow_stage || "").toLowerCase();
-        return workflowStage === "awaiting_expenses" || workflowStage === "turnaround";
+        return workflowStage === "check_in" ||
+          workflowStage === "awaiting_expenses" || workflowStage === "check_in";
       })
       .sort((a, b) => getTripEndMs(b) - getTripEndMs(a))[0];
   }
 
   function getPostTripLabel(trip) {
     const workflowStage = String(trip?.workflow_stage || "").toLowerCase();
-    return workflowStage === "turnaround" ? "Turnaround" : "Awaiting expenses";
+    return workflowStage === "check_in" ? "Turnaround" : "Awaiting expenses";
   }
 
   function getVehicleDisplayOdometer(vehicle) {

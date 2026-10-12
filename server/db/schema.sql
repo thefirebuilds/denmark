@@ -1384,7 +1384,7 @@ CREATE TABLE public.trips (
     deleted_at timestamp with time zone,
     CONSTRAINT trips_expense_status_check CHECK (((expense_status IS NULL) OR (expense_status = ANY (ARRAY['none'::text, 'pending'::text, 'submitted'::text, 'resolved'::text, 'waived'::text])))),
     CONSTRAINT trips_toll_review_status_check CHECK ((toll_review_status = ANY (ARRAY['none'::text, 'pending'::text, 'reviewed'::text, 'billed'::text, 'waived'::text]))),
-    CONSTRAINT trips_workflow_stage_check CHECK ((workflow_stage = ANY (ARRAY['booked'::text, 'confirmed'::text, 'ready_for_handoff'::text, 'in_progress'::text, 'turnaround'::text, 'awaiting_expenses'::text, 'complete'::text, 'canceled'::text])))
+    CONSTRAINT trips_workflow_stage_check CHECK ((workflow_stage = ANY (ARRAY['booked'::text, 'confirmed'::text, 'ready_for_handoff'::text, 'in_progress'::text, 'check_in'::text, 'awaiting_expenses'::text, 'complete'::text, 'canceled'::text])))
 );
 
 
