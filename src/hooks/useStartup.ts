@@ -95,6 +95,22 @@ export function useStartup({
             return;
           }
 
+          if (meRes.status === 403) {
+            if (cancelled) return;
+            console.warn("[startup] session check denied", {
+              endpoint: "/api/me",
+              status: meRes.status,
+              contentType: meRes.headers.get("content-type"),
+              requestId: meRes.headers.get("cf-ray") || meRes.headers.get("x-request-id"),
+            });
+            setStartup({
+              ready: false,
+              label: "Access blocked",
+              error: "The session check (/api/me) was denied with HTTP 403. Check the site's access policy or reverse proxy, then reload. This is not a normal expired-session response.",
+            });
+            return;
+          }
+
           if (!meRes.ok) {
             throw new Error(`Auth request failed: ${meRes.status}`);
           }
