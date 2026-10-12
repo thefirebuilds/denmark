@@ -929,6 +929,11 @@ function buildMessageBody(message) {
   }
 
   if (type === "check_in_required") {
+    const vehicle = message.vehicle_nickname || message.vehicle_name || "this vehicle";
+    const locationAt = message.check_in_location_at ? formatTripTime(message.check_in_location_at) : null;
+    const location = message.check_in_location
+      ? `${message.check_in_location_label || 'Location'}: ${message.check_in_location}${locationAt ? ` (as of ${locationAt})` : ''}.`
+      : "Location unavailable.";
     const remainingMs = new Date(message.check_in_deadline).getTime() - Date.now();
     const hours = Math.ceil(Math.abs(remainingMs) / 3600000);
     const duration = Math.abs(remainingMs) < 3600000
@@ -937,11 +942,11 @@ function buildMessageBody(message) {
     const countdown = !Number.isFinite(remainingMs)
       ? "Check-in deadline unavailable."
       : remainingMs > 0
-      ? `Check in within ${duration}.`
+      ? `Check in ${vehicle} within ${duration}.`
       : remainingMs === 0
-      ? "Check-in is due now."
-      : `Check-in overdue by ${duration}.`;
-    return `${countdown} After checking it in, advance the trip to Awaiting expenses.`;
+      ? `${vehicle}: check-in is due now.`
+      : `${vehicle}: check-in overdue by ${duration}.`;
+    return `${countdown} ${location} After checking it in, advance the trip to Awaiting expenses.`;
   }
   if (type === "closeout_required") {
     const end = formatTripTime(message?.trip_end);

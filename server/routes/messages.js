@@ -4750,10 +4750,27 @@ router.get("/", async (req, res) => {
     }
 
     const checkInResult = await db.query(`
-      SELECT id, reservation_id, guest_name, vehicle_name, trip_end, workflow_stage,
-             stage_updated_at, status, closed_out
-      FROM trips WHERE workflow_stage = 'check_in' AND deleted_at IS NULL
-        AND COALESCE(closed_out, false) = false AND COALESCE(status, '') <> 'canceled'
+      SELECT t.id, t.reservation_id, t.guest_name, t.vehicle_name, t.trip_end, t.workflow_stage,
+             t.stage_updated_at, t.status, t.closed_out, v.nickname AS vehicle_nickname,
+             t.pickup_location, t.return_location, t.return_detected_location, t.returned_at,
+             gps.address AS last_location_address, gps.seen_at AS last_location_at
+      FROM trips t
+      LEFT JOIN LATERAL (
+        SELECT v.vin, v.nickname FROM vehicles v
+        WHERE t.turo_vehicle_id IS NOT NULL AND v.turo_vehicle_id = t.turo_vehicle_id
+        ORDER BY v.id LIMIT 1
+      ) v ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT s.address, COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
+        FROM vehicle_telemetry_snapshots s
+        WHERE LOWER(s.vin) = LOWER(v.vin)
+          AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+          AND s.vin IS NOT NULL AND s.vin <> ''
+        ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST, s.id DESC
+        LIMIT 1
+      ) gps ON TRUE
+      WHERE t.workflow_stage = 'check_in' AND t.deleted_at IS NULL
+        AND COALESCE(t.closed_out, false) = false AND COALESCE(t.status, '') <> 'canceled'
     `);
     const queueItems = compactTripChangedNotices(
       compactGuestMessageThreads([

@@ -60,3 +60,14 @@ test('early return does not start the clock; official end edits recompute the de
   assert.equal(shortened.check_in_overdue, true);
   assert.equal(extended.id, early.id);
 });
+test('check-in notice identifies fleet nickname and distinguishes observed from scheduled locations', () => {
+  const trip={id:20,workflow_stage:'check_in',trip_end:'2026-10-12T20:00:00Z',vehicle_name:'Hyundai Accent',vehicle_nickname:'Delavan',pickup_location:'Launch lot'};
+  const scheduled=mapCheckInNotice(trip);
+  assert.equal(scheduled.vehicle_nickname,'Delavan');
+  assert.equal(scheduled.check_in_location,'Launch lot');
+  assert.equal(scheduled.check_in_location_label,'Scheduled location');
+  const actual=mapCheckInNotice({...trip,last_location_address:'Garlic Creek',last_location_at:'2026-10-12T19:00:00Z'});
+  assert.equal(actual.check_in_location,'Garlic Creek');
+  assert.equal(actual.check_in_location_label,'Last reported location');
+  assert.equal(actual.check_in_location_at,'2026-10-12T19:00:00Z');
+});
