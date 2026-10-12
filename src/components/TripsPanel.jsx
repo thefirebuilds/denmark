@@ -115,6 +115,12 @@ function formatAttentionDateTime(value) {
 
 function getCompactNextActivityText(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();
+  if (stage === "check_in") {
+    const endMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
+    return Number.isFinite(endMs)
+      ? `Check in prior to ${formatAttentionDateTime(endMs + 24 * 60 * 60 * 1000)}`
+      : "Check in - official trip end needed";
+  }
   const attentionText = formatAttentionDateTime(trip?.attentionAt);
   const previousGuestName = trip?.previousTrip?.guest_name || "current guest";
   const previousReturnText = trip?.previousTrip?.trip_end

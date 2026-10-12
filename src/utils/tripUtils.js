@@ -698,6 +698,17 @@ export function deriveOperationalUrgency(trip, previousTrip, nextTrip) {
     };
   }
 
+  if (stage === "check_in" && !isClosedTrip(trip)) {
+    return {
+      bucket: 3,
+      attentionAt: endMs === Number.MAX_SAFE_INTEGER ? endMs : endMs + 24 * 60 * 60 * 1000,
+      urgencyLabel: "Check in prior to",
+      turnGapHours: null,
+      isTurnaroundRisk: false,
+      dependencyNote: null,
+    };
+  }
+
   if (isOverdueTrip(trip)) {
     return {
       bucket: 0,

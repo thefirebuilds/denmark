@@ -929,7 +929,19 @@ function buildMessageBody(message) {
   }
 
   if (type === "check_in_required") {
-    return `Check in this vehicle by ${formatTripTime(message.check_in_deadline)} (24 hours after the official trip end). ${message.check_in_overdue ? 'Check-in is overdue. ' : ''}After checking it in, advance the trip to Awaiting expenses.`;
+    const remainingMs = new Date(message.check_in_deadline).getTime() - Date.now();
+    const hours = Math.ceil(Math.abs(remainingMs) / 3600000);
+    const duration = Math.abs(remainingMs) < 3600000
+      ? "less than 1 hour"
+      : `${hours} ${hours === 1 ? "hour" : "hours"}`;
+    const countdown = !Number.isFinite(remainingMs)
+      ? "Check-in deadline unavailable."
+      : remainingMs > 0
+      ? `Check in within ${duration}.`
+      : remainingMs === 0
+      ? "Check-in is due now."
+      : `Check-in overdue by ${duration}.`;
+    return `${countdown} After checking it in, advance the trip to Awaiting expenses.`;
   }
   if (type === "closeout_required") {
     const end = formatTripTime(message?.trip_end);
