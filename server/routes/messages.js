@@ -4753,7 +4753,7 @@ router.get("/", async (req, res) => {
       SELECT t.id, t.reservation_id, t.guest_name, t.vehicle_name, t.trip_end, t.workflow_stage,
              t.stage_updated_at, t.status, t.closed_out, v.nickname AS vehicle_nickname,
              t.pickup_location, t.return_location, t.return_detected_location, t.returned_at,
-             gps.address AS last_location_address, gps.seen_at AS last_location_at
+             gps.address AS last_location_address, gps.seen_at AS last_location_at, gps.latitude, gps.longitude
       FROM trips t
       LEFT JOIN LATERAL (
         SELECT v.vin, v.nickname FROM vehicles v
@@ -4761,7 +4761,7 @@ router.get("/", async (req, res) => {
         ORDER BY v.id LIMIT 1
       ) v ON TRUE
       LEFT JOIN LATERAL (
-        SELECT s.address, COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
+        SELECT s.latitude, s.longitude, s.address, COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) AS seen_at
         FROM vehicle_telemetry_snapshots s
         WHERE LOWER(s.vin) = LOWER(v.vin)
           AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
@@ -4772,10 +4772,11 @@ router.get("/", async (req, res) => {
       WHERE t.workflow_stage = 'check_in' AND t.deleted_at IS NULL
         AND COALESCE(t.closed_out, false) = false AND COALESCE(t.status, '') <> 'canceled'
     `);
+    const checkInLocations = checkInResult.rows.length ? await getEnabledLocations() : [];
     const queueItems = compactTripChangedNotices(
       compactGuestMessageThreads([
         ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
-        ...checkInResult.rows.map(row => mapCheckInNotice(row)).filter(Boolean),
+        ...checkInResult.rows.map(row => mapCheckInNotice(row, new Date(), checkInLocations)).filter(Boolean),
         ...attachedHandoffNotices,
         ...attachedInspectionExportNotices,
         ...closeoutResult.rows.map(mapCloseoutNoticeRow),

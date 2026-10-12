@@ -930,10 +930,7 @@ function buildMessageBody(message) {
 
   if (type === "check_in_required") {
     const vehicle = message.vehicle_nickname || message.vehicle_name || "this vehicle";
-    const locationAt = message.check_in_location_at ? formatTripTime(message.check_in_location_at) : null;
-    const location = message.check_in_location
-      ? `${message.check_in_location_label || 'Location'}: ${message.check_in_location}${locationAt ? ` (as of ${locationAt})` : ''}.`
-      : "Location unavailable.";
+    const location = 'Detected Return Location: ' + (message.check_in_geofence || 'Not identified');
     const remainingMs = new Date(message.check_in_deadline).getTime() - Date.now();
     const hours = Math.ceil(Math.abs(remainingMs) / 3600000);
     const duration = Math.abs(remainingMs) < 3600000
@@ -946,7 +943,7 @@ function buildMessageBody(message) {
       : remainingMs === 0
       ? `${vehicle}: check-in is due now.`
       : `${vehicle}: check-in overdue by ${duration}.`;
-    return `${countdown} ${location} After checking it in, advance the trip to Awaiting expenses.`;
+    return <>{countdown}<br />{location}</>;
   }
   if (type === "closeout_required") {
     const end = formatTripTime(message?.trip_end);
@@ -1169,7 +1166,7 @@ function formatQueueTimingSummary(debugTiming) {
 }
 
 function buildMessageTitle(message) {
-  if (message?.type === "check_in_required") return message.check_in_overdue ? "Check In overdue" : "Check In required";
+  if (message?.type === "check_in_required") return `Check In ${message.check_in_overdue ? "Overdue" : "Required"}: ${message.vehicle_nickname || message.vehicle_name || "Vehicle"}`;
   const type = message?.type || message?.message_type;
   if (type === "daily_brief") {
     return "Daily fleet brief";
@@ -1222,6 +1219,7 @@ function buildMessageTitle(message) {
 
 function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
+  if (type === "check_in_required") return "Trip check-in required";
   if (type === "home_maintenance") return "Maintenance at home";
 
   if (type === "daily_brief") return "AM briefing";

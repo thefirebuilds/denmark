@@ -71,3 +71,9 @@ test('check-in notice identifies fleet nickname and distinguishes observed from 
   assert.equal(actual.check_in_location_label,'Last reported location');
   assert.equal(actual.check_in_location_at,'2026-10-12T19:00:00Z');
 });
+test('check-in uses configured geofence names instead of street addresses', () => {
+  const trip={id:21,workflow_stage:'check_in',trip_end:'2026-10-12T20:00:00Z',latitude:30,longitude:-97};
+  const locations=[{id:'lot',label:'Launch Lot',latitude:30,longitude:-97,radiusMiles:.15,enabled:true}];
+  assert.equal(mapCheckInNotice(trip,new Date(),locations).check_in_geofence,'Launch Lot');
+  assert.equal(mapCheckInNotice({...trip,latitude:31},new Date(),locations).check_in_geofence,null);
+});
