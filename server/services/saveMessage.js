@@ -39,6 +39,11 @@ function isRenterSideTuroActivity({ subject = "", normalizedTextBody = "" } = {}
   const bodyText = String(normalizedTextBody || "");
   const combined = `${subjectText}\n${bodyText}`;
 
+  // Host notices share booking summary headings with renter receipts.
+  if (/\b(?:trip with your|about your)\b/i.test(subjectText)) {
+    return false;
+  }
+
   const renterSideSignals = [
     /^.+ has sent you a message about their .+$/i,
     /^.+ has sent you a message about .+['’]s .+$/i,
@@ -49,8 +54,6 @@ function isRenterSideTuroActivity({ subject = "", normalizedTextBody = "" } = {}
     /\babout their\b/i,
     /\babout your host\b/i,
     /\btotal paid\b/i,
-    /\btotal distance included\b/i,
-    /\bbooked trip\b/i,
     /\bview receipt\b/i,
     /\bowned by:\b/i,
   ];
@@ -111,7 +114,7 @@ function classifyMessageType(subject, normalizedTextBody = "") {
     return "trip_changed";
   }
 
-  if (/^.+[’']s trip with your .+ is booked!$/i.test(s)) {
+  if (/^.+(?:\u2019|')s trip with your .+ is booked!?$/i.test(s)) {
     return "trip_booked";
   }
 
@@ -387,10 +390,14 @@ const LOCATION_STOP_LABELS = new Set([
 
 function cleanLocationLine(value) {
   const text = String(value || "")
+    .replace(/\[([^\]]+)\]\([^\n]*?\)/g, "$1")
+    .replace(/\*\*/g, "")
+    .replace(/^\s*\|\s*|\s*\|\s*$/g, "")
     .replace(/\s+/g, " ")
     .replace(/\s*,?\s*Guests see\s*:\s*.*$/i, "")
     .trim();
   if (!text) return null;
+  if (/^[|:\s-]+$/.test(text) || /^\[?image\]?/i.test(text)) return null;
   if (/^https?:\/\//i.test(text)) return null;
   if (/^view\b/i.test(text)) return null;
   return text;
@@ -419,6 +426,8 @@ function extractLocationBlock(lines, startIndex) {
 }
 
 function extractTripLocations(lines) {
+  lines = lines.flatMap((line) => String(line).split(/<br\s*\/?>/i))
+    .map(cleanLocationLine).filter(Boolean);
   let pickupLocation = null;
   let returnLocation = null;
 
@@ -1214,14 +1223,16 @@ async function backfillTripLocationsFromStoredMessages() {
   const { rows } = await pool.query(`SELECT id,reservation_id,subject,normalized_text_body,html_body
     FROM messages
     WHERE reservation_id IS NOT NULL
-      AND normalized_text_body IS NOT NULL
-      AND (pickup_location IS NULL OR return_location IS NULL)
-      AND COALESCE(message_type,'') IN ('trip_booked','trip_changed','turo_notification')
+      AND (normalized_text_body IS NOT NULL OR html_body IS NOT NULL)
+      AND (NULLIF(TRIM(pickup_location),'') IS NULL OR LOWER(TRIM(pickup_location)) = 'unknown'
+        OR NULLIF(TRIM(return_location),'') IS NULL OR LOWER(TRIM(return_location)) = 'unknown')
+      AND COALESCE(message_type,'') IN ('trip_booked','trip_changed','turo_notification','renter_activity')
     ORDER BY COALESCE(message_timestamp,created_at) DESC NULLS LAST
     LIMIT 5000`);
 
   let repairedMessages = 0;
   for (const row of rows) {
+    if (isRenterSideTuroActivity({ subject: row.subject, normalizedTextBody: row.normalized_text_body })) continue;
     const extracted = baseExtractFields(
       row.normalized_text_body,
       row.subject || "",
@@ -1229,8 +1240,10 @@ async function backfillTripLocationsFromStoredMessages() {
     );
     if (!extracted.pickupLocation && !extracted.returnLocation) continue;
     const result = await pool.query(`UPDATE messages SET
-        pickup_location=COALESCE(pickup_location,$2),
-        return_location=COALESCE(return_location,$3)
+        pickup_location=CASE WHEN NULLIF(TRIM(pickup_location),'') IS NULL OR LOWER(TRIM(pickup_location)) = 'unknown'
+          THEN COALESCE($2,pickup_location) ELSE pickup_location END,
+        return_location=CASE WHEN NULLIF(TRIM(return_location),'') IS NULL OR LOWER(TRIM(return_location)) = 'unknown'
+          THEN COALESCE($3,return_location) ELSE return_location END
       WHERE id=$1`, [row.id, extracted.pickupLocation, extracted.returnLocation]);
     repairedMessages += result.rowCount;
   }
@@ -1238,9 +1251,9 @@ async function backfillTripLocationsFromStoredMessages() {
   const repairedTrips = await pool.query(`WITH locations AS (
       SELECT reservation_id,
         (ARRAY_AGG(pickup_location ORDER BY COALESCE(message_timestamp,created_at) DESC)
-          FILTER (WHERE pickup_location IS NOT NULL))[1] AS pickup_location,
+          FILTER (WHERE NULLIF(TRIM(pickup_location),'') IS NOT NULL AND LOWER(TRIM(pickup_location)) <> 'unknown'))[1] AS pickup_location,
         (ARRAY_AGG(return_location ORDER BY COALESCE(message_timestamp,created_at) DESC)
-          FILTER (WHERE return_location IS NOT NULL))[1] AS return_location
+          FILTER (WHERE NULLIF(TRIM(return_location),'') IS NOT NULL AND LOWER(TRIM(return_location)) <> 'unknown'))[1] AS return_location
       FROM messages
       WHERE reservation_id IS NOT NULL
       GROUP BY reservation_id
@@ -1248,26 +1261,26 @@ async function backfillTripLocationsFromStoredMessages() {
     UPDATE trips t SET
       pickup_location=CASE
         WHEN locations.pickup_location IS NOT NULL
-          AND (t.pickup_location IS NULL OR LOWER(TRIM(t.pickup_location)) = 'park my share')
+          AND (NULLIF(TRIM(t.pickup_location),'') IS NULL OR LOWER(TRIM(t.pickup_location)) IN ('park my share','unknown'))
         THEN locations.pickup_location
         ELSE t.pickup_location
       END,
       return_location=CASE
         WHEN locations.return_location IS NOT NULL
-          AND (t.return_location IS NULL OR LOWER(TRIM(t.return_location)) = 'park my share')
+          AND (NULLIF(TRIM(t.return_location),'') IS NULL OR LOWER(TRIM(t.return_location)) IN ('park my share','unknown'))
         THEN locations.return_location
         ELSE t.return_location
       END,
-      updated_at=CASE WHEN ((t.pickup_location IS NULL OR LOWER(TRIM(t.pickup_location)) = 'park my share')
+      updated_at=CASE WHEN ((NULLIF(TRIM(t.pickup_location),'') IS NULL OR LOWER(TRIM(t.pickup_location)) IN ('park my share','unknown'))
           AND locations.pickup_location IS NOT NULL)
-        OR ((t.return_location IS NULL OR LOWER(TRIM(t.return_location)) = 'park my share')
+        OR ((NULLIF(TRIM(t.return_location),'') IS NULL OR LOWER(TRIM(t.return_location)) IN ('park my share','unknown'))
           AND locations.return_location IS NOT NULL)
         THEN NOW() ELSE t.updated_at END
     FROM locations
     WHERE t.reservation_id=locations.reservation_id
-      AND (((t.pickup_location IS NULL OR LOWER(TRIM(t.pickup_location)) = 'park my share')
+      AND (((NULLIF(TRIM(t.pickup_location),'') IS NULL OR LOWER(TRIM(t.pickup_location)) IN ('park my share','unknown'))
           AND locations.pickup_location IS NOT NULL)
-        OR ((t.return_location IS NULL OR LOWER(TRIM(t.return_location)) = 'park my share')
+        OR ((NULLIF(TRIM(t.return_location),'') IS NULL OR LOWER(TRIM(t.return_location)) IN ('park my share','unknown'))
           AND locations.return_location IS NOT NULL))`);
 
   console.log(`[messages] trip location backfill | scanned=${rows.length} repairedMessages=${repairedMessages} repairedTrips=${repairedTrips.rowCount}`);

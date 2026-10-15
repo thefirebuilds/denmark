@@ -189,6 +189,15 @@ function isNeedsExpensesTrip(trip) {
   return String(trip?.workflow_stage || "").toLowerCase() === "awaiting_expenses";
 }
 
+function isGroupedUpcomingTrip(trip) {
+  const pickupAt = getTripStartMs(trip);
+  return (
+    isQueueBucket(trip, "upcoming") &&
+    Number.isFinite(pickupAt) &&
+    pickupAt - Date.now() >= 24 * 60 * 60 * 1000
+  );
+}
+
 function isRoutineInProgressTrip(trip) {
   // Surface imminent returns without expanding trips for unrelated warnings.
   const hoursUntilReturn = getHoursUntilTripEnd(trip);
@@ -602,10 +611,14 @@ if (urgency.dependencyNote) {
     (trip) => isNeedsExpensesTrip(trip) && !isReadyForCloseout(trip)
   );
   const groupedInProgressTrips = filteredActiveTrips.filter(isRoutineInProgressTrip);
+  const groupedUpcomingTrips = filteredActiveTrips
+    .filter(isGroupedUpcomingTrip)
+    .sort((a, b) => getTripStartMs(a) - getTripStartMs(b));
   const displayedActiveTrips = filteredActiveTrips.filter(
     (trip) =>
       (!isNeedsExpensesTrip(trip) || isReadyForCloseout(trip)) &&
-      !isRoutineInProgressTrip(trip)
+      !isRoutineInProgressTrip(trip) &&
+      !isGroupedUpcomingTrip(trip)
   );
   const representedFleetVehicles = new Set(
     mappedTrips
@@ -877,6 +890,34 @@ if (urgency.dependencyNote) {
             </article>
           );
         })}
+
+        {groupedUpcomingTrips.length > 0 && (
+          <section className="expense-trip-group" aria-label="Upcoming trips">
+            <div className="expense-trip-group-header">
+              <div>
+                <div className="trip-title">Upcoming trips</div>
+                <div className="trip-sub">Individual cards appear within 24 hours of pickup</div>
+              </div>
+              <div className="chip">{groupedUpcomingTrips.length}</div>
+            </div>
+            <div className="expense-trip-list">
+              {groupedUpcomingTrips.map((trip) => (
+                <button
+                  key={trip.id}
+                  type="button"
+                  className={`expense-trip-row ${trip.id === selectedTrip?.id ? "selected" : ""}`}
+                  onClick={() => onSelectTrip(trip.id === selectedTrip?.id ? null : trip)}
+                >
+                  <span>
+                    <strong>{trip.cardGuestName}</strong> - {trip.cardNickname}
+                    {trip.turnaroundRisk && <small>{trip.operationalNote || "Tight turnaround"}</small>}
+                  </span>
+                  <small>Pickup {formatAttentionDateTime(trip.trip_start)}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {groupedInProgressTrips.length > 0 && (
           <section className="expense-trip-group in-trip-group" aria-label="Trips in progress">

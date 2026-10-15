@@ -516,6 +516,9 @@ async function collectNewTripBookedAlerts() {
       t.trip_start,
       t.created_at,
       t.created_from_message_id,
+      t.pickup_location,
+      t.return_location,
+      m.pickup_location AS message_pickup_location,
       m.normalized_text_body,
       m.subject
     FROM trips t
@@ -535,6 +538,7 @@ async function collectNewTripBookedAlerts() {
   return rows.map((row) => {
     const vehicle = row.vehicle_nickname || row.vehicle_name || "Unknown car";
     const location =
+      String(row.pickup_location || row.return_location || row.message_pickup_location || "").trim() ||
       extractPickupLocation(row.normalized_text_body || row.subject) ||
       "pickup location unknown";
 
@@ -1350,23 +1354,13 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       latest.location_last_updated,
       latest.captured_at
     FROM trips t
-    LEFT JOIN LATERAL (
-      SELECT candidate.*
-      FROM vehicles candidate
-      WHERE (
-          t.turo_vehicle_id IS NOT NULL
-          AND candidate.turo_vehicle_id = t.turo_vehicle_id
-        )
-        OR (
-          COALESCE(t.vehicle_name, '') <> ''
-          AND LOWER(t.vehicle_name) IN (
-            LOWER(COALESCE(candidate.nickname, '')),
-            LOWER(COALESCE(candidate.turo_vehicle_name, ''))
-          )
-        )
-      ORDER BY
-        (t.turo_vehicle_id IS NOT NULL AND candidate.turo_vehicle_id = t.turo_vehicle_id) DESC,
-        candidate.id ASC
+    JOIN LATERAL (
+      SELECT candidate.* FROM vehicles candidate
+      WHERE NULLIF(t.turo_vehicle_id, '') IS NOT NULL
+        AND candidate.turo_vehicle_id = t.turo_vehicle_id
+        AND NULLIF(candidate.vin, '') IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM vehicles other
+          WHERE other.turo_vehicle_id = t.turo_vehicle_id AND other.id <> candidate.id)
       LIMIT 1
     ) v ON true
     LEFT JOIN LATERAL (
@@ -1382,42 +1376,19 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       WHERE s.latitude IS NOT NULL
         AND s.longitude IS NOT NULL
         AND COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at) >= t.trip_start
+        AND LOWER(s.vin) = LOWER(v.vin)
+        AND COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at)
+          BETWEEN NOW() - INTERVAL '24 hours' AND NOW() + INTERVAL '5 minutes'
         AND (
-          s.trip_id = t.id
-          OR
-          (
-            v.vin IS NOT NULL
-            AND s.vin IS NOT NULL
-            AND LOWER(s.vin) = LOWER(v.vin)
-          )
-          OR (
-            v.nickname IS NOT NULL
-            AND s.nickname IS NOT NULL
-            AND LOWER(s.nickname) = LOWER(v.nickname)
-          )
-          OR (
-            t.vehicle_name IS NOT NULL
-            AND s.nickname IS NOT NULL
-            AND LOWER(s.nickname) = LOWER(t.vehicle_name)
-          )
-          OR (
-            v.dimo_token_id IS NOT NULL
-            AND s.dimo_token_id = v.dimo_token_id
-          )
-          OR (
-            v.bouncie_vehicle_id IS NOT NULL
-            AND s.provider_vehicle_id = v.bouncie_vehicle_id
-          )
-          OR (
-            v.external_vehicle_key IS NOT NULL
-            AND s.external_vehicle_key = v.external_vehicle_key
-          )
+          COALESCE(s.location_last_updated,s.vehicle_last_updated,s.captured_at) >= NOW() - INTERVAL '2 hours'
+          OR (s.speed = 0 AND s.captured_at >= NOW() - INTERVAL '15 minutes'
+            AND s.captured_at <= NOW() + INTERVAL '5 minutes')
         )
       ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,
         s.id DESC
       LIMIT 1
     ) latest ON true
-    WHERE NOW() >= t.trip_end - INTERVAL '2 hours'
+    WHERE t.deleted_at IS NULL AND NOW() >= t.trip_end - INTERVAL '2 hours'
       AND COALESCE(t.closed_out, false) = false
       AND COALESCE(t.workflow_stage, '') = 'in_progress'
       AND t.returned_at IS NULL

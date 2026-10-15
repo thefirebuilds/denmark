@@ -709,10 +709,6 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
             t.turo_vehicle_id IS NOT NULL
             AND v.turo_vehicle_id = t.turo_vehicle_id
           )
-          OR (
-            COALESCE(t.vehicle_name, '') <> ''
-            AND LOWER(v.nickname) = LOWER(t.vehicle_name)
-          )
       ),
       latest_locations AS (
         SELECT
@@ -757,11 +753,6 @@ async function autoAcknowledgeVerifiedReturnNotifications() {
                 mt.vehicle_vin <> ''
                 AND s.vin IS NOT NULL
                 AND LOWER(s.vin) = LOWER(mt.vehicle_vin)
-              )
-              OR (
-                mt.vehicle_name <> ''
-                AND s.nickname IS NOT NULL
-                AND LOWER(s.nickname) = LOWER(mt.vehicle_name)
               )
             )
           ORDER BY COALESCE(s.location_last_updated, s.vehicle_last_updated, s.captured_at) DESC NULLS LAST,

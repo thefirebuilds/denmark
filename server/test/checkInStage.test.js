@@ -37,10 +37,15 @@ test('telemetry return rule uses the trip launch location and advances directly 
   };
   const context=vm.createContext({module:{exports:{}},__dirname:__dirname,console,require:name=>deps[name]});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../services/trips/autoAdvanceTurnaroundTrip.js'),'utf8'),context);
-  const client={query:async sql=>({rows:sql.includes('FROM vehicles')?[{turo_vehicle_id:'1'}]:[trip]})};
+  let bookingWindowTimestamp;
+  const client={query:async (sql, values)=>{
+    if (!sql.includes('FROM vehicles')) bookingWindowTimestamp = values[2];
+    return {rows:sql.includes('FROM vehicles')?[{turo_vehicle_id:'1'}]:[trip]};
+  }};
   const run=context.module.exports.maybeAutoAdvanceTurnaroundTripFromTelemetry;
   assert.equal(await run(client,{vin:'VIN',address:'Other lot'}),null);
-  await run(client,{vin:'VIN',address:'Garlic Creek'});
+  await run(client,{vin:'VIN',address:'Garlic Creek',eventTimestamp:'2020-01-01T00:00:00Z'});
+  assert.ok(Math.abs(Date.now() - Date.parse(bookingWindowTimestamp)) < 5000, 'booking window uses poll time, not the stale movement timestamp');
   assert.equal(calls.length,1);
   assert.equal(calls[0][1],'check_in');
 });
@@ -76,4 +81,14 @@ test('check-in uses configured geofence names instead of street addresses', () =
   const locations=[{id:'lot',label:'Launch Lot',latitude:30,longitude:-97,radiusMiles:.15,enabled:true}];
   assert.equal(mapCheckInNotice(trip,new Date(),locations).check_in_geofence,'Launch Lot');
   assert.equal(mapCheckInNotice({...trip,latitude:31},new Date(),locations).check_in_geofence,null);
+});
+test('return telemetry refuses ambiguous vehicle identity and gates tracker fallback on missing VIN', async () => {
+  const context=vm.createContext({module:{exports:{}},__dirname,console,require:name=>name==='path'?path:{}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../services/trips/autoAdvanceTurnaroundTrip.js'),'utf8'),context);
+  const resolve=vm.runInContext('getVehicleForTelemetry',context);
+  let query;
+  const result=await resolve({query:async(sql)=>{query=sql;return {rows:[{id:1},{id:2}]};}}, {vin:'JUNEAUVIN',dimoTokenId:123});
+  assert.equal(result,null);
+  assert.match(query,/\$1 = '' AND \$2::text IS NOT NULL/);
+  assert.match(query,/\$1 = '' AND \$3::text IS NOT NULL/);
 });

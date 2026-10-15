@@ -110,16 +110,16 @@ async function getVehicleForTelemetry(client, telemetry) {
       SELECT id, vin, nickname, turo_vehicle_id, bouncie_vehicle_id, dimo_token_id
       FROM vehicles
       WHERE ($1 <> '' AND LOWER(vin) = LOWER($1))
-        OR ($2::text IS NOT NULL AND CAST(dimo_token_id AS text) = $2)
-        OR ($3::text IS NOT NULL AND CAST(bouncie_vehicle_id AS text) = $3)
+        OR ($1 = '' AND $2::text IS NOT NULL AND CAST(dimo_token_id AS text) = $2)
+        OR ($1 = '' AND $3::text IS NOT NULL AND CAST(bouncie_vehicle_id AS text) = $3)
       ORDER BY
         CASE WHEN $1 <> '' AND LOWER(vin) = LOWER($1) THEN 0 ELSE 1 END
-      LIMIT 1
+      LIMIT 2
     `,
     [vin, tokenId, bouncieId]
   );
 
-  return result.rows[0] || null;
+  return result.rows.length === 1 ? result.rows[0] : null;
 }
 
 async function getPreviousRunningState(client, telemetry) {
@@ -291,7 +291,9 @@ async function maybeAutoAdvanceTurnaroundTripFromTelemetry(client, telemetry) {
   const rules = getEnabledStageRules().filter(
     (rule) => rule.fromStage === "in_progress" && rule.toStage === "check_in"
   );
-  const eventTimestamp = toTimestamp(telemetry?.eventTimestamp);
+  // A parked DIMO vehicle may retain its last movement timestamp across polls.
+  // Evaluate the booking window now, not when its last movement occurred.
+  const eventTimestamp = new Date().toISOString();
 
   for (const rule of rules) {
     const trip = await findEligibleTripForRule(client, vehicle, eventTimestamp, rule);
