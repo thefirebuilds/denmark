@@ -121,6 +121,7 @@
 }
 
 .trips-panel .expense-trip-group {
+  min-width: 0;
   border: 1px solid rgba(245, 158, 11, 0.38);
   background: linear-gradient(180deg, rgba(120, 74, 10, 0.18), rgba(16, 24, 44, 0.96));
   border-radius: 18px;
@@ -161,17 +162,21 @@
 
 .trips-panel .expense-trip-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 
 .trips-panel .expense-trip-row {
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 11px;
   background: rgba(7, 12, 24, 0.42);
   color: inherit;
   padding: 9px 10px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -187,7 +192,23 @@
 
 .trips-panel .expense-trip-row small {
   color: var(--muted);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.trips-panel .expense-trip-row > span {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.trips-panel .expense-trip-row > span small {
+  display: block;
+  margin-top: 3px;
+}
+
+.trips-panel .expense-trip-row > small {
+  max-width: 100%;
 }
 
 .trips-panel .ready-closeout-chip {
@@ -200,6 +221,10 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 3px;
+  }
+
+  .trips-panel .expense-trip-row > span {
+    flex-basis: auto;
   }
 }
 
