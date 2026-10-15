@@ -216,6 +216,60 @@
   color: #fcd34d;
 }
 
+.trips-panel .compact-trip-group {
+  padding: 8px 10px;
+  gap: 4px;
+  border-radius: 12px;
+}
+
+.trips-panel .compact-trip-group .expense-trip-group-header {
+  align-items: center;
+  gap: 6px;
+}
+
+.trips-panel .compact-trip-group .trip-title {
+  font-size: 0.85rem;
+  line-height: 1.2;
+}
+
+.trips-panel .compact-trip-group .chip {
+  padding: 1px 6px;
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+.trips-panel .compact-trip-group .expense-trip-list {
+  gap: 0;
+}
+
+.trips-panel .compact-trip-group .expense-trip-row {
+  padding: 5px 0;
+  gap: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.trips-panel .compact-trip-group .expense-trip-row + .expense-trip-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.trips-panel .compact-trip-group .expense-trip-row:hover,
+.trips-panel .compact-trip-group .expense-trip-row.selected {
+  background: rgba(32, 58, 99, 0.38);
+}
+
+.trips-panel .compact-trip-group .expense-trip-row small {
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+.trips-panel .compact-trip-group .expense-trip-row > span small {
+  margin-top: 1px;
+}
+
 @media (max-width: 560px) {
   .trips-panel .expense-trip-row {
     align-items: flex-start;

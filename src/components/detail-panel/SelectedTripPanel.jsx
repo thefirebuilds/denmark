@@ -438,11 +438,6 @@ export default function SelectedTripPanel({
           ["billed", "waived", "none"].includes(tollReview),
       },
       {
-        key: "rating",
-        label: "Guest rating checked",
-        done: Boolean(closeoutForm.guest_rating_received),
-      },
-      {
         key: "closed",
         label: "Closeout flag set",
         done: Boolean(closeoutForm.closed_out),
@@ -1065,7 +1060,7 @@ function renderLocationLink(vehicle) {
               </label>
 
               <label className="detail-closeout-field detail-closeout-checkfield">
-                <span>Guest left a rating</span>
+                <span>Guest left a rating (optional)</span>
                 <input
                   type="checkbox"
                   checked={closeoutForm.guest_rating_received}

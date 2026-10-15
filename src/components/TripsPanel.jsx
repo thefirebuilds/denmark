@@ -892,11 +892,10 @@ if (urgency.dependencyNote) {
         })}
 
         {groupedUpcomingTrips.length > 0 && (
-          <section className="expense-trip-group" aria-label="Upcoming trips">
+          <section className="expense-trip-group compact-trip-group" aria-label="Upcoming trips">
             <div className="expense-trip-group-header">
               <div>
                 <div className="trip-title">Upcoming trips</div>
-                <div className="trip-sub">Individual cards appear within 24 hours of pickup</div>
               </div>
               <div className="chip">{groupedUpcomingTrips.length}</div>
             </div>
@@ -920,11 +919,10 @@ if (urgency.dependencyNote) {
         )}
 
         {groupedInProgressTrips.length > 0 && (
-          <section className="expense-trip-group in-trip-group" aria-label="Trips in progress">
+          <section className="expense-trip-group in-trip-group compact-trip-group" aria-label="Trips in progress">
             <div className="expense-trip-group-header">
               <div>
                 <div className="trip-title">In trip</div>
-                <div className="trip-sub">Vehicles currently out with guests</div>
               </div>
               <div className="chip">{groupedInProgressTrips.length}</div>
             </div>
