@@ -1331,6 +1331,7 @@ router.patch("/:id", async (req, res) => {
       return res.json({ id: tripId });
     }
 
+    require('../services/trips/tripUpdateEvents').notifyTripUpdated();
     return res.json(enrichTrip(refreshed.rows[0]));
   } catch (err) {
     await client.query("ROLLBACK");

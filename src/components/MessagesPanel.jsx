@@ -3106,6 +3106,24 @@ async function handleExportGuestInspectionSheet(message) {
   }, [rawFeedType, rawFeedPage]);
 
   useEffect(() => {
+    const handleTripUpdated = (event) => {
+      const trip = event.detail;
+      if (!trip?.id || !trip.closed_out) return;
+      rememberResolvedMessages([`closeout:${trip.id}`]);
+      const keepMessage = (message) =>
+        !(isCloseoutTask(message) && Number(message.trip_id) === Number(trip.id));
+      messagesRef.current = messagesRef.current.filter(keepMessage);
+      setMessages((current) => current.filter(keepMessage));
+      setFocusedCloseoutTask((current) =>
+        Number(current?.trip_id) === Number(trip.id) ? null : current);
+      invalidateLiveQueueCache();
+      lastFullQueueRefreshAtRef.current = 0;
+    };
+    window.addEventListener("denmark:trip-updated", handleTripUpdated);
+    return () => window.removeEventListener("denmark:trip-updated", handleTripUpdated);
+  }, []);
+
+  useEffect(() => {
     if (messageMode !== "trip" || !selectedTrip?.id) {
       setFocusedCloseoutTask(null);
       return;

@@ -512,6 +512,7 @@ function invalidateMessageCaches() {
 }
 
 onBankingReconciliationNoticeChanged(() => invalidateMessageCaches());
+require('../services/trips/tripUpdateEvents').onTripUpdated(invalidateMessageCaches);
 
 let ensureNotificationAckColumnsPromise = null;
 let ensureDiagnosticSuppressionsPromise = null;

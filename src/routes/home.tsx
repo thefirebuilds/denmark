@@ -260,6 +260,7 @@ export default function Home() {
   });
 
   function handleTripUpdated(savedTrip: TripLike) {
+    window.dispatchEvent(new CustomEvent("denmark:trip-updated", { detail: savedTrip }));
     setSelectedTrip((prev) =>
       prev?.id === savedTrip?.id ? savedTrip : prev
     );
