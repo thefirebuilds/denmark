@@ -394,9 +394,6 @@ const OPEN_MAINTENANCE_TASK_STATUSES = [
   "deferred",
 ];
 const MESSAGE_QUEUE_CACHE_MS = Number(process.env.MESSAGE_QUEUE_CACHE_MS || 1500);
-const MESSAGE_QUEUE_LIGHT_CACHE_MS = Number(
-  process.env.MESSAGE_QUEUE_LIGHT_CACHE_MS || 60000
-);
 const MESSAGE_QUEUE_CACHE_MAX_KEYS = Number(
   process.env.MESSAGE_QUEUE_CACHE_MAX_KEYS || 12
 );
@@ -407,9 +404,6 @@ const FLEET_ALERT_CACHE_MS = Number(
 );
 const URGENT_FLEET_ALERT_CACHE_MS = Number(
   process.env.MESSAGE_URGENT_FLEET_ALERT_CACHE_MS || 60 * 1000
-);
-const TOLL_CLOSEOUT_CACHE_MS = Number(
-  process.env.MESSAGE_TOLL_CLOSEOUT_CACHE_MS || 15 * 60 * 1000
 );
 
 const messageQueueCache = new Map();
@@ -2692,7 +2686,8 @@ router.get("/", async (req, res) => {
     const includeDebug = String(req.query.debug || "").trim() === "1";
     const cacheBust = String(req.query.cacheBust || "").trim() !== "";
     const cacheKey = `limit:${limit}:fast:${fast ? "1" : "0"}:light:${light ? "1" : "0"}`;
-    const cacheTtlMs = light ? MESSAGE_QUEUE_LIGHT_CACHE_MS : MESSAGE_QUEUE_CACHE_MS;
+    // Closeout state must not be held behind the minute-long light queue cache.
+    const cacheTtlMs = Math.min(MESSAGE_QUEUE_CACHE_MS, 1500);
 
     if (!fast) {
       await ensureNotificationAckColumns();
@@ -4089,7 +4084,9 @@ router.get("/", async (req, res) => {
             COALESCE(t.vehicle_name, '') <> ''
             AND LOWER(v.nickname) = LOWER(t.vehicle_name)
           )
-        WHERE t.trip_end <= NOW() - make_interval(hours => toll_arrival_window.delay_hours)
+        WHERE t.deleted_at IS NULL
+          AND COALESCE(t.closed_out, false) = false
+          AND t.trip_end <= NOW() - make_interval(hours => toll_arrival_window.delay_hours)
           AND t.trip_end >= NOW() - INTERVAL '45 days'
           AND COALESCE(t.workflow_stage, '') <> 'canceled'
           AND COALESCE(t.status, '') <> 'canceled'
@@ -4186,32 +4183,8 @@ router.get("/", async (req, res) => {
         ORDER BY nt.trip_start ASC
         LIMIT 1
       ) next_trip ON true
-      WHERE
-        COALESCE(c.closed_out, false) = false
-        AND (
-          COALESCE(c.workflow_stage, '') NOT IN ('complete', 'closed')
-          OR c.starting_odometer IS NULL
-          OR c.ending_odometer IS NULL
-          OR COALESCE(c.expense_status, '') IN ('', 'pending', 'needs_review')
-          OR (
-            (
-              COALESCE(c.has_tolls, false) = true
-              OR COALESCE(c.toll_count, 0) > 0
-              OR COALESCE(c.toll_total, 0) > 0
-              OR COALESCE(c.unresolved_toll_count, 0) > 0
-            )
-            AND COALESCE(c.toll_review_status, '') NOT IN ('billed', 'waived')
-          )
-          OR (
-            latest_fuel.fuel_level < ${TURNOVER_REFUEL_THRESHOLD_PERCENT}
-            AND (
-              next_trip.trip_start IS NULL
-              OR next_trip.trip_start > NOW()
-            )
-          )
-        )
+      WHERE COALESCE(c.closed_out, false) = false
       ORDER BY c.trip_end DESC NULLS LAST, c.trip_id DESC
-      LIMIT 25
     `;
 
     const refuelSql = `
@@ -4559,32 +4532,13 @@ router.get("/", async (req, res) => {
     const inspectionExportResult = fast
       ? EMPTY_QUERY_RESULT
       : getCachedFleetAlertQuery("inspectionExport", () => db.query(inspectionExportSql));
-    const closeoutResult = fast
-      ? EMPTY_QUERY_RESULT
-      : getCachedFleetAlertQuery(
-          "closeout",
-          async () => {
-            const eligibility = await db.query(
-              `
-                SELECT EXISTS (
-                  SELECT 1
-                  FROM trips t
-                  WHERE t.trip_end <= NOW() - make_interval(hours => $1::integer)
-                    AND t.trip_end >= NOW() - INTERVAL '45 days'
-                    AND COALESCE(t.closed_out, false) = false
-                    AND COALESCE(t.workflow_stage, '') <> 'canceled'
-                    AND COALESCE(t.status, '') <> 'canceled'
-                ) AS has_candidates
-              `,
-              [TOLL_COLLECTION_WAIT_HOURS]
-            );
-            if (eligibility.rows[0]?.has_candidates !== true) {
-              return EMPTY_QUERY_RESULT;
-            }
-            return db.query(closeoutSql, [TOLL_COLLECTION_WAIT_HOURS]);
-          },
-          TOLL_CLOSEOUT_CACHE_MS
-        );
+    // Closeouts are authoritative on every refresh, including the fast queue.
+    // The background fleet cache can initially return empty or stale rows.
+    const closeoutResult = await timeQueueQuery(
+      queueTimings,
+      "closeout",
+      db.query(closeoutSql, [TOLL_COLLECTION_WAIT_HOURS])
+    );
     const refuelResult = fast
       ? EMPTY_QUERY_RESULT
       : getCachedFleetAlertQuery("refuel", () => db.query(refuelSql));
@@ -4783,7 +4737,7 @@ router.get("/", async (req, res) => {
       ])
     )
       .sort(compareQueueItems)
-      .slice(0, limit);
+      .filter((item, index) => index < limit || item.type === "closeout_required");
 
     setQueueTimingHeader(res, queueStartedAt, queueTimings);
     maybeLogQueueTimings(queueStartedAt, queueTimings, queueItems.length);

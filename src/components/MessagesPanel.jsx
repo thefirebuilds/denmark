@@ -36,7 +36,6 @@ const FULL_QUEUE_ONLY_TYPES = new Set([
   "home_maintenance",
   "vehicle_diagnostic_alert",
   "maintenance_required",
-  "closeout_required",
   "refuel_required",
   "late_toll_unbilled",
   "trip_overlap_detected",
@@ -2985,7 +2984,7 @@ async function handleExportGuestInspectionSheet(message) {
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
           ? messageItems
-          : messageItems.slice(0, 10)
+          : messageItems.filter((message, index) => index < 10 || isCloseoutTask(message))
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
