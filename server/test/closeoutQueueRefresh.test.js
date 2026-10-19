@@ -40,4 +40,20 @@ test('open closeouts survive fast/full refreshes and display limits, then clear 
   await context.loadMessages(false);
   assert.equal(rendered.some(m => m.id === notice.id), false);
   assert.equal(state.messageRequestRef.current, null);
+
+  // A trip's historical read messages must stay cleared even without a
+  // temporary recently-resolved entry; a fresh unread reply still appears.
+  context.messageMode = 'trip';
+  context.selectedTrip = { id: 1 };
+  response = [
+    { id: 201, type: 'guest_message', status: 'read' },
+    { id: 202, message_type: 'guest_message', status: 'read' },
+    { id: 'thread:1', type: 'guest_message_thread', status: 'read' },
+    { id: 203, type: 'guest_message', status: 'unread' },
+    { id: 204, type: 'trip_booked', status: 'read' },
+  ];
+  await context.loadMessages(false);
+  assert.deepEqual(Array.from(rendered, m => m.id), [203, 204]);
+  await context.loadMessages(false);
+  assert.deepEqual(Array.from(rendered, m => m.id), [203, 204]);
 });

@@ -29,6 +29,15 @@ const RECENTLY_RESOLVED_MESSAGES_STORAGE_KEY = "denmark.recentlyResolvedMessages
 const DAILY_BRIEF_DISPLAY_STORAGE_KEY = "denmark.dailyBriefDisplay";
 const MAINTENANCE_BRIEF_DISPLAY_STORAGE_KEY = "denmark.maintenanceBriefDisplay";
 const LIVE_MESSAGE_CACHE_TTL_MS = 60 * 1000;
+// Startup props are a snapshot, not current queue state. Navigation remounts
+// this panel, so remember consumed snapshots outside the component lifecycle.
+const consumedStartupMessageSnapshots = new WeakSet();
+
+function getUnusedStartupMessages(items) {
+  return Array.isArray(items) && !consumedStartupMessageSnapshots.has(items)
+    ? items
+    : [];
+}
 const RECENTLY_RESOLVED_MESSAGE_TTL_MS = 180 * 1000;
 const FULL_QUEUE_ONLY_TYPES = new Set([
   "handoff_ready_required",
@@ -1910,7 +1919,7 @@ export default function MessagesPanel({
 }) {
   const [messages, setMessages] = useState(() =>
     filterRecentlyResolvedMessagesFromStorage(
-      Array.isArray(initialMessages) ? initialMessages : []
+      readLiveMessageQueueCache()?.items || getUnusedStartupMessages(initialMessages)
     )
   );
   const [loading, setLoading] = useState(!initialLoadComplete);
@@ -2143,6 +2152,7 @@ async function handleMarkAsRead(messageId) {
       ...(Array.isArray(message?.message_ids) ? message.message_ids : []),
       ...ids,
     ]);
+    messagesRef.current = messagesRef.current.filter((msg) => msg.id !== queueItemId);
     setMessages((prev) => prev.filter((msg) => msg.id !== queueItemId));
     setNewMessageIds((prev) => prev.filter((id) => id !== queueItemId));
     seenIdsRef.current.delete(queueItemId);
@@ -2197,6 +2207,10 @@ async function handleMarkAsRead(messageId) {
     setMessages((prev) =>
       prev.filter((msg) => !resolvedIds.has(String(msg.id)))
     );
+    messagesRef.current = messagesRef.current.filter(
+      (msg) => !resolvedIds.has(String(msg.id))
+    );
+    invalidateLiveQueueCache();
     setNewMessageIds((prev) =>
       prev.filter((id) => !resolvedIds.has(String(id)))
     );
@@ -2219,6 +2233,15 @@ async function handleMarkAsRead(messageId) {
       console.warn("Failed to schedule follow-up message refresh:", err);
     }
   } catch (err) {
+    messagesRef.current = previousMessages;
+    for (const id of [queueItemId, message?.messageId, message?.latest_message_id, ...ids]) {
+      recentlyResolvedMessageIdsRef.current.delete(String(id));
+    }
+    writeRecentlyResolvedMessageEntries(
+      Array.from(recentlyResolvedMessageIdsRef.current.entries()).map(
+        ([id, expiresAt]) => ({ id, expiresAt })
+      )
+    );
     setMessages(previousMessages);
     setNewMessageIds(previousNewMessageIds);
     setUnreadCount(previousUnreadCount);
@@ -2981,10 +3004,18 @@ async function handleExportGuestInspectionSheet(message) {
           }`
         );
       }
+      // Trip feeds can contain read history from older servers. Cleared guest
+      // messages are no longer queue actions, regardless of suppression expiry.
+      const actionableMessageItems = Array.isArray(messageItems)
+        ? messageItems.filter((message) => {
+            const type = message.type || message.message_type;
+            return !["guest_message", "guest_message_thread"].includes(type) || message.status !== "read";
+          })
+        : [];
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
-          ? messageItems
-          : messageItems.filter((message, index) => index < 10 || isCloseoutTask(message))
+          ? actionableMessageItems
+          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message))
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
@@ -3152,6 +3183,7 @@ async function handleExportGuestInspectionSheet(message) {
       messageMode === "live" &&
       !selectedTrip?.id &&
       Array.isArray(initialMessages) &&
+      !consumedStartupMessageSnapshots.has(initialMessages) &&
       !consumedInitialLiveMessagesRef.current;
 
     const cachedLiveQueue =
@@ -3187,6 +3219,9 @@ async function handleExportGuestInspectionSheet(message) {
     queueChimeWatermarkRef.current = Date.now();
     consumedInitialLiveMessagesRef.current =
       consumedInitialLiveMessagesRef.current || canUseInitialMessages;
+    if (canUseInitialMessages) {
+      consumedStartupMessageSnapshots.add(initialMessages);
+    }
 
     if (canUseInitialMessages || cachedLiveMessages) {
       setLoading(false);

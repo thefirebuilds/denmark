@@ -1517,6 +1517,7 @@ router.get("/:id/messages", async (req, res) => {
       LEFT JOIN trips t
         ON t.id = m.trip_id
       WHERE m.trip_id = $1
+        AND (COALESCE(m.message_type, '') <> 'guest_message' OR m.status = 'unread')
       ORDER BY
         CASE
           WHEN m.status = 'unread'
