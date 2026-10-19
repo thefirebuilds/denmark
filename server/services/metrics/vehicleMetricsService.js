@@ -51,9 +51,6 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
 }
 
 async function fetchActiveVehicles(client) {
-  await ensureVehicleRuntimeSchema(client);
-  await ensureVehicleAliasesTable(client);
-
   const { rows } = await client.query(
     `
       SELECT
@@ -1394,6 +1391,8 @@ function projectPayoff({
 
 async function getVehicleMetrics(rangeKey = "30d") {
   const { key, startDate, endDate } = getDateRange(rangeKey);
+  await ensureVehicleRuntimeSchema();
+  await ensureVehicleAliasesTable();
   const client = await pool.connect();
 
   try {
@@ -2135,6 +2134,8 @@ async function getVehicleMetrics(rangeKey = "30d") {
 
 async function getOffTripMileageAudit(rangeKey = "30d") {
   const { key, startDate, endDate } = getDateRange(rangeKey);
+  await ensureVehicleRuntimeSchema();
+  await ensureVehicleAliasesTable();
   const client = await pool.connect();
 
   try {
@@ -2334,14 +2335,16 @@ async function getOffTripMileageAudit(rangeKey = "30d") {
 async function getVehicleFinancialDetail(vehicleIdInput, rangeKey = "30d") {
   const targetVehicleId = String(vehicleIdInput || "").trim();
   const { startDate, endDate, key } = getDateRange(rangeKey);
+  await ensureVehicleRuntimeSchema();
+  await ensureVehicleAliasesTable();
+  const vehicleMetricsPayload = await getVehicleMetrics(rangeKey);
   const client = await pool.connect();
 
   try {
-    const [vehicles, trips, expenses, vehicleMetricsPayload] = await Promise.all([
+    const [vehicles, trips, expenses] = await Promise.all([
       fetchActiveVehicles(client),
       fetchTripsForVehicles(client, startDate, endDate),
       fetchExpensesForVehicles(client, startDate, endDate),
-      getVehicleMetrics(rangeKey),
     ]);
     const vehicleMetrics = Array.isArray(vehicleMetricsPayload?.vehicles)
       ? vehicleMetricsPayload.vehicles
