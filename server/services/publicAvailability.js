@@ -526,7 +526,14 @@ function buildVehicleStatus(vehicle, trips, now) {
   const window = getDateWindow();
   const fullWindowUnavailableDates = getDateKeysBetweenInclusive(window.start, window.end);
 
-  if (vehicle.is_active !== true || vehicle.trip_eligible === false) {
+  // Tracker discovery alone does not make a vehicle a public rental listing.
+  // Require an explicit listing identity instead of publishing profile-link cards.
+  if (
+    vehicle.is_active !== true ||
+    vehicle.trip_eligible === false ||
+    !/^\d+$/.test(String(vehicle.turo_vehicle_id || "").trim()) ||
+    Number(vehicle.turo_vehicle_id) <= 0
+  ) {
     return null;
   }
 

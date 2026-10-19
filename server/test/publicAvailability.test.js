@@ -76,6 +76,18 @@ test('inactive transferred tracker cars never appear in the website export', asy
   assert.equal(rows[0].status, 'available_now');
 });
 
+test('active tracker-only cars cannot be published even when trip eligibility defaults true', async () => {
+  for (const turo_vehicle_id of [null, undefined, '', ' ', 'not-a-listing', '0', 'https://turo.com/us/en/drivers/49832972']) {
+    const vehicles = [fleet[0], ...['Cocaina', 'Phantom', 'Yogi'].map((nickname, index) => ({
+      id: index + 10, nickname, is_active: true, in_service: true,
+      trip_eligible: true, turo_vehicle_id,
+    }))];
+    const rows = await availability([], vehicles);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].nickname, 'Juneau');
+  }
+});
+
 test('only explicitly active cars are published; maintenance mode remains visible as unavailable', async () => {
   for (const is_active of [false, null, undefined]) {
     assert.equal((await availability([], [{ ...fleet[0], is_active }])).length, 0);
