@@ -167,65 +167,6 @@ function buildReturnEvent(trip) {
   });
 }
 
-function getExpenseCloseoutStart(trip) {
-  const now = new Date();
-  const stageUpdatedAt = trip.stage_updated_at ? new Date(trip.stage_updated_at) : null;
-
-  if (stageUpdatedAt) {
-    const hour = stageUpdatedAt.getHours();
-    if (hour >= 8 && hour <= 18) {
-      return stageUpdatedAt.toISOString();
-    }
-  }
-
-  const nextMorning = new Date(now);
-  nextMorning.setHours(9, 0, 0, 0);
-
-  if (now >= nextMorning) {
-    nextMorning.setDate(nextMorning.getDate() + 1);
-  }
-
-  return nextMorning.toISOString();
-}
-
-function buildExpenseCloseoutEvent(trip) {
-  const startAt = getExpenseCloseoutStart(trip);
-  const vehicleName = getVehicleCalendarName(trip);
-
-  const extra = [];
-  if (trip.toll_count != null) extra.push(`Toll count: ${trip.toll_count}`);
-  if (trip.toll_total != null) extra.push(`Toll total: ${trip.toll_total}`);
-  if (trip.fuel_reimbursement_total != null) {
-    extra.push(`Fuel reimbursement total: ${trip.fuel_reimbursement_total}`);
-  }
-  if (trip.expense_status) extra.push(`Expense status: ${trip.expense_status}`);
-
-  return withTripIdentity(trip, "expense_closeout", {
-    summary: `Turo closeout: ${vehicleName} / ${trip.guest_name || "Guest"}`,
-    description: [
-      "Action: close out expenses",
-      ...baseDescriptionLines(trip),
-      "",
-      ...extra,
-    ].join("\n"),
-    start: {
-      dateTime: startAt,
-      timeZone: "America/Chicago",
-    },
-    end: {
-      dateTime: addMinutes(startAt, 15),
-      timeZone: "America/Chicago",
-    },
-    reminders: {
-      useDefault: false,
-      overrides: [
-        { method: "popup", minutes: 30 },
-        { method: "popup", minutes: 0 },
-      ],
-    },
-  });
-}
-
 function isCanceledOrDeleted(trip) {
   const stage = getNormalizedStage(trip);
   return Boolean(
@@ -241,12 +182,6 @@ function isUnconfirmedTrip(trip) {
   const stage = (trip.workflow_stage || "").toLowerCase();
 
   return stage.includes("unconfirmed");
-}
-
-function isWaitingExpenses(trip) {
-  return ["waiting expenses", "awaiting_expenses"].includes(
-    (trip.workflow_stage || "").toLowerCase()
-  );
 }
 
 function getNormalizedStage(trip) {
@@ -291,9 +226,8 @@ function getDesiredGoogleEventsForTrip(trip) {
     desired.push(buildReturnEvent(trip));
   }
 
-  if (isWaitingExpenses(trip)) {
-    desired.push(buildExpenseCloseoutEvent(trip));
-  }
+  // Awaiting expenses ends calendar action reminders; reconciliation removes
+  // previously synced expense_closeout events along with handoff notices.
 
   return desired;
 }
