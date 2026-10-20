@@ -16,6 +16,16 @@ test('awaiting expenses clears calendar reminders while confirmed trips retain h
   assert.equal(builder.getDesiredGoogleEventsForTrip({ ...trip, workflow_stage: 'confirmed' }).length, 2);
 });
 
+test('pickup stays on the calendar through preparation and clears once the trip starts', () => {
+  for (const workflow_stage of ['booked', 'confirmed', 'ready_for_handoff', 'ready_for_guest']) {
+    const events = builder.getDesiredGoogleEventsForTrip({ ...trip, workflow_stage });
+    assert.deepEqual(events.map(event => event.eventType), ['pickup', 'return']);
+    assert.equal(events[0].payload.start.dateTime, trip.trip_start.replace('Z', '.000Z'));
+  }
+  assert.deepEqual(builder.getDesiredGoogleEventsForTrip({ ...trip, workflow_stage: 'in_progress' })
+    .map(event => event.eventType), ['return']);
+});
+
 test('calendar reconciliation deletes an existing closeout event instead of recreating it', async () => {
   const deleted = [];
   const marked = [];

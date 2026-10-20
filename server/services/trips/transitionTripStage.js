@@ -114,7 +114,7 @@ function runStageEntryAutomation(trip, previousStage = null) {
 }
 
 function shouldSyncTripCalendarAfterStageChange(stage) {
-  return ["ready_for_handoff", "check_in", "awaiting_expenses", "complete", "canceled"].includes(stage);
+  return ["ready_for_handoff", "in_progress", "check_in", "awaiting_expenses", "complete", "canceled"].includes(stage);
 }
 
 let vehiclesColumnCache = null;

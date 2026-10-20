@@ -191,8 +191,6 @@ function getNormalizedStage(trip) {
 function shouldKeepPickupNotice(trip) {
   const stage = getNormalizedStage(trip);
   return ![
-    "ready_for_handoff",
-    "ready_for_guest",
     "in_progress",
     "check_in",
     "awaiting_expenses",
