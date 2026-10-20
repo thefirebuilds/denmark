@@ -3458,7 +3458,7 @@ router.get("/", async (req, res) => {
         v.nickname AS vehicle_nickname
       FROM vehicles v
       JOIN LATERAL (
-        SELECT
+        SELECT DISTINCT ON (s.service_name)
           s.id,
           s.service_name,
           s.vin,
@@ -3492,11 +3492,10 @@ router.get("/", async (req, res) => {
         WHERE s.vin IS NOT NULL
           AND s.vin <> ''
           AND LOWER(s.vin) = LOWER(v.vin)
-        ORDER BY COALESCE(s.vehicle_last_updated, s.mil_last_updated, s.captured_at) DESC NULLS LAST,
+        ORDER BY s.service_name, COALESCE(s.vehicle_last_updated, s.mil_last_updated, s.captured_at) DESC NULLS LAST,
           s.id DESC
-        LIMIT 1
       ) latest ON true
-      WHERE COALESCE(v.is_active, true) = true
+      WHERE v.is_active = true
         AND (
           COALESCE(latest.mil_on, false) = true
           OR COALESCE(latest.dtc_count, 0) > 0
@@ -4580,9 +4579,11 @@ router.get("/", async (req, res) => {
           () => db.query(unmatchedNotificationsSql)
         )
       : EMPTY_QUERY_RESULT;
-    const diagnosticResult = light
-      ? EMPTY_QUERY_RESULT
-      : getCachedFleetAlertQuery("diagnostics", () => db.query(diagnosticSql));
+    // Safety alerts belong in every poll; don't wait for the background
+    // analytics cache or a full queue refresh.
+    const diagnosticResult = await timeQueueQuery(
+      queueTimings, "diagnostics", db.query(diagnosticSql)
+    );
     const deviceConnectivityResult = light
       ? EMPTY_QUERY_RESULT
       : getCachedFleetAlertQuery(
@@ -4737,7 +4738,7 @@ router.get("/", async (req, res) => {
       ])
     )
       .sort(compareQueueItems)
-      .filter((item, index) => index < limit || item.type === "closeout_required");
+      .filter((item, index) => index < limit || ["closeout_required", "vehicle_diagnostic_alert"].includes(item.type));
 
     setQueueTimingHeader(res, queueStartedAt, queueTimings);
     maybeLogQueueTimings(queueStartedAt, queueTimings, queueItems.length);

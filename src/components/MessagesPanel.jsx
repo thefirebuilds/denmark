@@ -43,7 +43,6 @@ const FULL_QUEUE_ONLY_TYPES = new Set([
   "handoff_ready_required",
   "inspection_export_required",
   "home_maintenance",
-  "vehicle_diagnostic_alert",
   "maintenance_required",
   "refuel_required",
   "late_toll_unbilled",
@@ -3015,7 +3014,7 @@ async function handleExportGuestInspectionSheet(message) {
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
           ? actionableMessageItems
-          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message))
+          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || message.type === "vehicle_diagnostic_alert")
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
