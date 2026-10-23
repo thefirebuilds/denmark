@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22.12-bookworm-slim AS web-build
+FROM node:22.23.4-bookworm-slim AS web-build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -16,13 +16,13 @@ COPY shared ./shared
 # so use it directly for the deployable client bundle.
 RUN npx vite build
 
-FROM node:22.12-bookworm-slim AS server-deps
+FROM node:22.23.4-bookworm-slim AS server-deps
 WORKDIR /app/server
 
 COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 
-FROM node:22.12-bookworm-slim AS runtime
+FROM node:22.23.4-bookworm-slim AS runtime
 ARG DENMARK_BUILD_COMMIT=unknown
 ARG DENMARK_BUILD_TIME=unknown
 ENV NODE_ENV=production
