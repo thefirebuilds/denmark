@@ -1,3 +1,4 @@
+import { getConfiguredReturnLocation } from "../../shared/returnLocation.mjs";
 ﻿import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import {
@@ -208,6 +209,7 @@ function formatHeading(value) {
 }
 
 function formatSpeedMph(value) {
+  if (value == null || value === '') return null;
   const speed = Number(value);
   if (!Number.isFinite(speed)) return null;
   return `${Math.max(0, Math.round(speed))} mph`;
@@ -319,51 +321,6 @@ function distanceMiles(a, b) {
     Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) ** 2;
 
   return 2 * radiusMiles * Math.asin(Math.sqrt(h));
-}
-
-function normalizeLocationText(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function getConfiguredReturnLocation(activeTrip, locations) {
-  const bookedText = normalizeLocationText(activeTrip?.returnLocation);
-  if (!Array.isArray(locations)) return null;
-
-  const namedMatch = bookedText
-    ? locations.find((location) => {
-        const candidates = [location?.label, location?.address, location?.id]
-          .map(normalizeLocationText)
-          .filter(Boolean);
-        return candidates.some(
-          (candidate) =>
-            candidate === bookedText ||
-            (candidate.length >= 6 && bookedText.includes(candidate)) ||
-            (bookedText.length >= 6 && candidate.includes(bookedText))
-        );
-      })
-    : null;
-  if (namedMatch) return namedMatch;
-
-  const explicitlyAlternate =
-    /(?:^| )(?:airport|terminal|hotel|delivery|delivered|station|garage)(?: |$)/.test(
-      bookedText
-    );
-  if (explicitlyAlternate) return null;
-
-  return (
-    locations.find((location) =>
-      /(?:^|\b)(?:park my share|garlic creek|home|buda|78610)(?:\b|$)/i.test(
-        `${location?.label || ""} ${location?.address || ""}`
-      )
-    ) ||
-    locations.find(
-      (location) => String(location?.kind || "").toLowerCase() === "parking"
-    ) ||
-    null
-  );
 }
 
 function getReturnProgress(vehicle, locations) {

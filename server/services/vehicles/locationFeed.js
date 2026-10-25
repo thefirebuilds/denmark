@@ -83,7 +83,8 @@ function mapLocationRow(row) {
     lastSeenType: row.last_seen_type || "telemetry_snapshot",
     isRunning,
     runningLastSeen,
-    speed: toNumber(row.speed),
+    speed: isFreshTimestamp(row.speed_last_seen || row.last_seen) ? toNumber(row.speed) : null,
+    speedLastSeen: row.speed_last_seen || null,
     googleMapsUrl: buildGoogleMapsUrl(lat, lon),
     activeTrip: row.active_trip_id
       ? {
@@ -96,7 +97,7 @@ function mapLocationRow(row) {
     telemetryDiagnostics: {
       provider: row.source || null,
       latestPollAt: row.latest_poll_at || null,
-      locationSignalAt: row.location_signal_at || row.last_seen || null,
+      locationSignalAt: row.location_signal_at || null,
       availableSignalsCount: toNumber(row.available_signals_count),
       fetchedSignals: toArray(row.fetched_signals),
       skippedSignals: toArray(row.skipped_signals),
@@ -144,6 +145,7 @@ async function getStoredVehicleLocations(client = pool) {
       latest.heading,
       latest.is_running,
       latest.speed,
+      latest.speed_seen_at AS speed_last_seen,
       latest.captured_at AT TIME ZONE 'UTC' AS latest_poll_at,
       latest.available_signals_count,
       latest.fetched_signals,
@@ -161,6 +163,7 @@ async function getStoredVehicleLocations(client = pool) {
           AND latest.missing_privileges ? 'GetLocationHistory'
           THEN 'missing_privilege:GetLocationHistory'
         WHEN latest.service_name = 'dimo'
+          AND latest.available_signals_count IS NOT NULL
           AND NOT (latest.fetched_signals ? 'currentLocationCoordinates')
           AND NOT (latest.fetched_signals ? 'currentLocationApproximateCoordinates')
           THEN 'dimo_location_signal_not_fetched'
@@ -204,6 +207,7 @@ async function getStoredVehicleLocations(client = pool) {
         candidates.heading,
         candidates.is_running,
         candidates.speed,
+        candidates.speed_seen_at,
         candidates.location_last_updated,
         candidates.ignition_last_updated,
         candidates.vehicle_last_updated,
@@ -230,6 +234,10 @@ async function getStoredVehicleLocations(client = pool) {
             s.heading,
             s.is_running,
             s.speed,
+            CASE WHEN s.service_name = 'dimo'
+              THEN s.speed_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.speed_last_updated AT TIME ZONE 'UTC'
+            END AS speed_seen_at,
             s.location_last_updated,
             s.ignition_last_updated,
             s.vehicle_last_updated,
@@ -270,6 +278,10 @@ async function getStoredVehicleLocations(client = pool) {
             s.heading,
             s.is_running,
             s.speed,
+            CASE WHEN s.service_name = 'dimo'
+              THEN s.speed_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.speed_last_updated AT TIME ZONE 'UTC'
+            END AS speed_seen_at,
             s.location_last_updated,
             s.ignition_last_updated,
             s.vehicle_last_updated,
@@ -307,6 +319,10 @@ async function getStoredVehicleLocations(client = pool) {
             s.heading,
             s.is_running,
             s.speed,
+            CASE WHEN s.service_name = 'dimo'
+              THEN s.speed_last_updated AT TIME ZONE 'America/Chicago'
+              ELSE s.speed_last_updated AT TIME ZONE 'UTC'
+            END AS speed_seen_at,
             s.location_last_updated,
             s.ignition_last_updated,
             s.vehicle_last_updated,

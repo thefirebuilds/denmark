@@ -3,8 +3,8 @@ import '../styles/business-questions.css';
 
 type Source = { id: string; tool: string; retrievedAt: string; filters: Record<string, unknown>; data: unknown };
 type Answer = { question: string; answer: string; sources: Source[]; generatedAt: string };
-const examples = ['How much did I spend on tires this year?', 'What maintenance items are due for Delavan?'];
-const labels: Record<string, string> = { database_schema: 'Database schema', database_query: 'Database query', list_fleet: 'Fleet', search_expenses: 'Expenses', vehicle_maintenance: 'Maintenance', trip_summary: 'Trips', search_guest_messages: 'Guest messages' };
+const examples = ['How much did I spend on tires this year?', 'What maintenance items are due for Delavan?', 'Add a todo to fix the headlights on Geneva'];
+const labels: Record<string, string> = { database_schema: 'Database schema', database_query: 'Database query', list_fleet: 'Fleet', search_expenses: 'Expenses', vehicle_maintenance: 'Maintenance', trip_summary: 'Trips', search_guest_messages: 'Guest messages', create_maintenance_task: 'Created maintenance to-do' };
 const MINIMIZED_KEY = 'denmark.businessQuestions.minimized';
 
 export default function BusinessQuestions() {
@@ -67,7 +67,7 @@ export default function BusinessQuestions() {
     </div>
     <div id="business-questions-content" hidden={minimized}>
     {answers.length > 0 && <button type="button" disabled={busy} onClick={() => { setAnswers([]); setError(''); }}>New conversation</button>}
-    <p className="business-questions__hint">Answers from your recorded expenses, maintenance, fleet and trips. Questions and relevant records are sent to OpenAI when you ask.</p>
+    <p className="business-questions__hint">Ask about your expenses, maintenance, fleet and trips, or ask to add a vehicle maintenance to-do. Requests and relevant records are sent to OpenAI.</p>
     {answers.length === 0 && <div className="business-questions__examples">
       {examples.map((example) => <button type="button" key={example} disabled={busy} onClick={() => setQuestion(example)}>{example}</button>)}
     </div>}
@@ -89,7 +89,7 @@ export default function BusinessQuestions() {
     <form onSubmit={ask}>
       <label htmlFor="business-question">{answers.length ? 'Ask a follow-up' : 'Your question'}</label>
       <textarea id="business-question" value={question} maxLength={2000} rows={2} disabled={busy}
-        onChange={(event) => setQuestion(event.target.value)} placeholder="What would you like to know?" />
+        onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a question or add a maintenance to-do" />
       <button type="submit" disabled={busy || !question.trim()}>{busy ? 'Checking your records…' : 'Ask'}</button>
     </form>
     {error && <p role="alert" className="business-questions__error">{error}</p>}

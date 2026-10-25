@@ -5,6 +5,7 @@
 // ------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { expenseEffect, transactionFlowLabel } from '../../../shared/expenseRefund.mjs';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const VEHICLES_API = `${API_BASE}/api/vehicles`;
@@ -382,6 +383,7 @@ function ExpenseProcessingListPanel({
                   <span>{txn.counterparty_name || "Unknown merchant"}</span>
                   <span>{getTransactionSourceLabel(txn)}</span>
                   <span>{txn.category || "uncategorized"}</span>
+                  <span className="inbox-pill">{transactionFlowLabel(txn)}</span>
                   {hasLikelyMatch ? (
                     <span
                       className={`inbox-pill inbox-pill-match inbox-pill-match--${matchTone}`}
@@ -560,7 +562,7 @@ function ExpenseProcessingDetailPanel({
             onClick={() => onCreateExpense(transaction.id)}
             disabled={actionLocked}
           >
-            {draftLoading ? "Loading Draft…" : acting === "create" ? "Adding…" : "Add Expense"}
+            {draftLoading ? "Loading Draft…" : acting === "create" ? "Adding…" : Number(transaction.amount) > 0 ? "Add Refund" : "Add Expense"}
           </button>
 
           {showIncomeAction ? (
@@ -676,6 +678,7 @@ function ExpenseProcessingDetailPanel({
           <>
             <div className="inbox-detail-card">
               <div className="inbox-detail-amount">{money(transaction.amount)}</div>
+              <div className="inbox-pill">{transactionFlowLabel(transaction)}</div>
               <div className="inbox-detail-description">
                 {transaction.description || "No description"}
               </div>
@@ -768,21 +771,28 @@ function ExpenseDraftModal({
   if (!open || !draft) return null;
 
   const topSuggestion = draft.category_options?.[0] || null;
+  const effect = expenseEffect(draft);
 
   return (
     <div className="inbox-draft-overlay">
         <div className="inbox-draft-modal">
           <div className="panel-header">
-            <h2>Create Expense</h2>
+            <h2>{effect.refund ? 'Record Expense Refund' : 'Create Expense'}</h2>
           </div>
 
           <div className="inbox-draft-form">
-            {draft.refund_signal_detected ? (
-              <div className="inbox-draft-suggestion-summary">
-                Refund signal detected. This draft defaults to a negative amount
-                so the credit reduces expense instead of adding a second cost.
-              </div>
-            ) : null}
+            <label className="inbox-draft-field">
+              <span>Record as</span>
+              <select value={draft.record_type || 'expense'} onChange={event => onChange('record_type', event.target.value)}>
+                <option value="expense">Expense — increases expenses</option>
+                <option value="refund">Refund — reduces expenses</option>
+              </select>
+            </label>
+            <div className="inbox-draft-suggestion-summary" role="status">
+              {effect.refund
+                ? `This refund will reduce expenses by ${money(Math.abs(effect.total))}. It will be saved as ${money(effect.total)} in expenses.`
+                : `This expense will increase expenses by ${money(effect.total)}.`}
+            </div>
 
             <label className="inbox-draft-field">
               <span>Vendor</span>
@@ -944,7 +954,7 @@ function ExpenseDraftModal({
             onClick={onSubmit}
             disabled={saving}
           >
-            {saving ? "Saving…" : "Save Expense"}
+            {saving ? "Saving…" : effect.refund ? "Save Refund" : "Save Expense"}
           </button>
         </div>
       </div>
@@ -1437,7 +1447,7 @@ export default function InboxPanel() {
       }
 
       const draft = await res.json();
-      setExpenseDraft(draft);
+      setExpenseDraft({ ...draft, record_type: draft.record_type || (Number(draft.price) < 0 ? 'refund' : 'expense') });
       setDraftOpen(true);
     } catch (err) {
       setActionError(err.message || "Failed to load expense draft.");
@@ -1450,6 +1460,13 @@ export default function InboxPanel() {
   function handleDraftChange(field, value) {
     setExpenseDraft((current) => {
       if (!current) return current;
+
+      if (field === 'record_type') {
+        const sign = value === 'refund' ? -1 : 1;
+        return { ...current, record_type: value,
+          price: current.price === '' ? '' : sign * Math.abs(Number(current.price || 0)),
+          tax: current.tax === '' ? '' : sign * Math.abs(Number(current.tax || 0)) };
+      }
 
       if (field === "vehicle_id") {
         return {

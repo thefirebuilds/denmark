@@ -1,4 +1,5 @@
 const { mapCheckInNotice } = require('../services/trips/checkInNotice');
+const { getReturnMessageReminders, acknowledgeReturnMessage } = require('../services/trips/returnMessageReminder');
 ﻿const express = require("express");
 const router = express.Router();
 const db = require("../db");
@@ -1386,6 +1387,7 @@ function messageQueueRank(item) {
   if (item.type === "handoff_ready_required") {
     return -1;
   }
+  if (item.type === "return_message_required") return -1;
   if (item.status === "unread") return 0;
   if (item.type === "trip_overlap_detected") return 1;
   if (item.type === "late_toll_unbilled") return 1;
@@ -1586,6 +1588,7 @@ function mapMessageRow(row) {
     trip_record_start: row.trip_record_start,
     trip_record_end: row.trip_record_end,
     trip_record_amount: row.trip_record_amount,
+    initial_booking_amount: row.initial_booking_amount,
     reimbursement_invoice: reimbursementInvoice,
     reimbursement_invoice_has_discrepancy:
       reimbursementInvoice?.has_discrepancy === true,
@@ -2746,6 +2749,8 @@ router.get("/", async (req, res) => {
         trip_record_start,
         trip_record_end,
         trip_record_amount,
+        initial_booking_amount,
+        pickup_location,
         trip_record_fuel_reimbursement_total,
         trip_record_toll_count,
         trip_record_toll_total,
@@ -2798,6 +2803,13 @@ router.get("/", async (req, res) => {
           t.trip_start AS trip_record_start,
           t.trip_end AS trip_record_end,
           t.amount AS trip_record_amount,
+          COALESCE((SELECT booking.amount FROM messages booking
+            WHERE booking.message_type = 'trip_booked' AND booking.amount IS NOT NULL
+              AND ((t.id IS NOT NULL AND booking.trip_id = t.id)
+                OR booking.reservation_id = COALESCE(t.reservation_id, m.reservation_id))
+            ORDER BY booking.message_timestamp ASC NULLS LAST, booking.id ASC LIMIT 1),
+            CASE WHEN m.message_type = 'trip_booked' THEN m.amount ELSE NULL END) AS initial_booking_amount,
+          COALESCE(NULLIF(TRIM(t.pickup_location), ''), NULLIF(TRIM(m.pickup_location), '')) AS pickup_location,
           t.fuel_reimbursement_total AS trip_record_fuel_reimbursement_total,
           t.toll_count AS trip_record_toll_count,
           t.toll_total AS trip_record_toll_total,
@@ -3044,6 +3056,13 @@ router.get("/", async (req, res) => {
         t.trip_start AS trip_record_start,
         t.trip_end AS trip_record_end,
         t.amount AS trip_record_amount,
+          COALESCE((SELECT booking.amount FROM messages booking
+            WHERE booking.message_type = 'trip_booked' AND booking.amount IS NOT NULL
+              AND ((t.id IS NOT NULL AND booking.trip_id = t.id)
+                OR booking.reservation_id = COALESCE(t.reservation_id, m.reservation_id))
+            ORDER BY booking.message_timestamp ASC NULLS LAST, booking.id ASC LIMIT 1),
+            CASE WHEN m.message_type = 'trip_booked' THEN m.amount ELSE NULL END) AS initial_booking_amount,
+          COALESCE(NULLIF(TRIM(t.pickup_location), ''), NULLIF(TRIM(m.pickup_location), '')) AS pickup_location,
         t.fuel_reimbursement_total AS trip_record_fuel_reimbursement_total,
         t.toll_count AS trip_record_toll_count,
         t.toll_total AS trip_record_toll_total,
@@ -4605,7 +4624,7 @@ router.get("/", async (req, res) => {
 
 
     messagesResult.rows.forEach((row) => {
-      row.pickup_location = extractPickupLocationFromNoticeText(
+      row.pickup_location = row.pickup_location || extractPickupLocationFromNoticeText(
         row.normalized_text_body || row.subject || ""
       );
     });
@@ -4720,11 +4739,13 @@ router.get("/", async (req, res) => {
         AND COALESCE(t.closed_out, false) = false AND COALESCE(t.status, '') <> 'canceled'
     `);
     const checkInLocations = checkInResult.rows.length ? await getEnabledLocations() : [];
+    const returnMessageReminders = await timeQueueQuery(queueTimings, 'returnMessages', getReturnMessageReminders(db));
     const queueItems = compactTripChangedNotices(
       compactGuestMessageThreads([
         ...googleCalendarReconnectResult.rows.map(mapGoogleCalendarReconnectNoticeRow),
         ...checkInResult.rows.map(row => mapCheckInNotice(row, new Date(), checkInLocations)).filter(Boolean),
         ...attachedHandoffNotices,
+        ...returnMessageReminders,
         ...attachedInspectionExportNotices,
         ...closeoutResult.rows.map(mapCloseoutNoticeRow),
         ...verifiedRefuelRows.map(mapRefuelNoticeRow),
@@ -4738,7 +4759,7 @@ router.get("/", async (req, res) => {
       ])
     )
       .sort(compareQueueItems)
-      .filter((item, index) => index < limit || ["closeout_required", "vehicle_diagnostic_alert"].includes(item.type));
+      .filter((item, index) => index < limit || ["closeout_required", "vehicle_diagnostic_alert", "return_message_required"].includes(item.type));
 
     setQueueTimingHeader(res, queueStartedAt, queueTimings);
     maybeLogQueueTimings(queueStartedAt, queueTimings, queueItems.length);
@@ -4753,6 +4774,16 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("messages endpoint failed:", err);
     res.status(500).json({ error: "failed to load messages" });
+  }
+});
+
+router.patch('/return-message/:tripId/ack', async (req, res) => {
+  try {
+    await acknowledgeReturnMessage(db, Number(req.params.tripId), req.body?.tripEnd, req.auth?.email || req.auth?.userId?.toString());
+    invalidateMessageCaches();
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Could not dismiss return message reminder' });
   }
 });
 

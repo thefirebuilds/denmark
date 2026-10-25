@@ -4,6 +4,7 @@
 // --------------------------------
 
 import { useEffect, useRef, useState } from "react";
+import { withMapTelemetry } from "../../../shared/tripLocationTelemetry.mjs";
 
 /**
  * Poll fleet telemetry on an interval and expose a highlight state
@@ -70,13 +71,20 @@ export function useVehicleStatus(pollMs = 60000, initialVehicles = []) {
       setVehiclesError("");
 
       try {
-        const resp = await fetch("/api/vehicles/live-status");
+        const [resp, locationResult] = await Promise.all([
+          fetch("/api/vehicles/live-status"),
+          fetch("/api/vehicles/locations").then(async response => {
+            if (!response.ok) return [];
+            const data = await response.json();
+            return Array.isArray(data) ? data : Array.isArray(data?.vehicles) ? data.vehicles : [];
+          }).catch(() => []),
+        ]);
         if (!resp.ok) {
           throw new Error(`HTTP ${resp.status}`);
         }
 
         const data = await resp.json();
-        const nextVehicles = Array.isArray(data) ? data : [];
+        const nextVehicles = Array.isArray(data) ? data.map(vehicle => withMapTelemetry(vehicle, locationResult)) : [];
 
         if (cancelled) return;
 

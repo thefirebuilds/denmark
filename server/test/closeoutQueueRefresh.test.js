@@ -41,6 +41,14 @@ test('open closeouts survive fast/full refreshes and display limits, then clear 
   assert.equal(rendered.some(m => m.id === notice.id), false);
   assert.equal(state.messageRequestRef.current, null);
 
+  const returnReminder = { id: 'return-message:7:due', trip_id: 7, type: 'return_message_required', status: 'read' };
+  response = [...Array.from({ length: 12 }, (_, id) => ({ id, type: 'guest_message' })), returnReminder];
+  await context.loadMessages(false);
+  assert.ok(rendered.some(m => m.id === returnReminder.id));
+  response = [];
+  await context.loadMessages(false);
+  assert.equal(rendered.some(m => m.id === returnReminder.id), false);
+
   // Urgent OBD2 notices arrive on fast polls even when more than ten other
   // items precede them, and a subsequent clear from the server removes them.
   const diagnostic = { id: 'diagnostic:7', type: 'vehicle_diagnostic_alert', status: 'read' };

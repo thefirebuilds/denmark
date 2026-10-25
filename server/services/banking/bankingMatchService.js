@@ -586,6 +586,19 @@ async function ignoreBankingTransaction(id, payload = {}) {
   }
 }
 
+function resolveExpenseTreatment(tx, payload = {}) {
+  if (payload.record_type != null && !['expense', 'refund'].includes(payload.record_type)) {
+    throw Object.assign(new Error('Choose expense or refund'), { status: 400 });
+  }
+  const requestedPrice = payload.price == null || payload.price === '' ? Math.abs(Number(tx.amount)) : Number(payload.price);
+  const requestedTax = payload.tax == null || payload.tax === '' ? 0 : Number(payload.tax);
+  const isRefund = payload.record_type ? payload.record_type === 'refund' : Number(tx.amount) > 0 || requestedPrice < 0;
+  return {
+    price: requestedPrice === 0 ? 0 : isRefund ? -Math.abs(requestedPrice) : Math.abs(requestedPrice),
+    tax: requestedTax === 0 ? 0 : isRefund ? -Math.abs(requestedTax) : Math.abs(requestedTax),
+  };
+}
+
 async function createExpenseFromBanking(id, payload = {}) {
   const tx = await getBankingTransactionRow(id);
   if (!tx) {
@@ -594,34 +607,13 @@ async function createExpenseFromBanking(id, payload = {}) {
     throw err;
   }
 
-  const amount = Math.abs(Number(tx.amount || 0));
-  const absoluteAmount = Math.abs(amount);
-  const refundSignal = detectRefundSignal(
-    payload.vendor,
-    payload.notes,
-    tx.counterparty_name,
-    tx.description
-  );
-  const requestedPrice =
-    payload.price == null || payload.price === ""
-      ? absoluteAmount
-      : Number(payload.price);
-  const finalPrice =
-    refundSignal.detected && Number.isFinite(requestedPrice) && requestedPrice > 0
-      ? -Math.abs(requestedPrice)
-      : requestedPrice;
-  const requestedTax =
-    payload.tax == null || payload.tax === "" ? 0 : Number(payload.tax);
-  const finalTax =
-    refundSignal.detected && Number.isFinite(requestedTax) && requestedTax > 0
-      ? -Math.abs(requestedTax)
-      : requestedTax;
+  const treatment = resolveExpenseTreatment(tx, payload);
 
   const expensePayload = {
     vehicle_id: payload.vehicle_id ?? null,
     vendor: payload.vendor ?? tx.counterparty_name ?? null,
-    price: finalPrice,
-    tax: finalTax,
+    price: treatment.price,
+    tax: treatment.tax,
     is_capitalized: payload.is_capitalized ?? false,
     category: payload.category ?? null,
     notes: payload.notes ?? tx.description ?? null,
@@ -823,6 +815,7 @@ async function createIncomeFromBanking(id, payload = {}) {
 }
 
 module.exports = {
+  resolveExpenseTreatment,
   getBankingSuggestions,
   matchBankingTransaction,
   createExpenseFromBanking,

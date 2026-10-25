@@ -198,7 +198,8 @@ router.get("/:id/expense-draft", async (req, res) => {
     const draft = {
       vehicle_id: null,
       vendor: tx.counterparty_name || tx.description || null,
-      price: refundSignal.detected ? -amount : amount,
+      record_type: Number(tx.amount) > 0 ? 'refund' : 'expense',
+      price: Number(tx.amount) > 0 ? -amount : amount,
       tax: 0,
       is_capitalized: false,
       category: categoryOptions[0]?.category || null,

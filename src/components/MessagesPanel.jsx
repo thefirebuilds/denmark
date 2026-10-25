@@ -9,6 +9,8 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import GuestReplyComposer from "./GuestReplyComposer";
+import ReturnMessageDraft from "./ReturnMessageDraft";
+import { getBookingContext } from "../../shared/bookingContext.mjs";
 import { toPng } from "html-to-image";
 import GuestSafetySnapshotCard from "./maintenance/GuestSafetySnapshotCard";
 import PreflightCard from "./maintenance/PreflightCard";
@@ -1226,6 +1228,7 @@ function buildMessageTitle(message) {
 
 function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
+  if (type === 'return_message_required') return 'Send guest return instructions';
   if (type === "check_in_required") return "Trip check-in required";
   if (type === "home_maintenance") return "Maintenance at home";
 
@@ -3014,7 +3017,7 @@ async function handleExportGuestInspectionSheet(message) {
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
           ? actionableMessageItems
-          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || message.type === "vehicle_diagnostic_alert")
+          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || message.type === "vehicle_diagnostic_alert" || message.type === "return_message_required")
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
@@ -3614,6 +3617,7 @@ async function handleExportGuestInspectionSheet(message) {
             const canConfirmBooking = isBookingConfirmationTask(message);
             const canShowOperationalTripNotice =
               isOperationalTripNotice(message) && !canConfirmBooking;
+            const bookingContext = getBookingContext(message);
             const canShowMaintenance = isMaintenanceNotice(message);
             const canShowMaintenanceBrief = isMaintenanceBriefNotice(message);
             const maintenanceBriefDisplayKey = getMaintenanceBriefDisplayKey(message);
@@ -4112,10 +4116,18 @@ async function handleExportGuestInspectionSheet(message) {
                   context={buildGuestReplySuggestionPayload(message)}
                 />}
 
+                {message.type === 'return_message_required' && <ReturnMessageDraft
+                  message={message} replyUrl={buildReplyUrl(message)} onDismiss={() => {
+                    messagesRef.current = messagesRef.current.filter(item => item.id !== message.id);
+                    setMessages(previous => previous.filter(item => item.id !== message.id));
+                    invalidateLiveQueueCache();
+                    notifyMessageStatsUpdated();
+                  }} />}
+
                 {canShowOperationalTripNotice && (
                   <div className="message-booking-task">
                     <div className="message-booking-title">
-                      Upcoming booking context
+                      {bookingContext.title}
                       <span>
                         {message.trip_record_vehicle_nickname ||
                           message.vehicle_nickname ||
@@ -4131,12 +4143,12 @@ async function handleExportGuestInspectionSheet(message) {
                         ) || "Unknown"}
                       </strong>
                     </div>
-                    <div className="message-handoff-countdown">
+                    {bookingContext.showPickupCountdown && <div className="message-handoff-countdown">
                       {formatHandoffCountdown(
                         message.trip_record_start || message.trip_start,
                         countdownNow
                       )}
-                    </div>
+                    </div>}
                     <div className="message-maintenance-plan-date">
                       <span>Vehicle status</span>
                       <strong>{getVehicleOperationalStatus(message)}</strong>
@@ -4144,6 +4156,10 @@ async function handleExportGuestInspectionSheet(message) {
                     <div className="message-maintenance-plan-date">
                       <span>Pickup location</span>
                       <strong>{message.pickup_location || "Unknown"}</strong>
+                    </div>
+                    <div className="message-maintenance-plan-date">
+                      <span>Initial booking amount</span>
+                      <strong>{formatMoney(bookingContext.initialAmount) || "Not captured"}</strong>
                     </div>
                     {message.trip_id && (
                       <div className="message-inline-actions">

@@ -7,6 +7,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import "../../styles/selected-trip.css";
+import { getConfiguredReturnLocation } from "../../../shared/returnLocation.mjs";
+import { describeVehicleBehavior } from "../../../shared/tripLocationTelemetry.mjs";
 import TripSpeedNote from "../TripSpeedNote";
 import {
   buildBouncieVehicleDetailsUrl,
@@ -143,63 +145,6 @@ function formatDriveEstimate(miles) {
   return `~${hours} hr${remainder ? ` ${remainder} min` : ""}`;
 }
 
-function normalizeLocationText(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function getConfiguredReturnLocation(trip, locations) {
-  const bookedLabel = trip?.return_location || trip?.pickup_location || "";
-  const bookedText = normalizeLocationText(bookedLabel);
-  const enabledLocations = locations.filter((location) => {
-    const lat = Number(location?.latitude ?? location?.lat);
-    const lon = Number(location?.longitude ?? location?.lon ?? location?.lng);
-    return location?.enabled !== false && Number.isFinite(lat) && Number.isFinite(lon);
-  });
-
-  const namedMatch = bookedText
-    ? enabledLocations.find((location) => {
-      const candidates = [
-        location?.label,
-        location?.name,
-        location?.address,
-        location?.id,
-      ]
-        .map(normalizeLocationText)
-        .filter(Boolean);
-      return candidates.some(
-        (candidate) =>
-          candidate === bookedText ||
-          (candidate.length >= 6 && bookedText.includes(candidate)) ||
-          (bookedText.length >= 6 && candidate.includes(bookedText))
-      );
-    })
-    : null;
-  if (namedMatch) return namedMatch;
-
-  // Keep this fallback aligned with server-side return geofence detection:
-  // ordinary Turo street-address text resolves to the primary parking lot,
-  // even though configured geofences retain only a friendly label and coords.
-  const primaryParking =
-    enabledLocations.find((location) =>
-      /(?:^|\b)(?:garlic creek|home|buda|78610)(?:\b|$)/i.test(
-        String(location?.label || "")
-      )
-    ) ||
-    enabledLocations.find(
-      (location) => String(location?.kind || "").toLowerCase() === "parking"
-    ) ||
-    enabledLocations[0] ||
-    null;
-  const explicitlyAlternate =
-    /(?:^| )(?:airport|terminal|hotel|delivery|delivered|station|garage)(?: |$)/.test(
-      bookedText
-    );
-
-  return explicitlyAlternate ? null : primaryParking;
-}
 
 export default function SelectedTripPanel({
   selectedTrip,
@@ -298,6 +243,10 @@ export default function SelectedTripPanel({
     telemetry: selectedVehicle?.telemetry,
   });
   const selectedVehicleCommAlert = getCommAlert(selectedVehicle);
+  const locationDiagnostics = selectedVehicle?.telemetry?.location_diagnostics;
+  const telemetryStatusLabel = locationDiagnostics?.locationIssue === 'dimo_location_signal_stale'
+    ? 'DIMO GPS signal is stale'
+    : selectedVehicleCommAlert?.label || `${getTelemetrySourceLabel(selectedVehicle)} reporting`;
   const selectedVehicleBatteryAlert = getBatteryAlert(selectedVehicle);
   const mileageStats = getMileageStats(selectedTrip, selectedVehicle);
   const vehicleLabel = getTripVehicleLabel(selectedTrip, selectedVehicleInfo);
@@ -358,16 +307,7 @@ export default function SelectedTripPanel({
     mileageStats.allowed != null && mileageStats.used != null
       ? Math.max(0, mileageStats.used - mileageStats.allowed)
       : null;
-  const currentSpeed = Number(selectedVehicle?.telemetry?.speed);
-  const vehicleBehavior = selectedVehicle
-    ? selectedVehicle?.telemetry?.engine_running
-      ? Number.isFinite(currentSpeed) && currentSpeed > 0
-        ? `Driving at ${Math.round(currentSpeed)} mph`
-        : "Engine running, currently stopped"
-      : Number.isFinite(currentSpeed) && currentSpeed > 0
-      ? `Moving at ${Math.round(currentSpeed)} mph`
-      : "Parked / engine off"
-    : "Awaiting telemetry";
+  const vehicleBehavior = describeVehicleBehavior(selectedVehicle?.telemetry);
   const directionsUrl = telemetryPoint && hasReturnPoint
     ? `https://www.google.com/maps/dir/?api=1&origin=${telemetryPoint.lat},${telemetryPoint.lon}&destination=${returnPoint.lat},${returnPoint.lon}`
     : "";
@@ -794,8 +734,8 @@ function renderLocationLink(vehicle) {
               <div><span>Required return</span><strong>{bookedReturnLabel}</strong></div>
               <div><span>Distance to return</span><strong>{Number.isFinite(milesToReturn) ? `${milesToReturn < 10 ? milesToReturn.toFixed(1) : Math.round(milesToReturn)} mi straight-line / ${formatDriveEstimate(milesToReturn)} estimated drive` : "Return location needs configured coordinates"}</strong></div>
               <div><span>Mileage position</span><strong>{mileageOver == null ? "Awaiting odometer" : mileageOver > 0 ? `${Math.round(mileageOver).toLocaleString("en-US")} mi over allowance` : `${Math.round(mileageStats.remaining || 0).toLocaleString("en-US")} mi remaining`}</strong></div>
-              <div><span>Last GPS update</span><strong>{selectedVehicle ? formatRelativeComm(selectedVehicle?.telemetry?.last_comm) : "Awaiting telemetry"}</strong></div>
-              <div><span>Telemetry status</span><strong>{selectedVehicleCommAlert?.label || `${getTelemetrySourceLabel(selectedVehicle)} reporting`}</strong></div>
+              <div><span>Last GPS update</span><strong>{selectedVehicle ? formatRelativeComm(selectedVehicle?.telemetry?.timestamps?.location_last_updated) : "Awaiting telemetry"}</strong></div>
+              <div><span>Telemetry status</span><strong>{telemetryStatusLabel}</strong></div>
             </div>
 
             {mapUrl ? (
