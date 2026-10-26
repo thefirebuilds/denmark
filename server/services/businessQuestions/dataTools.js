@@ -7,6 +7,12 @@ function tool(name, description, properties) {
     parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } };
 }
 const definitions = [
+  tool('search_trips', 'Find individual trips by guest name, vehicle nickname/name, or a trip/reservation number. A number the user calls a trip ID may actually be a Turo reservation ID: trip_reference checks BOTH. Search all dates by default. Use this for guest return times and follow-up reservation numbers, NOT list_fleet or trip_summary. Returns scheduled trip_end separately from actual returned_at; a missing returned_at is NOT proof of no trip or no return.', {
+    trip_reference: { type: ['string', 'null'], description: 'Numeric internal trip ID or Turo reservation ID, or null.' },
+    guest_name: { type: ['string', 'null'], description: 'Guest name or partial name, e.g. Olive, or null. Clear this when looking up an exact reference.' },
+    vehicle_name: { type: ['string', 'null'], description: 'Vehicle nickname, stored alias or name, or null.' },
+    offset: { type: 'integer', description: 'Start at 0; follow next_offset if needed.' },
+  }),
   tool('database_schema', 'Discover tables, views and columns throughout the connected Denmark database. No application table or column allowlist. Start with null schema_name and table_name, then inspect relevant tables. Paginated 200 columns at a time.', {
     schema_name: { type: ['string', 'null'] }, table_name: { type: ['string', 'null'] },
     offset: { type: 'integer', description: 'Start at 0; follow next_offset.' },
@@ -40,6 +46,14 @@ function validateArgs(name, args) {
   if (!definition || !args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Invalid data request');
   const keys = Object.keys(definition.parameters.properties);
   if (Object.keys(args).some((key) => !keys.includes(key)) || keys.some((key) => !(key in args))) throw new Error('Invalid data request fields');
+  if (name === 'search_trips') {
+    if (!Number.isSafeInteger(args.offset) || args.offset < 0) throw new Error('Invalid page offset');
+    if (args.trip_reference !== null && (typeof args.trip_reference !== 'string' || !/^\d{1,18}$/.test(args.trip_reference))) throw new Error('Invalid trip reference');
+    for (const key of ['guest_name', 'vehicle_name']) {
+      if (args[key] !== null && (typeof args[key] !== 'string' || !args[key].trim() || args[key].length > 200)) throw new Error('Invalid trip search');
+    }
+    if (!args.trip_reference && !args.guest_name && !args.vehicle_name) throw new Error('Provide a guest, vehicle or trip reference');
+  }
   if (name === 'database_query' || name === 'database_schema') {
     if (!Number.isSafeInteger(args.offset) || args.offset < 0) throw new Error('Invalid page offset');
     if (name === 'database_query' && (typeof args.sql !== 'string' || !args.sql.trim() || args.sql.length > 30000)) throw new Error('Invalid SQL query');
@@ -71,7 +85,40 @@ function createDataTools({ pool, getMaintenanceSummary }) {
       await client.query('BEGIN READ ONLY');
       await client.query("SET LOCAL statement_timeout = '10000ms'");
       let data;
-      if (name === 'database_schema') {
+      if (name === 'search_trips') {
+        const result = await client.query(`WITH matching AS (
+          SELECT t.id AS trip_id, t.reservation_id::text, t.guest_name, t.vehicle_name,
+            v.nickname AS vehicle_nickname, t.trip_start, t.trip_end AS scheduled_return_at,
+            t.returned_at, t.return_detection_source, t.return_detected_location,
+            t.return_late_minutes, t.status, t.workflow_stage, t.pickup_location, t.return_location
+          FROM trips t
+          LEFT JOIN LATERAL (SELECT candidate.id, candidate.nickname FROM vehicles candidate
+            WHERE candidate.turo_vehicle_id = t.turo_vehicle_id OR
+              (t.turo_vehicle_id IS NULL AND (
+                LOWER(TRIM(candidate.nickname)) = LOWER(TRIM(t.vehicle_name)) OR
+                LOWER(TRIM(candidate.turo_vehicle_name)) = LOWER(TRIM(t.vehicle_name)) OR
+                EXISTS (SELECT 1 FROM vehicle_aliases a WHERE a.vehicle_id = candidate.id AND a.active = true
+                  AND LOWER(TRIM(a.alias)) = LOWER(TRIM(t.vehicle_name)))))
+            ORDER BY candidate.id LIMIT 1) v ON true
+          WHERE t.deleted_at IS NULL
+            AND ($1::text IS NULL OR t.id::text = $1 OR t.reservation_id::text = $1)
+            AND ($2::text IS NULL OR strpos(LOWER(COALESCE(t.guest_name, '')), LOWER($2)) > 0)
+            AND ($3::text IS NULL OR strpos(LOWER(CONCAT_WS(' ', t.vehicle_name, v.nickname)), LOWER($3)) > 0
+              OR EXISTS (SELECT 1 FROM vehicle_aliases a WHERE a.vehicle_id = v.id AND a.active = true
+                AND strpos(LOWER(a.alias), LOWER($3)) > 0))
+        ), page AS (SELECT * FROM matching ORDER BY trip_start DESC NULLS LAST, trip_id DESC LIMIT 50 OFFSET $4)
+        SELECT (SELECT COUNT(*) FROM matching)::int AS matched_count,
+          COALESCE((SELECT jsonb_agg(page ORDER BY trip_start DESC NULLS LAST, trip_id DESC) FROM page), '[]'::jsonb) AS records`,
+        [args.trip_reference, args.guest_name?.trim() ?? null, args.vehicle_name?.trim() ?? null, args.offset]);
+        const row = result.rows[0];
+        const localTime = value => value ? DateTime.fromISO(new Date(value).toISOString()).setZone('America/Chicago').toISO() : null;
+        data = { ...row, records: row.records.map(trip => ({ ...trip,
+          returned_at_local: localTime(trip.returned_at),
+          scheduled_return_at_local: localTime(trip.scheduled_return_at),
+        })), timezone: 'America/Chicago',
+          next_offset: args.offset + row.records.length < row.matched_count ? args.offset + row.records.length : null,
+          basis: 'Individual trip records across all dates. returned_at is the recorded actual return/detection time; scheduled_return_at is only the booked deadline. A null actual return timestamp means it was not recorded here, not that the trip was not found.' };
+      } else if (name === 'database_schema') {
         const result = await client.query(`SELECT table_schema, table_name, column_name,
           data_type, udt_name, is_nullable, column_default
           FROM information_schema.columns

@@ -182,8 +182,8 @@ async function evaluateCondition(client, telemetry, condition, trip) {
     case 'launch_location': {
       const { getEnabledLocations } = require('../locations/locationSettings');
       const { getMatchedTripReturnGeoLocation } = require('../alerts/fleetAlerts');
-      const match = getMatchedTripReturnGeoLocation({ ...telemetry, return_location: trip.pickup_location }, await getEnabledLocations(), { strictReturnLocation: true });
-      return { matched: Boolean(match), reason: match ? 'returned to launch location ' + match.location.label : 'outside launch location' };
+      const match = getMatchedTripReturnGeoLocation({ ...telemetry, return_location: trip.return_location || trip.pickup_location }, await getEnabledLocations(), { strictReturnLocation: true });
+      return { matched: Boolean(match), returnMatch: match, reason: match ? 'returned to launch location ' + match.location.label : 'outside launch location' };
     }
     case "engine_transition":
       return evaluateEngineTransitionCondition(client, telemetry, condition);
@@ -199,10 +199,12 @@ async function evaluateCondition(client, telemetry, condition, trip) {
 
 async function evaluateRuleConditions(client, telemetry, rule, trip) {
   const reasons = [];
+  let returnMatch = null;
 
   for (const condition of rule.conditions || []) {
     const result = await evaluateCondition(client, telemetry, condition, trip);
     reasons.push(result.reason);
+    if (result.returnMatch) returnMatch = result.returnMatch;
 
     if (!result.matched) {
       return {
@@ -216,6 +218,7 @@ async function evaluateRuleConditions(client, telemetry, rule, trip) {
   return {
     matched: true,
     reason: reasons.join("; "),
+    returnMatch,
     reasons,
   };
 }
@@ -241,6 +244,7 @@ async function findEligibleTripForRule(client, vehicle, eventTimestamp, rule) {
         vehicle_name,
         guest_name,
         pickup_location,
+        return_location,
         trip_start,
         trip_end,
         workflow_stage,
@@ -300,6 +304,15 @@ async function maybeAutoAdvanceTurnaroundTripFromTelemetry(client, telemetry) {
     if (!trip) continue;
     const signal = await evaluateRuleConditions(client, telemetry, rule, trip);
     if (!signal.matched) continue;
+
+    if (signal.returnMatch) {
+      const { recordTripReturnObservation } = require('../alerts/fleetAlerts');
+      await recordTripReturnObservation({ ...trip,
+        service_name: telemetry.serviceName,
+        location_last_updated: telemetry.locationLastUpdated,
+        captured_at: telemetry.capturedAt || new Date().toISOString(),
+      }, signal.returnMatch, client);
+    }
 
     console.log(
       `Auto-advancing trip ${trip.id} (${trip.guest_name || "unknown guest"} / ${

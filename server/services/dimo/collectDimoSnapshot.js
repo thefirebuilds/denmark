@@ -972,6 +972,8 @@ async function persistDimoTelemetry({ normalized, raw }) {
     const autoTurnaroundResult = await maybeAutoAdvanceTurnaroundTripFromTelemetry(
       client,
       {
+        locationLastUpdated: normalized.location_last_updated,
+        capturedAt: normalized.captured_at,
         serviceName: "dimo",
         vin: normalized.vin,
         dimoTokenId: normalized.dimo_token_id,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import TripPathMap from "./TripPathMap";
+import TripReturnAudit from './TripReturnAudit';
 
 const TOLL_REVIEW_STATUS_OPTIONS = [
   { value: "", label: "— Select toll review status —" },
@@ -757,6 +758,8 @@ async function handleSubmit(e) {
 </div>
             </div>
           </section>
+
+          <TripReturnAudit tripId={trip?.id} open={open} />
 
           <section className="trip-summary-drawer-section">
             <div className="trip-summary-drawer-section-title">Workflow</div>

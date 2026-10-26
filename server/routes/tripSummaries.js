@@ -550,6 +550,24 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.get('/:id/return-audit', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid trip ID' });
+  try {
+    await ensureTripRuntimeSchema();
+    const trip = await pool.query('SELECT id FROM trips WHERE id = $1', [id]);
+    if (!trip.rows.length) return res.status(404).json({ error: 'Trip not found' });
+    const { rows } = await pool.query(`SELECT id, trip_id, occurred_at, recorded_at, location, source,
+      distance_miles, late_minutes, is_backfilled FROM trip_return_audit
+      WHERE trip_id = $1 ORDER BY occurred_at, id`, [id]);
+    res.set('Cache-Control', 'no-store');
+    res.json(rows);
+  } catch (error) {
+    console.error('Trip return audit lookup failed:', error.code || 'unknown');
+    res.status(500).json({ error: 'Could not load return audit log' });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     await ensureTripRuntimeSchema();

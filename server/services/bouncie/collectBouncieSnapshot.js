@@ -445,6 +445,8 @@ async function maybeAutoStartReadyTrip(client, snapshot) {
 
 async function maybeAutoAdvanceTurnaroundTrip(client, snapshot) {
   return maybeAutoAdvanceTurnaroundTripFromTelemetry(client, {
+    locationLastUpdated: snapshot.location_last_updated || snapshot.vehicle_last_updated,
+    capturedAt: snapshot.captured_at,
     serviceName: "bouncie",
     vin: snapshot.vin,
     bouncieVehicleId: snapshot.bouncie_vehicle_id,

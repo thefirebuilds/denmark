@@ -26,6 +26,50 @@ async function ensureTripRuntimeSchema(client = pool) {
       `);
 
       await client.query(`
+        CREATE TABLE IF NOT EXISTS public.trip_return_audit (
+          id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+          trip_id integer NOT NULL UNIQUE,
+          occurred_at timestamptz NOT NULL,
+          recorded_at timestamptz NOT NULL DEFAULT NOW(),
+          location text,
+          source text NOT NULL,
+          distance_miles numeric,
+          late_minutes integer,
+          is_backfilled boolean NOT NULL DEFAULT false
+        );
+
+        CREATE OR REPLACE FUNCTION public.audit_trip_return() RETURNS trigger
+        LANGUAGE plpgsql AS $trip_return_audit$
+        BEGIN
+          IF NEW.returned_at IS NOT NULL THEN
+            INSERT INTO public.trip_return_audit
+              (trip_id, occurred_at, location, source, distance_miles, late_minutes)
+            VALUES (NEW.id, NEW.returned_at, NEW.return_detected_location,
+              COALESCE(NEW.return_detection_source, 'unknown'),
+              NEW.return_distance_miles, NEW.return_late_minutes)
+            ON CONFLICT (trip_id) DO NOTHING;
+          END IF;
+          RETURN NEW;
+        END $trip_return_audit$;
+
+        DO $install_return_audit$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_trigger
+            WHERE tgrelid = 'public.trips'::regclass AND tgname = 'trips_return_audit') THEN
+            CREATE TRIGGER trips_return_audit
+              AFTER INSERT OR UPDATE OF returned_at ON public.trips
+              FOR EACH ROW EXECUTE FUNCTION public.audit_trip_return();
+          END IF;
+        END $install_return_audit$;
+
+        INSERT INTO public.trip_return_audit
+          (trip_id, occurred_at, location, source, distance_miles, late_minutes, is_backfilled)
+        SELECT id, returned_at, return_detected_location,
+          COALESCE(return_detection_source, 'unknown'), return_distance_miles, return_late_minutes, true
+        FROM public.trips WHERE returned_at IS NOT NULL
+        ON CONFLICT (trip_id) DO NOTHING;
+      `);
+
+      await client.query(`
         UPDATE public.trips t
         SET guest_rating_received = TRUE,
             guest_rating_received_at = COALESCE(

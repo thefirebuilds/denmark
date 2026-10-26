@@ -339,13 +339,13 @@ function getReturnObservedAt(row) {
   return observedAt;
 }
 
-async function recordTripReturnObservation(row, match) {
+async function recordTripReturnObservation(row, match, client = pool) {
   const observedAt = getReturnObservedAt(row);
   const dueAt = new Date(row.trip_end);
   const lateMinutes = Number.isNaN(dueAt.getTime())
     ? 0
     : Math.max(0, Math.round((observedAt.getTime() - dueAt.getTime()) / 60000));
-  const result = await pool.query(`UPDATE trips SET
+  const result = await client.query(`UPDATE trips SET
       returned_at=COALESCE(returned_at,$2::timestamptz),
       return_late_minutes=COALESCE(return_late_minutes,$3::integer),
       return_detection_source=COALESCE(return_detection_source,$4),
@@ -2044,6 +2044,7 @@ async function runFleetAlerts(reason = "interval") {
 }
 
 module.exports = {
+  recordTripReturnObservation,
   ensureFleetAlertTables,
   getMatchedTripReturnGeoLocation,
   runFleetAlerts,

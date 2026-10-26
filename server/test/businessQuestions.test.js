@@ -159,13 +159,15 @@ test('database errors are not sent to OpenAI or exposed as source records', asyn
   assert.deepEqual((await answer(question)).sources, []);
 });
 
-test('repeated tool calls stop at the round limit', async () => {
+test('repeated tool calls stop executing and preserve evidence at the round limit', async () => {
   let calls = 0;
   const answer = createQuestionAnswerer({ apiKey: () => 'test', execute: async () => ({}),
     fetchImpl: async () => { calls++; return toolReply('list_fleet', {}); },
   });
-  await assert.rejects(answer(question), { statusCode: 422 });
-  assert.equal(calls, 6);
+  const result = await answer(question);
+  assert.match(result.answer, /lookup limit/);
+  assert.equal(result.sources.length, 6);
+  assert.equal(calls, 7);
 });
 
 test('maintenance lookup is read-only and excludes lockbox credentials and raw data', async () => {
