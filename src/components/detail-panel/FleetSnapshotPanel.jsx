@@ -299,6 +299,9 @@ export default function FleetSnapshotPanel({
 
     return {
       nextServiceDue: getNextServiceDue(summary),
+      oilChangeStatus: (summary?.ruleStatuses || []).find(
+        (rule) => rule.ruleCode === 'oil_change' && ['due_soon', 'overdue'].includes(rule.status)
+      )?.status || null,
       dueTaskText: queueItems.length
         ? queueItems
             .slice(0, 3)
@@ -643,6 +646,8 @@ export default function FleetSnapshotPanel({
               : "Available";
 
             const serviceDueLabel = getServiceDueText(vehicle);
+            const oilChangeStatus = serviceDueByVin[vehicle?.vin]?.oilChangeStatus;
+            const oilChangeLabel = oilChangeStatus === 'overdue' ? 'Oil change due' : 'Oil change due soon';
             const hasServiceDue = serviceDueLabel && serviceDueLabel !== "No service due";
             const serviceDueBadgeClass = hasServiceDue
               ? "fleet-maintenance-badge fleet-maintenance-badge--info"
@@ -669,7 +674,17 @@ export default function FleetSnapshotPanel({
                   <div className="fleet-row-summary-main">
                     <div className="fleet-row-summary-header">
                       <div>
-                        <div className="fleet-row-title">{nameTitle}</div>
+                        <div className="fleet-row-title">
+                          {nameTitle}
+                          {oilChangeStatus && <img
+                            className="fleet-oil-due-icon"
+                            src="/images/oil_light.png"
+                            alt={oilChangeLabel}
+                            title={oilChangeLabel}
+                            width={24}
+                            height={24}
+                          />}
+                        </div>
                         {subtitle ? (
                           <div className="fleet-row-subtitle">{subtitle}</div>
                         ) : null}
