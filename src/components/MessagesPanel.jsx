@@ -3063,6 +3063,8 @@ async function handleExportGuestInspectionSheet(message) {
       } else {
         const watermark = queueChimeWatermarkRef.current;
         const freshMessages = unsuppressedMessages.filter((message) => {
+          // Reconciliation is a persistent work reminder, not new mail.
+          if ((message.type || message.message_type) === 'banking_reconciliation_required') return false;
           const idKey = String(message.id);
           if (knownQueueItemIds.has(idKey)) return false;
 

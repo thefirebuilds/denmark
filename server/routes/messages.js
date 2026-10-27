@@ -2393,6 +2393,8 @@ router.get("/stats", async (req, res) => {
               AND subject ILIKE '%upcoming trip%'
             )
         ) AS unread_count,
+        COUNT(*) FILTER (WHERE status = 'unread'
+          AND message_type = 'banking_reconciliation_required') AS reconciliation_unread_count,
         COUNT(*) FILTER (WHERE status = 'read') AS read_count,
         COUNT(*) FILTER (WHERE message_type = 'guest_message') AS guest_message_count,
         COUNT(*) FILTER (WHERE message_type = 'trip_booked') AS trip_booked_count,
@@ -2515,6 +2517,7 @@ router.get("/stats", async (req, res) => {
 
     const payload = {
       unread: Number(row.unread_count || 0),
+      chimeUnread: Math.max(0, Number(row.unread_count || 0) - Number(row.reconciliation_unread_count || 0)),
       read: Number(row.read_count || 0),
       guestMessages: Number(row.guest_message_count || 0),
       tripsBooked: Number(row.trip_booked_count || 0),

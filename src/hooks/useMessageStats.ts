@@ -89,11 +89,12 @@ export function useMessageStats({
 
       const data = JSON.parse(text);
       const nextUnread = Number(data?.unread ?? 0);
+      const nextChimeUnread = Number(data?.chimeUnread ?? nextUnread);
 
       if (!cancelled) {
         const prevUnread = previousUnreadRef.current;
         const now = Date.now();
-        const unreadIncreased = prevUnread !== null && nextUnread > prevUnread;
+        const unreadIncreased = prevUnread !== null && nextChimeUnread > prevUnread;
         const enoughTimePassed = now - lastChimeAtRef.current > 1500;
 
         if (unreadIncreased && enoughTimePassed) {
@@ -101,7 +102,7 @@ export function useMessageStats({
           playMailChime();
         }
 
-        previousUnreadRef.current = nextUnread;
+        previousUnreadRef.current = nextChimeUnread;
 
         setMessageStats({
           unread: nextUnread,
