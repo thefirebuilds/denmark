@@ -226,6 +226,7 @@ const EMPTY_VEHICLE = {
   turo_vehicle_name: "",
   bouncie_vehicle_id: "",
   dimo_token_id: "",
+  dimo_odometer_unit: 'km',
   provider_vehicle_id: "",
   external_vehicle_key: "",
   imei: "",
@@ -2438,6 +2439,15 @@ function VehicleConfigFields({ form, update, mode = "edit" }) {
           value={form.bouncie_vehicle_id || ""}
           onChange={(e) => update("bouncie_vehicle_id", e.target.value)}
         />
+      </label>
+
+      <label className="settings-field">
+        <span>DIMO odometer input unit</span>
+        <select value={form.dimo_odometer_unit || 'km'} onChange={(e) => update('dimo_odometer_unit', e.target.value)}>
+          <option value="km">Kilometers (DIMO default)</option>
+          <option value="mi">Miles (vehicle-specific correction)</option>
+        </select>
+        <small>Use Miles only when the raw DIMO odometer already matches the dashboard miles. Denmark stores mileage in miles.</small>
       </label>
 
       <label className="settings-field">

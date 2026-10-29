@@ -3255,6 +3255,8 @@ ON CONFLICT (key) DO NOTHING;
 
 
 -- Permanent trip return audit records and trigger.
+ALTER TABLE public.vehicles ADD COLUMN IF NOT EXISTS dimo_odometer_unit text NOT NULL DEFAULT 'km'
+  CHECK (dimo_odometer_unit IN ('km', 'mi'));
 CREATE TABLE IF NOT EXISTS public.trip_return_audit (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   trip_id integer NOT NULL UNIQUE,

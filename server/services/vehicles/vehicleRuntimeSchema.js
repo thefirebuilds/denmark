@@ -5,7 +5,9 @@ let ensurePromise = null;
 async function createVehicleRuntimeSchema(client) {
   await client.query(`
     ALTER TABLE public.vehicles
-      ADD COLUMN IF NOT EXISTS battery_installed_at date
+      ADD COLUMN IF NOT EXISTS battery_installed_at date,
+      ADD COLUMN IF NOT EXISTS dimo_odometer_unit text NOT NULL DEFAULT 'km'
+        CHECK (dimo_odometer_unit IN ('km', 'mi'))
   `);
 
   await client.query(`

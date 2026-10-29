@@ -533,6 +533,7 @@ router.post("/", async (req, res) => {
         toNullableText(req.body.license_state)?.toUpperCase() || null,
       bouncie_vehicle_id: toNullableText(req.body.bouncie_vehicle_id),
       dimo_token_id: toNullableInt(req.body.dimo_token_id),
+      dimo_odometer_unit: req.body.dimo_odometer_unit ?? 'km',
       provider_vehicle_id:
         toNullableText(req.body.provider_vehicle_id) ||
         (toNullableInt(req.body.dimo_token_id) != null
@@ -1222,6 +1223,10 @@ router.patch("/:selector", async (req, res) => {
         : existing.dimo_token_id;
 
     const dimoTokenWasProvided = req.body.dimo_token_id !== undefined;
+    const dimoOdometerUnit = req.body.dimo_odometer_unit ?? existing.dimo_odometer_unit ?? 'km';
+    if (!['km', 'mi'].includes(dimoOdometerUnit)) {
+      throw Object.assign(new Error('DIMO odometer unit must be km or mi'), { statusCode: 400 });
+    }
 
     const provider_vehicle_id =
       req.body.provider_vehicle_id !== undefined
@@ -1327,6 +1332,7 @@ router.patch("/:selector", async (req, res) => {
         lockbox_pin_public = $17,
         bouncie_vehicle_id = $18,
         dimo_token_id = $19,
+        dimo_odometer_unit = $31,
         provider_vehicle_id = $20,
         external_vehicle_key = COALESCE($21, CASE WHEN $19::bigint IS NOT NULL THEN 'dimo:' || $19::text ELSE NULL END),
         turo_vehicle_id = $22,
@@ -1373,6 +1379,7 @@ router.patch("/:selector", async (req, res) => {
       trip_eligible,
       is_active,
       existing.id,
+      dimoOdometerUnit,
     ];
 
     const { rows } = await client.query(vehicleQuery, vehicleValues);
@@ -1461,7 +1468,7 @@ router.patch("/:selector", async (req, res) => {
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("PATCH /api/vehicles/:selector failed:", err);
-    return res.status(500).json({ error: "Failed to update vehicle" });
+    return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : "Failed to update vehicle" });
   } finally {
     client.release();
   }

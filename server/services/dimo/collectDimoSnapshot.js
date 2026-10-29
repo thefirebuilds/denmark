@@ -440,7 +440,7 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
     year: toNumber(vehicleConfig.year),
     standard_engine: cleanString(vehicleConfig.standard_engine),
 
-    odometer: kmToMiles(odometerKm),
+    odometer: vehicleConfig.dimo_odometer_unit === 'mi' ? toNumber(odometerKm) : kmToMiles(odometerKm),
     fuel_level: toNumber(signalValue(s.powertrainFuelSystemRelativeLevel)),
     is_running: toBool(signalValue(s.isIgnitionOn)),
     speed: kmhToMph(signalValue(s.speed)),
@@ -472,6 +472,7 @@ function normalizeDimoSnapshot(raw, vehicleConfig, options = {}) {
 
     raw_payload: {
       provider: "dimo",
+      odometerInputUnit: vehicleConfig.dimo_odometer_unit || 'km',
       tokenId: vehicleConfig.tokenId,
       externalVehicleKey: vehicleConfig.external_vehicle_key,
       capturedAt: options.capturedAt,
@@ -589,6 +590,7 @@ async function upsertDimoVehicle(normalized, client = pool) {
     ON CONFLICT (vin)
     DO UPDATE SET
       ${assignments.join(",\n      ")}
+    RETURNING current_odometer_miles
   `;
 
   return client.query(sql, values);
@@ -626,6 +628,7 @@ async function insertDimoOdometerHistory(normalized, client = pool) {
         LIMIT 1
       ) last_h ON true
       WHERE LOWER(v.vin) = LOWER($1)
+        AND $2 >= COALESCE(v.current_odometer_miles, 0)
         AND (
           last_h.odometer_miles IS NULL
           OR last_h.odometer_miles <> $2
@@ -941,12 +944,15 @@ async function persistDimoTelemetry({ normalized, raw }) {
     }
     normalized.vin = managedVehicle.vin;
     const vehicleResult = await upsertDimoVehicle(normalized, client);
+    const recordedOdometerMiles = vehicleResult.rows?.[0]?.current_odometer_miles ?? null;
+    const effectiveOdometerMiles = normalized.odometer == null ? recordedOdometerMiles
+      : Math.max(Number(normalized.odometer), Number(recordedOdometerMiles ?? 0));
     const stagedOdometerResult = await stageStartingOdometerFromTelemetry(client, {
       serviceName: "dimo",
       vin: normalized.vin,
       dimoTokenId: normalized.dimo_token_id,
       odometer:
-        normalized.odometer == null ? null : Math.round(Number(normalized.odometer)),
+        effectiveOdometerMiles == null ? null : Math.round(effectiveOdometerMiles),
       eventTimestamp:
         normalized.vehicle_last_updated ||
         normalized.ignition_last_updated ||
@@ -962,7 +968,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
       latitude: normalized.latitude,
       longitude: normalized.longitude,
       odometer:
-        normalized.odometer == null ? null : Math.round(Number(normalized.odometer)),
+        effectiveOdometerMiles == null ? null : Math.round(effectiveOdometerMiles),
       eventTimestamp:
         normalized.vehicle_last_updated ||
         normalized.ignition_last_updated ||
@@ -983,7 +989,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
         longitude: normalized.longitude,
         address: normalized.address,
         odometer:
-          normalized.odometer == null ? null : Math.round(Number(normalized.odometer)),
+          effectiveOdometerMiles == null ? null : Math.round(effectiveOdometerMiles),
         eventTimestamp:
           normalized.vehicle_last_updated ||
           normalized.ignition_last_updated ||

@@ -216,6 +216,7 @@ async function getDimoFleetFromDb() {
       year,
       standard_engine,
       dimo_token_id,
+      dimo_odometer_unit,
       is_active,
       in_service
     FROM vehicles
@@ -228,6 +229,7 @@ async function getDimoFleetFromDb() {
     vehicle_id: vehicle.id,
     tokenId: normalizeTokenId(vehicle.dimo_token_id),
     dimo_token_id: normalizeTokenId(vehicle.dimo_token_id),
+    dimo_odometer_unit: vehicle.dimo_odometer_unit || 'km',
     active: vehicle.is_active !== false,
     in_service: vehicle.in_service !== false,
     nickname: cleanString(vehicle.nickname),

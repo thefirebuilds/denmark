@@ -141,6 +141,12 @@ function mergeTelemetry(primary, fallback) {
   };
 }
 
+function getDisplayOdometer(recorded, reported) {
+  const candidates = [recorded, reported].filter(value => value != null && value !== '')
+    .map(normalizeOdometer).filter(value => Number.isFinite(value) && value >= 0);
+  return candidates.length ? Math.max(...candidates) : null;
+}
+
 function getTelemetryTimeMs(vehicle) {
   const telemetry = vehicle?.telemetry || {};
   const candidates = [
@@ -244,7 +250,8 @@ function mergeVehicleTelemetry(baseVehicle, bouncieVehicle, dimoVehicle) {
     telemetry: telemetry
       ? {
           ...telemetry,
-          odometer: normalizeOdometer(telemetry.odometer),
+          reported_odometer: normalizeOdometer(telemetry.odometer),
+          odometer: getDisplayOdometer(currentOdometerMiles, telemetry.odometer),
           source: activeTelemetrySource,
           fallback_sources: telemetrySource.filter(
             (source) => source !== activeTelemetrySource
@@ -544,7 +551,8 @@ async function loadCachedVehicleStatusFeed() {
     const telemetry = {
       local_time_zone: vehicle.local_time_zone || null,
       last_comm: vehicle.vehicle_last_updated || vehicle.telemetry_captured_at || null,
-      odometer: normalizeOdometer(vehicle.telemetry_odometer),
+      reported_odometer: normalizeOdometer(vehicle.telemetry_odometer),
+      odometer: getDisplayOdometer(vehicle.current_odometer_miles, vehicle.telemetry_odometer),
       fuel_level: normalizeFuel(vehicle.fuel_level),
       engine_running:
         typeof vehicle.is_running === "boolean" ? vehicle.is_running : null,
