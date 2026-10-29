@@ -223,7 +223,13 @@ function tripReturnLocationMatchesNamedLocation(tripReturnLocation, location) {
   const tripLocation = normalizeLocationText(tripReturnLocation);
   if (!tripLocation || !location) return false;
 
-  return [location.label, location.id, location.kind]
+  const name = normalizeLocationText(`${location.label || ''} ${location.id || ''}`);
+  const airportAlias = /park my share|parking spot west/.test(name) &&
+    /park my share|parking spot west|1600 (?:e|east) (?:hwy|highway) 71/.test(tripLocation);
+  const homeAlias = /garlic creek|fletcher bend|fletcher bnd/.test(name) &&
+    /fletcher (?:bend|bnd)/.test(tripLocation);
+  if (airportAlias || homeAlias) return true;
+  return [location.label, location.id, location.address, ...(location.aliases || [])]
     .map(normalizeLocationText)
     .filter(Boolean)
     .some(
@@ -368,9 +374,9 @@ async function reconcileTripReturnAtCurrentLocation(row, locations, primaryParki
     ...location,
     isPrimaryParking: location.id === primaryParking?.id,
   }));
-  let match = getMatchedTripReturnGeoLocation(row, returnLocations);
+  let match = getMatchedTripReturnGeoLocation(row, returnLocations, { strictReturnLocation: true });
 
-  if (!match && primaryParking?.enabled) {
+  if (!match && !cleanText(row.return_location) && primaryParking?.enabled) {
     const lat = toNumber(row.latitude);
     const lon = toNumber(row.longitude);
     const allowsParking = tripReturnLocationAllowsPrimaryParkingFallback(
@@ -921,6 +927,7 @@ async function collectOverdueReturnAlerts() {
       v.nickname AS vehicle_nickname,
       v.vin AS vehicle_vin,
       t.guest_name,
+      t.trip_start,
       t.trip_end,
       t.return_location,
       t.workflow_stage,
@@ -1054,6 +1061,8 @@ async function collectOverdueReturnAlerts() {
       );
       const state = await pool.query("SELECT returned_at FROM trips WHERE id=$1", [row.id]);
       if (state.rows[0]?.returned_at) continue;
+      // A failed return check cannot establish that a guest is overdue.
+      continue;
     }
 
       const vehicle = row.vehicle_nickname || row.vehicle_name || "vehicle";
@@ -1345,7 +1354,8 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
       t.guest_name,
       t.trip_start,
       t.trip_end,
-      COALESCE(NULLIF(t.pickup_location,''),NULLIF(t.return_location,'')) AS return_location,
+      COALESCE(NULLIF(t.return_location,''),NULLIF(t.pickup_location,'')) AS return_location,
+      t.returned_at,
       latest.service_name,
       latest.latitude,
       latest.longitude,
@@ -1391,7 +1401,6 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
     WHERE t.deleted_at IS NULL AND NOW() >= t.trip_end - INTERVAL '2 hours'
       AND COALESCE(t.closed_out, false) = false
       AND COALESCE(t.workflow_stage, '') = 'in_progress'
-      AND t.returned_at IS NULL
       AND COALESCE(t.status, '') <> 'canceled'
       AND NOT EXISTS (
         SELECT 1
@@ -1418,7 +1427,19 @@ async function autoAdvanceReturnedTripsAtExpectedGeoLocations() {
 
   let advanced = 0;
   for (const row of rows) {
-    const match = getMatchedTripReturnGeoLocation(row, returnLocations);
+    if (row.returned_at) {
+      try {
+        await transitionTripStage(row.id, 'check_in', {
+          changedBy: 'system:return-geo-location', changedAt: row.returned_at,
+          reason: 'Retry check-in for an already recorded return',
+        });
+        advanced += 1;
+      } catch (error) {
+        console.warn('[alerts] recorded return check-in retry failed', { tripId: row.id, error: error.message });
+      }
+      continue;
+    }
+    const match = getMatchedTripReturnGeoLocation(row, returnLocations, { strictReturnLocation: true });
     if (!match) {
       console.log(
         `[alerts] overdue return not advanced | trip=${row.id} expected=${JSON.stringify(
@@ -1453,6 +1474,8 @@ async function collectReturnedToParkingSpotAlerts() {
   const parking = await getPrimaryParkingLocation();
   if (!parking.enabled) return [];
 
+  const returnLocations = await getEnabledLocations();
+
   const { rows } = await pool.query(`
     WITH return_day_trips AS (
       SELECT
@@ -1463,6 +1486,10 @@ async function collectReturnedToParkingSpotAlerts() {
         v.vin AS vehicle_vin,
         t.guest_name,
         t.trip_end,
+        t.trip_start,
+        t.workflow_stage,
+        t.returned_at,
+        COALESCE(NULLIF(t.return_location,''),NULLIF(t.pickup_location,'')) AS return_location,
         t.turo_vehicle_id
       FROM trips t
       LEFT JOIN vehicles v
@@ -1476,7 +1503,9 @@ async function collectReturnedToParkingSpotAlerts() {
         )
       WHERE t.trip_end >= NOW() - INTERVAL '12 hours'
         AND t.trip_end <= NOW() + INTERVAL '18 hours'
-        AND COALESCE(t.workflow_stage, '') NOT IN ('canceled')
+        AND t.deleted_at IS NULL
+        AND COALESCE(t.closed_out, false) = false
+        AND COALESCE(t.workflow_stage, '') IN ('in_progress', 'check_in')
         AND COALESCE(t.status, '') <> 'canceled'
         AND t.trip_end IS NOT NULL
     )
@@ -1529,21 +1558,31 @@ async function collectReturnedToParkingSpotAlerts() {
       AND latest.longitude IS NOT NULL
   `);
 
-  return rows
-    .map((row) => {
+  const alerts = [];
+  for (const row of rows) {
       const lat = toNumber(row.latitude);
       const lon = toNumber(row.longitude);
-      if (lat == null || lon == null) return null;
+      if (lat == null || lon == null) continue;
 
       const milesAway = distanceMiles(lat, lon, parking.lat, parking.lon);
-      if (milesAway > parking.radiusMiles) return null;
+      if (milesAway > parking.radiusMiles) continue;
+
+      // Proximity alone must not produce a return confirmation for the wrong
+      // booked location, or leave an observed return stuck in progress.
+      try {
+        const reconciliation = await reconcileTripReturnAtCurrentLocation(row, returnLocations, parking);
+        if (!reconciliation.returned) continue;
+      } catch (error) {
+        console.warn('[alerts] parking return reconciliation failed', { tripId: row.id, error: error.message });
+        continue;
+      }
 
       const vehicle = row.vehicle_nickname || row.vehicle_name || "vehicle";
       const guest = row.guest_name || "guest";
       const seenAt =
         row.location_last_updated || row.vehicle_last_updated || row.captured_at;
 
-      return {
+      alerts.push({
         alertKey: `return-parking:${row.id}`,
         alertType: "return_to_parking",
         severity: "info",
@@ -1555,9 +1594,9 @@ async function collectReturnedToParkingSpotAlerts() {
           parking,
           milesAway,
         },
-      };
-    })
-    .filter(Boolean);
+      });
+  }
+  return alerts;
 }
 
 async function collectLocationEntryAlerts() {
@@ -1980,8 +2019,8 @@ async function collectFleetAlerts() {
     collectDtcAlerts,
     collectLowVoltageAlerts,
     collectDeviceConnectivityAlerts,
-    collectOverdueReturnAlerts,
     collectReturnedToParkingSpotAlerts,
+    collectOverdueReturnAlerts,
     collectLocationEntryAlerts,
   ]) {
     groups.push(await collect());
@@ -2006,6 +2045,14 @@ async function runFleetAlerts(reason = "interval") {
 
     for (const alert of alerts) {
       try {
+        if (alert.alertType === 'return_overdue') {
+          const state = await pool.query(`SELECT id FROM trips WHERE id = $1
+            AND returned_at IS NULL AND deleted_at IS NULL
+            AND COALESCE(closed_out, false) = false
+            AND COALESCE(status, '') <> 'canceled'
+            AND workflow_stage IN ('booked','confirmed','ready_for_handoff','in_progress')`, [alert.details.id]);
+          if (!state.rows.length) continue;
+        }
         results.push({
           alertKey: alert.alertKey,
           ...(await sendDedupedAlert(alert)),

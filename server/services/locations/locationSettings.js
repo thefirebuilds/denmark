@@ -61,6 +61,8 @@ function normalizeLocation(raw, index = 0) {
   return {
     id: slugify(raw?.id || label, `location-${index + 1}`),
     label,
+    address: cleanText(raw?.address),
+    aliases: Array.isArray(raw?.aliases) ? raw.aliases.map(value => cleanText(value)).filter(Boolean) : [],
     latitude,
     longitude,
     radiusMiles:
