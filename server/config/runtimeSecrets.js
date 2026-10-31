@@ -15,7 +15,10 @@ function getRuntimeSecret(name, fallback = "") {
 }
 
 function getRuntimeNumber(name, fallback) {
-  const value = Number(getRuntimeSecret(name, ""));
+  const raw = getRuntimeSecret(name, "");
+  // Number('') is zero, which disables pg timeouts instead of using defaults.
+  if (!raw) return fallback;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
 }
 
