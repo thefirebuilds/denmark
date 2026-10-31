@@ -8,6 +8,7 @@ const express = require("express");
 const pool = require("../db");
 const { pushPublicAvailabilitySnapshotSafe } = require("../services/pushPublicAvailability");
 const { evaluateCloseoutCompleteness } = require("../services/trips/closeoutState");
+const { assertTollsSettled, attachTollSettlement } = require('../services/tolls/settlementWindow');
 const { ensureTripRuntimeSchema } = require("../services/trips/tripRuntimeSchema");
 
 const router = express.Router();
@@ -362,7 +363,7 @@ router.get("/", async (req, res) => {
     `;
 
     const { rows } = await pool.query(query, params);
-    res.json(rows.map(enrichTripSummary));
+    res.json(await attachTollSettlement(rows.map(enrichTripSummary)));
   } catch (err) {
     console.error("GET /api/trip-summaries failed:", {
       message: err.message,
@@ -514,6 +515,9 @@ router.post("/", async (req, res) => {
     );
 
     const tripId = insertResult.rows[0].id;
+    if (tollReviewStatus === 'billed' || parsed.workflow_stage === 'complete') {
+      await assertTollsSettled({ ...parsed, id: tripId }, client);
+    }
     const refreshed = await client.query(
       `
         ${TRIP_SUMMARY_SELECT}
@@ -527,7 +531,7 @@ router.post("/", async (req, res) => {
 
     void pushPublicAvailabilitySnapshotSafe("trip created manually");
 
-    return res.status(201).json(enrichTripSummary(refreshed.rows[0]));
+    return res.status(201).json((await attachTollSettlement([enrichTripSummary(refreshed.rows[0])], client))[0]);
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("POST /api/trip-summaries failed:", {
@@ -590,7 +594,7 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ error: "Trip summary not found" });
     }
 
-    res.json(enrichTripSummary(rows[0]));
+    res.json((await attachTollSettlement([enrichTripSummary(rows[0])]))[0]);
   } catch (err) {
     console.error("GET /api/trip-summaries/:id failed:", {
       message: err.message,
@@ -824,6 +828,7 @@ router.patch("/:id", async (req, res) => {
           status,
           workflow_stage,
           canceled_at,
+          trip_end,
           starting_odometer,
           ending_odometer,
           mileage_verified,
@@ -894,6 +899,7 @@ router.patch("/:id", async (req, res) => {
 
     const proposedTrip = {
       ...existingTrip,
+      trip_end: hasField("trip_end") ? trip_end : existingTrip.trip_end,
       starting_odometer: hasField("starting_odometer")
         ? numericStartingOdometer
         : existingTrip.starting_odometer,
@@ -919,6 +925,12 @@ router.patch("/:id", async (req, res) => {
     };
 
     const closeoutState = evaluateCloseoutCompleteness(proposedTrip);
+
+    if ((proposedTrip.closed_out === true && existingTrip.closed_out !== true) ||
+        (proposedTrip.toll_review_status === 'billed' && existingTrip.toll_review_status !== 'billed') ||
+        (req.body.workflow_stage === 'complete' && existingTrip.workflow_stage !== 'complete')) {
+      await assertTollsSettled(proposedTrip, client);
+    }
 
     if (proposedTrip.closed_out === true && closeoutState.isIncomplete) {
       await client.query("ROLLBACK");
@@ -1080,7 +1092,7 @@ router.patch("/:id", async (req, res) => {
       return res.json({ id: tripId });
     }
 
-    return res.json(enrichTripSummary(refreshed.rows[0]));
+    return res.json((await attachTollSettlement([enrichTripSummary(refreshed.rows[0])], client))[0]);
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("PATCH /api/trip-summaries/:id failed:", {
@@ -1089,8 +1101,8 @@ router.patch("/:id", async (req, res) => {
       body: req.body,
       stack: err.stack,
     });
-    return res.status(500).json({
-      error: "Failed to update trip summary",
+    return res.status(err.statusCode || 500).json({
+      error: err.statusCode ? err.message : "Failed to update trip summary",
       detail: err.message,
     });
   } finally {

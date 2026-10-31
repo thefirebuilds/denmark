@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { getUniqueMaintenanceHistory } from "../../utils/maintenanceHistory";
 
 function getMaxFutureDate(days = 7) {
   const d = new Date();
@@ -278,7 +279,10 @@ export default function InspectionItemDrawer({
     wiperSize3: "",
   });
 
-  const recentHistory = useMemo(() => {
+  const [historyLimit, setHistoryLimit] = useState(5);
+  useEffect(() => { setHistoryLimit(5); }, [open, item?.id, item?.ruleCode, vehicle?.vin]);
+
+  const uniqueHistory = useMemo(() => {
     const entries =
       Array.isArray(item?.history) && item.history.length
         ? item.history
@@ -286,18 +290,9 @@ export default function InspectionItemDrawer({
         ? [item.lastEvent]
         : [];
 
-    return [...entries]
-      .sort(
-        (a, b) =>
-          new Date(
-            b?.performedAt || b?.performed_at || b?.recorded_at || 0
-          ).getTime() -
-          new Date(
-            a?.performedAt || a?.performed_at || a?.recorded_at || 0
-          ).getTime()
-      )
-      .slice(0, 5);
+    return getUniqueMaintenanceHistory(entries);
   }, [item]);
+  const recentHistory = uniqueHistory.slice(0, historyLimit);
 
   useEffect(() => {
     if (!open || !item) return;
@@ -1025,7 +1020,7 @@ export default function InspectionItemDrawer({
           {recentHistory.length ? (
             <div className="drawer-history">
               <div className="drawer-label">
-                Last {Math.min(5, recentHistory.length)} entries
+                Latest {recentHistory.length} of {uniqueHistory.length} unique entries
               </div>
 
               <div className="drawer-history-list">
@@ -1097,6 +1092,18 @@ export default function InspectionItemDrawer({
                 ))}
               </div>
             </div>
+          ) : null}
+
+          {uniqueHistory.length > historyLimit ? (
+            <button type="button" className="drawer-history-delete"
+              onClick={() => setHistoryLimit(limit => limit + 5)}>
+              Show more
+            </button>
+          ) : historyLimit > 5 ? (
+            <button type="button" className="drawer-history-delete"
+              onClick={() => setHistoryLimit(5)}>
+              Show less
+            </button>
           ) : null}
 
           <div className="drawer-context">

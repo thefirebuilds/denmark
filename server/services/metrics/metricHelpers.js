@@ -38,6 +38,8 @@ function isTripTollAttributedOutstanding(trip) {
 }
 
 function isTripTollCollectionOverdue(trip, now = Date.now()) {
+  if (typeof trip?.toll_collection_ready === 'boolean') return trip.toll_collection_ready;
+  if (trip?.toll_collection_due_at) return now >= new Date(trip.toll_collection_due_at).getTime();
   const tripEndMs = trip?.trip_end ? new Date(trip.trip_end).getTime() : NaN;
   if (!Number.isFinite(tripEndMs)) return false;
   return now >= tripEndMs + TOLL_COLLECTION_WAIT_HOURS * 60 * 60 * 1000;

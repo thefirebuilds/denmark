@@ -117,16 +117,16 @@ function hasValidCoordinates(location) {
   );
 }
 
-async function getLocationSettings() {
-  const { rows } = await pool.query(
+async function getLocationSettings(client = pool) {
+  const { rows } = await client.query(
     "SELECT value FROM app_settings WHERE key = $1 LIMIT 1",
     [SETTINGS_KEY]
   );
   return normalizeLocationSettings(rows[0]?.value);
 }
 
-async function getEnabledLocations() {
-  const settings = await getLocationSettings();
+async function getEnabledLocations(client = pool) {
+  const settings = await getLocationSettings(client);
   return settings.locations.filter(
     (location) =>
       location.enabled &&
@@ -135,8 +135,8 @@ async function getEnabledLocations() {
   );
 }
 
-async function getPrimaryParkingLocation() {
-  const locations = await getEnabledLocations();
+async function getPrimaryParkingLocation(client = pool) {
+  const locations = await getEnabledLocations(client);
   const parking =
     locations.find((location) => location.kind === "parking") ||
     locations.find((location) =>

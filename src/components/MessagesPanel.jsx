@@ -1754,10 +1754,10 @@ function buildTollCloseoutDetail(message) {
   if (count > 0 || total > 0) {
     const tollLabel =
       count > 0 ? `${count} toll${count === 1 ? "" : "s"}` : "Tolls";
-    return `${tollLabel} totaling ${formatMoney(total)} need Turo billing review. Current status: ${status}.${unresolvedText} Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
+    return `${tollLabel} totaling ${formatMoney(total)} need Turo billing review. Current status: ${status}.${unresolvedText} Tolls have passed the ${arrivalDelay}-hour collection window, a 48-hour quiet period, and a successful HCTRA sync.`;
   }
 
-  return `Audit HCTRA tolls against Turo billing. Current status: ${status}.${unresolvedText} Reminder held for the observed ${arrivalDelay}-hour toll-arrival window.`;
+  return `Audit HCTRA tolls against Turo billing. Current status: ${status}.${unresolvedText} Tolls have passed the ${arrivalDelay}-hour collection window, a 48-hour quiet period, and a successful HCTRA sync.`;
 }
 
 function buildCloseoutActionItems(message) {

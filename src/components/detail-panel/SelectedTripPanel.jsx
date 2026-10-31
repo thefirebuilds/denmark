@@ -656,7 +656,7 @@ function renderLocationLink(vehicle) {
         <button
           type="button"
           className="detail-action-button"
-          disabled={!nextStage || stageSaving}
+          disabled={!nextStage || stageSaving || (nextStage === "complete" && !isCanceledTrip && selectedTrip.toll_collection_ready === false)}
           onClick={() => onAdvanceStage?.(selectedTrip, nextStage)}
         >
           {stageSaving
@@ -778,8 +778,15 @@ function renderLocationLink(vehicle) {
                     ? `Cancellation value: ${formatMoney(closeoutForm.amount || 0)}`
                     : closeoutRemaining
                     ? `${closeoutRemaining} item${closeoutRemaining === 1 ? "" : "s"} left`
-                    : "Ready to close"}
+                    : selectedTrip.toll_collection_ready === false ? "Waiting for HCTRA tolls" : "Ready to close"}
                 </div>
+                {!isCanceledTrip && selectedTrip.toll_collection_ready === false ? (
+                  <div className="detail-closeout-copy" role="status">
+                    {selectedTrip.toll_collection_hold_reason}.
+                    {selectedTrip.toll_collection_due_at ? ` Earliest billing: ${formatDateTime(selectedTrip.toll_collection_due_at)}.` : ""}
+                    {" "}New tolls restart a 48-hour quiet period; a successful HCTRA sync must confirm the window has passed.
+                  </div>
+                ) : null}
                 <div className="detail-closeout-copy">
                   {isCanceledTrip ? (
                     <>
@@ -804,7 +811,8 @@ function renderLocationLink(vehicle) {
                 disabled={
                   closeoutSaving ||
                   Boolean(closeoutForm.closed_out) ||
-                  closeoutBlockers.length > 0
+                  closeoutBlockers.length > 0 ||
+                  (!isCanceledTrip && selectedTrip.toll_collection_ready === false)
                 }
                 onClick={() => saveCloseout({ closed_out: true })}
               >
@@ -981,7 +989,7 @@ function renderLocationLink(vehicle) {
                   disabled={!closeoutForm.has_tolls}
                 >
                   {TOLL_REVIEW_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
+                    <option key={option.value} value={option.value} disabled={option.value === "billed" && closeoutForm.toll_review_status !== "billed" && !isCanceledTrip && selectedTrip.toll_collection_ready === false}>
                       {option.label}
                     </option>
                   ))}

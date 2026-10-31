@@ -85,11 +85,11 @@ export function rewriteDevApiRequest(input: RequestInfo | URL) {
 export async function timedStartupFetch(
   label: string,
   input: RequestInfo | URL,
-  init?: RequestInit
+  init?: RequestInit,
+  timeoutMs = 20000
 ) {
   const startedAt = performance.now();
   const controller = new AbortController();
-  const timeoutMs = 20000;
   const timeout = window.setTimeout(() => {
     controller.abort(new Error(`${label} request timed out after ${timeoutMs}ms`));
   }, timeoutMs);

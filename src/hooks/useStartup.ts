@@ -159,16 +159,26 @@ export function useStartup({
             error: "",
           });
 
-          const settingsRes = await timedStartupFetch(
-            "dispatch settings",
-            `${API_BASE}/api/settings/ui.dispatch`
-          );
-          if (!settingsRes.ok) {
-            throw new Error(`Settings request failed: ${settingsRes.status}`);
+          // Layout preferences are optional; a slow settings read must not
+          // restart the entire startup loop and add more database work.
+          let mergedSettings = DEFAULT_DISPATCH_SETTINGS;
+          try {
+            const settingsRes = await timedStartupFetch(
+              "dispatch settings",
+              `${API_BASE}/api/settings/ui.dispatch`,
+              undefined,
+              5000
+            );
+            if (settingsRes.status === 401 || settingsRes.status === 403) {
+              throw new Error(`Settings access denied: ${settingsRes.status}`);
+            }
+            if (!settingsRes.ok) throw new Error(`Settings request failed: ${settingsRes.status}`);
+            const settingsData = await settingsRes.json();
+            mergedSettings = mergeDispatchSettings(settingsData?.value);
+          } catch (error) {
+            if (error instanceof Error && error.message.startsWith("Settings access denied:")) throw error;
+            console.warn("Dispatch preferences unavailable; using defaults for this session", error);
           }
-
-          const settingsData = await settingsRes.json();
-          const mergedSettings = mergeDispatchSettings(settingsData?.value);
 
           if (cancelled) return;
           setDispatchSettings(mergedSettings);

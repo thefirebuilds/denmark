@@ -1,4 +1,4 @@
-const { transitionTripStage } = require("./transitionTripStage");
+const { transitionTripStageInTransaction } = require("./transitionTripStage");
 const { sendTripUnderwayAlert } = require("../alerts/fleetAlerts");
 
 function toNumber(value) {
@@ -159,7 +159,7 @@ async function findEligibleReadyTrip(client, vehicle, eventTimestamp) {
   return result.rows[0];
 }
 
-async function maybeAutoStartReadyTripFromTelemetry(client, telemetry) {
+async function maybeAutoStartReadyTripFromTelemetry(client, telemetry, { afterCommit } = {}) {
   const vehicle = await getVehicleForTelemetry(client, telemetry);
   if (!vehicle?.turo_vehicle_id) return null;
 
@@ -176,13 +176,14 @@ async function maybeAutoStartReadyTripFromTelemetry(client, telemetry) {
     }) from ${telemetry.serviceName || "telemetry"}: ${signal.reason}`
   );
 
-  const result = await transitionTripStage(trip.id, "in_progress", {
+  const result = await transitionTripStageInTransaction(client, trip.id, "in_progress", {
+    afterCommit,
     changedBy: `system:${telemetry.serviceName || "telemetry"}`,
     reason: `auto-start from ${telemetry.serviceName || "telemetry"} telemetry near scheduled trip start: ${signal.reason}`,
     currentOdometer: telemetry?.odometer,
   });
 
-  void sendTripUnderwayAlert(result, {
+  afterCommit.push(() => sendTripUnderwayAlert(result, {
     source: telemetry.serviceName || "telemetry",
     reason: signal.reason,
     startedAt: eventTimestamp,
@@ -190,7 +191,7 @@ async function maybeAutoStartReadyTripFromTelemetry(client, telemetry) {
     console.warn(
       `[alerts] trip underway alert failed | trip=${trip.id} error=${err.message || err}`
     );
-  });
+  }));
 
   return result;
 }

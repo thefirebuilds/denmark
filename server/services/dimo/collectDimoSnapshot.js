@@ -7,6 +7,7 @@ const {
 } = require("./client");
 const { getDimoVehicleAuthHeader } = require("./auth");
 const pool = require("../../db");
+const { withTransaction } = require('../withTransaction');
 const {
   ensureDefaultMaintenanceRulesForVehicle,
 } = require("../maintenance/ruleTemplates");
@@ -930,15 +931,10 @@ async function insertVehicleTelemetrySignalValues(rows, client = pool) {
 }
 
 async function persistDimoTelemetry({ normalized, raw }) {
-  const client = await pool.connect();
-
-  await client.query("BEGIN");
-
-  try {
+  return withTransaction(pool, async (client, afterCommit) => {
     const { findManagedTelemetryVehicle } = require("../telemetry/managedVehicle");
     const managedVehicle = await findManagedTelemetryVehicle(client, normalized.vin);
     if (!managedVehicle) {
-      await client.query("COMMIT");
       return { skipped: true, reason: "not_in_managed_fleet", snapshotId: null,
         vehicleRows: 0, maintenanceRuleRows: 0, odometerRows: 0, rawSignalRows: 0 };
     }
@@ -974,7 +970,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
         normalized.ignition_last_updated ||
         normalized.location_last_updated ||
         normalized.speed_last_updated,
-    });
+    }, { afterCommit });
     const autoTurnaroundResult = await maybeAutoAdvanceTurnaroundTripFromTelemetry(
       client,
       {
@@ -995,7 +991,8 @@ async function persistDimoTelemetry({ normalized, raw }) {
           normalized.ignition_last_updated ||
           normalized.location_last_updated ||
           normalized.speed_last_updated,
-      }
+      },
+      { afterCommit }
     );
     const snapshotResult = await insertVehicleTelemetrySnapshot(normalized, client);
     const tripRpmResult = await updateActiveTripMaxEngineRpm(normalized, client);
@@ -1014,12 +1011,11 @@ async function persistDimoTelemetry({ normalized, raw }) {
     });
     const rawResult = await insertVehicleTelemetrySignalValues(rawRows, client);
 
-    await client.query("COMMIT");
-    void sendLocationEntryAlertsForSnapshot(snapshot.id).catch((err) => {
+    afterCommit.push(() => sendLocationEntryAlertsForSnapshot(snapshot.id).catch((err) => {
       console.warn(
         `[dimo] location entry alert failed | snapshot=${snapshot.id} error=${err.message || err}`
       );
-    });
+    }));
 
     return {
       snapshotId: snapshot.id,
@@ -1034,12 +1030,7 @@ async function persistDimoTelemetry({ normalized, raw }) {
       odometerRows: odometerResult.rowCount,
       rawSignalRows: rawResult.rowCount,
     };
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function collectDimoVehicleSnapshot(vehicleConfig) {

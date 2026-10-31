@@ -9,6 +9,35 @@
 
 
 const pool = require("../../db");
+
+// A summary must not occupy most of the pool, or queue overlapping commands
+// when its caller supplies a transaction client.
+async function runQueriesSequentially(queries) {
+  const results = [];
+  for (const query of queries) results.push(await query());
+  return results;
+}
+
+const batteryHealthReads = new Map();
+const BATTERY_HEALTH_CACHE_MS = 60000;
+async function getSharedBatteryVoltageHealth(client, vin) {
+  // Transaction clients must always read their own database state.
+  if (client !== pool) return getBatteryVoltageHealth(client, vin);
+  const key = String(vin).toLowerCase();
+  const existing = batteryHealthReads.get(key);
+  if (existing && (existing.pending || Date.now() < existing.expiresAt)) return existing.promise;
+  const entry = { pending: true, expiresAt: 0, promise: null };
+  entry.promise = getBatteryVoltageHealth(client, vin).then(result => {
+    entry.pending = false;
+    entry.expiresAt = Date.now() + BATTERY_HEALTH_CACHE_MS;
+    return result;
+  }, error => {
+    batteryHealthReads.delete(key);
+    throw error;
+  });
+  batteryHealthReads.set(key, entry);
+  return entry.promise;
+}
 const {
   ensureDefaultMaintenanceRulesForVehicle,
 } = require("./ruleTemplates");
@@ -78,6 +107,7 @@ async function getBatteryVoltageHealth(client, vin) {
           ) AS recorded_at
         FROM vehicle_telemetry_snapshots
         WHERE vin IS NOT NULL
+          AND vin <> ''
           AND LOWER(vin) = LOWER($1)
           AND battery_voltage IS NOT NULL
           AND battery_voltage BETWEEN 5 AND 16
@@ -876,7 +906,7 @@ async function getVehicleMaintenanceSummary(
       currentOdometerMiles,
     })
   );
-  const batteryVoltageHealth = await getBatteryVoltageHealth(client, vin);
+  const batteryVoltageHealth = await getSharedBatteryVoltageHealth(client, vin);
   if (!readOnly) {
     await ensureBatteryVoltageInspectionTask(client, vin, batteryVoltageHealth);
     await closeSatisfiedMaintenanceTasks(client, vin, { ruleStatuses });
@@ -889,8 +919,8 @@ async function getVehicleMaintenanceSummary(
     notesResult,
     historyResult,
     odometerHistoryResult,
-  ] = await Promise.all([
-    client.query(
+  ] = await runQueriesSequentially([
+    () => client.query(
       `
         SELECT
           id,
@@ -928,7 +958,7 @@ async function getVehicleMaintenanceSummary(
       `,
       [vin, ACTIVE_TASK_STATUSES]
     ),
-    client.query(
+    () => client.query(
       `
         SELECT
           id,
@@ -959,7 +989,7 @@ async function getVehicleMaintenanceSummary(
       `,
       [vin]
     ),
-    client.query(
+    () => client.query(
       `
         SELECT
           id,
@@ -981,7 +1011,7 @@ async function getVehicleMaintenanceSummary(
       `,
       [vin]
     ),
-    client.query(
+    () => client.query(
       `
         SELECT
           me.id,
@@ -1018,7 +1048,7 @@ async function getVehicleMaintenanceSummary(
       `,
       [vin]
     ),
-    client.query(
+    () => client.query(
       `
         SELECT
           h.id,

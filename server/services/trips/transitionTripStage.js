@@ -6,6 +6,8 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const { withTransaction } = require('../withTransaction');
+const { assertTollsSettled } = require('../tolls/settlementWindow');
 const { handleTripStageEntry } = require("./handleTripStageEntry");
 const {
   syncTripToSelectedGoogleCalendars,
@@ -110,7 +112,9 @@ function runStageEntryAutomation(trip, previousStage = null) {
     } finally {
       client.release();
     }
-  })();
+  })().catch(err => {
+    console.warn(`[trips] stage entry automation could not acquire a client | trip=${trip.id} error=${err.message || err}`);
+  });
 }
 
 function shouldSyncTripCalendarAfterStageChange(stage) {
@@ -463,6 +467,12 @@ async function updateTripSpeedStats(client, trip) {
 }
 
 async function transitionTripStage(tripId, nextStage, options = {}) {
+  validateTransitionInput(tripId, nextStage);
+  return withTransaction(pool, (client, afterCommit) =>
+    transitionTripStageInTransaction(client, tripId, nextStage, { ...options, afterCommit }));
+}
+
+function validateTransitionInput(tripId, nextStage) {
   const normalizedTripId = Number(tripId);
   const normalizedNextStage = String(nextStage || "").trim();
 
@@ -477,11 +487,14 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
     err.statusCode = 400;
     throw err;
   }
+  return { normalizedTripId, normalizedNextStage };
+}
 
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
+async function transitionTripStageInTransaction(client, tripId, nextStage, options = {}) {
+  if (!Array.isArray(options.afterCommit)) {
+    throw new Error('Trip transition requires the transaction owner\'s afterCommit queue');
+  }
+  const { normalizedTripId, normalizedNextStage } = validateTransitionInput(tripId, nextStage);
 
     const existingResult = await client.query(
       `
@@ -567,20 +580,19 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
           [normalizedTripId, transitionTimestamp]
         );
 
-        await client.query("COMMIT");
         return {
           ...repairResult.rows[0],
           allowed_next_stages: getAllowedNextStages(currentStage),
         };
       }
 
-      await client.query("ROLLBACK");
       return {
         ...trip,
         allowed_next_stages: getAllowedNextStages(currentStage),
       };
     }
 
+    if (normalizedNextStage === 'complete') await assertTollsSettled(trip, client);
     if (!options.force && !canTransition(currentStage, normalizedNextStage)) {
       const err = new Error(
         `Invalid trip stage transition: ${currentStage} -> ${normalizedNextStage}`
@@ -784,34 +796,29 @@ async function transitionTripStage(tripId, nextStage, options = {}) {
       ]
     );
 
-    await client.query("COMMIT");
-
     const response = {
       ...updatedTrip,
       allowed_next_stages: getAllowedNextStages(updatedTrip.workflow_stage),
     };
 
-    runStageEntryAutomation(updatedTrip, currentStage);
+    options.afterCommit.push(() => {
+      runStageEntryAutomation(updatedTrip, currentStage);
 
-    void reconcileBookingAlerts(buildRuntime()).catch((err) => {
-      console.warn(`[physical-alerts] booking reconciliation failed | error=${err.message || err}`);
+      void reconcileBookingAlerts(buildRuntime()).catch((err) => {
+        console.warn(`[physical-alerts] booking reconciliation failed | error=${err.message || err}`);
+      });
+
+      if (shouldSyncTripCalendarAfterStageChange(normalizedNextStage)) {
+        syncTripCalendarNotices(updatedTrip, normalizedNextStage);
+      }
     });
 
-    if (shouldSyncTripCalendarAfterStageChange(normalizedNextStage)) {
-      syncTripCalendarNotices(updatedTrip, normalizedNextStage);
-    }
-
     return response;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
 }
 
 module.exports = {
   transitionTripStage,
+  transitionTripStageInTransaction,
   canTransition,
   isValidStage,
   getAllowedNextStages,

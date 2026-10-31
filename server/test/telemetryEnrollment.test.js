@@ -26,6 +26,7 @@ for (const provider of ['bouncie', 'dimo']) {
     const context = vm.createContext({ module: { exports: {} }, console: { log() {}, warn() {} },
       require(name) {
         if (name === '../../db') return { connect: async () => client };
+        if (name === '../withTransaction') return require('../services/withTransaction');
         if (name === '../telemetry/managedVehicle') return managed;
         if (name === './client') return { getVehicles: async () => [{ vin: 'FRIENDVIN', nickName: 'Yogi' }] };
         return {};

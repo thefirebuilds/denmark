@@ -32,7 +32,7 @@ test('telemetry return rule uses the trip launch location and advances directly 
   const trip = {id: 11, pickup_location:'Garlic Creek', workflow_stage:'in_progress'};
   const deps = {
     fs: {readFileSync:()=>JSON.stringify({tripStageAutomations:[{enabled:true,fromStage:'in_progress',toStage:'check_in',conditions:[{type:'launch_location'}]}]})},
-    path, './transitionTripStage':{transitionTripStage:async (...args)=>{calls.push(args);return {id:11};}},
+    path, './transitionTripStage':{transitionTripStageInTransaction:async (...args)=>{calls.push(args);return {id:11};}},
     '../locations/locationSettings':{getEnabledLocations:async()=>[]},
     '../alerts/fleetAlerts':{getMatchedTripReturnGeoLocation:(row)=>row.address===row.return_location ? {location:{label:row.return_location}} : null,
       recordTripReturnObservation: async (...args) => { observations.push(args); return { returned_at: new Date().toISOString() }; }},
@@ -46,10 +46,13 @@ test('telemetry return rule uses the trip launch location and advances directly 
   }};
   const run=context.module.exports.maybeAutoAdvanceTurnaroundTripFromTelemetry;
   assert.equal(await run(client,{vin:'VIN',address:'Other lot'}),null);
-  await run(client,{vin:'VIN',address:'Garlic Creek',eventTimestamp:'2020-01-01T00:00:00Z', locationLastUpdated: '2026-10-26T16:12:00Z'});
+  const afterCommit = [];
+  await run(client,{vin:'VIN',address:'Garlic Creek',eventTimestamp:'2020-01-01T00:00:00Z', locationLastUpdated: '2026-10-26T16:12:00Z'}, { afterCommit });
   assert.ok(Math.abs(Date.now() - Date.parse(bookingWindowTimestamp)) < 5000, 'booking window uses poll time, not the stale movement timestamp');
   assert.equal(calls.length,1);
-  assert.equal(calls[0][1],'check_in');
+  assert.equal(calls[0][0],client);
+  assert.equal(calls[0][2],'check_in');
+  assert.equal(calls[0][3].afterCommit,afterCommit);
   assert.equal(observations.length, 1);
   assert.equal(observations[0][0].id, trip.id);
   assert.equal(observations[0][0].location_last_updated, '2026-10-26T16:12:00Z');

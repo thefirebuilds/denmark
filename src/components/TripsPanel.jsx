@@ -212,6 +212,7 @@ function isRoutineInProgressTrip(trip) {
 }
 
 function isReadyForCloseout(trip) {
+  if (typeof trip?.toll_collection_ready === 'boolean') return trip.toll_collection_ready;
   const dueAt = trip?.toll_collection_due_at
     ? new Date(trip.toll_collection_due_at).getTime()
     : NaN;
@@ -219,6 +220,8 @@ function isReadyForCloseout(trip) {
 }
 
 function formatTollWait(trip) {
+  if (trip?.toll_collection_hold_reason && trip?.toll_collection_due_at &&
+      Date.now() >= new Date(trip.toll_collection_due_at).getTime()) return trip.toll_collection_hold_reason;
   const dueAt = trip?.toll_collection_due_at
     ? new Date(trip.toll_collection_due_at).getTime()
     : NaN;

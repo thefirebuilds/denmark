@@ -1,4 +1,5 @@
 const pool = require("../../db");
+const { withTransaction } = require('../withTransaction');
 const { findManagedTelemetryVehicle } = require("../telemetry/managedVehicle");
 const { getVehicles } = require("./client");
 const {
@@ -428,7 +429,7 @@ async function findEligibleReadyTrip(client, snapshot) {
   return tripResult.rows[0];
 }
 
-async function maybeAutoStartReadyTrip(client, snapshot) {
+async function maybeAutoStartReadyTrip(client, snapshot, afterCommit) {
   return maybeAutoStartReadyTripFromTelemetry(client, {
     serviceName: "bouncie",
     vin: snapshot.vin,
@@ -440,10 +441,10 @@ async function maybeAutoStartReadyTrip(client, snapshot) {
     address: snapshot.address,
     odometer: snapshot.current_odometer_miles,
     eventTimestamp: snapshot.vehicle_last_updated,
-  });
+  }, { afterCommit });
 }
 
-async function maybeAutoAdvanceTurnaroundTrip(client, snapshot) {
+async function maybeAutoAdvanceTurnaroundTrip(client, snapshot, afterCommit) {
   return maybeAutoAdvanceTurnaroundTripFromTelemetry(client, {
     locationLastUpdated: snapshot.location_last_updated || snapshot.vehicle_last_updated,
     capturedAt: snapshot.captured_at,
@@ -457,7 +458,7 @@ async function maybeAutoAdvanceTurnaroundTrip(client, snapshot) {
     address: snapshot.address,
     odometer: snapshot.current_odometer_miles,
     eventTimestamp: snapshot.vehicle_last_updated,
-  });
+  }, { afterCommit });
 }
 
 async function maybeStageStartingOdometer(client, snapshot) {
@@ -481,11 +482,7 @@ async function main() {
 
   console.log(`[bouncie] vehicles=${vehicles.length}`);
 
-  const dbClient = await pool.connect();
-
-  try {
-    await dbClient.query("BEGIN");
-
+  return withTransaction(pool, async (dbClient, afterCommit) => {
     let inserted = 0;
     let stagedStartingOdometers = 0;
     let autoStarted = 0;
@@ -510,10 +507,11 @@ async function main() {
         dbClient,
         snapshot
       );
-      const autoStartResult = await maybeAutoStartReadyTrip(dbClient, snapshot);
+      const autoStartResult = await maybeAutoStartReadyTrip(dbClient, snapshot, afterCommit);
       const autoTurnaroundResult = await maybeAutoAdvanceTurnaroundTrip(
         dbClient,
-        snapshot
+        snapshot,
+        afterCommit
       );
       const snapshotResult = await insertSnapshot(dbClient, snapshot);
       await updateActiveTripSpeedStats(dbClient, snapshot);
@@ -527,23 +525,17 @@ async function main() {
       inserted += 1;
     }
 
-    await dbClient.query("COMMIT");
     for (const snapshotId of insertedSnapshotIds) {
-      void sendLocationEntryAlertsForSnapshot(snapshotId).catch((err) => {
+      afterCommit.push(() => sendLocationEntryAlertsForSnapshot(snapshotId).catch((err) => {
         console.warn(
           `[bouncie] location entry alert failed | snapshot=${snapshotId} error=${err.message || err}`
         );
-      });
+      }));
     }
-    console.log(
+    afterCommit.push(() => console.log(
       `[bouncie] snapshot done | inserted=${inserted} stagedStartingOdometers=${stagedStartingOdometers} autoStarted=${autoStarted} autoAdvancedTurnaround=${autoAdvancedTurnaround}`
-    );
-  } catch (err) {
-    await dbClient.query("ROLLBACK");
-    throw err;
-  } finally {
-    dbClient.release();
-  }
+    ));
+  });
 }
 
 module.exports = main;

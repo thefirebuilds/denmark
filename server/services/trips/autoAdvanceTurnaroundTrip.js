@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { transitionTripStage } = require("./transitionTripStage");
+const { transitionTripStageInTransaction } = require("./transitionTripStage");
 
 const RULES_PATH = path.resolve(__dirname, "../../config/tripAutomationRules.json");
 const DEFAULT_RULES = { tripStageAutomations: [] };
@@ -182,7 +182,7 @@ async function evaluateCondition(client, telemetry, condition, trip) {
     case 'launch_location': {
       const { getEnabledLocations } = require('../locations/locationSettings');
       const { getMatchedTripReturnGeoLocation } = require('../alerts/fleetAlerts');
-      const match = getMatchedTripReturnGeoLocation({ ...telemetry, return_location: trip.return_location || trip.pickup_location }, await getEnabledLocations(), { strictReturnLocation: true });
+      const match = getMatchedTripReturnGeoLocation({ ...telemetry, return_location: trip.return_location || trip.pickup_location }, await getEnabledLocations(client), { strictReturnLocation: true });
       return { matched: Boolean(match), returnMatch: match, reason: match ? 'returned to launch location ' + match.location.label : 'outside launch location' };
     }
     case "engine_transition":
@@ -288,7 +288,7 @@ async function findEligibleTripForRule(client, vehicle, eventTimestamp, rule) {
   return result.rows[0];
 }
 
-async function maybeAutoAdvanceTurnaroundTripFromTelemetry(client, telemetry) {
+async function maybeAutoAdvanceTurnaroundTripFromTelemetry(client, telemetry, { afterCommit } = {}) {
   const vehicle = await getVehicleForTelemetry(client, telemetry);
   if (!vehicle?.turo_vehicle_id) return null;
 
@@ -320,7 +320,8 @@ async function maybeAutoAdvanceTurnaroundTripFromTelemetry(client, telemetry) {
       }) to ${rule.toStage} from ${telemetry.serviceName || "telemetry"} rule=${rule.id}: ${signal.reason}`
     );
 
-    return transitionTripStage(trip.id, rule.toStage, {
+    return transitionTripStageInTransaction(client, trip.id, rule.toStage, {
+      afterCommit,
       changedBy: `system:${telemetry.serviceName || rule.changedBySuffix || "telemetry"}`,
       reason: `auto-stage rule ${rule.id} from ${
         telemetry.serviceName || "telemetry"

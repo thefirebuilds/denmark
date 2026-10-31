@@ -1,4 +1,5 @@
 const { mapCheckInNotice } = require('../services/trips/checkInNotice');
+const { POLICY_SQL, QUIET_HOURS } = require('../services/tolls/settlementWindow');
 const { getReturnMessageReminders, acknowledgeReturnMessage } = require('../services/trips/returnMessageReminder');
 ﻿const express = require("express");
 const router = express.Router();
@@ -27,7 +28,6 @@ const {
 const { getEnabledLocations, getPrimaryParkingLocation } = require("../services/locations/locationSettings");
 const { getMatchedTripReturnGeoLocation } = require("../services/alerts/fleetAlerts");
 const {
-  TOLL_COLLECTION_WAIT_HOURS,
 } = require("../services/metrics/metricHelpers");
 
 const bridgeEmailMismatchGraceMinutes = Number(
@@ -4060,7 +4060,7 @@ router.get("/", async (req, res) => {
 
     const closeoutSql = `
       WITH toll_arrival_window AS (
-        SELECT $1::integer AS delay_hours
+        ${POLICY_SQL}
       ),
       closeout_candidates AS (
         SELECT
@@ -4108,6 +4108,15 @@ router.get("/", async (req, res) => {
         WHERE t.deleted_at IS NULL
           AND COALESCE(t.closed_out, false) = false
           AND t.trip_end <= NOW() - make_interval(hours => toll_arrival_window.delay_hours)
+          AND toll_arrival_window.last_success_at >= NOW() - INTERVAL '24 hours'
+          AND toll_arrival_window.last_success_at >= GREATEST(
+            t.trip_end + make_interval(hours => toll_arrival_window.delay_hours),
+            COALESCE((SELECT MAX(tc.created_at) FROM toll_charges tc
+              WHERE tc.matched_trip_id = t.id AND tc.source = 'hctra_eztag'), t.trip_end)
+              + make_interval(hours => ${QUIET_HOURS}))
+          AND NOW() >= COALESCE((SELECT MAX(tc.created_at) FROM toll_charges tc
+            WHERE tc.matched_trip_id = t.id AND tc.source = 'hctra_eztag'), t.trip_end)
+              + make_interval(hours => ${QUIET_HOURS})
           AND t.trip_end >= NOW() - INTERVAL '45 days'
           AND COALESCE(t.workflow_stage, '') <> 'canceled'
           AND COALESCE(t.status, '') <> 'canceled'
@@ -4558,7 +4567,7 @@ router.get("/", async (req, res) => {
     const closeoutResult = await timeQueueQuery(
       queueTimings,
       "closeout",
-      db.query(closeoutSql, [TOLL_COLLECTION_WAIT_HOURS])
+      db.query(closeoutSql)
     );
     const refuelResult = fast
       ? EMPTY_QUERY_RESULT
