@@ -4,6 +4,7 @@
 // ------------------------------------------------------------
 
 const pool = require("../../db");
+const { getTollSettlementPolicy, settlementState, QUIET_HOURS, BUFFER_HOURS } = require('../tolls/settlementWindow');
 const {
   getCalendarDaysInRange,
   getDateRange,
@@ -754,6 +755,7 @@ async function fetchTollChargesForTripIds(client, tripIds) {
     `
       SELECT
         tc.id,
+        tc.source,
         tc.trxn_at,
         tc.posted_at,
         tc.created_at,
@@ -902,10 +904,9 @@ async function getTollMetricsDetail(rangeKey = "30d") {
   const client = await pool.connect();
 
   try {
-    const [trips, tollCharges] = await Promise.all([
-      fetchTripsInRange(client, startDate, endDate),
-      fetchTollChargesInRange(client, startDate, endDate),
-    ]);
+    const settlementPolicy = await getTollSettlementPolicy(client);
+    const trips = await fetchTripsInRange(client, startDate, endDate);
+    const tollCharges = await fetchTollChargesInRange(client, startDate, endDate);
 
     const allMatchedTripCharges = await fetchTollChargesForTripIds(
       client,
@@ -969,7 +970,16 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         timing.last_toll_received_at = receivedAt;
       }
       timing.charges.push(charge);
+      if (charge.source === 'hctra_eztag' && charge.created_at &&
+          (!timing.last_hctra_arrival_at || new Date(charge.created_at) > new Date(timing.last_hctra_arrival_at))) {
+        timing.last_hctra_arrival_at = charge.created_at;
+      }
       tollTimingByTripId.set(tripId, timing);
+    }
+
+    for (const trip of trips) {
+      Object.assign(trip, settlementState(trip, settlementPolicy,
+        tollTimingByTripId.get(Number(trip.id))?.last_hctra_arrival_at));
     }
 
     function getTollAuditTiming(trip, invoice) {
@@ -1059,9 +1069,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           vehicle_plate: trip.vehicle_plate || null,
           trip_start: trip.trip_start || null,
           trip_end: trip.trip_end || null,
-          collection_due_at: trip.trip_end
-            ? new Date(new Date(trip.trip_end).getTime() + 100 * 60 * 60 * 1000).toISOString()
-            : null,
+          collection_due_at: trip.toll_collection_due_at,
           toll_total: roundMoney(trip.toll_total),
           attributed_toll_amount: attributedTollAmount,
           charged_toll_amount: chargedTollAmount,
@@ -1243,7 +1251,12 @@ async function getTollMetricsDetail(rangeKey = "30d") {
         observed_count: receiptLagsHours.length,
         max_hours_after_trip_end: Math.ceil(maxReceiptLagHours),
         p95_hours_after_trip_end: Math.ceil(p95ReceiptLagHours),
-        closeout_delay_hours: 100,
+        closeout_delay_hours: settlementPolicy.delay_hours,
+        policy_sample_count: Number(settlementPolicy.sample_count || 0),
+        policy_max_receipt_delay_hours: settlementPolicy.max_hours == null
+          ? null : Math.ceil(Number(settlementPolicy.max_hours)),
+        buffer_hours: BUFFER_HOURS,
+        quiet_hours: QUIET_HOURS,
       },
     };
   } finally {

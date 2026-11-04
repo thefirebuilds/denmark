@@ -12,13 +12,12 @@ const {
   upsertBusinessFinancialSettings,
   listVehicleFinancialProfiles,
   upsertVehicleFinancialProfile,
-  getBusinessMetrics,
   createBusinessMetricSnapshot,
   listBusinessMetricSnapshots,
-  buildQuarterlyAnalysisPayload,
 } = require("../services/metrics/businessMetricsService");
 
 const router = express.Router();
+const { savedMetricReport } = require("../services/metrics/metricReportCache");
 
 function normalizeMissingLaborRow(kind, row) {
   const suggestedHours = estimateLaborHours({
@@ -55,16 +54,12 @@ function shouldSaveActualLabor(kind, row) {
   return status === "resolved" || status === "complete" || status === "completed";
 }
 
-function isDbPoolUnderPressure() {
-  if (typeof pool.getPoolStats !== "function") return false;
-  const stats = pool.getPoolStats();
-  const max = Number(stats.max || 0);
-  const checkedOut = Number(stats.checked_out || 0);
-  const waiting = Number(stats.waiting || 0);
-  return waiting > 0 || (max > 0 && checkedOut >= Math.max(1, max - 1));
-}
+const { limitMetricRead } = require("../services/metrics/metricReadLimiter");
 
-router.get("/settings", async (req, res) => {
+function metricGet(path, handler) { return router.get(path, limitMetricRead(handler)); }
+function metricPost(path, handler) { return router.post(path, limitMetricRead(handler)); }
+
+metricGet("/settings", async (req, res) => {
   try {
     const settings = await getBusinessFinancialSettings();
     res.json(settings);
@@ -86,7 +81,7 @@ router.put("/settings", async (req, res) => {
   }
 });
 
-router.get("/vehicle-profiles", async (req, res) => {
+metricGet("/vehicle-profiles", async (req, res) => {
   try {
     const profiles = await listVehicleFinancialProfiles();
     res.json({ profiles });
@@ -111,24 +106,9 @@ router.put("/vehicle-profiles/:vehicleId", async (req, res) => {
   }
 });
 
-router.get("/current", async (req, res) => {
-  try {
-    if (isDbPoolUnderPressure()) {
-      return res.status(503).json({
-        error: "Business metrics temporarily deferred while database is busy",
-        retry_after_seconds: 10,
-      });
-    }
+router.get("/current", savedMetricReport('business', req => ({ range: req.query.range || '90d' })));
 
-    const data = await getBusinessMetrics(req.query.range || "90d");
-    res.json(data);
-  } catch (err) {
-    console.error("GET /api/metrics/business/current failed:", err);
-    res.status(500).json({ error: "Failed to load business metrics" });
-  }
-});
-
-router.get("/maintenance-labor-missing/:vehicleId", async (req, res) => {
+metricGet("/maintenance-labor-missing/:vehicleId", async (req, res) => {
   try {
     const vehicleId = Number(req.params.vehicleId);
     if (!Number.isInteger(vehicleId) || vehicleId <= 0) {
@@ -305,7 +285,7 @@ router.patch("/maintenance-labor/:kind/:id", async (req, res) => {
   }
 });
 
-router.post("/snapshots", async (req, res) => {
+metricPost("/snapshots", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -324,7 +304,7 @@ router.post("/snapshots", async (req, res) => {
   }
 });
 
-router.get("/snapshots", async (req, res) => {
+metricGet("/snapshots", async (req, res) => {
   try {
     const snapshots = await listBusinessMetricSnapshots();
     res.json({ snapshots });
@@ -334,20 +314,6 @@ router.get("/snapshots", async (req, res) => {
   }
 });
 
-router.get("/analysis-payload", async (req, res) => {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const payload = await buildQuarterlyAnalysisPayload(client);
-    await client.query("COMMIT");
-    res.json(payload);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("GET /api/metrics/business/analysis-payload failed:", err);
-    res.status(500).json({ error: "Failed to build analysis payload" });
-  } finally {
-    client.release();
-  }
-});
+router.get("/analysis-payload", savedMetricReport('quarterlyAnalysis', req => ({ range: req.query.range || '90d' })));
 
 module.exports = router;

@@ -427,11 +427,16 @@ function getCachedFleetAlertQuery(
       result: EMPTY_QUERY_RESULT,
       refreshedAt: 0,
       refreshPending: false,
+      lastAttemptAt: 0,
+      retryAfter: 0,
+      deferred: false,
+      refreshFailed: false,
     };
     fleetAlertQueryCache.set(key, entry);
   }
 
-  if (!entry.refreshPending && now - entry.refreshedAt >= ttlMs) {
+  if (!entry.refreshPending && now >= entry.retryAfter &&
+      now - Math.max(entry.refreshedAt, entry.lastAttemptAt) >= ttlMs) {
     entry.refreshPending = true;
     const previousRefresh =
       priority === "urgent" ? urgentFleetAlertRefreshChain : fleetAlertRefreshChain;
@@ -440,16 +445,29 @@ function getCachedFleetAlertQuery(
       .then(async () => {
         const startedAt = Date.now();
         try {
+          // Leave capacity for messages and authoritative trip state. Recheck
+          // when queued work starts, not only when it was scheduled.
+          const stats = typeof db.getPoolStats === 'function' ? db.getPoolStats() : null;
+          if (stats && (stats.waiting > 0 ||
+              (stats.max > 0 && stats.checked_out >= Math.max(1, stats.max - 2)))) {
+            entry.deferred = true;
+            entry.retryAfter = Date.now() + 15000;
+            return;
+          }
+          entry.deferred = false;
+          entry.lastAttemptAt = Date.now();
           const result = await loader();
           entry.result = result || EMPTY_QUERY_RESULT;
           entry.refreshedAt = Date.now();
+          entry.refreshFailed = false;
           if (Date.now() - startedAt >= Number(process.env.MESSAGE_QUEUE_SLOW_MS || 1000)) {
             console.log(`[messages] refreshed fleet alert cache ${key} in ${Date.now() - startedAt}ms`);
           }
         } catch (error) {
           // Back off until the next normal refresh window instead of retrying
           // a failing analytical query on every browser poll.
-          entry.refreshedAt = Date.now();
+          entry.lastAttemptAt = Date.now();
+          entry.refreshFailed = true;
           console.warn(
             `[messages] fleet alert cache refresh failed | key=${key} error=${error.message || error}`
           );
@@ -467,6 +485,17 @@ function getCachedFleetAlertQuery(
   return entry.result;
 }
 
+function getDiagnosticCacheStatus() {
+  const entry = fleetAlertQueryCache.get('diagnostics');
+  return {
+    checkedAt: entry?.refreshedAt ? new Date(entry.refreshedAt).toISOString() : null,
+    refreshing: Boolean(entry?.refreshPending),
+    stale: !entry?.refreshedAt || Date.now() - entry.refreshedAt >= URGENT_FLEET_ALERT_CACHE_MS,
+    deferred: Boolean(entry?.deferred),
+    refreshFailed: Boolean(entry?.refreshFailed),
+  };
+}
+
 function getCachedPayload(cache, key, ttlMs) {
   const entry = cache?.get?.(key);
   if (!entry) return null;
@@ -477,9 +506,10 @@ function getCachedPayload(cache, key, ttlMs) {
   return entry.payload;
 }
 
-function setMessageQueueCache(key, payload) {
+function setMessageQueueCache(key, payload, diagnostics) {
   messageQueueCache.set(key, {
     payload,
+    diagnostics,
     createdAt: Date.now(),
   });
 
@@ -500,9 +530,12 @@ function setMessageStatsCache(payload) {
 
 function invalidateMessageCaches() {
   messageQueueCache.clear();
-  // Derived rows are cached separately. Clear them after queue actions so a
-  // successfully handled alert cannot reappear from a stale snapshot.
-  fleetAlertQueryCache.clear();
+  // Refresh action-derived rows. Diagnostic acknowledgements are filtered by
+  // the live suppression query below; retain telemetry results and in-flight
+  // refreshes so reading a message or editing a trip does not rescan history.
+  for (const key of fleetAlertQueryCache.keys()) {
+    if (key !== 'diagnostics') fleetAlertQueryCache.delete(key);
+  }
   messageStatsCache = null;
 }
 
@@ -2714,6 +2747,7 @@ router.get("/", async (req, res) => {
       if (includeDebug) {
         return res.json({
           items: cached,
+          diagnostics: messageQueueCache.get(cacheKey)?.diagnostics || getDiagnosticCacheStatus(),
           debugTiming: {
             ...buildQueueDebugTiming(res, queueStartedAt, { cache: 0 }),
             cached: true,
@@ -4610,11 +4644,13 @@ router.get("/", async (req, res) => {
           () => db.query(unmatchedNotificationsSql)
         )
       : EMPTY_QUERY_RESULT;
-    // Safety alerts belong in every poll; don't wait for the background
-    // analytics cache or a full queue refresh.
-    const diagnosticResult = await timeQueueQuery(
-      queueTimings, "diagnostics", db.query(diagnosticSql)
+    // Include the last known diagnostics in every poll without holding guest
+    // messages behind telemetry history. One urgent background refresh is shared.
+    const diagnosticResult = getCachedFleetAlertQuery(
+      'diagnostics', () => db.query(diagnosticSql),
+      URGENT_FLEET_ALERT_CACHE_MS, 'urgent'
     );
+    const diagnosticStatus = getDiagnosticCacheStatus();
     const deviceConnectivityResult = light
       ? EMPTY_QUERY_RESULT
       : getCachedFleetAlertQuery(
@@ -4775,10 +4811,11 @@ router.get("/", async (req, res) => {
 
     setQueueTimingHeader(res, queueStartedAt, queueTimings);
     maybeLogQueueTimings(queueStartedAt, queueTimings, queueItems.length);
-    setMessageQueueCache(cacheKey, queueItems);
+    setMessageQueueCache(cacheKey, queueItems, diagnosticStatus);
     if (includeDebug) {
       return res.json({
         items: queueItems,
+        diagnostics: diagnosticStatus,
         debugTiming: buildQueueDebugTiming(res, queueStartedAt, queueTimings),
       });
     }

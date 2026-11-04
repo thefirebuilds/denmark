@@ -24,6 +24,7 @@ const {
 } = require("../server/config/runtimeSecrets");
 
 const REQUIRED_TABLES = [
+  "metric_report_cache",
   "api_auth_tokens",
   "app_settings",
   "business_financial_settings",

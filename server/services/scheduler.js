@@ -32,7 +32,6 @@ const {
   listGoogleCalendarSyncTargets,
 } = require("./googleCalendar/googleCalendarStore");
 const { refreshFleetFmvIfStale } = require("./vehicles/fmvEstimateService");
-const { createBusinessMetricSnapshot } = require("./metrics/businessMetricsService");
 
 const { pruneOldTelemetryRawPayloads } = require("./telemetry/retention");
 const { runFleetAlerts: runFleetAlertsCheck } = require("./alerts/fleetAlerts");
@@ -40,6 +39,8 @@ const { refreshVehicleOdometerRollups } = require("./vehicles/odometerRollupServ
 const { logSystemActivity } = require("./systemActivityLog");
 const { isIntegrationEnabled } = require("./integrations/integrationSettings");
 const pool = require("../db");
+const { refreshDueReport, getSavedReport } = require('./metrics/metricReportCache');
+let metricReportIntervalHandle = null;
 
 let bankingSyncInProgress = false;
 let bankingSyncIntervalHandle = null;
@@ -712,10 +713,8 @@ async function runBusinessMetricsSnapshot(reason = "interval") {
 
   try {
     console.log(`[scheduler] businessMetrics start | reason=${reason}`);
-    const snapshot = await createBusinessMetricSnapshot("quarterly");
-    console.log(
-      `[scheduler] businessMetrics done | reason=${reason} period=${snapshot.period_key} vehicles=${snapshot.vehicles.length} durationMs=${Date.now() - startedAt}`
-    );
+    await getSavedReport('businessSnapshot', { range: '90d' });
+    console.log(`[scheduler] businessMetrics archive requested | reason=${reason} durationMs=${Date.now() - startedAt}`);
   } catch (err) {
     console.error(
       `[scheduler] businessMetrics failed | reason=${reason} error=${err.message || err}`
@@ -823,6 +822,13 @@ function startScheduler() {
   }).catch(() => null);
 
   const everyFifteenMinutesMs = 15 * 60 * 1000;
+  // Poll the persisted schedule, not every report: hourly and four-hour
+  // deadlines are per requested report. Only one due report runs per tick.
+  metricReportIntervalHandle = scheduleIntervalTask('savedMetrics', 60000, 10000,
+    async () => {
+      try { await refreshDueReport(); }
+      catch (error) { console.warn(`[metrics-reports] worker failed: ${error.message || error}`); }
+    });
   const everyHourMs = 60 * 60 * 1000;
   const everyTwoHoursMs = 2 * 60 * 60 * 1000;
   const everyEightHoursMs = 8 * 60 * 60 * 1000;
@@ -957,6 +963,10 @@ function startScheduler() {
 }
 
 function stopScheduler() {
+  if (metricReportIntervalHandle) {
+    stopScheduledInterval(metricReportIntervalHandle);
+    metricReportIntervalHandle = null;
+  }
   if (bankingSyncIntervalHandle) {
     stopScheduledInterval(bankingSyncIntervalHandle);
     bankingSyncIntervalHandle = null;

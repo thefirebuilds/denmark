@@ -1926,6 +1926,7 @@ export default function MessagesPanel({
   );
   const [loading, setLoading] = useState(!initialLoadComplete);
   const [queueStatus, setQueueStatus] = useState("");
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState(null);
   const [lastMessagesCheckedAt, setLastMessagesCheckedAt] = useState(() =>
     initialLoadComplete ? new Date().toISOString() : null
   );
@@ -2984,6 +2985,7 @@ async function handleExportGuestInspectionSheet(message) {
 
       const data = await res.json();
       if (messageRequestRef.current !== request) return;
+      if (!showingTripMessages && data?.diagnostics) setDiagnosticsStatus(data.diagnostics);
       const messageItems = Array.isArray(data) ? data : data?.items;
       const debugTiming = Array.isArray(data) ? null : data?.debugTiming;
       const totalMs = Math.round(performance.now() - requestStartedAt);
@@ -3484,6 +3486,16 @@ async function handleExportGuestInspectionSheet(message) {
         <div className="raw-feed-bar">
           <div className="raw-feed-status">
             {queueStatus || formatLastChecked(lastMessagesCheckedAt)}
+            <small style={{ display: "block" }}>
+              {diagnosticsStatus?.checkedAt
+                ? `Diagnostics checked ${formatTripTime(diagnosticsStatus.checkedAt)}${
+                    diagnosticsStatus.refreshFailed ? " · refresh failed; showing previous results"
+                    : diagnosticsStatus.deferred ? " · refresh delayed while messages load"
+                    : diagnosticsStatus.stale || diagnosticsStatus.refreshing ? " · updating in background" : ""
+                  }`
+                : diagnosticsStatus?.refreshFailed ? "Diagnostics unavailable; retrying in background"
+                : "Diagnostics updating in background"}
+            </small>
           </div>
           <div className="raw-feed-controls">
             <span className="raw-feed-label">Raw feeds</span>

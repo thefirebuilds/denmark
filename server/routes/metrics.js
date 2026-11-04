@@ -8,148 +8,25 @@ const express = require("express");
 const pool = require("../db");
 const { refreshTripTollCaches } = require("../services/tolls/syncTolls");
 const {
-  getSummaryMetrics,
   getTollMetricsDetail,
 } = require("../services/metrics/summaryService");
-const {
-  getVehicleMetrics,
-  getOffTripMileageAudit,
-  getVehicleFinancialDetail,
-} = require("../services/metrics/vehicleMetricsService");
-const {
-  getTrendMetrics,
-} = require("../services/metrics/trendMetricsService");
-const {
-  getParkingEconomics,
-} = require("../services/metrics/parkingMetricsService");
 const {
   getTollAccountBalance,
   reconcileTollAccountBalance,
 } = require("../services/metrics/tollAccountBalanceService");
-const {
-  getHomeParkingTransfers,
-} = require("../services/metrics/parkingTransferService");
 
 
 const router = express.Router();
-const METRICS_MAX_CONCURRENT = Number(process.env.METRICS_MAX_CONCURRENT || 1);
-const METRICS_QUEUE_MAX = Number(process.env.METRICS_QUEUE_MAX || 4);
-const METRICS_QUEUE_TIMEOUT_MS = Number(
-  process.env.METRICS_QUEUE_TIMEOUT_MS || 8000
-);
-let activeMetricReads = 0;
-const queuedMetricReads = [];
+const { limitMetricRead } = require("../services/metrics/metricReadLimiter");
+const { savedMetricReport } = require("../services/metrics/metricReportCache");
 
-function isDbPoolUnderPressure() {
-  if (typeof pool.getPoolStats !== "function") return false;
-  const stats = pool.getPoolStats();
-  const max = Number(stats.max || 0);
-  const checkedOut = Number(stats.checked_out || 0);
-  const waiting = Number(stats.waiting || 0);
-  return waiting > 0 || (max > 0 && checkedOut >= Math.max(1, max - 1));
-}
+router.get("/", savedMetricReport('summary'));
 
-function acquireMetricsSlot() {
-  if (activeMetricReads < METRICS_MAX_CONCURRENT) {
-    activeMetricReads += 1;
-    return Promise.resolve();
-  }
+router.get("/summary", savedMetricReport('summary'));
 
-  if (queuedMetricReads.length >= METRICS_QUEUE_MAX) {
-    const err = new Error("metrics queue full");
-    err.statusCode = 503;
-    throw err;
-  }
+router.get("/vehicles", savedMetricReport('vehicles'));
 
-  return new Promise((resolve, reject) => {
-    const queued = { resolve, reject, timer: null };
-    queued.timer = setTimeout(() => {
-      const index = queuedMetricReads.indexOf(queued);
-      if (index >= 0) queuedMetricReads.splice(index, 1);
-      const err = new Error("metrics queue timeout");
-      err.statusCode = 503;
-      reject(err);
-    }, METRICS_QUEUE_TIMEOUT_MS);
-    queuedMetricReads.push(queued);
-  }).then(() => {
-    activeMetricReads += 1;
-  });
-}
-
-function releaseMetricsSlot() {
-  activeMetricReads = Math.max(0, activeMetricReads - 1);
-  const next = queuedMetricReads.shift();
-  if (next) {
-    clearTimeout(next.timer);
-    next.resolve();
-  }
-}
-
-function limitMetricRead(handler) {
-  return async (req, res, next) => {
-    if (isDbPoolUnderPressure()) {
-      return res.status(503).json({
-        error: "Metrics temporarily deferred while database is busy",
-        retry_after_seconds: 10,
-      });
-    }
-
-    try {
-      await acquireMetricsSlot();
-    } catch (err) {
-      return res.status(err.statusCode || 503).json({
-        error: "Metrics temporarily queued behind other work",
-        retry_after_seconds: 10,
-      });
-    }
-
-    try {
-      return await handler(req, res, next);
-    } finally {
-      releaseMetricsSlot();
-    }
-  };
-}
-
-router.get("/", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getSummaryMetrics(req.query.range || "30d");
-    return res.json(data);
-  } catch (err) {
-    console.error("GET /api/metrics failed:", err);
-    return res.status(500).json({ error: "Failed to load metrics" });
-  }
-}));
-
-router.get("/summary", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getSummaryMetrics(req.query.range || "30d");
-    return res.json(data);
-  } catch (err) {
-    console.error("GET /api/metrics/summary failed:", err);
-    return res.status(500).json({ error: "Failed to load summary metrics" });
-  }
-}));
-
-router.get("/vehicles", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getVehicleMetrics(req.query.range || "30d");
-    return res.json(data);
-  } catch (err) {
-    console.error("GET /api/metrics/vehicles failed:", err);
-    return res.status(500).json({ error: "Failed to load vehicle metrics" });
-  }
-}));
-
-router.get("/off-trip-audit", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getOffTripMileageAudit(req.query.range || "30d");
-    return res.json(data);
-  } catch (err) {
-    console.error("GET /api/metrics/off-trip-audit failed:", err);
-    return res.status(500).json({ error: "Failed to load off-trip mileage audit" });
-  }
-}));
+router.get("/off-trip-audit", savedMetricReport('offTripAudit'));
 
 router.get("/tolls/detail", limitMetricRead(async (req, res) => {
   try {
@@ -179,31 +56,9 @@ router.put("/tolls/account-balance", async (req, res) => {
   }
 });
 
-router.get("/parking", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getParkingEconomics(req.query.range || "30d");
-    return res.json(data);
-  } catch (err) {
-    const status = err?.status || err?.statusCode || 500;
-    console.error("GET /api/metrics/parking failed:", err);
-    return res.status(status).json({
-      error: status === 500 ? "Failed to load parking metrics" : err.message,
-    });
-  }
-}));
+router.get("/parking", savedMetricReport('parking'));
 
-router.get("/parking/home-transfers", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getHomeParkingTransfers(req.query || {});
-    return res.json(data);
-  } catch (err) {
-    const status = err?.status || err?.statusCode || 500;
-    console.error("GET /api/metrics/parking/home-transfers failed:", err);
-    return res.status(status).json({
-      error: status === 500 ? "Failed to load parking transfer metrics" : err.message,
-    });
-  }
-}));
+router.get("/parking/home-transfers", savedMetricReport('homeTransfers'));
 
 // Retired: never generate AI briefings, including from stale clients.
 router.all(['/daily-brief', '/daily-brief/context', '/daily-brief/latest'], (req, res) => {
@@ -343,21 +198,7 @@ router.put("/tolls/charges/:tollChargeId/assign-trip", async (req, res) => {
   }
 });
 
-router.get("/vehicles/:vehicleId/financial-detail", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getVehicleFinancialDetail(
-      req.params.vehicleId,
-      req.query.range || "30d"
-    );
-    return res.json(data);
-  } catch (err) {
-    if (err?.statusCode === 404) {
-      return res.status(404).json({ error: err.message || "Vehicle not found" });
-    }
-    console.error("GET /api/metrics/vehicles/:vehicleId/financial-detail failed:", err);
-    return res.status(500).json({ error: "Failed to load vehicle financial detail" });
-  }
-}));
+router.get("/vehicles/:vehicleId/financial-detail", savedMetricReport('vehicleFinancial', req => ({ ...req.query, vehicleId: req.params.vehicleId })));
 
 router.put("/off-trip-audit/review", async (req, res) => {
   try {
@@ -456,14 +297,6 @@ router.put("/off-trip-audit/review", async (req, res) => {
   }
 });
 
-router.get("/trends", limitMetricRead(async (req, res) => {
-  try {
-    const data = await getTrendMetrics(req.query.range || "90d");
-    return res.json(data);
-  } catch (err) {
-    console.error("GET /api/metrics/trends failed:", err);
-    return res.status(500).json({ error: "Failed to load trend metrics" });
-  }
-}));
+router.get("/trends", savedMetricReport('trends'));
 
 module.exports = router;

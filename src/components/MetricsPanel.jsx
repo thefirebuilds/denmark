@@ -11,6 +11,7 @@ import TollStat from "./metrics/TollStat";
 import TollAuditDrawer from "./metrics/TollAuditDrawer";
 import VehicleComparisonRow from "./metrics/VehicleComparisonRow";
 import VehicleFinancialDrawer from "./metrics/VehicleFinancialDrawer";
+import { parseMetricReportResponse } from '../utils/metricReportResponse';
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "";
@@ -1108,6 +1109,8 @@ export default function MetricsPanel() {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [pendingReportMessage, setPendingReportMessage] = useState("");
+  const [reportStatuses, setReportStatuses] = useState({});
   const [fmvRefreshing, setFmvRefreshing] = useState(false);
   const [fmvRefreshStatus, setFmvRefreshStatus] = useState("");
   const [tollBalanceSaving, setTollBalanceSaving] = useState(false);
@@ -1213,19 +1216,29 @@ export default function MetricsPanel() {
         throw new Error(`${label} request failed: ${response.status} ${text}`);
       }
 
-      return text ? JSON.parse(text) : null;
+      const data = parseMetricReportResponse(response, text, label);
+      if (data?._report && metricsLoadSeq.current === loadSeq) {
+        setReportStatuses(current => ({ ...current, [label]: data._report }));
+      }
+      return data;
     };
 
-    const summaryData = await fetchMetricJson("Summary", "/api/metrics/summary");
-    const vehiclesData = await fetchMetricJson("Vehicles", "/api/metrics/vehicles");
-    const trendsData = await fetchMetricJson("Trends", "/api/metrics/trends");
+    // These are small saved-report lookups, never aggregate calculations.
+    // Register demand for all primary reports together on the first visit.
+    const [summaryData, vehiclesData, trendsData] = await Promise.all([
+      fetchMetricJson("Summary", "/api/metrics/summary"),
+      fetchMetricJson("Vehicles", "/api/metrics/vehicles"),
+      fetchMetricJson("Trends", "/api/metrics/trends"),
+    ]);
 
     if (metricsLoadSeq.current !== loadSeq) return;
+    setPendingReportMessage("");
 
-    setSummary({
-      ...(summaryData || {}),
+    setSummary(existing => ({
+      ...(existing?._report?.calculated_at === summaryData?._report?.calculated_at
+        ? { ...existing, _report: summaryData._report } : summaryData || {}),
       vehicle_run_rate: vehiclesData?.summary || null,
-    });
+    }));
     setTrends(trendsData);
     setVehicles(
       Array.isArray(vehiclesData)
@@ -1238,10 +1251,6 @@ export default function MetricsPanel() {
     if (resetExpanded) {
       setExpandedVehicleId(null);
     }
-
-    setBusinessMetrics(null);
-    setParkingMetrics(null);
-    setParkingTransfers(null);
 
     void (async () => {
       const secondaryLoads = [
@@ -1273,7 +1282,8 @@ export default function MetricsPanel() {
         } catch (err) {
           console.warn(`${item.label} loaded after primary metrics failed:`, err);
           if (metricsLoadSeq.current === loadSeq) {
-            item.apply(null);
+            if (err.reportPending) setReportStatuses(current => ({ ...current, [item.label]: { pending: true } }));
+            // Preserve a previously loaded snapshot when a refresh/read fails.
           }
         }
       }
@@ -1289,25 +1299,41 @@ export default function MetricsPanel() {
 
   useEffect(() => {
     let cancelled = false;
+    let reading = false;
+    setSummary(null);
+    setTrends(null);
+    setVehicles([]);
+    setBusinessMetrics(null);
+    setParkingMetrics(null);
+    setParkingTransfers(null);
+    setReportStatuses({});
+    setPendingReportMessage("");
 
-    async function load() {
+    async function load(initial = false) {
+      if (reading) return;
+      reading = true;
       try {
-        await loadMetrics(selectedRange, { showPageLoading: true });
+        await loadMetrics(selectedRange, { showPageLoading: initial, resetExpanded: initial });
       } catch (err) {
         if (!cancelled) {
-          setError(err.message || "Unknown error");
+          if (err.reportPending) setPendingReportMessage(err.message);
+          else setError(err.message || "Unknown error");
         }
       } finally {
+        reading = false;
         if (!cancelled) {
           setLoading(false);
         }
       }
     }
 
-    load();
+    load(true);
+    const poll = window.setInterval(() => load(false), 30000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(poll);
+      metricsLoadSeq.current++;
     };
   }, [selectedRange]);
 
@@ -1422,6 +1448,7 @@ export default function MetricsPanel() {
     if (!offTripAuditOpen) return undefined;
 
     let cancelled = false;
+    let retryTimer;
 
     async function loadOffTripAudit() {
       try {
@@ -1441,13 +1468,14 @@ export default function MetricsPanel() {
           throw new Error(`Off-trip audit request failed: ${response.status} ${text}`);
         }
 
-        const data = JSON.parse(text);
+        const data = parseMetricReportResponse(response, text, 'Off-trip audit');
         if (!cancelled) {
           setOffTripAudit(data);
         }
       } catch (err) {
         if (!cancelled) {
           setOffTripAuditError(err.message || "Failed to load off-trip audit");
+          if (err.reportPending) retryTimer = window.setTimeout(loadOffTripAudit, 30000);
         }
       } finally {
         if (!cancelled) {
@@ -1460,6 +1488,7 @@ export default function MetricsPanel() {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(retryTimer);
     };
   }, [offTripAuditOpen, selectedRange]);
 
@@ -1486,7 +1515,7 @@ export default function MetricsPanel() {
           throw new Error(`Toll detail request failed: ${response.status} ${text}`);
         }
 
-        const data = JSON.parse(text);
+        const data = parseMetricReportResponse(response, text, 'Toll detail');
         if (!cancelled) {
           setTollAudit(data);
         }
@@ -1575,6 +1604,7 @@ export default function MetricsPanel() {
     }
 
     let cancelled = false;
+    let retryTimer;
 
     async function loadFinancialDetail() {
       try {
@@ -1593,13 +1623,14 @@ export default function MetricsPanel() {
           throw new Error(`Financial detail request failed: ${response.status} ${text}`);
         }
 
-        const data = JSON.parse(text);
+        const data = parseMetricReportResponse(response, text, 'Financial detail');
         if (!cancelled) {
           setFinancialDetail(data);
         }
       } catch (err) {
         if (!cancelled) {
           setFinancialDetailError(err.message || "Failed to load financial detail");
+          if (err.reportPending) retryTimer = window.setTimeout(loadFinancialDetail, 30000);
         }
       } finally {
         if (!cancelled) {
@@ -1612,6 +1643,7 @@ export default function MetricsPanel() {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(retryTimer);
     };
   }, [financialDetailOpen, financialDetailVehicle, selectedRange]);
 
@@ -2345,8 +2377,21 @@ const mileageStats = useMemo(() => {
       {loading && <div>Loading metrics…</div>}
       {error && <div>Failed to load metrics: {error}</div>}
 
-      {!loading && !error && summary && (
-        <>
+      {pendingReportMessage && <div role="status">{pendingReportMessage}</div>}
+      <div className="metrics-snapshot-status" role="status">
+        Summaries refresh hourly; historical reports refresh every four hours. Saved results remain available while refreshing.
+        {Object.keys(reportStatuses).length > 0 && (
+          <details>
+            <summary>Report calculation times</summary>
+            {Object.entries(reportStatuses).map(([label, report]) => (
+              <div key={label}>
+                {label}: {report.calculated_at ? new Date(report.calculated_at).toLocaleString() : "Preparing first report"}
+                {report.refresh_failed ? " - last refresh failed; showing saved results" : report.stale ? " - refresh due" : ""}
+              </div>
+            ))}
+          </details>
+        )}
+      </div>
           <div className="metrics-topbar">
             <div className="metrics-topbar__group">
               <div className="metrics-topbar__label">Range</div>
@@ -2409,6 +2454,8 @@ const mileageStats = useMemo(() => {
             </div>
           </div>
 
+      {!loading && summary && (
+        <>
           <RevenueExpenseSparkline trends={trends} summary={summary} />
           <OccupancyChart trends={trends} />
           <MonthlyProfitLossChart trends={trends} />

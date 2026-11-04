@@ -1236,23 +1236,16 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
   await ensureBusinessMetricsTables(client);
   await ensureMaintenanceRuntimeSchema(client);
   await syncTripFinancialFacts(client);
-  const [
-    settings,
-    vehicles,
-    vehicleOpsPayload,
-    trips,
-    expenses,
-    startupBasisByVehicle,
-    maintenanceLaborByVehicle,
-  ] = await Promise.all([
-    getBusinessFinancialSettings(client),
-    fetchVehiclesWithProfiles(client, startDate, endDate),
-    getVehicleMetrics(key),
-    fetchTripsForBusinessMetrics(client, startDate, endDate),
-    fetchExpensesForBusinessMetrics(client, startDate, endDate),
-    fetchStartupBasisByVehicle(client, endDate),
-    fetchMaintenanceLaborForBusinessMetrics(client, startDate, endDate),
-  ]);
+  // This is a dashboard read, not a reason to claim the entire pool. The
+  // supplied client may also be a transaction client, which cannot run SQL
+  // concurrently in the first place.
+  const settings = await getBusinessFinancialSettings(client);
+  const vehicles = await fetchVehiclesWithProfiles(client, startDate, endDate);
+  const vehicleOpsPayload = await getVehicleMetrics(key);
+  const trips = await fetchTripsForBusinessMetrics(client, startDate, endDate);
+  const expenses = await fetchExpensesForBusinessMetrics(client, startDate, endDate);
+  const startupBasisByVehicle = await fetchStartupBasisByVehicle(client, endDate);
+  const maintenanceLaborByVehicle = await fetchMaintenanceLaborForBusinessMetrics(client, startDate, endDate);
 
   const vehicleOps = Array.isArray(vehicleOpsPayload?.vehicles)
     ? vehicleOpsPayload.vehicles

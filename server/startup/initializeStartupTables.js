@@ -16,6 +16,7 @@ const {
 const {
   ensureMetricsIndexes,
 } = require("../services/metrics/metricsIndexes");
+const { ensureMetricReportCacheSchema } = require('../services/metrics/metricReportCache');
 const {
   ensureVehicleOdometerRollupTable,
 } = require("../services/vehicles/odometerRollupService");
@@ -100,6 +101,7 @@ async function initializeStartupTables() {
     ["vehicle FMV estimates", ensureVehicleFmvEstimatesTable],
     ["business metrics", ensureBusinessMetricsTables],
     ["metrics indexes", ensureMetricsIndexes],
+    ["saved metrics reports", ensureMetricReportCacheSchema],
     ["vehicle odometer rollups", ensureVehicleOdometerRollupTable],
     ["vehicle aliases", ensureVehicleAliasesTable],
     ["message runtime schema", ensureMessageRuntimeSchema],

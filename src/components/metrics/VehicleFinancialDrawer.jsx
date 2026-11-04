@@ -66,6 +66,11 @@ export default function VehicleFinancialDrawer({
             <div className="app-drawer-subtitle">
               Exact revenue drivers and allocated expense line items for the selected range.
             </div>
+            {detail?._report?.calculated_at && (
+              <div className="app-drawer-subtitle">
+                Calculated {new Date(detail._report.calculated_at).toLocaleString()} - refreshes every four hours
+              </div>
+            )}
           </div>
 
           <button type="button" className="app-drawer-close" onClick={onClose}>

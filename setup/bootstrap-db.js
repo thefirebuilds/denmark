@@ -41,6 +41,7 @@ const {
 const {
   ensureMetricsIndexes,
 } = require("../server/services/metrics/metricsIndexes");
+const { ensureMetricReportCacheSchema } = require('../server/services/metrics/metricReportCache');
 const {
   ensureVehicleOdometerRollupTable,
 } = require("../server/services/vehicles/odometerRollupService");
@@ -120,6 +121,7 @@ const BASE_SCHEMA_TABLES = [
   "service_tokens",
 ];
 const RUNTIME_ENSURED_TABLES = [
+  "metric_report_cache",
   "income_transactions",
   "maintenance_google_sync",
   "alert_devices",
@@ -373,6 +375,7 @@ async function runRuntimeEnsures() {
   await ensureVehicleFmvEstimatesTable();
   await ensureBusinessMetricsTables();
   await ensureMetricsIndexes();
+  await ensureMetricReportCacheSchema();
   await ensureVehicleOdometerRollupTable();
   await ensureVehicleAliasesTable();
   await ensureMessageRuntimeSchema();

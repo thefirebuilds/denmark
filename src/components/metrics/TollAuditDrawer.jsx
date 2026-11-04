@@ -168,10 +168,16 @@ export default function TollAuditDrawer({
             <>
               <section className="toll-audit-timing-summary">
                 <strong>
-                  Observed toll arrival window: {Number(arrivalTiming.max_hours_after_trip_end ?? 24)} hours after trip end
+                  Billing and trip closeout hold: at least {Number(arrivalTiming.closeout_delay_hours ?? 100)} hours after trip end
                 </strong>
                 <span>
-                  95% arrived within {Number(arrivalTiming.p95_hours_after_trip_end ?? 24)} hours. Closeout reminders now wait {Number(arrivalTiming.closeout_delay_hours ?? 24)} hours.
+                  {Number(arrivalTiming.policy_sample_count || 0) > 0
+                    ? `Based on the longest observed HCTRA receipt delay plus ${Number(arrivalTiming.buffer_hours ?? 24)} hours of padding, with a 100-hour minimum.`
+                    : "Using a 100-hour minimum until HCTRA arrival history is available."}
+                  {" "}Each new toll restarts a {Number(arrivalTiming.quiet_hours ?? 48)}-hour quiet period. Billing and closeout also require a successful HCTRA sync after the hold.
+                  {Number(arrivalTiming.observed_count || 0) > 0
+                    ? ` Latest observed arrival in this period: ${Number(arrivalTiming.max_hours_after_trip_end)} hours after trip end.`
+                    : ""}
                 </span>
               </section>
 

@@ -10,6 +10,7 @@ test('open closeouts survive fast/full refreshes and display limits, then clear 
   const end = source.indexOf('  useEffect(', start);
   let response = [];
   let rendered = [];
+  let diagnosticsStatus;
   const state = {
     messageMode: 'live', selectedTrip: null, focusedCloseoutTask: null,
     messageRequestRef: { current: null }, messagesRef: { current: [] },
@@ -24,6 +25,7 @@ test('open closeouts survive fast/full refreshes and display limits, then clear 
     isCompletableSyntheticTask: () => false, wasRecentlyResolved: () => false,
     getNotificationCreatedAtMs: () => 0,
     setMessages: items => { rendered = items; },
+    setDiagnosticsStatus: value => { diagnosticsStatus = value; },
   };
   for (const name of ['setLoading', 'setQueueStatus', 'setError', 'setLastMessagesCheckedAt',
     'setNewMessageIds', 'writeLiveMessageQueueCache']) state[name] = () => {};
@@ -52,10 +54,14 @@ test('open closeouts survive fast/full refreshes and display limits, then clear 
   // Urgent OBD2 notices arrive on fast polls even when more than ten other
   // items precede them, and a subsequent clear from the server removes them.
   const diagnostic = { id: 'diagnostic:7', type: 'vehicle_diagnostic_alert', status: 'read' };
-  response = [...Array.from({ length: 12 }, (_, id) => ({ id, type: 'guest_message' })), diagnostic];
+  response = {
+    items: [...Array.from({ length: 12 }, (_, id) => ({ id, type: 'guest_message' })), diagnostic],
+    diagnostics: { checkedAt: '2026-10-31T12:00:00Z', refreshing: true, stale: true },
+  };
   state.lastFullQueueRefreshAtRef.current = Date.now();
   await context.loadMessages(false);
   assert.ok(rendered.some(m => m.id === diagnostic.id));
+  assert.equal(diagnosticsStatus, response.diagnostics);
   response = [];
   await context.loadMessages(false);
   assert.equal(rendered.some(m => m.id === diagnostic.id), false);

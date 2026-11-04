@@ -160,6 +160,11 @@ export default function OffTripMilesDrawer({
             <div className="app-drawer-subtitle">
               Gap miles between a prior known trip odometer and the next trip start.
             </div>
+            {audit?._report?.calculated_at && (
+              <div className="app-drawer-subtitle">
+                Calculated {new Date(audit._report.calculated_at).toLocaleString()} - refreshes every four hours
+              </div>
+            )}
           </div>
 
           <button type="button" className="app-drawer-close" onClick={onClose}>

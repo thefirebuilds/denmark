@@ -1,6 +1,7 @@
 const pool = require('../../db');
 
 const QUIET_HOURS = 48;
+const BUFFER_HOURS = 24;
 let policyCache = null;
 let policyCachedAt = 0;
 // First-seen time measures when Denmark actually received the charge. Exclude
@@ -12,17 +13,24 @@ const POLICY_SQL = `WITH samples AS (
     AND GREATEST(created_at, COALESCE(posted_at, created_at)) >= trxn_at
     AND GREATEST(created_at, COALESCE(posted_at, created_at)) <= trxn_at + INTERVAL '30 days'
 ), learned AS (
-  SELECT COUNT(*)::int AS sample_count, percentile_cont(0.99) WITHIN GROUP (ORDER BY hours) AS p99_hours FROM samples
+  SELECT COUNT(*)::int AS sample_count, MAX(hours) AS max_hours FROM samples
 )
-SELECT CASE WHEN sample_count >= 20 THEN GREATEST(100, CEIL(p99_hours + 24)::integer) ELSE 100 END AS delay_hours,
-  sample_count, p99_hours,
+SELECT GREATEST(100, CEIL(COALESCE(max_hours, 0) + ${BUFFER_HOURS})::integer) AS delay_hours,
+  sample_count, max_hours,
   (SELECT MAX(finished_at) FROM toll_sync_runs WHERE source = 'hctra_eztag' AND status = 'success') AS last_success_at
 FROM learned`;
+
+function getSettlementDelayHours(policy) {
+  if (policy.max_hours != null && Number.isFinite(Number(policy.max_hours))) {
+    return Math.max(100, Math.ceil(Number(policy.max_hours) + BUFFER_HOURS));
+  }
+  return Number(policy.delay_hours) || 100;
+}
 
 function settlementState(trip, policy, lastArrival, now = new Date()) {
   const end = trip.trip_end ? new Date(trip.trip_end).getTime() : NaN;
   const arrival = lastArrival ? new Date(lastArrival).getTime() : NaN;
-  const delayHours = Number(policy.delay_hours) || 100;
+  const delayHours = getSettlementDelayHours(policy);
   const due = Number.isFinite(end) ? Math.max(end + delayHours * 3600000,
     Number.isFinite(arrival) ? arrival + QUIET_HOURS * 3600000 : 0) : NaN;
   const sync = policy.last_success_at ? new Date(policy.last_success_at).getTime() : NaN;
@@ -45,17 +53,22 @@ function settlementState(trip, policy, lastArrival, now = new Date()) {
 
 async function attachTollSettlement(trips, client = pool) {
   if (!trips.length) return [];
-  let policy = client === pool && Date.now() - policyCachedAt < 60000 ? policyCache : null;
-  if (!policy) {
-    policy = (await client.query(POLICY_SQL)).rows[0] || {};
-    if (client === pool) { policyCache = policy; policyCachedAt = Date.now(); }
-  }
+  const policy = await getTollSettlementPolicy(client);
   const ids = trips.map(trip => Number(trip.id)).filter(Number.isSafeInteger);
   const arrivals = await client.query(`SELECT matched_trip_id, MAX(created_at) AS last_arrival
     FROM toll_charges WHERE matched_trip_id = ANY($1::bigint[]) AND source = 'hctra_eztag'
     GROUP BY matched_trip_id`, [ids]);
   const byTrip = new Map(arrivals.rows.map(row => [Number(row.matched_trip_id), row.last_arrival]));
   return trips.map(trip => ({ ...trip, ...settlementState(trip, policy, byTrip.get(Number(trip.id))) }));
+}
+
+async function getTollSettlementPolicy(client = pool) {
+  let policy = client === pool && Date.now() - policyCachedAt < 60000 ? policyCache : null;
+  if (!policy) {
+    policy = (await client.query(POLICY_SQL)).rows[0] || {};
+    if (client === pool) { policyCache = policy; policyCachedAt = Date.now(); }
+  }
+  return { ...policy, delay_hours: getSettlementDelayHours(policy) };
 }
 
 async function assertTollsSettled(trip, client = pool) {
@@ -66,4 +79,5 @@ async function assertTollsSettled(trip, client = pool) {
   }
 }
 
-module.exports = { POLICY_SQL, QUIET_HOURS, settlementState, attachTollSettlement, assertTollsSettled };
+module.exports = { POLICY_SQL, QUIET_HOURS, BUFFER_HOURS, getSettlementDelayHours,
+  getTollSettlementPolicy, settlementState, attachTollSettlement, assertTollsSettled };
