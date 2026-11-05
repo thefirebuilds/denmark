@@ -2383,3 +2383,23 @@ body {
   min-width: 0;
   min-height: 0;
 }
+
+.message-draft-reminder label { display: block; color: var(--muted); margin-bottom: 8px; }
+.message-draft-reminder textarea {
+  display: block;
+  width: 100%;
+  min-height: 280px;
+  resize: vertical;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-3);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color-scheme: dark;
+}
+.message-draft-reminder textarea:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
+.message-draft-reminder .message-inline-actions { flex-wrap: wrap; margin-top: 12px; }
+.message-draft-reminder [role="status"] { color: var(--green); }

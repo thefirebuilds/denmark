@@ -1,3 +1,4 @@
+const { getBookingMessageReminders, acknowledgeBookingMessage } = require('../services/trips/bookingMessageReminder');
 const { mapCheckInNotice } = require('../services/trips/checkInNotice');
 const { POLICY_SQL, QUIET_HOURS } = require('../services/tolls/settlementWindow');
 const { getReturnMessageReminders, acknowledgeReturnMessage } = require('../services/trips/returnMessageReminder');
@@ -1420,7 +1421,7 @@ function messageQueueRank(item) {
   if (item.type === "handoff_ready_required") {
     return -1;
   }
-  if (item.type === "return_message_required") return -1;
+  if (["return_message_required", "booking_message_required"].includes(item.type)) return -1;
   if (item.status === "unread") return 0;
   if (item.type === "trip_overlap_detected") return 1;
   if (item.type === "late_toll_unbilled") return 1;
@@ -4787,6 +4788,7 @@ router.get("/", async (req, res) => {
         AND COALESCE(t.closed_out, false) = false AND COALESCE(t.status, '') <> 'canceled'
     `);
     const checkInLocations = checkInResult.rows.length ? await getEnabledLocations() : [];
+    const bookingMessageReminders = await timeQueueQuery(queueTimings, 'bookingMessages', getBookingMessageReminders(db));
     const returnMessageReminders = await timeQueueQuery(queueTimings, 'returnMessages', getReturnMessageReminders(db));
     const queueItems = compactTripChangedNotices(
       compactGuestMessageThreads([
@@ -4794,6 +4796,7 @@ router.get("/", async (req, res) => {
         ...checkInResult.rows.map(row => mapCheckInNotice(row, new Date(), checkInLocations)).filter(Boolean),
         ...attachedHandoffNotices,
         ...returnMessageReminders,
+        ...bookingMessageReminders,
         ...attachedInspectionExportNotices,
         ...closeoutResult.rows.map(mapCloseoutNoticeRow),
         ...verifiedRefuelRows.map(mapRefuelNoticeRow),
@@ -4807,7 +4810,7 @@ router.get("/", async (req, res) => {
       ])
     )
       .sort(compareQueueItems)
-      .filter((item, index) => index < limit || ["closeout_required", "vehicle_diagnostic_alert", "return_message_required"].includes(item.type));
+      .filter((item, index) => index < limit || ["closeout_required", "vehicle_diagnostic_alert", "return_message_required", "booking_message_required"].includes(item.type));
 
     setQueueTimingHeader(res, queueStartedAt, queueTimings);
     maybeLogQueueTimings(queueStartedAt, queueTimings, queueItems.length);
@@ -4833,6 +4836,16 @@ router.patch('/return-message/:tripId/ack', async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Could not dismiss return message reminder' });
+  }
+});
+
+router.patch('/booking-message/:tripId/ack', async (req, res) => {
+  try {
+    await acknowledgeBookingMessage(db, Number(req.params.tripId), req.body?.tripStart, req.auth?.email || req.auth?.userId?.toString());
+    invalidateMessageCaches();
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Could not dismiss booking message reminder' });
   }
 });
 

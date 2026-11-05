@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
 
 export default function ReturnMessageDraft({ message, replyUrl, onDismiss }) {
-  const [draft, setDraft] = useState(message.return_message_draft || '');
+  const isBooking = message.type === 'booking_message_required';
+  const initialDraft = isBooking ? message.booking_message_draft : message.return_message_draft;
+  const [draft, setDraft] = useState(initialDraft || '');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setDraft(message.return_message_draft || ''); setNotice(''); }, [message.id]);
+  useEffect(() => { setDraft(initialDraft || ''); setNotice(''); }, [message.id]);
 
   async function dismiss() {
     setBusy(true);
     setNotice('');
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/messages/return-message/${message.trip_id}/ack`, {
+      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/messages/${isBooking ? 'booking-message' : 'return-message'}/${message.trip_id}/ack`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tripEnd: message.trip_end }),
+        body: JSON.stringify(isBooking ? { tripStart: message.trip_start } : { tripEnd: message.trip_end }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not dismiss reminder');
@@ -21,10 +23,10 @@ export default function ReturnMessageDraft({ message, replyUrl, onDismiss }) {
     finally { setBusy(false); }
   }
 
-  return <div className="message-booking-task" onClick={event => event.stopPropagation()}>
-    <div className="message-booking-title">Guest return message</div>
+  return <div className="message-booking-task message-draft-reminder" onClick={event => event.stopPropagation()}>
+    <div className="message-booking-title">{isBooking ? 'Guest booking welcome' : 'Guest return message'}</div>
     <p>Review and copy this draft, then send it in the guest conversation.</p>
-    <label htmlFor={`return-draft-${message.trip_id}`}>Return instructions</label>
+    <label htmlFor={`return-draft-${message.trip_id}`}>{isBooking ? 'Booking welcome' : 'Return instructions'}</label>
     <textarea id={`return-draft-${message.trip_id}`} rows={14} value={draft}
       style={{ width: '100%', boxSizing: 'border-box' }}
       onChange={event => setDraft(event.target.value)} />

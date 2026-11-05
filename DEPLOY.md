@@ -84,3 +84,7 @@ docker compose up -d
 ```
 
 Docker Compose will pull `ghcr.io/thefirebuilds/denmark:latest` and restart the app with the new image.
+
+## Infrastructure diagnostics
+
+The existing Settings log viewer includes scoped resource samples, sustained-pressure/recovery events, Metrics request timings and enriched database pool warnings. No extra service or database migration is needed. See [infrastructure diagnostics](docs/infrastructure-diagnostics.md) for configuration, container visibility limits, deployment and incident interpretation.

@@ -33,6 +33,12 @@ function isDatabaseConnectionError(error) {
   );
 }
 
+// pg-pool emits this exact message when a request times out in its local
+// checkout queue. It does not mean PostgreSQL disconnected or lost its schema.
+function isDatabasePoolTimeout(error) {
+  return error?.message === 'timeout exceeded when trying to connect' && !error?.code && !error?.cause;
+}
+
 function isDatabaseSchemaError(error) {
   const code = String(error?.code || error?.cause?.code || "").toUpperCase();
   const text = `${error?.message || ""} ${error?.cause?.message || ""}`.toLowerCase();
@@ -131,6 +137,7 @@ module.exports = {
   databaseUnavailableMiddleware,
   getDatabaseHealth,
   isDatabaseConnectionError,
+  isDatabasePoolTimeout,
   isDatabaseSchemaError,
   markDatabaseReady,
   markDatabaseSchemaMissing,

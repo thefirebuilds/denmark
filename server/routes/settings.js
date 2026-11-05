@@ -888,6 +888,13 @@ router.put("/:key", async (req, res) => {
       [key, JSON.stringify(value)]
     );
 
+    if (key === BOOKING_ALERT_SETTINGS_KEY) {
+      const { buildRuntime } = require('../services/physicalAlerts/runtime');
+      const { reconcileBookingAlerts } = require('../services/physicalAlerts/bookingAlertReconciler');
+      void reconcileBookingAlerts(buildRuntime(), { reason: 'settings_changed' }).catch(error => {
+        console.warn(`[physical-alerts] Bat Signal trip check failed | reason=settings_changed error=${error.message}`);
+      });
+    }
     res.json(rows[0]);
   } catch (err) {
     console.error("PUT /api/settings/:key failed:", err);

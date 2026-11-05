@@ -2286,3 +2286,16 @@ select.drawer-input option {
 .fleet-maintenance-telemetry-history-state--error {
   color: #fecaca;
 }
+
+.maintenance-queue-edit input:not([type="checkbox"]),
+.maintenance-queue-edit textarea {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-3);
+  color: var(--text);
+  font: inherit;
+}
+.maintenance-queue-edit textarea { resize: vertical; }
+.maintenance-queue-edit [role="alert"] { color: var(--red); }

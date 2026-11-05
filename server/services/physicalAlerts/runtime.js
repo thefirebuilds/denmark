@@ -5,6 +5,7 @@ const { getPhysicalAlertConfig } = require("./config");
 const { createHealthService } = require("./healthService");
 const { MQTTTransport } = require("./mqttTransport");
 const { reconcileBookingAlerts } = require("./bookingAlertReconciler");
+const { onTripUpdated } = require('../trips/tripUpdateEvents');
 
 let runtime = null;
 
@@ -16,7 +17,7 @@ function buildRuntime() {
   const transport = new MQTTTransport(config.mqtt, {
     onConnect: async () => {
       try {
-        await reconcileBookingAlerts(runtime);
+        await checkTrips(runtime, 'mqtt_reconnected');
         await alertService.republishActiveAlerts();
         await publishHeartbeats();
       } catch (error) {
@@ -46,8 +47,15 @@ function buildRuntime() {
   return runtime;
 }
 
+const heartbeats = new WeakSet();
 async function publishHeartbeats(current = buildRuntime()) {
-  await reconcileBookingAlerts(current);
+  if (heartbeats.has(current)) return;
+  heartbeats.add(current);
+  try { return await publishDeviceHeartbeats(current); }
+  finally { heartbeats.delete(current); }
+}
+
+async function publishDeviceHeartbeats(current) {
   const health = await current.healthService.computeHealth();
   let devices;
   try {
@@ -77,7 +85,22 @@ async function publishHeartbeats(current = buildRuntime()) {
   return health;
 }
 
-async function startPhysicalAlertRuntime(current = buildRuntime()) {
+async function checkTrips(current, reason) {
+  try { return await reconcileBookingAlerts(current, { reason }); }
+  catch (error) {
+    console.warn(`[physical-alerts] Bat Signal trip check failed | reason=${reason} error=${error.message}`);
+  }
+}
+
+const starts = new WeakMap();
+function startPhysicalAlertRuntime(current = buildRuntime()) {
+  if (starts.has(current)) return starts.get(current);
+  const starting = startRuntime(current).catch(error => { starts.delete(current); throw error; });
+  starts.set(current, starting);
+  return starting;
+}
+
+async function startRuntime(current) {
   await current.repository.ensureSchema();
   await current.repository.registerDevice(current.config.defaultDeviceId, "Bedroom alert");
   try {
@@ -85,7 +108,14 @@ async function startPhysicalAlertRuntime(current = buildRuntime()) {
   } catch (error) {
     console.warn(`[physical-alerts] MQTT startup failed; reconnect remains available | error=${error.message}`);
   }
-  await reconcileBookingAlerts(current);
+  if (!current.unsubscribeTripUpdates) {
+    current.unsubscribeTripUpdates = onTripUpdated(() => { void checkTrips(current, 'trip_changed'); });
+  }
+  await checkTrips(current, 'startup');
+  if (!current.tripCheckHandle) {
+    current.tripCheckHandle = setInterval(() => { void checkTrips(current, 'fallback'); }, current.config.tripCheckIntervalMs || 300000);
+    current.tripCheckHandle.unref?.();
+  }
   if (!current.heartbeatHandle) {
     current.heartbeatHandle = setInterval(() => void publishHeartbeats(current).catch((error) =>
       console.warn(`[physical-alerts] heartbeat publish failure | error=${error.message}`)), current.config.heartbeatIntervalMs);
@@ -95,4 +125,15 @@ async function startPhysicalAlertRuntime(current = buildRuntime()) {
   return current;
 }
 
-module.exports = { buildRuntime, publishHeartbeats, startPhysicalAlertRuntime };
+function stopPhysicalAlertRuntime(current = runtime) {
+  if (!current) return;
+  clearInterval(current.heartbeatHandle);
+  clearInterval(current.tripCheckHandle);
+  current.heartbeatHandle = null;
+  current.tripCheckHandle = null;
+  current.unsubscribeTripUpdates?.();
+  current.unsubscribeTripUpdates = null;
+  starts.delete(current);
+}
+
+module.exports = { buildRuntime, publishHeartbeats, startPhysicalAlertRuntime, stopPhysicalAlertRuntime };

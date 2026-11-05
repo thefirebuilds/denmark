@@ -361,6 +361,9 @@ export default function MaintenanceQueuePanel({
   const [fleetPlanningLoading, setFleetPlanningLoading] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [expandedQueueItems, setExpandedQueueItems] = useState(() => new Set());
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [taskEdit, setTaskEdit] = useState({});
+  const [taskEditError, setTaskEditError] = useState('');
   const [reassigningTaskId, setReassigningTaskId] = useState(null);
   const [reassignVehicleVin, setReassignVehicleVin] = useState("");
   const [updatingTaskId, setUpdatingTaskId] = useState(null);
@@ -733,7 +736,39 @@ export default function MaintenanceQueuePanel({
     });
   }
 
+  function handleStartEditTask(item) {
+    const task = item.task;
+    setReassigningTaskId(null);
+    setEditingTaskId(task.id);
+    setTaskEditError('');
+    setTaskEdit({ title: task.title || item.title || '', description: task.description || '',
+      priority: task.priority || 'medium', estimated_labor_hours: task.estimated_labor_hours ?? '',
+      blocks_rental: Boolean(task.blocks_rental), blocks_guest_export: Boolean(task.blocks_guest_export) });
+  }
+
+  async function handleSaveTaskEdit(item) {
+    if (!taskEdit.title.trim()) { setTaskEditError('Give the to-do a title.'); return; }
+    const hours = taskEdit.estimated_labor_hours === '' ? null : Number(taskEdit.estimated_labor_hours);
+    if (hours !== null && (!Number.isFinite(hours) || hours < 0)) { setTaskEditError('Enter valid nonnegative labor hours.'); return; }
+    setUpdatingTaskId(item.task.id);
+    setTaskEditError('');
+    try {
+      const response = await fetch(`/api/maintenance-tasks/${encodeURIComponent(item.task.id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...taskEdit, title: taskEdit.title.trim(), estimated_labor_hours: hours }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not save task.');
+      setEditingTaskId(null);
+      if (selectedVehicleId && selectedFleetVehicle?.vin) await loadSummaryForSelectedVehicle(selectedFleetVehicle.vin);
+      else setRefreshNonce(value => value + 1);
+      notifyMaintenanceTasksUpdated({ task: body.task, taskId: item.task.id, source: 'maintenance_queue_edit' });
+    } catch (error) { setTaskEditError(error.message || 'Could not save task.'); }
+    finally { setUpdatingTaskId(null); }
+  }
+
   function handleStartReassignTask(item) {
+    setEditingTaskId(null);
     const taskId = getQueueItemTaskId(item);
     if (!taskId) return;
 
@@ -1147,7 +1182,21 @@ export default function MaintenanceQueuePanel({
           </div>
         ) : null}
 
-        {isReassigning ? (
+        {editingTaskId === taskId && taskId ? (
+          <form className="maintenance-queue-reassign maintenance-queue-edit" onSubmit={event => { event.preventDefault(); handleSaveTaskEdit(item); }}>
+            <label><span>Title</span><input autoFocus required value={taskEdit.title} disabled={isUpdating} onChange={event => setTaskEdit({ ...taskEdit, title: event.target.value })} /></label>
+            <label><span>Description</span><textarea rows={4} value={taskEdit.description} disabled={isUpdating} onChange={event => setTaskEdit({ ...taskEdit, description: event.target.value })} /></label>
+            <label><span>Priority</span><select value={taskEdit.priority} disabled={isUpdating} onChange={event => setTaskEdit({ ...taskEdit, priority: event.target.value })}>{['low', 'medium', 'high', 'urgent'].map(value => <option key={value} value={value}>{humanizeQueueValue(value)}</option>)}</select></label>
+            <label><span>Estimated labor hours</span><input type="number" min="0" step="any" value={taskEdit.estimated_labor_hours} disabled={isUpdating} onChange={event => setTaskEdit({ ...taskEdit, estimated_labor_hours: event.target.value })} /></label>
+            <label><span><input type="checkbox" checked={taskEdit.blocks_rental} disabled={isUpdating} onChange={event => setTaskEdit({ ...taskEdit, blocks_rental: event.target.checked })} /> Blocks rental</span></label>
+            <label><span><input type="checkbox" checked={taskEdit.blocks_guest_export} disabled={isUpdating} onChange={event => setTaskEdit({ ...taskEdit, blocks_guest_export: event.target.checked })} /> Blocks guest export</span></label>
+            {taskEditError && <p role="alert">{taskEditError}</p>}
+            <div className="maintenance-queue-task-actions">
+              <button type="submit" className="maintenance-queue-action maintenance-queue-action--primary" disabled={isUpdating}>{isUpdating ? 'Saving...' : 'Save changes'}</button>
+              <button type="button" className="maintenance-queue-action" disabled={isUpdating} onClick={() => setEditingTaskId(null)}>Cancel</button>
+            </div>
+          </form>
+        ) : isReassigning ? (
           <div className="maintenance-queue-reassign">
             <label>
               <span>Move to vehicle</span>
@@ -1209,6 +1258,7 @@ export default function MaintenanceQueuePanel({
                 >
                   {isUpdating ? "Closing..." : "Close task"}
                 </button>
+                {task.source === 'manual' && <button type="button" className="maintenance-queue-action" onClick={() => handleStartEditTask(item)} disabled={isUpdating}>Edit</button>}
                 <button
                   type="button"
                   className="maintenance-queue-action"

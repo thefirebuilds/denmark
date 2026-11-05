@@ -47,6 +47,8 @@ function getPhysicalAlertConfig() {
     criticalTripWindowHours: Number(process.env.ALERT_CRITICAL_TRIP_WINDOW_HOURS || 10),
     businessTimeZone: process.env.BUSINESS_TIMEZONE || "America/Chicago",
     heartbeatIntervalMs: 30000,
+    tripCheckIntervalMs: Math.max(60000, Math.min(3600000,
+      Number(process.env.ALERT_TRIP_CHECK_INTERVAL_MS) || 300000)),
   };
 }
 

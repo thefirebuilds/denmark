@@ -1223,13 +1223,25 @@ export default function MetricsPanel() {
       return data;
     };
 
-    // These are small saved-report lookups, never aggregate calculations.
-    // Register demand for all primary reports together on the first visit.
-    const [summaryData, vehiclesData, trendsData] = await Promise.all([
-      fetchMetricJson("Summary", "/api/metrics/summary"),
-      fetchMetricJson("Vehicles", "/api/metrics/vehicles"),
-      fetchMetricJson("Trends", "/api/metrics/trends"),
-    ]);
+    // Read one snapshot at a time so opening Metrics does not burst the pool.
+    // Still register every primary report when a first snapshot is pending.
+    const primaryData = [];
+    let pendingError;
+    for (const [label, path] of [
+      ["Summary", "/api/metrics/summary"],
+      ["Vehicles", "/api/metrics/vehicles"],
+      ["Trends", "/api/metrics/trends"],
+    ]) {
+      if (metricsLoadSeq.current !== loadSeq) return;
+      try { primaryData.push(await fetchMetricJson(label, path)); }
+      catch (error) {
+        if (!error.reportPending) throw error;
+        pendingError = error;
+        primaryData.push(null);
+      }
+    }
+    if (pendingError) throw pendingError;
+    const [summaryData, vehiclesData, trendsData] = primaryData;
 
     if (metricsLoadSeq.current !== loadSeq) return;
     setPendingReportMessage("");
@@ -1381,6 +1393,7 @@ export default function MetricsPanel() {
   }
 
   useEffect(() => {
+    if (!businessInputsSectionOpen || businessSettings) return;
     let cancelled = false;
 
     async function loadInputs() {
@@ -1401,7 +1414,7 @@ export default function MetricsPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [businessInputsSectionOpen]);
 
   async function handleRefreshFmvNow() {
     try {

@@ -1228,6 +1228,7 @@ function buildMessageTitle(message) {
 
 function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
+  if (type === 'booking_message_required') return 'Send guest booking welcome';
   if (type === 'return_message_required') return 'Send guest return instructions';
   if (type === "check_in_required") return "Trip check-in required";
   if (type === "home_maintenance") return "Maintenance at home";
@@ -3019,7 +3020,7 @@ async function handleExportGuestInspectionSheet(message) {
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
           ? actionableMessageItems
-          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || message.type === "vehicle_diagnostic_alert" || message.type === "return_message_required")
+          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || message.type === "vehicle_diagnostic_alert" || ["return_message_required", "booking_message_required"].includes(message.type))
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
@@ -4130,7 +4131,7 @@ async function handleExportGuestInspectionSheet(message) {
                   context={buildGuestReplySuggestionPayload(message)}
                 />}
 
-                {message.type === 'return_message_required' && <ReturnMessageDraft
+                {['return_message_required', 'booking_message_required'].includes(message.type) && <ReturnMessageDraft
                   message={message} replyUrl={buildReplyUrl(message)} onDismiss={() => {
                     messagesRef.current = messagesRef.current.filter(item => item.id !== message.id);
                     setMessages(previous => previous.filter(item => item.id !== message.id));

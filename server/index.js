@@ -7,6 +7,9 @@ const {
   installConsoleLogBuffer,
 } = require("./services/serverLogBuffer");
 installConsoleLogBuffer();
+const infrastructure = require('./services/infra/diagnostics');
+const databasePool = require('./db');
+infrastructure.start({ db: databasePool, getPoolStats: () => databasePool.getPoolStats({ logPressure: false }) });
 
 const { isAuthEnforced } = require("./auth/config");
 const { getOidcConfig } = require("./auth/oidcProvider");
@@ -24,12 +27,18 @@ process.on("unhandledRejection", (reason) => {
 });
 
 process.on("SIGTERM", () => {
+  infrastructure.stop();
+  require('./services/physicalAlerts/runtime').stopPhysicalAlertRuntime();
   console.warn("[server] received SIGTERM");
 });
 
 process.on("SIGINT", () => {
+  infrastructure.stop();
+  require('./services/physicalAlerts/runtime').stopPhysicalAlertRuntime();
   console.warn("[server] received SIGINT");
 });
+
+process.once('exit', () => infrastructure.stop());
 
 const PORT = process.env.PORT || 5000;
 const app = createApp({ port: PORT });

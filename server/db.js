@@ -1,5 +1,8 @@
 require("dotenv").config({ path: "../.env" });
 const { Pool } = require("pg");
+const { createHash } = require('node:crypto');
+const infra = require('./services/infra/diagnostics');
+const { requestContext } = require('./services/infra/requestContext');
 const {
   isDatabaseConnectionError,
   markDatabaseUnavailable,
@@ -34,14 +37,15 @@ let querySequence = 0;
 let clientSequence = 0;
 let lastPoolPressureLogAt = 0;
 
-function summarizeSql(input) {
+function identifySql(input) {
   const text =
     typeof input === "string"
       ? input
       : typeof input?.text === "string"
       ? input.text
       : "";
-  return text.replace(/\s+/g, " ").trim().slice(0, 260) || "(unknown query)";
+  return { query_id: createHash('sha256').update(text).digest('hex').slice(0, 16),
+    operation: /^(SELECT|WITH|INSERT|UPDATE|DELETE|BEGIN|COMMIT|ROLLBACK|SET|CREATE|ALTER|DROP)\b/i.exec(text.trim())?.[1]?.toUpperCase() || 'OTHER' };
 }
 
 function startQueryTracking({ sql, source }) {
@@ -50,7 +54,8 @@ function startQueryTracking({ sql, source }) {
   const entry = {
     id,
     source,
-    sql: summarizeSql(sql),
+    ...identifySql(sql),
+    correlation_id: requestContext.getStore()?.correlationId || null,
     startedAt,
   };
 
@@ -156,7 +161,9 @@ function describeQueryEntry(entry, now = Date.now()) {
     id: entry.id,
     source: entry.source,
     age_ms: now - entry.startedAt,
-    sql: entry.sql,
+    query_id: entry.query_id,
+    operation: entry.operation,
+    correlation_id: entry.correlation_id,
   };
 }
 
@@ -195,7 +202,7 @@ pool.on("error", (err) => {
   console.error("[db] unexpected pool error:", err);
 });
 
-function getPoolStats() {
+function getPoolStats({ logPressure = true } = {}) {
   const stats = {
     total: pool.totalCount,
     idle: pool.idleCount,
@@ -206,7 +213,7 @@ function getPoolStats() {
     checked_out_clients: activePoolClients.size,
   };
 
-  maybeLogPoolPressure(stats);
+  if (logPressure) maybeLogPoolPressure(stats);
   return stats;
 }
 
@@ -223,11 +230,13 @@ function maybeLogPoolPressure(stats) {
   const intervalMs = getRuntimeNumber("PGPOOL_PRESSURE_LOG_INTERVAL_MS", 15000);
   if (now - lastPoolPressureLogAt < intervalMs) return;
   lastPoolPressureLogAt = now;
+  infra.triggerDatabase('pool_pressure');
 
   console.warn(
     `[db] pool pressure ${JSON.stringify({
       ...stats,
       activity: getPoolActivitySnapshot({ limit: 12 }),
+      diagnostics: infra.context(),
     })}`
   );
 }

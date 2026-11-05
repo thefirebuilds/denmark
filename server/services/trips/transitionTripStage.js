@@ -805,7 +805,7 @@ async function transitionTripStageInTransaction(client, tripId, nextStage, optio
       runStageEntryAutomation(updatedTrip, currentStage);
 
       void reconcileBookingAlerts(buildRuntime()).catch((err) => {
-        console.warn(`[physical-alerts] booking reconciliation failed | error=${err.message || err}`);
+        console.warn(`[physical-alerts] Bat Signal trip check failed | error=${err.message || err}`);
       });
 
       if (shouldSyncTripCalendarAfterStageChange(normalizedNextStage)) {

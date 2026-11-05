@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '../services/metrics/metricR
 const context = vm.createContext({ module: { exports: {} }, console: { log() {}, warn() {} },
   require: name => name === 'node:crypto' ? require(name)
     : name === './metricHelpers' ? require('../services/metrics/metricHelpers')
-    : name === './metricReadLimiter' ? { tryRunMetricRefresh: work => work() } : {},
+    : name === './metricReadLimiter' ? { tryRunMetricRefresh: work => work(), limitMetricRead: handler => handler } : {},
 });
 vm.runInContext(source, context);
 const { createMetricReportCache, describeReport } = context.module.exports;
@@ -223,4 +223,60 @@ test('client never treats a pending report as zero financial results', async () 
     JSON.stringify({ pending: true, message: 'Preparing first report' })),
     error => error.reportPending === true && /Preparing/.test(error.message));
   assert.equal(parseMetricReportResponse({ ok: true, status: 200 }, '{"revenue":123}').revenue, 123);
+});
+
+test('simultaneous snapshot reads share one query and repeated reads use a short cache', async () => {
+  const db = database();
+  const cache = service(db, () => assert.fail('read must never calculate'));
+  const reports = await Promise.all(Array.from({ length: 10 }, () => cache.getSavedReport('summary', {})));
+  assert.equal(db.queries.length, 1);
+  assert.ok(reports.every(report => report.meta.pending));
+  await cache.getSavedReport('summary', {});
+  assert.equal(db.queries.length, 1);
+  db.advance(15001);
+  await cache.getSavedReport('summary', {});
+  assert.equal(db.queries.length, 2);
+});
+
+test('a failed snapshot read is retried rather than cached', async () => {
+  const db = database();
+  let fail = true;
+  const query = db.query;
+  db.query = async (...args) => {
+    if (fail) throw new Error('read failed');
+    return query(...args);
+  };
+  const cache = service(db, () => assert.fail('read must never calculate'));
+  await assert.rejects(cache.getSavedReport('summary', {}), /read failed/);
+  fail = false;
+  assert.equal((await cache.getSavedReport('summary', {})).meta.pending, true);
+});
+
+test('saved report endpoints defer before querying an already busy pool', async () => {
+  let busy = true;
+  const gateContext = vm.createContext({ module: { exports: {} }, process: { env: {} },
+    require: () => ({}), setTimeout, clearTimeout });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../services/metrics/metricReadLimiter.js'), 'utf8'), gateContext);
+  const gate = gateContext.module.exports.createMetricReadLimiter({ db: {
+    getPoolStats: () => ({ max: 6, checked_out: busy ? 4 : 0, waiting: 0 }),
+  } });
+  const cacheContext = vm.createContext({ module: { exports: {} }, console: { log() {}, warn() {} },
+    require: name => name === './metricReadLimiter' ? gate
+      : name === 'node:crypto' ? require(name)
+      : name === './metricHelpers' ? require('../services/metrics/metricHelpers') : {},
+  });
+  vm.runInContext(source, cacheContext);
+  const db = database();
+  const cache = cacheContext.module.exports.createMetricReportCache({ db, clock: db.clock });
+  const handler = cache.savedMetricReport('summary');
+  const response = () => ({ code: 200, setHeader() {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; } });
+  const deferred = response();
+  await handler({}, deferred);
+  assert.equal(deferred.code, 503);
+  assert.equal(db.queries.length, 0);
+  busy = false;
+  const ready = response();
+  await handler({}, ready);
+  assert.equal(ready.code, 202);
+  assert.equal(db.queries.length, 1);
 });

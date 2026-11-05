@@ -2,6 +2,7 @@ const {
   RETRY_AFTER_SECONDS,
   buildDatabaseUnavailablePayload,
   isDatabaseConnectionError,
+  isDatabasePoolTimeout,
   isDatabaseSchemaError,
   markDatabaseSchemaMissing,
   markDatabaseUnavailable,
@@ -21,6 +22,12 @@ function jsonParseErrorHandler(err, req, res, next) {
 
 function appErrorHandler(err, req, res, next) {
   if (!err) return next();
+
+  if (isDatabasePoolTimeout(err)) {
+    res.set('Retry-After', '10');
+    return res.status(503).json({ ok: false, error: 'database busy',
+      message: 'Database connections are busy. Please retry shortly.' });
+  }
 
   if (isDatabaseConnectionError(err)) {
     markDatabaseUnavailable(err);

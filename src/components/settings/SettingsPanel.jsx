@@ -6420,7 +6420,13 @@ function ServerLogsSettingsPanel() {
   const [message, setMessage] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [followTail, setFollowTail] = useState(true);
+  const [logSearch, setLogSearch] = useState('');
+  const [logLevel, setLogLevel] = useState('all');
   const logRef = useRef(null);
+  const visibleEntries = entries.filter(entry =>
+    (logLevel === 'all' || entry.level === logLevel) &&
+    (!logSearch || String(entry.message || '').toLowerCase().includes(logSearch.toLowerCase()))
+  );
 
   async function loadLogs({ append = false } = {}) {
     try {
@@ -6516,9 +6522,21 @@ function ServerLogsSettingsPanel() {
 
           {message ? <span className="settings-message">{message}</span> : null}
 
+          <div className="settings-form-actions">
+            <label className="settings-field">Filter logs
+              <input type="search" value={logSearch} onChange={event => setLogSearch(event.target.value)} placeholder="[infra], pool pressure, correlation ID..." />
+            </label>
+            <label className="settings-field">Level
+              <select value={logLevel} onChange={event => setLogLevel(event.target.value)}>
+                <option value="all">All levels</option>
+                {['info', 'warn', 'error', 'log', 'debug'].map(level => <option key={level} value={level}>{level}</option>)}
+              </select>
+            </label>
+          </div>
+
           <div ref={logRef} className="settings-json-view settings-log-view">
-            {entries.length ? (
-              entries.map((entry) => (
+            {visibleEntries.length ? (
+              visibleEntries.map((entry) => (
                 <div
                   key={entry.id}
                   className={`settings-log-line ${getLogLevelClass(entry)}`}
@@ -6530,7 +6548,7 @@ function ServerLogsSettingsPanel() {
               <div className="settings-log-line settings-log-line--empty">
                 {loading
                   ? "Loading server logs..."
-                  : "No server log entries captured yet."}
+                  : entries.length ? "No logs match these filters." : "No server log entries captured yet."}
               </div>
             )}
           </div>

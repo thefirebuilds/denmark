@@ -111,6 +111,7 @@ test('fast queue returns a guest message while its diagnostic query is still pen
       if (name.endsWith('/tripUpdateEvents')) return { onTripUpdated() {} };
       if (name.endsWith('/bridgeAlertSettings')) return { getBridgeAlertSettings: async () => ({ enabled: false }) };
       if (name.endsWith('/returnMessageReminder')) return { getReturnMessageReminders: async () => [] };
+      if (name.endsWith('/bookingMessageReminder')) return { getBookingMessageReminders: async () => [] };
       if (name.endsWith('/reimbursementStatus')) return require('../services/reimbursementStatus');
       return {};
     },

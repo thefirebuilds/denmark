@@ -17,10 +17,12 @@ const {
   jsonParseErrorHandler,
 } = require("./errorHandlers");
 const plaidWebhookRoutes = require("../routes/plaidWebhook");
+const { createMetricsRequestDiagnostics } = require('./metricsRequestDiagnostics');
 
 function createApp({ port }) {
   const app = express();
   app.set("trust proxy", 1);
+  app.use(createMetricsRequestDiagnostics());
 
   // Marketplace content-script requests need CORS even when later gates fail.
   app.use("/api/marketplace", marketplaceCors);

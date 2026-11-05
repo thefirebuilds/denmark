@@ -624,6 +624,17 @@ router.post("/vehicles/:vin/maintenance-tasks", async (req, res) => {
 router.patch("/maintenance-tasks/:taskId", async (req, res) => {
   try {
     const taskId = Number(req.params.taskId);
+    const editableFields = ['title', 'description', 'priority', 'blocks_rental', 'blocks_guest_export'];
+    const edits = Object.fromEntries(editableFields.filter(key => Object.prototype.hasOwnProperty.call(req.body || {}, key)).map(key => [key, req.body[key]]));
+    if ('title' in edits) {
+      if (typeof edits.title !== 'string' || !edits.title.trim()) return res.status(400).json({ error: 'Give the to-do a title.' });
+      edits.title = edits.title.trim();
+    }
+    if ('description' in edits && typeof edits.description !== 'string') return res.status(400).json({ error: 'Description must be text.' });
+    if ('priority' in edits && !['low', 'medium', 'high', 'urgent'].includes(edits.priority)) return res.status(400).json({ error: 'Invalid task priority' });
+    for (const key of ['blocks_rental', 'blocks_guest_export']) {
+      if (key in edits && typeof edits[key] !== 'boolean') return res.status(400).json({ error: 'Task blockers must be true or false.' });
+    }
     const statusProvided = Object.prototype.hasOwnProperty.call(req.body || {}, "status");
     const vehicleVinProvided = Object.prototype.hasOwnProperty.call(
       req.body || {},
@@ -658,7 +669,7 @@ router.patch("/maintenance-tasks/:taskId", async (req, res) => {
       !statusProvided &&
       !vehicleVinProvided &&
       !actualLaborProvided &&
-      !estimatedLaborProvided
+      !estimatedLaborProvided && Object.keys(edits).length === 0
     ) {
       return res.status(400).json({ error: "No task updates provided" });
     }
@@ -717,6 +728,10 @@ router.patch("/maintenance-tasks/:taskId", async (req, res) => {
 
     const updates = [];
     const values = [taskId];
+    for (const [key, value] of Object.entries(edits)) {
+      values.push(value);
+      updates.push(`${key} = $${values.length}`);
+    }
 
     if (statusProvided) {
       values.push(status);

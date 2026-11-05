@@ -5,6 +5,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 test('reused clients count queries once and track every explicit checkout', async () => {
+  const warnings = [];
+  let diagnosticTriggers = 0;
   const pending = [];
   const client = {
     query(...args) {
@@ -31,21 +33,28 @@ test('reused clients count queries once and track every explicit checkout', asyn
     }
   }
   const dependencies = {
+    'node:crypto': require('node:crypto'),
+    './services/infra/diagnostics': { triggerDatabase() { diagnosticTriggers++; }, context: () => ({ resources: { timestamp: '2026-11-05T12:00:00Z', age_ms: 20 } }) },
+    './services/infra/requestContext': { requestContext: { getStore: () => ({ correlationId: 'test-request-id' }) } },
     dotenv: { config() {} }, pg: { Pool }, './dbHealth': {},
     './config/runtimeSecrets': {
       getRuntimeNumber: (_, fallback) => fallback,
       getRuntimeSecret: (_, fallback) => fallback,
     },
   };
-  const context = vm.createContext({ module: { exports: {} }, console,
+  const context = vm.createContext({ module: { exports: {} }, console: { ...console, warn: line => warnings.push(line) },
     require: name => dependencies[name] });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../db.js'), 'utf8'), context);
   const pool = context.module.exports;
   for (let cycle = 0; cycle < 2; cycle++) {
     const connection = await pool.connect();
     assert.equal(pool.getPoolActivitySnapshot().checked_out_clients.length, 1);
-    const direct = connection.query('SELECT 1');
+    const direct = connection.query("SELECT 'private guest credential'");
     assert.equal(pool.getPoolActivitySnapshot().active_queries.length, 1);
+    const activity = pool.getPoolActivitySnapshot().active_queries[0];
+    assert.match(activity.query_id, /^[a-f0-9]{16}$/);
+    assert.equal(activity.correlation_id, 'test-request-id');
+    assert.doesNotMatch(JSON.stringify(activity), /private guest credential/);
     pending.shift()();
     await direct;
     connection.release();
@@ -56,4 +65,13 @@ test('reused clients count queries once and track every explicit checkout', asyn
     await pooled;
     assert.equal(pool.getPoolActivitySnapshot().active_queries.length, 0);
   }
+  pool.totalCount = 6; pool.idleCount = 0; pool.waitingCount = 1;
+  pool.getPoolStats({ logPressure: false });
+  assert.equal(warnings.length, 0, 'sampler stats reads cannot log recursively');
+  pool.getPoolStats(); pool.getPoolStats();
+  assert.equal(warnings.length, 1, 'existing pool warning rate limit is preserved');
+  assert.equal(diagnosticTriggers, 1);
+  const warning = JSON.parse(warnings[0].slice('[db] pool pressure '.length));
+  assert.equal(warning.waiting, 1);
+  assert.equal(warning.diagnostics.resources.age_ms, 20);
 });

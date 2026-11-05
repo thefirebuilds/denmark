@@ -1,7 +1,7 @@
 const pool = require('../../db');
 const { createHash } = require('node:crypto');
 const { getDateRange } = require('./metricHelpers');
-const { tryRunMetricRefresh } = require('./metricReadLimiter');
+const { tryRunMetricRefresh, limitMetricRead } = require('./metricReadLimiter');
 
 const HOUR_MS = 3600000;
 const REPORT_HOURS = Object.freeze({ summary: 1, vehicles: 1, business: 1,
@@ -67,9 +67,21 @@ async function computeReport(kind, params) {
 function createMetricReportCache({ db = pool, compute = computeReport, runRefresh = tryRunMetricRefresh,
   clock = () => Date.now() } = {}) {
   let running = false;
+  const snapshots = new Map();
+  const reads = new Map();
 
   async function getSavedReport(kind, input) {
     const report = describeReport(kind, input);
+    const cached = snapshots.get(report.cacheKey);
+    if (cached && cached.expiresAt > clock()) return cached.report;
+    if (reads.has(report.cacheKey)) return reads.get(report.cacheKey);
+    const read = readSavedReport(report);
+    reads.set(report.cacheKey, read);
+    try { return await read; }
+    finally { reads.delete(report.cacheKey); }
+  }
+
+  async function readSavedReport(report) {
     // This only registers demand and returns the last successful snapshot.
     // No calculation, callback, or background worker is started by a GET.
     const { rows } = await db.query(`
@@ -79,8 +91,8 @@ function createMetricReportCache({ db = pool, compute = computeReport, runRefres
       RETURNING payload, calculated_at, refresh_after, last_error_at
     `, [report.cacheKey, report.kind, JSON.stringify(report.params)]);
     const row = rows[0];
-    return { payload: row.payload, meta: {
-      kind, range: report.params.range,
+    const saved = { payload: row.payload, meta: {
+      kind: report.kind, range: report.params.range,
       calculated_at: row.calculated_at,
       refresh_after: row.refresh_after,
       refresh_interval_hours: report.intervalMs / HOUR_MS,
@@ -88,6 +100,10 @@ function createMetricReportCache({ db = pool, compute = computeReport, runRefres
       stale: row.payload == null || new Date(row.refresh_after).getTime() <= clock(),
       refresh_failed: Boolean(row.last_error_at),
     } };
+    // Polling and multiple tabs share one lookup. Bound both lifetime and size.
+    if (snapshots.size >= 100) snapshots.delete(snapshots.keys().next().value);
+    snapshots.set(report.cacheKey, { report: saved, expiresAt: clock() + 15000 });
+    return saved;
   }
 
   async function refreshDueReport() {
@@ -128,11 +144,13 @@ function createMetricReportCache({ db = pool, compute = computeReport, runRefres
                   refresh_after = NOW() + ($3::double precision * INTERVAL '1 millisecond'),
                   next_attempt_at = NOW(), last_error_at = NULL
               WHERE cache_key = $1`, [row.cache_key, JSON.stringify(payload), report.intervalMs]);
+            snapshots.delete(row.cache_key);
             console.log(`[metrics-reports] refreshed kind=${report.kind} range=${report.params.range} durationMs=${clock() - started}`);
             return { refreshed: true };
           } catch (error) {
             await coordinator.query(`UPDATE public.metric_report_cache SET last_error_at = NOW(),
               next_attempt_at = NOW() + INTERVAL '15 minutes' WHERE cache_key = $1`, [row.cache_key]);
+            snapshots.delete(row.cache_key);
             console.warn(`[metrics-reports] refresh failed kind=${row.report_kind}: ${error.message || error}`);
             return { refreshed: false, failed: true };
           }
@@ -151,7 +169,7 @@ function createMetricReportCache({ db = pool, compute = computeReport, runRefres
   }
 
   function savedMetricReport(kind, parameters = req => req.query || {}) {
-    return async (req, res) => {
+    return limitMetricRead(async (req, res) => {
       try {
         res.setHeader('Cache-Control', 'no-store');
         const report = await getSavedReport(kind, parameters(req));
@@ -165,7 +183,7 @@ function createMetricReportCache({ db = pool, compute = computeReport, runRefres
         console.warn(`[metrics-reports] read failed kind=${kind}: ${error.message || error}`);
         return res.status(error.statusCode || 503).json({ error: error.statusCode ? error.message : 'Saved metrics temporarily unavailable' });
       }
-    };
+    });
   }
   return { getSavedReport, refreshDueReport, savedMetricReport };
 }

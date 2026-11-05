@@ -430,7 +430,7 @@ async function upsertTripFromMessage(savedMessage) {
     // Trip ingestion remains authoritative even when the optional alert
     // subsystem or MQTT transport is unavailable.
     console.warn(
-      `[physical-alerts] booking reconciliation failed | trip=${result.rows[0]?.id || "unknown"} error=${error.message || error}`
+      `[physical-alerts] Bat Signal trip check failed | trip=${result.rows[0]?.id || "unknown"} error=${error.message || error}`
     );
   }
 
