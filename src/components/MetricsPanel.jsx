@@ -11,6 +11,7 @@ import TollStat from "./metrics/TollStat";
 import TollAuditDrawer from "./metrics/TollAuditDrawer";
 import VehicleComparisonRow from "./metrics/VehicleComparisonRow";
 import VehicleFinancialDrawer from "./metrics/VehicleFinancialDrawer";
+import RevenueSpendProgress from './metrics/RevenueSpendProgress';
 import { parseMetricReportResponse } from '../utils/metricReportResponse';
 
 const API_BASE =
@@ -1030,7 +1031,7 @@ function CapitalBasisProgress({ stats, selectedRange }) {
     <section className="capital-basis-progress" aria-label="Capital basis recovery progress">
       <div className="capital-basis-progress__header">
         <div>
-          <div className="capital-basis-progress__eyebrow">Capital Basis</div>
+          <div className="capital-basis-progress__eyebrow">Capital Basis <span>All time</span></div>
           <div className="capital-basis-progress__title">
             {hasBasis
               ? `${formatCurrency(recovered)} recovered of ${formatCurrency(basis)} spent`
@@ -1051,12 +1052,8 @@ function CapitalBasisProgress({ stats, selectedRange }) {
 
       <div className="capital-basis-progress__footer">
         <span>
-          <strong>{formatCurrency(recovered)}</strong>
-          Recovered
-        </span>
-        <span>
           <strong>{formatCurrency(displayRemaining)}</strong>
-          Remaining
+          Remaining by vehicle
         </span>
         <span>
           <strong>{formatNumber(vehicleCount)}</strong>
@@ -1064,6 +1061,7 @@ function CapitalBasisProgress({ stats, selectedRange }) {
         </span>
       </div>
 
+      <details className="recovery-meter-details"><summary>Payoff outlook</summary>
       <div className="capital-basis-progress__ticker">
         <span>
           <strong>
@@ -1086,11 +1084,13 @@ function CapitalBasisProgress({ stats, selectedRange }) {
           {rangeLabel}
         </span>
       </div>
+      </details>
     </section>
   );
 }
 
 export default function MetricsPanel() {
+  const [allTimeSummary, setAllTimeSummary] = useState(null);
   const metricsLoadSeq = useRef(0);
   const [selectedRange, setSelectedRange] = useState("30d");
   const initialCustomRange = useMemo(() => parseCustomRange(selectedRange), []);
@@ -1205,8 +1205,8 @@ export default function MetricsPanel() {
     }
     setError(null);
 
-    const params = new URLSearchParams({ range });
-    const fetchMetricJson = async (label, path) => {
+    const fetchMetricJson = async (label, path, reportRange = range) => {
+      const params = new URLSearchParams({ range: reportRange });
       const response = await fetch(`${API_BASE}${path}?${params.toString()}`, {
         headers: { Accept: "application/json" },
       });
@@ -1245,6 +1245,7 @@ export default function MetricsPanel() {
 
     if (metricsLoadSeq.current !== loadSeq) return;
     setPendingReportMessage("");
+    if (range === 'all') setAllTimeSummary(summaryData);
 
     setSummary(existing => ({
       ...(existing?._report?.calculated_at === summaryData?._report?.calculated_at
@@ -1266,6 +1267,7 @@ export default function MetricsPanel() {
 
     void (async () => {
       const secondaryLoads = [
+        ...(range === 'all' ? [] : [{ label: 'All-time totals', path: '/api/metrics/summary', range: 'all', apply: setAllTimeSummary }]),
         {
           label: "Business metrics",
           path: "/api/metrics/business/current",
@@ -1287,7 +1289,7 @@ export default function MetricsPanel() {
         if (metricsLoadSeq.current !== loadSeq) return;
 
         try {
-          const data = await fetchMetricJson(item.label, item.path);
+          const data = await fetchMetricJson(item.label, item.path, item.range || range);
           if (metricsLoadSeq.current === loadSeq) {
             item.apply(data);
           }
@@ -4207,10 +4209,10 @@ const mileageStats = useMemo(() => {
               </div>
             </div>
 
-            <CapitalBasisProgress
-              stats={capitalBasisStats}
-              selectedRange={selectedRange}
-            />
+            <div className="fleet-recovery-meters">
+              <CapitalBasisProgress stats={capitalBasisStats} selectedRange={selectedRange} />
+              <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} />
+            </div>
 
             <div className="metrics-toolbar">
               <div className="metrics-toolbar__group">

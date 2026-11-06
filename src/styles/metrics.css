@@ -3300,3 +3300,25 @@
     flex: 1 1 145px;
   }
 }
+
+.fleet-recovery-meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.fleet-recovery-meters .capital-basis-progress { min-width: 0; gap: 8px; padding: 10px 12px; border-radius: 10px; box-shadow: none; }
+.fleet-recovery-meters .capital-basis-progress__eyebrow { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.65rem; }
+.fleet-recovery-meters .capital-basis-progress__eyebrow > span { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
+.fleet-recovery-meters .capital-basis-progress__title { font-size: 0.88rem; line-height: 1.35; font-weight: 650; }
+.fleet-recovery-meters .capital-basis-progress__percent { font-size: 1.4rem; }
+.fleet-recovery-meters .capital-basis-progress__track { height: 9px; }
+.fleet-recovery-meters .capital-basis-progress__footer { gap: 6px 14px; }
+.fleet-recovery-meters .capital-basis-progress__footer span { font-size: 0.62rem; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.fleet-recovery-meters .capital-basis-progress__footer strong { font-size: 0.78rem; }
+.recovery-meter-details { color: var(--muted); font-size: 0.73rem; }
+.recovery-meter-details > summary { cursor: pointer; width: fit-content; }
+.recovery-meter-details > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.recovery-meter-details > p { line-height: 1.5; margin: 8px 0 0; }
+.recovery-meter-details .capital-basis-progress__ticker { margin-top: 8px; }
+.revenue-spend-progress .capital-basis-progress__fill { background: linear-gradient(90deg, #a78bfa, #60a5fa); }
+.fleet-recovery-meters .revenue-spend-positive { color: var(--green); }
+.fleet-recovery-meters .revenue-spend-negative { color: var(--amber); }
+@media (max-width: 760px) {
+  .fleet-recovery-meters { grid-template-columns: 1fr; }
+}
