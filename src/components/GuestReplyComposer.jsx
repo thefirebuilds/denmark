@@ -33,21 +33,20 @@ export default function GuestReplyComposer({ messageKey, context }) {
         onChange={event => setCategory(event.target.value)} placeholder="Pickup, tolls, extension…" /></label>
       <label>Guidance for this reply
         <textarea rows={2} maxLength={2000} value={guidance} onChange={event => setGuidance(event.target.value)}
-          placeholder="Details to include, exceptions, or the tone you want" style={{ width: '100%' }} />
+          placeholder="Details to include, exceptions, or the tone you want" />
       </label>
       <button type="button" className="message-action" disabled={busy} onClick={() => run(async () => {
         const data = await request('guest-reply-suggestion', 'POST', { ...context, category, guidance });
         setReply(data.suggestion);
       })}>{busy ? 'Working…' : reply ? 'Regenerate reply' : 'Suggest reply'}</button>
       <label>Reply — edit or write your own
-        <textarea rows={6} maxLength={6000} value={reply} onChange={event => setReply(event.target.value)}
-          style={{ width: '100%' }} />
+        <textarea rows={6} maxLength={6000} value={reply} onChange={event => setReply(event.target.value)} />
       </label>
       <div className="message-guest-reply-actions">
-        <button type="button" disabled={!reply.trim() || busy} onClick={() => run(async () => {
+        <button type="button" className="message-action" disabled={!reply.trim() || busy} onClick={() => run(async () => {
           await navigator.clipboard.writeText(reply); setNotice('Copied.');
         })}>Copy reply</button>
-        <button type="button" disabled={!reply.trim() || !category.trim() || busy} onClick={() => run(async () => {
+        <button type="button" className="message-action" disabled={!reply.trim() || !category.trim() || busy} onClick={() => run(async () => {
           await request('guest-reply-examples', 'POST', { messageKey: String(messageKey), category,
             guestMessage: guestMessage.slice(0, 4000), reply });
           if (profile) setProfile(await request('guest-reply-profile'));
@@ -61,10 +60,9 @@ export default function GuestReplyComposer({ messageKey, context }) {
         <label>Guidance for all replies
           <textarea rows={5} maxLength={6000} value={profile.guidance}
             onChange={event => setProfile({ ...profile, guidance: event.target.value })}
-            placeholder="Your voice, pickup instructions, business policies, and details guests should know"
-            style={{ width: '100%' }} />
+            placeholder="Your voice, pickup instructions, business policies, and details guests should know" />
         </label>
-        <button type="button" disabled={busy} onClick={() => run(async () => {
+        <button type="button" className="message-action" disabled={busy} onClick={() => run(async () => {
           await request('guest-reply-profile', 'PUT', { guidance: profile.guidance });
           setNotice('Response profile saved.');
         })}>Save response profile</button>
@@ -72,8 +70,8 @@ export default function GuestReplyComposer({ messageKey, context }) {
         {profile.examples.map(example => <details key={example.id}>
           <summary>{example.category} — {example.guest_message.slice(0, 90)}</summary>
           <p style={{ whiteSpace: 'pre-wrap' }}>{example.reply}</p>
-          <button type="button" disabled={busy} onClick={() => { setReply(example.reply); setCategory(example.category); }}>Use in editor</button>
-          <button type="button" disabled={busy} onClick={() => run(async () => {
+          <button type="button" className="message-action" disabled={busy} onClick={() => { setReply(example.reply); setCategory(example.category); }}>Use in editor</button>
+          <button type="button" className="message-action" disabled={busy} onClick={() => run(async () => {
             await request(`guest-reply-examples/${example.id}`, 'DELETE');
             setProfile(await request('guest-reply-profile'));
             setNotice('Example removed from future suggestions.');

@@ -72,7 +72,7 @@ function parseSearchNumber(value) {
   const cleaned = cleanString(value);
   if (!cleaned) return null;
   const normalized = cleaned.replace(/[$,]/g, "");
-  if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null;
+  if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return null;
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
@@ -252,6 +252,7 @@ function normalizeListFilters(raw = {}) {
 
   return {
     vehicle_id: toNumberOrNull(raw.vehicle_id),
+    vehicle_unassigned: toBooleanOrNull(raw.vehicle_unassigned),
     trip_id: toNumberOrNull(raw.trip_id),
     category: cleanString(raw.category),
     vendor: cleanString(raw.vendor),
@@ -281,6 +282,8 @@ function buildWhereClause(filters, options = {}) {
 
   if (includeVehicle && filters.vehicle_id != null) {
     addClause("e.vehicle_id = ?", filters.vehicle_id);
+  } else if (includeVehicle && filters.vehicle_unassigned === true) {
+    clauses.push('e.vehicle_id IS NULL');
   }
 
   if (filters.trip_id != null) {
@@ -288,7 +291,7 @@ function buildWhereClause(filters, options = {}) {
   }
 
   if (filters.category) {
-    addClause("LOWER(e.category) = LOWER(?)", filters.category);
+    addClause("LOWER(COALESCE(NULLIF(TRIM(e.category), ''), 'Uncategorized')) = LOWER(?)", filters.category);
   }
 
   if (filters.vendor) {

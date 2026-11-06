@@ -1,24 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import ExpenseModal from "./ExpenseModal";
+import { DEFAULT_EXPENSE_FILTERS, expenseReviewFilters, validExpenseAmount } from '../../utils/expenseFilters';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const EXPENSE_LEDGER_FOCUS_STORAGE_KEY = "denmark.expenseLedgerFocus";
 const EXPENSES_UPDATED_EVENT = "denmark:expenses-updated";
 
-const DEFAULT_FILTERS = {
-  q: "",
-  amount: "",
-  category: "",
-  vendor: "",
-  expense_scope: "",
-  is_capitalized: "",
-  date_from: "",
-  date_to: "",
-  sort: "date",
-  direction: "desc",
-  page: 1,
-  limit: 50,
-};
+const DEFAULT_FILTERS = DEFAULT_EXPENSE_FILTERS;
 
 function getDefaultFilters() {
   return { ...DEFAULT_FILTERS };
@@ -33,6 +21,8 @@ function money(value) {
 }
 
 function fmtDate(value) {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (iso) return `${iso[2]}/${iso[3]}/${iso[1].slice(-2)}`;
   if (!value) return "—";
   return value;
 }
@@ -83,23 +73,6 @@ async function fetchExpenseById(expenseId) {
   return json;
 }
 
-function ExpenseMetricCard({ label, value, sub }) {
-  return (
-    <div className="detail-card">
-      <div className="detail-label">{label}</div>
-      <div className="detail-value">{value}</div>
-      {sub ? <div className="detail-sub">{sub}</div> : null}
-    </div>
-  );
-}
-
-function getScopePillClass(scope) {
-  if (scope === "direct") return "running";
-  if (scope === "apportioned") return "warning";
-  if (scope === "shared") return "parked";
-  return "parked";
-}
-
 function getVendorFilterValue(vendor) {
   const cleaned = String(vendor || "").trim();
   return cleaned ? cleaned : "__unknown__";
@@ -121,6 +94,7 @@ export default function ExpensesPanel({ selectedVehicleId }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [expandedExpenseId, setExpandedExpenseId] = useState(null);
   const [pendingExpenseFocus, setPendingExpenseFocus] = useState(
     readStoredExpenseLedgerFocus
   );
@@ -132,14 +106,21 @@ export default function ExpensesPanel({ selectedVehicleId }) {
     };
   }, [filters, selectedVehicleId]);
 
-  const loadExpenses = useCallback(async () => {
+  const loadExpenses = useCallback(async (signal) => {
     setLoading(true);
     setLoadError("");
 
+    if (!validExpenseAmount(scopedFilters.amount)) {
+      setLoadError('Enter a valid amount or expense ID.');
+      setLoading(false);
+      return;
+    }
+
     try {
       const query = buildQuery(scopedFilters);
-      const res = await fetch(`${API_BASE}/api/expenses?${query}`);
+      const res = await fetch(`${API_BASE}/api/expenses?${query}`, { signal });
       const json = await res.json().catch(() => ({}));
+      if (signal.aborted) return;
 
       if (!res.ok) {
         throw new Error(json?.error || "Failed to load expenses");
@@ -156,18 +137,20 @@ export default function ExpensesPanel({ selectedVehicleId }) {
         }
       );
     } catch (err) {
-      setLoadError(err.message || "Failed to load expenses");
+      if (!signal.aborted) setLoadError(err.message || "Failed to load expenses");
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   }, [scopedFilters]);
 
   useEffect(() => {
-    loadExpenses();
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => loadExpenses(controller.signal), 200);
+    return () => { window.clearTimeout(timer); controller.abort(); };
   }, [loadExpenses, refreshToken]);
 
   useEffect(() => {
-    setFilters((prev) => ({ ...prev, page: 1 }));
+    setFilters(prev => expenseReviewFilters({ date_from: prev.date_from, date_to: prev.date_to }));
   }, [selectedVehicleId]);
 
   useEffect(() => {
@@ -222,11 +205,7 @@ export default function ExpensesPanel({ selectedVehicleId }) {
   useEffect(() => {
     if (!pendingExpenseFocus?.filters || pendingExpenseFocus?.expenseId) return;
 
-    setFilters((prev) => ({
-      ...prev,
-      ...pendingExpenseFocus.filters,
-      page: 1,
-    }));
+    setFilters(expenseReviewFilters(pendingExpenseFocus.filters));
 
     clearStoredExpenseLedgerFocus();
     setPendingExpenseFocus(null);
@@ -251,7 +230,7 @@ export default function ExpensesPanel({ selectedVehicleId }) {
   }
 
   function handleVendorFilter(vendor) {
-    updateFilter("vendor", getVendorFilterValue(vendor));
+    setFilters(prev => expenseReviewFilters({ vendor: getVendorFilterValue(vendor), date_from: prev.date_from, date_to: prev.date_to }));
   }
 
   async function handleDelete(expense) {
@@ -395,29 +374,12 @@ export default function ExpensesPanel({ selectedVehicleId }) {
         </div>
 
         <div className="detail-body expenses-body">
-          <div className="detail-grid">
-            <ExpenseMetricCard
-              label="Rows"
-              value={totals.row_count || 0}
-              sub="Expense records in view"
-            />
-            <ExpenseMetricCard
-              label="Subtotal"
-              value={money(totals.subtotal)}
-              sub="Before tax"
-            />
-            <ExpenseMetricCard
-              label="Tax"
-              value={money(totals.tax_total)}
-              sub="Recorded tax"
-            />
-            <ExpenseMetricCard
-              label="Grand Total"
-              value={money(totals.grand_total)}
-              sub="Total spend in view"
-            />
-          </div>
-
+          <dl className="expenses-statement-totals" aria-label="Filtered expense totals">
+            <div><dt>Transactions</dt><dd>{totals.row_count || 0}</dd></div>
+            <div><dt>Subtotal</dt><dd>{money(totals.subtotal)}</dd></div>
+            <div><dt>Tax</dt><dd>{money(totals.tax_total)}</dd></div>
+            <div className="expenses-statement-total"><dt>Total</dt><dd>{money(totals.grand_total)}</dd></div>
+          </dl>
           {loading ? (
             <div className="message-empty">Loading expenses…</div>
           ) : loadError ? (
@@ -425,103 +387,63 @@ export default function ExpensesPanel({ selectedVehicleId }) {
           ) : !expenses.length ? (
             <div className="message-empty">No expenses found.</div>
           ) : (
-            <div className="list expenses-card-list">
-              {expenses.map((expense) => (
-                <div key={expense.id} className="trip-card expenses-card">
-                  <div className="trip-top">
-                    <div>
-                      <div className="trip-title">
-                        <button
-                          type="button"
-                          className="expenses-vendor-link"
-                          onClick={() => handleVendorFilter(expense.vendor)}
-                        >
-                          {expense.vendor || "Unknown vendor"}
-                        </button>
-                      </div>
-                      <div className="trip-sub">
-                        {expense.vehicle_nickname || "No vehicle"} · {fmtDate(expense.date)}
-                      </div>
-                    </div>
-
-                    <div className="alert-badge">
-                      {money(expense.total_cost)}
-                    </div>
-                  </div>
-
-                  <div className="message-tags">
-                    <div className={`fleet-status-pill ${getScopePillClass(expense.expense_scope)}`}>
-                      {expense.expense_scope || "—"}
-                    </div>
-
-                    <div className="tag">
-                      {expense.category || "Uncategorized"}
-                    </div>
-
-                    <div className="tag">
-                      {expense.is_capitalized ? "Capitalized" : "Non-capitalized"}
-                    </div>
-
-                    {expense.trip_id ? (
-                      <div className="tag">Trip #{expense.trip_id}</div>
-                    ) : null}
-                  </div>
-
-                  <div className="trip-meta">
-                    <div>
-                      <div className="meta-label">Price</div>
-                      <div className="meta-value">{money(expense.price)}</div>
-                    </div>
-
-                    <div>
-                      <div className="meta-label">Tax</div>
-                      <div className="meta-value">{money(expense.tax)}</div>
-                    </div>
-
-                    <div>
-                      <div className="meta-label">Total</div>
-                      <div className="meta-value">{money(expense.total_cost)}</div>
-                    </div>
-
-                    <div>
-                      <div className="meta-label">Expense ID</div>
-                      <div className="meta-value">#{expense.id}</div>
-                    </div>
-                  </div>
-
-                  {expense.notes ? (
-                    <>
-                      <div className="trip-section-divider" />
-                      <div>
-                        <div className="trip-section-label">Notes</div>
-                        <div className="message-body">{expense.notes}</div>
-                      </div>
-                    </>
-                  ) : null}
-
-                  <div className="message-actions">
-                    <button
-                      type="button"
-                      className="message-action"
-                      onClick={() => handleOpenEdit(expense)}
-                    >
-                      Edit
-                    </button>
-
-                    <button
-                      type="button"
-                      className="message-action"
-                      disabled={deletingId === expense.id}
-                      onClick={() => handleDelete(expense)}
-                    >
-                      {deletingId === expense.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </div>
-                </div>
-              ))}
+            <div className="expenses-statement-scroll" role="region" aria-label="Expense transactions" tabIndex={0}>
+              <table className="expenses-statement">
+                <caption className="expenses-sr-only">Expenses matching the selected filters. Amounts include tax; negative amounts are refunds.</caption>
+                <colgroup>
+                  <col className="expense-col-date" /><col className="expense-col-description" />
+                  <col className="expense-col-vehicle" /><col className="expense-col-category" />
+                  <col className="expense-col-amount" /><col className="expense-col-actions" />
+                </colgroup>
+                <thead><tr>
+                  <th scope="col">Date</th><th scope="col">Description</th><th scope="col">Vehicle</th>
+                  <th scope="col">Category</th><th scope="col" className="expense-number">Amount</th>
+                  <th scope="col"><span className="expenses-sr-only">Actions</span></th>
+                </tr></thead>
+                <tbody>
+                  {expenses.map(expense => {
+                    const expanded = expandedExpenseId === expense.id;
+                    return <Fragment key={expense.id}>
+                      <tr className={expanded ? 'expense-row-expanded' : ''}>
+                        <td className="expense-date"><time dateTime={expense.date} title={expense.date}>{fmtDate(expense.date)}</time></td>
+                        <td className="expense-description">
+                          <button type="button" className="expenses-vendor-link expense-cell-link" title={`Show expenses from ${expense.vendor || 'Unknown vendor'}`} onClick={() => handleVendorFilter(expense.vendor)}>{expense.vendor || 'Unknown vendor'}</button>
+                          {expense.notes && <span className="expense-note-preview" title={expense.notes}>{expense.notes}</span>}
+                        </td>
+                        <td><button type="button" className="expenses-vendor-link expense-cell-link" title={`Show expenses for ${expense.vehicle_nickname || 'No vehicle'}`} onClick={() => window.dispatchEvent(new CustomEvent('denmark:open-expense-ledger', { detail: {
+                          vehicleId: expense.vehicle_id ?? null,
+                          filters: { date_from: filters.date_from, date_to: filters.date_to, ...(expense.vehicle_id == null ? { vehicle_unassigned: true } : {}) },
+                        } }))}>{expense.vehicle_nickname || 'No vehicle'}</button></td>
+                        <td><button type="button" className="expenses-vendor-link expense-cell-link expense-category" title={expense.category || 'Uncategorized'} onClick={() => setFilters(expenseReviewFilters({ category: expense.category || 'Uncategorized', date_from: filters.date_from, date_to: filters.date_to }))}>{expense.category || 'Uncategorized'}</button></td>
+                        <td className={`expense-number expense-amount ${Number(expense.total_cost) < 0 ? 'expense-refund' : ''}`}>{money(expense.total_cost)}</td>
+                        <td className="expense-row-actions">
+                          <button type="button" className="expense-row-action" aria-label={`${expanded ? 'Hide' : 'Show'} details for expense ${expense.id}`} aria-expanded={expanded} aria-controls={`expense-details-${expense.id}`} onClick={() => setExpandedExpenseId(expanded ? null : expense.id)}>{expanded ? 'Hide' : 'Details'}</button>
+                          <button type="button" className="expense-row-action" aria-label={`Edit expense ${expense.id}`} onClick={() => handleOpenEdit(expense)}>Edit</button>
+                        </td>
+                      </tr>
+                      {expanded && <tr className="expense-details-row" id={`expense-details-${expense.id}`}><td colSpan={6}>
+                        <div className="expense-expanded-details">
+                          <dl>
+                            <div><dt>Expense</dt><dd>#{expense.id}</dd></div>
+                            <div><dt>Vehicle</dt><dd>{expense.vehicle_nickname || 'No vehicle'}</dd></div>
+                            <div><dt>Category</dt><dd>{expense.category || 'Uncategorized'}</dd></div>
+                            <div><dt>Subtotal</dt><dd>{money(expense.price)}</dd></div>
+                            <div><dt>Tax</dt><dd>{money(expense.tax)}</dd></div>
+                            <div><dt>Scope</dt><dd>{expense.expense_scope || 'Not specified'}</dd></div>
+                            <div><dt>Treatment</dt><dd>{expense.is_capitalized ? 'Capitalized' : 'Non-capitalized'}</dd></div>
+                            {expense.trip_id && <div><dt>Trip</dt><dd>#{expense.trip_id}</dd></div>}
+                          </dl>
+                          {expense.notes && <p>{expense.notes}</p>}
+                          <button type="button" className="expense-row-action" onClick={() => handleOpenEdit(expense)}>Edit expense</button>
+                          <button type="button" className="expense-row-action expense-delete" disabled={deletingId === expense.id} onClick={() => handleDelete(expense)}>{deletingId === expense.id ? 'Deleting...' : 'Delete expense'}</button>
+                        </div>
+                      </td></tr>}
+                    </Fragment>;
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
-
           <div className="expenses-pagination-inline">
             <button
               type="button"

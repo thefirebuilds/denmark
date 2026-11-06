@@ -276,6 +276,7 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
   const categoryRows = useMemo(() => {
     return (summary?.by_category || []).map((row) => ({
       key: row.category || "uncategorized",
+      categoryFilter: row.category || 'Uncategorized',
       title: row.category || "Uncategorized",
       sub: `${row.row_count || 0} item${Number(row.row_count) === 1 ? "" : "s"}`,
       total: money(row.total),
@@ -294,6 +295,7 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
   const vehicleRows = useMemo(() => {
     return (summary?.by_vehicle || []).map((row) => ({
       key: `${row.vehicle_id ?? "none"}-${row.vehicle_label || "no_vehicle"}`,
+      vehicleId: row.vehicle_id ?? null,
       title: row.vehicle_label || "No vehicle",
       sub: `${row.row_count || 0} item${Number(row.row_count) === 1 ? "" : "s"}`,
       total: money(row.total),
@@ -336,12 +338,18 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
   }, [summary]);
 
   function openExpenseVendorReview(row) {
+    openExpenseReview({ vendor: row?.vendorFilter || '' });
+  }
+
+  function openExpenseReview(filters, vehicleId = selectedVehicleId ?? null) {
     if (typeof window === "undefined") return;
 
     const detail = {
-      vehicleId: selectedVehicleId ?? null,
+      vehicleId,
       filters: {
-        vendor: row?.vendorFilter || "",
+        date_from: range.date_from,
+        date_to: range.date_to,
+        ...filters,
       },
     };
 
@@ -403,6 +411,7 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
             title="Categories"
             rows={categoryRows}
             emptyText="No category data."
+            onRowClick={row => openExpenseReview({ category: row.categoryFilter })}
           />
 
           <CompactRowsBox
@@ -432,6 +441,7 @@ export default function ExpensesSummaryPanel({ selectedVehicleId }) {
               title="Vehicles"
               rows={vehicleRows}
               emptyText="No vehicle data."
+              onRowClick={row => openExpenseReview(row.vehicleId == null ? { vehicle_unassigned: true } : {}, row.vehicleId)}
             />
           ) : null}
 

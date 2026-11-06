@@ -1076,6 +1076,50 @@ body {
   gap: 8px;
 }
 
+.message-guest-reply label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.message-guest-reply input,
+.message-guest-reply textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-3);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color-scheme: dark;
+}
+
+.message-guest-reply textarea { resize: vertical; }
+.message-guest-reply input::placeholder,
+.message-guest-reply textarea::placeholder { color: var(--muted); opacity: 1; }
+.message-guest-reply input:focus-visible,
+.message-guest-reply textarea:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.message-guest-reply > section { display: grid; min-width: 0; gap: 10px; }
+.message-guest-reply details {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-3);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.message-guest-reply summary { cursor: pointer; color: var(--muted); }
+.message-guest-reply p { margin: 4px 0; color: var(--muted); font-size: 0.8rem; }
+.message-guest-reply [role="status"] { color: var(--text); }
+
 .message-guest-reply-text {
   color: #dbeafe;
   background: rgba(15, 23, 42, 0.42);

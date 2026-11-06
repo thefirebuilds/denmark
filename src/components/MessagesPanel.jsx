@@ -2977,8 +2977,6 @@ async function handleExportGuestInspectionSheet(message) {
 
       const requestStartedAt = performance.now();
       const res = await fetch(endpoint);
-      const responseMs = Math.round(performance.now() - requestStartedAt);
-      const serverTiming = res.headers.get("Server-Timing");
 
       if (!res.ok) {
         throw new Error(`Failed to load messages (${res.status})`);
@@ -2990,25 +2988,6 @@ async function handleExportGuestInspectionSheet(message) {
       const messageItems = Array.isArray(data) ? data : data?.items;
       const debugTiming = Array.isArray(data) ? null : data?.debugTiming;
       const totalMs = Math.round(performance.now() - requestStartedAt);
-      let shouldLogTiming = totalMs >= 1000;
-      try {
-        shouldLogTiming =
-          shouldLogTiming ||
-          window.localStorage?.getItem("denmark.debugMessageTiming") === "1";
-      } catch {
-        // Ignore storage access failures in restricted browser contexts.
-      }
-      if (shouldLogTiming) {
-        console.info(
-          `[messages] ${isInitialLoad ? "initial" : "refresh"} ${
-            useFastQueue ? "fast" : "full"
-          } ${totalMs}ms response=${responseMs}ms endpoint=${endpoint}${
-            serverTiming ? ` | server: ${serverTiming}` : ""
-          }${
-            debugTiming ? ` | debug: ${JSON.stringify(debugTiming)}` : ""
-          }`
-        );
-      }
       // Trip feeds can contain read history from older servers. Cleared guest
       // messages are no longer queue actions, regardless of suppression expiry.
       const actionableMessageItems = Array.isArray(messageItems)
