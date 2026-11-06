@@ -963,25 +963,6 @@ function getCapitalRecoveryPct(vehicle) {
   return recovered / basis;
 }
 
-function getRangeRecoveryFactor(range) {
-  const value = String(range || "").toLowerCase();
-  if (value === "7d") return 7 / 30.4375;
-  if (value === "30d") return 1;
-  if (value === "90d") return 3;
-  const custom = parseCustomRange(value);
-  if (custom) {
-    const days = getInclusiveDateDays(custom.start, custom.end);
-    return days == null ? null : days / 30.4375;
-  }
-  if (value === "ytd") {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), 0, 1);
-    const days = Math.max(1, (now.getTime() - start.getTime()) / 86400000 + 1);
-    return days / 30.4375;
-  }
-  return null;
-}
-
 function formatBreakEvenDate(value) {
   if (!value) return "--";
   const date = value instanceof Date ? value : new Date(value);
@@ -993,7 +974,7 @@ function formatBreakEvenDate(value) {
   });
 }
 
-function CapitalBasisProgress({ stats, selectedRange }) {
+function CapitalBasisProgress({ stats }) {
   const basis = Number(stats?.basis ?? 0);
   const recovered = Number(stats?.recovered ?? 0);
   const remaining = Number(stats?.remaining ?? 0);
@@ -1013,20 +994,6 @@ function CapitalBasisProgress({ stats, selectedRange }) {
       : monthsToBreakEven != null
       ? new Date(Date.now() + monthsToBreakEven * 30.4375 * 86400000)
       : null;
-  const rangeFactor = getRangeRecoveryFactor(selectedRange);
-  const rangeRecovery =
-    rangeFactor != null && monthlyRecovery > 0 ? monthlyRecovery * rangeFactor : null;
-  const rangeLabel =
-    selectedRange === "7d"
-      ? "7D pace"
-      : selectedRange === "30d"
-      ? "30D pace"
-      : selectedRange === "90d"
-      ? "90D pace"
-      : selectedRange === "ytd"
-      ? "YTD pace"
-      : `${formatRangeLabel(selectedRange)} pace`;
-
   return (
     <section className="capital-basis-progress" aria-label="Capital basis recovery progress">
       <div className="capital-basis-progress__header">
@@ -1075,15 +1042,16 @@ function CapitalBasisProgress({ stats, selectedRange }) {
         </span>
         <span>
           <strong>{formatCurrencyCompact(monthlyRecovery)}</strong>
-          Monthly pace
+          30-day pace
         </span>
         <span>
           <strong>
-            {rangeRecovery == null ? "--" : formatCurrencyCompact(rangeRecovery)}
+            {formatCurrencyCompact(monthlyRecovery * 3)}
           </strong>
-          {rangeLabel}
+          90-day pace
         </span>
       </div>
+      <p>Estimated recovery over 30 and 90 days at the current capital recovery rate.</p>
       </details>
     </section>
   );
@@ -1091,6 +1059,7 @@ function CapitalBasisProgress({ stats, selectedRange }) {
 
 export default function MetricsPanel() {
   const [allTimeSummary, setAllTimeSummary] = useState(null);
+  const [recoveryPaceSummary, setRecoveryPaceSummary] = useState(null);
   const metricsLoadSeq = useRef(0);
   const [selectedRange, setSelectedRange] = useState("30d");
   const initialCustomRange = useMemo(() => parseCustomRange(selectedRange), []);
@@ -1246,6 +1215,7 @@ export default function MetricsPanel() {
     if (metricsLoadSeq.current !== loadSeq) return;
     setPendingReportMessage("");
     if (range === 'all') setAllTimeSummary(summaryData);
+    if (range === '30d') setRecoveryPaceSummary(summaryData);
 
     setSummary(existing => ({
       ...(existing?._report?.calculated_at === summaryData?._report?.calculated_at
@@ -1268,6 +1238,7 @@ export default function MetricsPanel() {
     void (async () => {
       const secondaryLoads = [
         ...(range === 'all' ? [] : [{ label: 'All-time totals', path: '/api/metrics/summary', range: 'all', apply: setAllTimeSummary }]),
+        ...(range === '30d' ? [] : [{ label: 'Recovery pace', path: '/api/metrics/summary', range: '30d', apply: setRecoveryPaceSummary }]),
         {
           label: "Business metrics",
           path: "/api/metrics/business/current",
@@ -4210,8 +4181,8 @@ const mileageStats = useMemo(() => {
             </div>
 
             <div className="fleet-recovery-meters">
-              <CapitalBasisProgress stats={capitalBasisStats} selectedRange={selectedRange} />
-              <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} />
+              <CapitalBasisProgress stats={capitalBasisStats} />
+              <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} paceReport={recoveryPaceSummary} />
             </div>
 
             <div className="metrics-toolbar">
