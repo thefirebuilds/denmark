@@ -2372,7 +2372,7 @@ const mileageStats = useMemo(() => {
             {Object.entries(reportStatuses).map(([label, report]) => (
               <div key={label}>
                 {label}: {report.calculated_at ? new Date(report.calculated_at).toLocaleString() : "Preparing first report"}
-                {report.refresh_failed ? " - last refresh failed; showing saved results" : report.stale ? " - refresh due" : ""}
+              {report.read_deferred ? " - database read deferred; showing saved results" : report.refresh_failed ? " - last refresh failed; showing saved results" : report.stale ? " - refresh due" : ""}
               </div>
             ))}
           </details>

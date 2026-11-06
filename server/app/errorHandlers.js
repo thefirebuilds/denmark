@@ -25,6 +25,7 @@ function appErrorHandler(err, req, res, next) {
 
   if (isDatabasePoolTimeout(err)) {
     res.set('Retry-After', '10');
+    res.set('X-Denmark-Error-Scope', 'request');
     return res.status(503).json({ ok: false, error: 'database busy',
       message: 'Database connections are busy. Please retry shortly.' });
   }

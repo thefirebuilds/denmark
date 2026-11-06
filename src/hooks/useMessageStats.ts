@@ -84,7 +84,9 @@ export function useMessageStats({
       const text = await res.text();
 
       if (!res.ok) {
-        throw new Error(`Failed to load message stats: ${res.status} ${text}`);
+        throw Object.assign(new Error(`Failed to load message stats: ${res.status} ${text}`), {
+          requestLocal: res.headers.get('X-Denmark-Error-Scope') === 'request',
+        });
       }
 
       const data = JSON.parse(text);

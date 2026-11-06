@@ -34,6 +34,32 @@ const {
 } = require("../services/maintenance/maintenanceRuntimeSchema");
 
 const router = express.Router();
+const { suggestMaintenanceLabor, TASK_RULE_CODE_MAP } = require('../services/maintenance/laborSuggestion');
+
+router.get('/maintenance-tasks/:taskId/labor-suggestion', async (req, res) => {
+  try {
+    const id = Number(req.params.taskId);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid task ID' });
+    const { rows } = await pool.query('SELECT * FROM maintenance_tasks WHERE id = $1', [id]);
+    const task = rows[0];
+    if (!task) return res.status(404).json({ error: 'Maintenance task not found' });
+    const customTodo = task.source === 'manual' || task.task_type === 'manual_todo';
+    const rule = customTodo ? null : await getRuleForTask(pool, task);
+    res.set('Cache-Control', 'no-store');
+    res.json(await suggestMaintenanceLabor(pool, { task, ruleCode: rule?.rule_code || getTaskRuleCode(task), title: task.title }));
+  } catch (error) { res.status(500).json({ error: 'Could not load labor estimate' }); }
+});
+
+router.get('/vehicles/:vin/maintenance-labor-suggestion', async (req, res) => {
+  try {
+    const code = String(req.query.ruleCode || '').trim();
+    if (!code || code.length > 100) return res.status(400).json({ error: 'Valid maintenance rule code required' });
+    const { rows } = await pool.query('SELECT rule_code, title FROM maintenance_rules WHERE vehicle_vin = $1 AND rule_code = $2 LIMIT 1', [req.params.vin, code]);
+    if (!rows[0]) return res.status(404).json({ error: 'Maintenance rule not found' });
+    res.set('Cache-Control', 'no-store');
+    res.json(await suggestMaintenanceLabor(pool, { ruleCode: rows[0].rule_code, title: rows[0].title }));
+  } catch (error) { res.status(500).json({ error: 'Could not load labor estimate' }); }
+});
 
 function toNullableText(value) {
   if (value == null) return null;
@@ -293,18 +319,6 @@ async function createVehicleOdometerReading(client, vehicle, input = {}) {
 
   return mapOdometerReading(insert.rows[0]);
 }
-
-const TASK_RULE_CODE_MAP = new Map([
-  ["battery_voltage_inspection", "battery_test"],
-  ["post_trip_brake_inspection", "brake_inspection"],
-  ["post_trip_tread_depth_check", "tread_depth"],
-  ["post_trip_tire_pressure_check", "tire_pressure_check"],
-  ["post_trip_fluid_leak_check", "fluid_leak_check"],
-  ["post_trip_oil_level_check", "fluid_leak_check"],
-  ["post_trip_condition_review", "cleaning"],
-  ["handoff_prep", "cleaning"],
-  ["vehicle_prep", "cleaning"],
-]);
 
 function getTaskRuleCode(task) {
   const contextRuleCode = String(task?.trigger_context?.ruleCode || "").trim();

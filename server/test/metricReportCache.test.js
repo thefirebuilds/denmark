@@ -280,3 +280,43 @@ test('saved report endpoints defer before querying an already busy pool', async 
   assert.equal(ready.code, 202);
   assert.equal(db.queries.length, 1);
 });
+
+test('saved snapshots bypass HTTP admission and survive temporary database read failures', async () => {
+  const db = database();
+  const cache = service(db, async () => ({ revenue: 123 }));
+  await cache.getSavedReport('summary', {});
+  await cache.refreshDueReport();
+  await cache.getSavedReport('summary', {});
+  db.advance(15001);
+  const queryCount = db.queries.length;
+  db.query = async () => { throw new Error('database read temporarily unavailable'); };
+  const res = { code: 200, setHeader() {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; } };
+  await cache.savedMetricReport('summary')({ query: {} }, res);
+  assert.equal(res.code, 200);
+  assert.equal(res.body.revenue, 123);
+  assert.equal(res.body._report.read_deferred, true);
+  assert.ok(res.body._report.calculated_at);
+  assert.equal(db.queries.length, queryCount);
+});
+
+test('an expired local snapshot is served without a pool checkout during real pressure', async () => {
+  let busy = false;
+  const gateContext = vm.createContext({ module: { exports: {} }, process: { env: {} }, require: () => ({}), setTimeout, clearTimeout });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../services/metrics/metricReadLimiter.js'), 'utf8'), gateContext);
+  const gate = gateContext.module.exports.createMetricReadLimiter({ db: { getPoolStats: () => ({ max: 6, checked_out: busy ? 6 : 0, idle: busy ? 0 : 3, waiting: busy ? 1 : 0 }) } });
+  const ctx = vm.createContext({ module: { exports: {} }, console: { log() {}, warn() {} }, require: name => name === './metricReadLimiter' ? gate
+    : name === 'node:crypto' ? require(name) : name === './metricHelpers' ? require('../services/metrics/metricHelpers') : {} });
+  vm.runInContext(source, ctx);
+  const db = database();
+  const cache = ctx.module.exports.createMetricReportCache({ db, clock: db.clock, compute: async () => ({ revenue: 123 }), runRefresh: work => work() });
+  await cache.getSavedReport('summary', {}); await cache.refreshDueReport(); await cache.getSavedReport('summary', {});
+  const count = db.queries.length;
+  db.advance(3600001); busy = true;
+  const res = { code: 200, setHeader() {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; } };
+  await cache.savedMetricReport('summary')({}, res);
+  assert.equal(res.code, 200);
+  assert.equal(res.body.revenue, 123);
+  assert.equal(res.body._report.read_deferred, true);
+  assert.equal(res.body._report.stale, true);
+  assert.equal(db.queries.length, count);
+});

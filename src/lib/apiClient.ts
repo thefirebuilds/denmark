@@ -15,6 +15,7 @@ export function delay(ms: number) {
 }
 
 export function isBackendUnavailableError(err: unknown) {
+  if (err && typeof err === 'object' && 'requestLocal' in err && err.requestLocal === true) return false;
   if (err instanceof TypeError) return true;
 
   const message = err instanceof Error ? err.message : String(err || "");
@@ -136,7 +137,7 @@ export function emitApiFetchEvents(response: Response) {
     window.dispatchEvent(new CustomEvent(APP_EVENTS.authRequired));
   }
 
-  if (isBackendAvailabilityStatus(response.status)) {
+  if (isBackendAvailabilityStatus(response.status) && response.headers.get('X-Denmark-Error-Scope') !== 'request') {
     window.dispatchEvent(new CustomEvent(APP_EVENTS.backendUnavailable));
   }
 }

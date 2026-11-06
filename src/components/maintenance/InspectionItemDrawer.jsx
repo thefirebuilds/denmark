@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getUniqueMaintenanceHistory } from "../../utils/maintenanceHistory";
+import { fetchLaborSuggestion, laborSuggestionLabel } from '../../utils/maintenanceLaborSuggestion';
 
 function getMaxFutureDate(days = 7) {
   const d = new Date();
@@ -280,6 +281,10 @@ export default function InspectionItemDrawer({
   });
 
   const [historyLimit, setHistoryLimit] = useState(5);
+  const laborEdited = useRef(false);
+  const [laborSuggestion, setLaborSuggestion] = useState(null);
+  const [laborSuggestionLoading, setLaborSuggestionLoading] = useState(false);
+  const [laborSuggestionError, setLaborSuggestionError] = useState(false);
   useEffect(() => { setHistoryLimit(5); }, [open, item?.id, item?.ruleCode, vehicle?.vin]);
 
   const uniqueHistory = useMemo(() => {
@@ -296,6 +301,7 @@ export default function InspectionItemDrawer({
 
   useEffect(() => {
     if (!open || !item) return;
+    laborEdited.current = false;
 
     const lastData = item.lastEvent?.data || {};
     const code = String(item.ruleCode || "").toLowerCase();
@@ -405,9 +411,29 @@ export default function InspectionItemDrawer({
     vehicle?.exteriorAirTempF,
   ]);
 
+  useEffect(() => {
+    if (!open || !item?.ruleCode || !vehicle?.vin) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    setLaborSuggestion(null);
+    setLaborSuggestionLoading(true);
+    setLaborSuggestionError(false);
+    fetchLaborSuggestion(`/api/vehicles/${encodeURIComponent(vehicle.vin)}/maintenance-labor-suggestion?ruleCode=${encodeURIComponent(item.ruleCode)}`, controller.signal)
+      .then(suggestion => {
+        if (cancelled) return;
+        setLaborSuggestion(suggestion);
+        if (!laborEdited.current && suggestion.hours != null) setForm(current => ({ ...current, laborHours: String(suggestion.hours) }));
+      })
+      .catch(() => { if (!cancelled) setLaborSuggestionError(true); })
+      .finally(() => { window.clearTimeout(timeout); if (!cancelled) setLaborSuggestionLoading(false); });
+    return () => { cancelled = true; window.clearTimeout(timeout); controller.abort(); };
+  }, [open, item?.ruleCode, item?.ruleId, vehicle?.vin]);
+
   if (!open || !item) return null;
 
   function updateField(field, value) {
+    if (field === 'laborHours') laborEdited.current = true;
     setForm((current) => ({
       ...current,
       [field]: value,
@@ -997,12 +1023,15 @@ export default function InspectionItemDrawer({
               className="drawer-input"
               type="number"
               min="0"
-              step="0.083"
+              step="any"
               value={form.laborHours}
               onChange={(e) => updateField("laborHours", e.target.value)}
-              placeholder="0.75"
+              placeholder="Hours spent"
               disabled={saving}
             />
+            <div className="drawer-context" role="status">
+              {laborSuggestionLoading ? 'Checking past labor hours...' : laborSuggestionError ? 'Estimate unavailable. Enter the time spent.' : laborSuggestionLabel(laborSuggestion)}
+            </div>
           </div>
 
           <div className="drawer-field">
@@ -1133,7 +1162,7 @@ export default function InspectionItemDrawer({
             >
               Cancel
             </button>
-            <button type="submit" className="message-action" disabled={saving}>
+            <button type="submit" className="message-action" disabled={saving || laborSuggestionLoading}>
               {saving ? "Saving…" : "Save"}
             </button>
           </div>

@@ -19,7 +19,10 @@ export function useBackendAvailability(onBackendUnavailable: () => void) {
         if (apiRequest) emitApiFetchEvents(response);
         return response;
       } catch (err) {
-        if (apiRequest) {
+        const cancelled = init?.signal?.aborted ||
+          (rewrittenInput instanceof Request && rewrittenInput.signal.aborted) ||
+          (err instanceof Error && err.name === 'AbortError');
+        if (apiRequest && !cancelled) {
           window.dispatchEvent(new CustomEvent(APP_EVENTS.backendUnavailable));
         }
 

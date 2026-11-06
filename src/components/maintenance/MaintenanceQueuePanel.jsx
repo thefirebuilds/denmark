@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import InspectionItemDrawer from "./InspectionItemDrawer";
+import { fetchLaborSuggestion, laborSuggestionLabel } from '../../utils/maintenanceLaborSuggestion';
 import {
   normalizeVehicleKey,
   findFleetVehicleBySelectedId,
@@ -851,9 +852,26 @@ export default function MaintenanceQueuePanel({
 
     if (!confirmed) return;
 
-    const defaultHours = getQueueItemLaborHours(item);
+    let defaultHours = getQueueItemLaborHours(item);
+    let suggestionNote = '';
+    if (item.task.source !== 'manual' && item.task.task_type !== 'manual_todo') {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 5000);
+      setUpdatingTaskId(taskId);
+      try {
+        const suggestion = await fetchLaborSuggestion(`/api/maintenance-tasks/${encodeURIComponent(taskId)}/labor-suggestion`, controller.signal);
+        defaultHours = suggestion.hours ?? (defaultHours > 0 ? defaultHours : null);
+        suggestionNote = `\n${laborSuggestionLabel(suggestion)}`;
+      } catch {
+        defaultHours = defaultHours > 0 ? defaultHours : null;
+        suggestionNote = '\nHistorical estimate unavailable; adjust the hours below.';
+      } finally {
+        window.clearTimeout(timeout);
+        setUpdatingTaskId(null);
+      }
+    }
     const enteredHours = window.prompt(
-      `Actual labor hours for "${taskTitle}"?`,
+      `Actual labor hours for "${taskTitle}"?${suggestionNote}`,
       defaultHours == null ? "" : String(defaultHours)
     );
 

@@ -12,12 +12,15 @@ function createMetricReadLimiter({
   queueMax = Number.isFinite(queueMax) ? Math.max(0, Math.floor(queueMax)) : 4;
   queueTimeoutMs = Number.isFinite(queueTimeoutMs) ? Math.max(1, queueTimeoutMs) : 8000;
   let active = 0;
+  let refreshing = false;
   const queue = [];
 
   function isDbPoolUnderPressure() {
     if (typeof db.getPoolStats !== 'function') return false;
     const stats = db.getPoolStats();
-    return stats.waiting > 0 || (stats.max > 0 &&
+    // pg-pool queues an idle-client handoff until nextTick. That transient
+    // queue is not contention when idle connections can satisfy it.
+    return stats.waiting > Math.max(0, Number(stats.idle) || 0) || (stats.max > 0 &&
       stats.checked_out >= Math.max(1, stats.max - 2));
   }
 
@@ -51,6 +54,7 @@ function createMetricReadLimiter({
 
   function busy(res) {
     res.setHeader?.('Retry-After', '10');
+    res.setHeader?.('X-Denmark-Error-Scope', 'request');
     return res.status(503).json({
       error: 'Metrics temporarily deferred while database is busy',
       retry_after_seconds: 10,
@@ -70,10 +74,12 @@ function createMetricReadLimiter({
     };
   }
   async function tryRunMetricRefresh(work) {
-    if (active > 0 || queue.length > 0 || isDbPoolUnderPressure()) return { deferred: true };
-    active++;
+    if (refreshing || active > 0 || queue.length > 0 || isDbPoolUnderPressure()) return { deferred: true };
+    // A refresh owns its own guard, not the HTTP admission slot. Small saved
+    // reads can proceed while calculations run, subject to the same pool reserve.
+    refreshing = true;
     try { return await work(); }
-    finally { release(); }
+    finally { refreshing = false; }
   }
   return { limitMetricRead, isDbPoolUnderPressure, tryRunMetricRefresh };
 }

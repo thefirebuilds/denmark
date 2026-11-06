@@ -147,3 +147,37 @@ test('business metrics input reads execute sequentially and stop after failure',
   await assert.rejects(context.computeBusinessMetricsForWindow({ key: '30d' }), /input failed/);
   assert.deepEqual(calls, names.slice(0, 2));
 });
+
+test('queued idle-client handoffs do not defer Metrics reads or refreshes', async () => {
+  const gate = limiter()({ db: { getPoolStats: () => ({ max: 6, checked_out: 1, idle: 2, waiting: 1 }) } });
+  assert.equal(gate.isDbPoolUnderPressure(), false);
+  let calls = 0;
+  await gate.limitMetricRead(async () => { calls++; })({}, response());
+  await gate.tryRunMetricRefresh(async () => { calls++; });
+  assert.equal(calls, 2);
+});
+
+test('a report calculation cannot occupy the HTTP read slot or overlap a second refresh', async () => {
+  const gate = limiter()({ db: { getPoolStats: () => ({ max: 6, checked_out: 2, idle: 1, waiting: 0 }) } });
+  let finish;
+  const refresh = gate.tryRunMetricRefresh(() => new Promise(resolve => { finish = resolve; }));
+  await flush();
+  assert.equal((await gate.tryRunMetricRefresh(() => assert.fail())).deferred, true);
+  let read = false;
+  await gate.limitMetricRead(async () => { read = true; })({}, response());
+  assert.equal(read, true, 'small reads proceed before the background calculation finishes');
+  finish(); await refresh;
+  await gate.tryRunMetricRefresh(async () => { read = false; });
+  assert.equal(read, false, 'refresh guard releases after completion');
+});
+
+test('capacity deferrals are request-local and keep their retry instruction', async () => {
+  const gate = limiter()({ db: { getPoolStats: () => ({ max: 6, checked_out: 6, idle: 0, waiting: 1 }) } });
+  const headers = {};
+  const res = response();
+  res.setHeader = (key, value) => { headers[key] = value; };
+  await gate.limitMetricRead(() => assert.fail())({}, res);
+  assert.equal(res.code, 503);
+  assert.equal(headers['X-Denmark-Error-Scope'], 'request');
+  assert.equal(headers['Retry-After'], '10');
+});

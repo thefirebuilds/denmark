@@ -65,6 +65,9 @@ test('reused clients count queries once and track every explicit checkout', asyn
     await pooled;
     assert.equal(pool.getPoolActivitySnapshot().active_queries.length, 0);
   }
+  pool.totalCount = 3; pool.idleCount = 2; pool.waitingCount = 1;
+  pool.getPoolStats();
+  assert.equal(warnings.length, 0, 'a queued idle-client handoff is not pool pressure');
   pool.totalCount = 6; pool.idleCount = 0; pool.waitingCount = 1;
   pool.getPoolStats({ logPressure: false });
   assert.equal(warnings.length, 0, 'sampler stats reads cannot log recursively');

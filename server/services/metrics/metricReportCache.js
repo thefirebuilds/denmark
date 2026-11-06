@@ -1,7 +1,7 @@
 const pool = require('../../db');
 const { createHash } = require('node:crypto');
 const { getDateRange } = require('./metricHelpers');
-const { tryRunMetricRefresh, limitMetricRead } = require('./metricReadLimiter');
+const { tryRunMetricRefresh, limitMetricRead, isDbPoolUnderPressure } = require('./metricReadLimiter');
 
 const HOUR_MS = 3600000;
 const REPORT_HOURS = Object.freeze({ summary: 1, vehicles: 1, business: 1,
@@ -169,21 +169,49 @@ function createMetricReportCache({ db = pool, compute = computeReport, runRefres
   }
 
   function savedMetricReport(kind, parameters = req => req.query || {}) {
-    return limitMetricRead(async (req, res) => {
+    function send(res, report, deferred = false) {
+      res.setHeader('Cache-Control', 'no-store');
+      const meta = { ...report.meta,
+        stale: report.meta.pending || new Date(report.meta.refresh_after).getTime() <= clock(),
+        ...(deferred ? { read_deferred: true } : {}),
+      };
+      if (meta.pending) {
+        res.setHeader('Retry-After', '30');
+        return res.status(202).json({ pending: true, _report: meta,
+          message: 'Preparing the first saved metrics report in the background. This page will check again shortly.' });
+      }
+      return res.json({ ...report.payload, _report: meta });
+    }
+    const read = async (req, res) => {
       try {
-        res.setHeader('Cache-Control', 'no-store');
         const report = await getSavedReport(kind, parameters(req));
-        if (report.meta.pending) {
-          res.setHeader('Retry-After', '30');
-          return res.status(202).json({ pending: true, _report: report.meta,
-            message: 'Preparing the first saved metrics report in the background. This page will check again shortly.' });
-        }
-        return res.json({ ...report.payload, _report: report.meta });
+        return send(res, report);
       } catch (error) {
         console.warn(`[metrics-reports] read failed kind=${kind}: ${error.message || error}`);
+        if (!error.statusCode) {
+          const descriptor = describeReport(kind, parameters(req));
+          const saved = snapshots.get(descriptor.cacheKey);
+          if (saved?.report.payload != null) return send(res, saved.report, true);
+        }
+        res.setHeader('X-Denmark-Error-Scope', 'request');
+        res.setHeader('Retry-After', '10');
         return res.status(error.statusCode || 503).json({ error: error.statusCode ? error.message : 'Saved metrics temporarily unavailable' });
       }
-    });
+    };
+    const limitedRead = limitMetricRead(read);
+    return (req, res, next) => {
+      // Memory-only responses do not consume admission slots or connections.
+      // Under real pool pressure keep serving the last successful snapshot,
+      // preserving its calculation time and marking the DB lookup as deferred.
+      let cached;
+      try { cached = snapshots.get(describeReport(kind, parameters(req)).cacheKey); }
+      catch { return read(req, res); }
+      if (cached?.report.payload != null) {
+        if (cached.expiresAt > clock()) return send(res, cached.report);
+        if (isDbPoolUnderPressure?.()) return send(res, cached.report, true);
+      }
+      return limitedRead(req, res, next);
+    };
   }
   return { getSavedReport, refreshDueReport, savedMetricReport };
 }

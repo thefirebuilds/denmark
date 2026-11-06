@@ -222,7 +222,7 @@ function maybeLogPoolPressure(stats) {
   const checkedOut = Number(stats.checked_out || 0);
   const waiting = Number(stats.waiting || 0);
   const pressure =
-    waiting > 0 || (max > 0 && checkedOut >= Math.max(1, max - 1));
+    waiting > Math.max(0, Number(stats.idle) || 0) || (max > 0 && checkedOut >= Math.max(1, max - 1));
 
   if (!pressure) return;
 
