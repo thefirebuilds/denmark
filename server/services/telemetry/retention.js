@@ -158,6 +158,8 @@ async function pruneOldTelemetryRawPayloads(options = {}) {
 }
 
 module.exports = {
+  getRawPayloadRetentionDays,
+  getArchiveRetentionDays,
   DEFAULT_RAW_PAYLOAD_RETENTION_DAYS,
   DEFAULT_RUN_INTERVAL_DAYS,
   pruneOldTelemetryRawPayloads,

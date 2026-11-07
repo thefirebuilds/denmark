@@ -38,6 +38,17 @@ const {
 } = require("../services/trips/transitionTripStage");
 
 const router = express.Router();
+const { requirePermission } = require('../auth/middleware');
+const telemetryReview = require('../services/telemetry/tripTelemetryReview');
+function reviewHandler(work) {
+  return async (req, res) => {
+    try { res.set('Cache-Control', 'no-store'); res.json(await work(req)); }
+    catch (error) { res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Could not load trip telemetry' }); }
+  };
+}
+router.get('/:id/telemetry-review/summary', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewSummary(pool, req.params.id)));
+router.get('/:id/telemetry-review', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewPage(pool, req.params.id, req.query)));
+router.get('/:id/telemetry-review/snapshots/:snapshotId', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewDetail(pool, req.params.id, req.params.snapshotId)));
 
 function isOverdueTrip(trip) {
   const stage = String(trip?.workflow_stage || "").toLowerCase();

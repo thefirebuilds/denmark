@@ -1458,3 +1458,34 @@ body.drawer-open {
     width: 100%;
   }
 }
+
+.trip-telemetry-review { min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: grid; gap: 10px; background: var(--panel-3); }
+.trip-telemetry-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.trip-telemetry-heading h3 { margin: 0; font-size: 1rem; }
+.trip-telemetry-heading p, .trip-telemetry-hint { margin: 4px 0; color: var(--muted); font-size: 0.77rem; line-height: 1.5; }
+.trip-telemetry-notice { border-left: 3px solid var(--amber); padding: 10px; background: rgba(251,191,36,0.06); color: var(--text); font-size: 0.79rem; line-height: 1.5; }
+.trip-telemetry-stats { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 0; }
+.trip-telemetry-stats dt { color: var(--muted); font-size: 0.72rem; }
+.trip-telemetry-stats dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; font-weight: 650; }
+.trip-telemetry-filters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; align-items: end; }
+.trip-telemetry-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 0.74rem; min-width: 0; }
+.trip-telemetry-filters input, .trip-telemetry-filters select { width: 100%; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font: inherit; color-scheme: dark; }
+.trip-telemetry-scroll { overflow: auto; max-height: 440px; border: 1px solid var(--border); border-radius: 6px; }
+.trip-telemetry-scroll table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 0.76rem; }
+.trip-telemetry-scroll th { position: sticky; top: 0; background: var(--panel-2); text-align: left; font-weight: 600; }
+.trip-telemetry-scroll th, .trip-telemetry-scroll td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.trip-telemetry-scroll small { display: block; color: var(--muted); font-size: 0.7rem; margin-top: 4px; }
+.trip-telemetry-scroll pre { max-width: 280px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.trip-telemetry-warning { display: block; color: var(--amber); font-size: 0.7rem; }
+.trip-telemetry-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.77rem; }
+.trip-telemetry-detail { min-width: 0; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 10px; font-size: 0.8rem; }
+.trip-telemetry-detail h4 { margin: 0; }
+.trip-telemetry-detail pre { max-height: 350px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 0.73rem; }
+.trip-telemetry-detail code, .trip-telemetry-detail li { overflow-wrap: anywhere; }
+.trip-telemetry-detail summary { cursor: pointer; color: var(--blue); }
+.trip-telemetry-review [role="alert"] { color: var(--red); }
+.trip-telemetry-review :is(input,select,button,summary):focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .trip-telemetry-heading { align-items: flex-start; flex-direction: column; }
+  .trip-telemetry-filters { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}

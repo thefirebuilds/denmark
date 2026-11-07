@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import TripPathMap from "./TripPathMap";
 import TripReturnAudit from './TripReturnAudit';
+import TripTelemetryReview from './TripTelemetryReview';
 
 const TOLL_REVIEW_STATUS_OPTIONS = [
   { value: "", label: "— Select toll review status —" },
@@ -527,6 +528,7 @@ async function handleSubmit(e) {
 
         <form className="app-drawer-body trip-summary-drawer-body" onSubmit={handleSubmit}>
           {!isNewTrip ? <TripPathMap tripId={trip.id} /> : null}
+          {!isNewTrip ? <TripTelemetryReview key={trip.id} tripId={trip.id} /> : null}
 
           <section className="trip-summary-drawer-section">
             <div className="trip-summary-drawer-section-title">Core Trip Info</div>
