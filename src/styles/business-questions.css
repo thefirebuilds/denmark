@@ -5,10 +5,10 @@
 .business-questions button { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: rgba(90,130,220,.14); color: inherit; cursor: pointer; text-align: left; }
 .business-questions button:disabled { opacity: .55; cursor: default; }
 .business-questions__examples { display: grid; gap: 6px; margin-bottom: 12px; }
-.business-questions form { display: grid; gap: 8px; }
+.business-questions__composer { display: grid; gap: 8px; }
 .business-questions label { font-size: 12px; }
 .business-questions textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 60px; border: 1px solid var(--border); border-radius: 8px; padding: 9px; color: inherit; background: rgba(0,0,0,.18); font: inherit; }
-.business-questions form > button { justify-self: end; }
+.business-questions__composer > button { justify-self: end; }
 .business-questions__answers { max-height: 480px; overflow-y: auto; overflow-wrap: anywhere; }
 .business-questions article { border-top: 1px solid var(--border); padding: 12px 0; display: grid; gap: 8px; }
 .business-questions__answer { white-space: pre-wrap; font-size: 13px; line-height: 1.6; }

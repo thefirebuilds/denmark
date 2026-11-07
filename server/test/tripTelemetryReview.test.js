@@ -1,7 +1,67 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { filters, redact, matchingFields, reviewPage, reviewDetail, reviewSummary } = require('../services/telemetry/tripTelemetryReview');
+const { reviewExport } = require('../services/telemetry/tripTelemetryReview');
 const trip = { id: 7, trip_start: '2026-11-01T12:00:00Z', trip_end: '2026-11-04T12:00:00Z', max_speed_mph: 91 };
+
+function exportFixture() {
+  const calls = [];
+  const db = { query: async (sql, values) => {
+    calls.push({ sql, values });
+    if (sql.startsWith('SELECT id,')) return { rows: [trip] };
+    if (sql.includes('AS snapshot_max')) return { rows: [{ snapshot_max: 55, signal_max: 105 }] };
+    if (sql.includes('COUNT(*)::int')) return { rows: [{ snapshots: 55, providers: ['dimo'] }] };
+    const snapshot = sql.includes('to_jsonb(s)');
+    assert.match(sql, /s.trip_id = \$1/);
+    assert.equal(values[0], 7);
+    assert.equal(values[1], snapshot ? 55 : 105);
+    const ids = Array.from({ length: snapshot ? 55 : 105 }, (_, i) => (snapshot ? 55 : 105) - i)
+      .filter(id => values[2] == null || id < values[2]).slice(0, snapshot ? 50 : 100);
+    return { rows: ids.map(id => snapshot ? { id, snapshot: { id }, raw_payload: { impact: false, access_token: 'SECRET' } }
+      : { id, signal_name: 'impact', value_boolean: false }) };
+  } };
+  return { db, calls };
+}
+
+test('full export streams every snapshot, raw payload and signal across bounded pages', async () => {
+  const f = exportFixture();
+  let text = '';
+  for await (const chunk of reviewExport(f.db, 7)) text += chunk;
+  const result = JSON.parse(text);
+  assert.equal(result.snapshots.length, 55);
+  assert.equal(result.signals.length, 105);
+  assert.equal(result.snapshots.at(-1).id, 1);
+  assert.equal(result.signals.at(-1).id, 1);
+  assert.deepEqual(result.exported_counts, { snapshots: 55, signals: 105 });
+  assert.equal(result.complete, true);
+  assert.equal(result.snapshots[0].raw_payload.impact, false);
+  assert.equal(result.snapshots[0].raw_payload.access_token, '[redacted]');
+  assert.doesNotMatch(text, /SECRET/);
+  assert.equal(f.calls.filter(c => c.sql.includes('LIMIT 50')).length, 2);
+  assert.equal(f.calls.filter(c => c.sql.includes('LIMIT 100')).length, 2);
+});
+
+test('full export stops fetching on disconnect and does not mark failed downloads complete', async () => {
+  const f = exportFixture();
+  const controller = new AbortController();
+  const stream = reviewExport(f.db, 7, { signal: controller.signal });
+  await stream.next(); // metadata
+  await stream.next(); // snapshots array
+  await stream.next(); // first snapshot batch
+  const count = f.calls.length;
+  controller.abort();
+  const rest = [];
+  for await (const chunk of stream) rest.push(chunk);
+  assert.equal(f.calls.length, count);
+  assert.doesNotMatch(rest.join(''), /"complete":true/);
+  const broken = exportFixture();
+  const original = broken.db.query;
+  broken.db.query = async (sql, values) => {
+    if (sql.includes('LIMIT 50')) throw Error('read failed');
+    return original(sql, values);
+  };
+  await assert.rejects(async () => { for await (const _ of reviewExport(broken.db, 7)) { /* consume */ } }, /read failed/);
+});
 
 test('telemetry filters validate IDs, dates, providers and speed with bounded pages', () => {
   assert.equal(filters({ limit: 5000 }).limit, 100);

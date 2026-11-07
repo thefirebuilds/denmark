@@ -7,6 +7,14 @@ function tool(name, description, properties) {
     parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } };
 }
 const definitions = [
+  tool('trip_telemetry', 'Review stored trip telemetry using the same data as Trip Ledger. First resolve the internal trip_id with search_trips; a reservation number is not the internal ID. Start with summary for coverage and caveats, then page snapshots or signals with next_cursor. Use snapshot for redacted raw payload and keyword matches. No live provider request. Missing impact flags do not establish no incident; keyword matches are not verified events. Signal values retain provider units.', {
+    trip_id: { type: 'integer', description: 'Internal trip_id returned by search_trips.' },
+    view: { type: 'string', enum: ['summary', 'snapshots', 'signals', 'snapshot'] },
+    before: { type: ['integer', 'null'], description: 'next_cursor from previous page, or null initially.' },
+    provider: { type: ['string', 'null'], enum: ['bouncie', 'dimo', null] },
+    signal: { type: ['string', 'null'], description: 'Signal name substring, or null for all signals.' },
+    snapshot_id: { type: ['integer', 'null'], description: 'Snapshot ID for snapshot view; otherwise null.' },
+  }),
   tool('search_trips', 'Find individual trips by guest name, vehicle nickname/name, or a trip/reservation number. A number the user calls a trip ID may actually be a Turo reservation ID: trip_reference checks BOTH. Search all dates by default. Use this for guest return times and follow-up reservation numbers, NOT list_fleet or trip_summary. Returns scheduled trip_end separately from actual returned_at; a missing returned_at is NOT proof of no trip or no return.', {
     trip_reference: { type: ['string', 'null'], description: 'Numeric internal trip ID or Turo reservation ID, or null.' },
     guest_name: { type: ['string', 'null'], description: 'Guest name or partial name, e.g. Olive, or null. Clear this when looking up an exact reference.' },
@@ -46,6 +54,18 @@ function validateArgs(name, args) {
   if (!definition || !args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Invalid data request');
   const keys = Object.keys(definition.parameters.properties);
   if (Object.keys(args).some((key) => !keys.includes(key)) || keys.some((key) => !(key in args))) throw new Error('Invalid data request fields');
+  if (name === 'trip_telemetry') {
+    if (!Number.isSafeInteger(args.trip_id) || args.trip_id <= 0 ||
+        !['summary', 'snapshots', 'signals', 'snapshot'].includes(args.view) ||
+        ![null, 'bouncie', 'dimo'].includes(args.provider) ||
+        (args.signal !== null && (typeof args.signal !== 'string' || args.signal.length > 100))) throw new Error('Invalid telemetry request');
+    for (const key of ['before', 'snapshot_id']) {
+      if (args[key] !== null && (!Number.isSafeInteger(args[key]) || args[key] <= 0)) throw new Error('Invalid telemetry record ID');
+    }
+    if (args.view === 'snapshot' && args.snapshot_id === null) throw new Error('Snapshot ID required');
+    if ((['summary', 'snapshot'].includes(args.view) && (args.before !== null || args.provider !== null || args.signal !== null)) ||
+        (args.view !== 'snapshot' && args.snapshot_id !== null) || (args.view === 'snapshots' && args.signal !== null)) throw new Error('Unsupported telemetry filters');
+  }
   if (name === 'search_trips') {
     if (!Number.isSafeInteger(args.offset) || args.offset < 0) throw new Error('Invalid page offset');
     if (args.trip_reference !== null && (typeof args.trip_reference !== 'string' || !/^\d{1,18}$/.test(args.trip_reference))) throw new Error('Invalid trip reference');
@@ -85,7 +105,14 @@ function createDataTools({ pool, getMaintenanceSummary }) {
       await client.query('BEGIN READ ONLY');
       await client.query("SET LOCAL statement_timeout = '10000ms'");
       let data;
-      if (name === 'search_trips') {
+      if (name === 'trip_telemetry') {
+        const review = require('../telemetry/tripTelemetryReview');
+        if (args.view === 'summary') data = await review.reviewSummary(client, args.trip_id);
+        else if (args.view === 'snapshot') data = await review.reviewDetail(client, args.trip_id, args.snapshot_id);
+        else data = await review.reviewPage(client, args.trip_id, {
+          kind: args.view, before: args.before, provider: args.provider || '', signal: args.signal || '', limit: 50,
+        });
+      } else if (name === 'search_trips') {
         const result = await client.query(`WITH matching AS (
           SELECT t.id AS trip_id, t.reservation_id::text, t.guest_name, t.vehicle_name,
             v.nickname AS vehicle_nickname, t.trip_start, t.trip_end AS scheduled_return_at,

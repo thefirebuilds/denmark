@@ -47,6 +47,27 @@ function reviewHandler(work) {
   };
 }
 router.get('/:id/telemetry-review/summary', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewSummary(pool, req.params.id)));
+router.get('/:id/telemetry-review/export', requirePermission('telemetry.read'), async (req, res) => {
+  const controller = new AbortController();
+  const close = () => controller.abort();
+  res.on('close', close);
+  const records = telemetryReview.reviewExport(pool, req.params.id, { signal: controller.signal });
+  try {
+    // Validate trip and read metadata before committing attachment headers.
+    const first = await records.next();
+    if (controller.signal.aborted) return;
+    res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'application/json',
+      'Content-Disposition': `attachment; filename="trip-${Number(req.params.id)}-all-telemetry.json"` });
+    const { Readable } = require('node:stream');
+    const { pipeline } = require('node:stream/promises');
+    await pipeline(Readable.from((async function* () { yield first.value; yield* records; })()), res);
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      if (res.headersSent || res.destroyed) res.destroy();
+      else res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Could not export trip telemetry' });
+    }
+  } finally { controller.abort(); await records.return(); res.off('close', close); }
+});
 router.get('/:id/telemetry-review', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewPage(pool, req.params.id, req.query)));
 router.get('/:id/telemetry-review/snapshots/:snapshotId', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewDetail(pool, req.params.id, req.params.snapshotId)));
 

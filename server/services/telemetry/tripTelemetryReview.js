@@ -107,4 +107,48 @@ async function reviewDetail(db, id, snapshotId) {
     raw_available: raw != null, raw_unavailable_reason: raw == null ? 'Raw payload was not retained or has been pruned. Normalized snapshot fields remain available.' : null,
     matching_fields_note: 'Keyword-matched provider fields, not verified incidents. False, zero, and historical values are preserved; inspect their timestamps.' };
 }
-module.exports = { filters, redact, matchingFields, reviewSummary, reviewPage, reviewDetail };
+// Stream bounded keyset batches, including retained raw payloads, without a
+// long-lived transaction or holding a pool client while the download is slow.
+async function* reviewExport(db, id, { signal, now = () => new Date() } = {}) {
+  const summary = await reviewSummary(db, id);
+  const { rows: [bounds] } = await db.query(`SELECT
+    (SELECT MAX(id) FROM vehicle_telemetry_snapshots WHERE trip_id = $1) AS snapshot_max,
+    (SELECT MAX(v.id) FROM vehicle_telemetry_signal_values v
+      JOIN vehicle_telemetry_snapshots s ON s.id = v.snapshot_id WHERE s.trip_id = $1) AS signal_max`, [summary.trip.id]);
+  const counts = { snapshots: 0, signals: 0 };
+  yield JSON.stringify({ exported_at: now().toISOString(), scope: 'All stored telemetry attributed to this trip; screen filters are not applied.',
+    consistency: 'Record IDs are capped at export start. This is not a transactional snapshot; concurrent edits or retention may affect records during export.',
+    summary, record_bounds: bounds, units: 'Normalized snapshot speed is mph. Signal values retain stored/provider units.',
+    timestamps: 'Raw snapshot and signal fields use stored conventions: captured_at is UTC; DIMO signal wall times are America/Chicago, Bouncie signal wall times are UTC.',
+    raw_payloads: 'Retained archive payload preferred, legacy inline payload fallback. Null means not retained or pruned. Authentication fields are redacted.' }).slice(0, -1);
+  for (const kind of ['snapshots', 'signals']) {
+    yield `,"${kind}":[`;
+    let before = null, first = true;
+    const max = kind === 'snapshots' ? bounds.snapshot_max : bounds.signal_max;
+    while (max != null && !signal?.aborted) {
+      const snapshots = kind === 'snapshots';
+      const { rows } = await db.query(snapshots ? `SELECT s.id,
+        to_jsonb(s) - 'raw_payload' AS snapshot,
+        COALESCE(raw.raw_payload, s.raw_payload) AS raw_payload
+        FROM vehicle_telemetry_snapshots s
+        LEFT JOIN vehicle_telemetry_raw_payloads raw ON raw.snapshot_id = s.id
+        WHERE s.trip_id = $1 AND s.id <= $2 AND ($3::bigint IS NULL OR s.id < $3)
+        ORDER BY s.id DESC LIMIT 50` : `SELECT v.* FROM vehicle_telemetry_signal_values v
+        JOIN vehicle_telemetry_snapshots s ON s.id = v.snapshot_id
+        WHERE s.trip_id = $1 AND v.id <= $2 AND ($3::bigint IS NULL OR v.id < $3)
+        ORDER BY v.id DESC LIMIT 100`, [summary.trip.id, max, before]);
+      if (signal?.aborted) return;
+      for (const row of rows) {
+        if (signal?.aborted) return;
+        yield `${first ? '' : ','}${JSON.stringify(redact(row))}`;
+        first = false; counts[kind]++;
+      }
+      if (rows.length < (snapshots ? 50 : 100)) break;
+      before = rows[rows.length - 1].id;
+    }
+    if (signal?.aborted) return;
+    yield ']';
+  }
+  yield `,"exported_counts":${JSON.stringify(counts)},"complete":true}`;
+}
+module.exports = { filters, redact, matchingFields, reviewSummary, reviewPage, reviewDetail, reviewExport };
