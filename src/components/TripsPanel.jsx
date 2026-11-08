@@ -199,6 +199,7 @@ function isGroupedUpcomingTrip(trip) {
 }
 
 function isRoutineInProgressTrip(trip) {
+  if (Number(trip?.collision_event_count) > 0) return false;
   // Surface imminent returns without expanding trips for unrelated warnings.
   const hoursUntilReturn = getHoursUntilTripEnd(trip);
   const returningWithinEightHours =
@@ -816,6 +817,7 @@ if (urgency.dependencyNote) {
                   <div className="trip-title">
                     {trip.cardGuestName} - {trip.cardNickname}
                   </div>
+                  {Number(trip.collision_event_count) > 0 && <div className="chip trip-collision-flag">Collision detected ({trip.collision_event_count})</div>}
                   {isSelected ? (
                     <>
                       <div className="trip-sub">{trip.cardVehicleLine} - {visibleStatus}</div>

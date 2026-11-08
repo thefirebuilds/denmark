@@ -308,6 +308,7 @@ function isFullQueueOnlyItem(message) {
 
 function getMessageQueueTopic(message) {
   const type = message?.type || message?.message_type;
+  if (type === 'collision_detected') return { id: 'collision_alerts', label: 'Collision alerts' };
   if (type === "guest_message" || type === "guest_message_thread") {
     return { id: "guest_messages", label: "Guest messages" };
   }
@@ -1175,6 +1176,7 @@ function formatQueueTimingSummary(debugTiming) {
 }
 
 function buildMessageTitle(message) {
+  if ((message?.type || message?.message_type) === 'collision_detected') return message.subject || 'Collision detected';
   if (message?.type === "check_in_required") return `Check In ${message.check_in_overdue ? "Overdue" : "Required"}: ${message.vehicle_nickname || message.vehicle_name || "Vehicle"}`;
   const type = message?.type || message?.message_type;
   if (type === "daily_brief") {
@@ -1228,6 +1230,7 @@ function buildMessageTitle(message) {
 
 function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
+  if (type === 'collision_detected') return 'Urgent: review provider-reported collision';
   if (type === 'booking_message_required') return 'Send guest booking welcome';
   if (type === 'return_message_required') return 'Send guest return instructions';
   if (type === "check_in_required") return "Trip check-in required";
@@ -2999,7 +3002,7 @@ async function handleExportGuestInspectionSheet(message) {
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
           ? actionableMessageItems
-          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || message.type === "vehicle_diagnostic_alert" || ["return_message_required", "booking_message_required"].includes(message.type))
+          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || ["vehicle_diagnostic_alert", "collision_detected"].includes(message.type) || ["return_message_required", "booking_message_required"].includes(message.type))
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
@@ -3640,7 +3643,7 @@ async function handleExportGuestInspectionSheet(message) {
               !canExportInspection &&
               !canShowMaintenance;
             const canFocusTrip =
-              (message.type === "check_in_required" || canAdvanceHandoff ||
+              (message.type === "collision_detected" || message.type === "check_in_required" || canAdvanceHandoff ||
                 canExportInspection ||
                 canCloseoutTrip ||
                 canReviewRefuel ||
@@ -3721,6 +3724,7 @@ async function handleExportGuestInspectionSheet(message) {
                 } ${
                   canReviewUnmatchedNotification ||
                   canVerifyReturnLocation ||
+                  message.type === 'collision_detected' ||
                   canReviewDiagnostic
                     ? "message-notification-gap"
                     : ""

@@ -23,19 +23,23 @@ async function ensureTripIncidentSchema(db = require('../../db')) {
   CREATE INDEX IF NOT EXISTS idx_trip_telemetry_event_imports_trip_id ON trip_telemetry_event_imports(trip_id, id DESC);`);
 }
 
-async function incidentPage(db, id, before = null) {
+async function incidentPage(db, id, before = null, eventName = null) {
   const trip = tripId(id);
+  if (eventName !== null && (typeof eventName !== 'string' || !eventName || eventName.length > 250)) throw fail('Invalid event category');
   if (before != null && (!/^\d+$/.test(String(before)) || BigInt(before) <= 0n)) throw fail('Invalid incident cursor');
   const exists = await db.query('SELECT id FROM trips WHERE id=$1 AND deleted_at IS NULL', [trip]);
   if (!exists.rows[0]) throw fail('Trip not found', 404);
   const { rows } = await db.query(`SELECT * FROM trip_telemetry_events
-    WHERE trip_id = $1 AND ($2::bigint IS NULL OR id < $2) ORDER BY id DESC LIMIT 51`, [trip, before]);
+    WHERE trip_id = $1 AND ($2::bigint IS NULL OR id < $2)
+      AND ($3::text IS NULL OR event_name = $3) ORDER BY id DESC LIMIT 51`, [trip, before, eventName]);
+  const categories = await db.query(`SELECT event_name, COUNT(*)::int AS count FROM trip_telemetry_events
+    WHERE trip_id = $1 GROUP BY event_name ORDER BY event_name`, [trip]);
   const imports = await db.query(`SELECT id, window_from, window_to, status, received_count, inserted_count,
     error_message, requested_at, finished_at FROM trip_telemetry_event_imports
     WHERE trip_id = $1 ORDER BY id DESC LIMIT 20`, [trip]);
   const data = rows.slice(0, 50).map(require('./tripTelemetryReview').redact);
   return { trip_id: trip, data, has_more: rows.length > 50, next_cursor: rows.length > 50 ? String(data.at(-1).id) : null,
-    imports: imports.rows,
+    categories: categories.rows, imports: imports.rows,
     note: 'Provider-reported events, not independently verified accidents or proof of driver fault. Empty results do not prove no incident. Import history covers only the requested windows; older attempts may not be shown.' };
 }
 

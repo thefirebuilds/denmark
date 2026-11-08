@@ -144,14 +144,26 @@ test('incident reads paginate within trip, preserve provider labels, and report 
   const result = await incidentPage({ query: async (sql, values) => {
     assert.equal(values[0], 7);
     if (sql.startsWith('SELECT id FROM trips')) return { rows: [{ id: 7 }] };
+    if (sql.includes('GROUP BY event_name')) {
+      assert.deepEqual(values, [7]);
+      return { rows: [{ event_name: 'behavior.harshBraking', count: 125 }, { event_name: 'safety.collision', count: 2 }] };
+    }
     if (sql.includes('FROM trip_telemetry_events')) {
-      assert.deepEqual(values, [7, 100]);
+      assert.deepEqual(values, [7, 100, 'behavior.harshBraking']);
+      assert.match(sql, /event_name = \$3/);
       return { rows: Array.from({ length: 51 }, (_, i) => ({ id: 99 - i, event_name: 'behavior.harshBraking' })) };
     }
     return { rows: [{ status: 'failed', error_message: 'DIMO unavailable' }] };
-  } }, 7, 100);
+  } }, 7, 100, 'behavior.harshBraking');
   assert.equal(result.data.length, 50);
   assert.equal(result.next_cursor, '50');
   assert.equal(result.imports[0].status, 'failed');
+  assert.deepEqual(result.categories, [{ event_name: 'behavior.harshBraking', count: 125 }, { event_name: 'safety.collision', count: 2 }]);
   assert.match(result.note, /not independently verified/);
+});
+
+test('incident category filters reject invalid values before querying', async () => {
+  for (const category of ['', [], 'x'.repeat(251)]) {
+    await assert.rejects(incidentPage({ query: () => assert.fail('must validate before query') }, 7, null, category), e => e.statusCode === 400);
+  }
 });

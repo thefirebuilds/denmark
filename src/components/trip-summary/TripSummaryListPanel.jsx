@@ -68,6 +68,7 @@ function formatObdSuggestion(trip) {
 
 function getAuditFlags(trip, vehicleStatuses = []) {
   const flags = [];
+  if (Number(trip?.collision_event_count) > 0) flags.push(`collision detected (${trip.collision_event_count})`);
 
   const start = Number(trip?.starting_odometer);
   const end = Number(trip?.ending_odometer);
@@ -375,7 +376,7 @@ export default function TripSummaryListPanel({
                 {!!flags.length && (
                   <div className="panel-subbar">
                     {flags.map((flag) => (
-                      <div key={flag} className="chip">
+                      <div key={flag} className={`chip ${flag.startsWith('collision detected') ? 'trip-collision-flag' : ''}`}>
                         {flag}
                       </div>
                     ))}

@@ -52,7 +52,7 @@ function reviewHandler(work) {
 }
 router.get('/:id/telemetry-review/summary', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewSummary(pool, req.params.id)));
 router.get('/:id/telemetry-review/incidents', requirePermission('telemetry.read'), reviewHandler(async req => ({
-  ...await incidentPage(pool, req.params.id, req.query.before || null),
+  ...await incidentPage(pool, req.params.id, req.query.before || null, req.query.event_name ?? null),
   can_import: !isAuthEnforced() || (req.auth?.isActive === true && hasPermission(req.auth.role, 'trips.write')),
 })));
 router.post('/:id/telemetry-review/incidents/import', requirePermission('trips.read'), requirePermission('trips.write'), requirePermission('telemetry.read'), async (req, res) => {
@@ -527,6 +527,8 @@ const TRIP_SELECT = `
     t.max_engine_rpm,
     t.max_speed_mph,
     t.speed_over_80_count,
+    (SELECT COUNT(*)::int FROM trip_telemetry_events collision_events
+      WHERE collision_events.trip_id=t.id AND collision_events.event_name='safety.collision') AS collision_event_count,
     t.guest_rating_received,
     t.guest_rating_received_at,
     t.returned_at,

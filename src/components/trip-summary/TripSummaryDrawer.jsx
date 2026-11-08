@@ -527,6 +527,7 @@ async function handleSubmit(e) {
         </div>
 
         <form className="app-drawer-body trip-summary-drawer-body" onSubmit={handleSubmit}>
+          {Number(trip?.collision_event_count) > 0 && <div className="trip-telemetry-notice" role="status"><strong>Collision detected: {trip.collision_event_count} provider event(s).</strong> Review the imported DIMO events below. This is not a verified accident or driver-fault finding.</div>}
           {!isNewTrip ? <TripPathMap tripId={trip.id} /> : null}
           {!isNewTrip ? <TripTelemetryReview key={trip.id} tripId={trip.id} /> : null}
 

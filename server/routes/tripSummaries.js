@@ -209,6 +209,8 @@ const TRIP_SUMMARY_SELECT = `
     t.max_engine_rpm,
     t.max_speed_mph,
     t.speed_over_80_count,
+    (SELECT COUNT(*)::int FROM trip_telemetry_events collision_events
+      WHERE collision_events.trip_id=t.id AND collision_events.event_name='safety.collision') AS collision_event_count,
     t.notes,
     t.closed_out,
     t.closed_out_at,

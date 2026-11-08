@@ -56,6 +56,9 @@ let bouncieIntervalHandle = null;
 
 let dimoInProgress = false;
 let dimoIntervalHandle = null;
+let collisionIntervalHandle = null;
+let collisionController = null;
+const pollCollisions = require('./telemetry/collisionMonitor').createCollisionMonitor({ pool });
 
 let googleCalendarInProgress = false;
 let googleCalendarIntervalHandle = null;
@@ -596,6 +599,18 @@ async function runDimo(reason = "interval") {
   }
 }
 
+async function runCollisionCheck() {
+  const controller = collisionController;
+  if (shouldDeferForDbPressure('dimoCollisions', 'interval') || controller?.signal.aborted) return;
+  try {
+    if (process.env.DIMO_COLLISION_POLL_ENABLED === 'false' || !(await isIntegrationEnabled('dimo'))) return;
+    if (controller?.signal.aborted) return;
+    await pollCollisions({ signal: controller?.signal });
+  } catch {
+    console.warn('[collisions] check failed; pending alerts and vehicle checkpoints retained');
+  }
+}
+
 async function runGoogleCalendarReconcile(reason = "interval") {
   if (shouldDeferForDbPressure("googleCalendar", reason)) return;
 
@@ -822,6 +837,11 @@ function startScheduler() {
   }).catch(() => null);
 
   const everyFifteenMinutesMs = 15 * 60 * 1000;
+  if (!collisionIntervalHandle) {
+    collisionController = new AbortController();
+    collisionIntervalHandle = scheduleIntervalTask('dimoCollisions', everyFifteenMinutesMs,
+      SCHEDULER_INTERVAL_OFFSET_STEP_MS * 4, runCollisionCheck);
+  }
   // Poll the persisted schedule, not every report: hourly and four-hour
   // deadlines are per requested report. Only one due report runs per tick.
   metricReportIntervalHandle = scheduleIntervalTask('savedMetrics', 60000, 10000,
@@ -963,6 +983,9 @@ function startScheduler() {
 }
 
 function stopScheduler() {
+  collisionController?.abort();
+  stopScheduledInterval(collisionIntervalHandle);
+  collisionIntervalHandle = null;
   if (metricReportIntervalHandle) {
     stopScheduledInterval(metricReportIntervalHandle);
     metricReportIntervalHandle = null;

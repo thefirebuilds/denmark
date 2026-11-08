@@ -1403,6 +1403,7 @@ function compactTripChangedNotices(items) {
 }
 
 function messageQueueRank(item) {
+  if (item.type === 'collision_detected') return -10;
   if (item.type === "check_in_required") return item.check_in_overdue ? -2 : -1;
   if (
     item.type === "maintenance_required" &&
@@ -1465,6 +1466,7 @@ function messageQueueTopic(item) {
 }
 
 function messageQueueTopicRank(item) {
+  if (item.type === 'collision_detected') return -1;
   return {
     guest_messages: 0,
     turo_updates: 1,
@@ -3024,6 +3026,7 @@ router.get("/", async (req, res) => {
       ) actionable_messages
       ORDER BY
         CASE
+          WHEN message_type = 'collision_detected' AND status = 'unread' THEN -2
           WHEN status = 'unread'
             AND COALESCE(message_type, '') NOT IN ('payment_notice', 'renter_activity')
             AND trip_id IS NULL

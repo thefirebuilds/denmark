@@ -77,7 +77,7 @@ export default function TripTelemetryReview({ tripId }) {
     </div>
     {open && <>
       <div className="trip-telemetry-notice">
-        <strong>Impact and aggressive-driving coverage is limited.</strong> Automatic collection includes periodic snapshots and signal values. Import DIMO event history below when needed. Missing flags or events do not establish that no incident occurred. Sparse samples cannot reconstruct a collision, hard braking, or continuous speed.
+        <strong>Impact and aggressive-driving coverage is limited.</strong> Active DIMO vehicles are checked for collision events every 15 minutes. Import other DIMO event history below when needed. Missing flags or events do not establish that no incident occurred. Sparse samples cannot reconstruct a collision, hard braking, or continuous speed.
       </div>
       <p className="trip-telemetry-hint"><a className="message-action" href={`${API_BASE}${base}/export`} download={`trip-${tripId}-all-telemetry.json`}>Export all telemetry (JSON)</a> All stored snapshots, signal values, imported DIMO events and retained raw payloads for this trip, regardless of page or filters.</p>
       <TripIncidentReview key={tripId} tripId={tripId} />

@@ -1481,6 +1481,11 @@ body.drawer-open {
 .trip-telemetry-incidents { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
 .trip-telemetry-incidents pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; font-size: 0.75rem; }
 .trip-telemetry-incidents summary { cursor: pointer; padding: 6px 0; overflow-wrap: anywhere; }
+.trip-incident-category { border-top: 1px solid var(--border); }
+.trip-incident-category > summary { padding: 9px 0; font-weight: 600; }
+.trip-incident-category-count { display: inline-block; margin-left: 10px; padding: 2px 7px; border-radius: 10px; background: rgba(120,150,200,.15); color: var(--muted); font-size: .75rem; font-weight: 400; }
+.trip-incident-category-body { padding: 0 0 10px 14px; }
+.trip-collision-flag { color: #ffd2cf; border-color: #bf5149; background: rgba(176,48,42,.24); font-weight: 600; }
 .trip-telemetry-detail { min-width: 0; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 10px; font-size: 0.8rem; }
 .trip-telemetry-detail h4 { margin: 0; }
 .trip-telemetry-detail pre { max-height: 350px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 0.73rem; }

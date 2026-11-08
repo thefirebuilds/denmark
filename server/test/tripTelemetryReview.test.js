@@ -141,6 +141,6 @@ test('missing trips fail before telemetry is read and summaries disclose collect
   const result = await reviewSummary({ query: async sql => ({ rows: sql.startsWith('SELECT id,') ? [trip] : [{ snapshots: 0, providers: [null], max_sampled_speed_mph: null }] }) }, 7);
   assert.equal(result.max_sampled_speed_mph, null);
   assert.deepEqual(result.providers, []);
-  assert.match(result.collection, /No dedicated impact/);
+  assert.match(result.collection, /polled every 15 minutes/);
   assert.match(result.association, /unassigned telemetry is not included/);
 });

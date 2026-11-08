@@ -80,6 +80,7 @@ async function sendSms(body, options = {}) {
           config.accountSid
         )}/Messages.json`,
         method: "POST",
+        ...(options.signal ? { signal: options.signal } : {}),
         headers: {
           Authorization: `Basic ${Buffer.from(
             `${config.accountSid}:${config.authToken}`
@@ -121,6 +122,7 @@ async function sendSms(body, options = {}) {
     );
 
     req.on("error", reject);
+    if (options.timeoutMs) req.setTimeout(options.timeoutMs, () => req.destroy(new Error('SMS delivery timed out; acceptance is unknown')));
     req.write(payload);
     req.end();
   });

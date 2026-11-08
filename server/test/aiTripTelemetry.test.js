@@ -34,7 +34,7 @@ test('AI telemetry summary reuses the read-only client and returns coverage cave
   const f = fixture([{ snapshots: 3, providers: ['dimo'], max_sampled_speed_mph: 90 }]);
   const result = await f.execute('trip_telemetry', args);
   assert.equal(result.snapshots, 3);
-  assert.match(result.collection, /No dedicated impact/);
+  assert.match(result.collection, /polled every 15 minutes/);
   assert.match(result.association, /unassigned telemetry is not included/);
   assert.equal(f.calls[0].sql, 'BEGIN READ ONLY');
   assert.match(f.calls[1].sql, /statement_timeout/);

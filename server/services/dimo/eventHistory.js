@@ -14,7 +14,7 @@ function abortable(work, signal) {
   });
 }
 
-async function fetchDimoEvents(tokenId, { from, to, signal, fetchImpl = fetch, auth = getDimoVehicleAuthHeader } = {}) {
+async function fetchDimoEvents(tokenId, { from, to, signal, collisionOnly = false, fetchImpl = fetch, auth = getDimoVehicleAuthHeader } = {}) {
   const timeout = AbortSignal.timeout(20000);
   const bounded = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let authHeader;
@@ -25,7 +25,8 @@ async function fetchDimoEvents(tokenId, { from, to, signal, fetchImpl = fetch, a
   }
   const response = await fetchImpl(URL, { method: 'POST', signal: bounded,
     headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-    body: JSON.stringify({ query: QUERY, variables: { tokenId: Number(tokenId), from, to } }) });
+    body: JSON.stringify({ query: collisionOnly ? QUERY.replace('to: $to)', 'to: $to, filter: { name: { eq: "safety.collision" } })') : QUERY,
+      variables: { tokenId: Number(tokenId), from, to } }) });
   if ([401, 403].includes(response.status)) {
     await response.body?.cancel();
     throw problem('DIMO denied event-history access. Verify this vehicle shares non-location data and all-time location with Denmark.', 403);

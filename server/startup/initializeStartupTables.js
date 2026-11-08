@@ -108,6 +108,7 @@ async function initializeStartupTables() {
     ["vehicle runtime schema", ensureVehicleRuntimeSchema],
     ["trip runtime schema", ensureTripRuntimeSchema],
     ["trip telemetry incidents", () => require('../services/telemetry/tripIncidents').ensureTripIncidentSchema()],
+    ["collision monitoring", () => require('../services/telemetry/collisionMonitor').ensureCollisionMonitorSchema()],
     ["maintenance runtime schema", ensureMaintenanceRuntimeSchema],
     ["toll audit schema", ensureTollAuditSchema],
     ["income tables", ensureIncomeTables],

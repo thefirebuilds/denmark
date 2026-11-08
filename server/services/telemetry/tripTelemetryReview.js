@@ -51,7 +51,7 @@ async function reviewSummary(db, id) {
     ARRAY_AGG(DISTINCT s.service_name) AS providers
     FROM vehicle_telemetry_snapshots s JOIN trips t ON t.id = s.trip_id WHERE s.trip_id = $1`, [trip.id]);
   return { trip, ...rows[0], providers: (rows[0]?.providers || []).filter(Boolean),
-    collection: 'Periodic vehicle snapshots and stored signal values. No dedicated impact/harsh-driving event feed is currently collected automatically. DIMO event history can be imported on request; use the incidents view and its import history to check coverage.',
+    collection: 'Periodic vehicle snapshots and stored signal values. Active DIMO vehicles are polled every 15 minutes for provider-reported collisions; other event history can be imported on request. Check the incidents view and import history for available records and coverage.',
     association: 'Stored trip attribution only; unassigned telemetry is not included. A provider reading can predate its snapshot or this trip.',
     raw_retention: { legacy_days: getRawPayloadRetentionDays(), archive_days: getArchiveRetentionDays() },
     cautions: ['No recorded impact flag does not establish that no incident occurred.', 'Samples can repeat stale readings. Speed thresholds are not posted-road-limit determinations.'] };
