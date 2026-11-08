@@ -49,7 +49,7 @@ const definitions = [
   }),
 ];
 
-function validateArgs(name, args) {
+function validateArgsInternal(name, args) {
   const definition = definitions.find((item) => item.name === name);
   if (!definition || !args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Invalid data request');
   const keys = Object.keys(definition.parameters.properties);
@@ -96,6 +96,11 @@ function validateArgs(name, args) {
       typeof term !== 'string' || !term.trim() || term.length > 80)) throw new Error('Invalid expense search terms');
     if (!Number.isSafeInteger(args.offset) || args.offset < 0 || (name === 'search_expenses' && args.offset > 10000)) throw new Error('Invalid page offset');
   }
+}
+
+function validateArgs(name, args) {
+  try { validateArgsInternal(name, args); }
+  catch (error) { error.code = 'AI_INVALID_TOOL_ARGUMENTS'; throw error; }
 }
 
 function createDataTools({ pool, getMaintenanceSummary }) {

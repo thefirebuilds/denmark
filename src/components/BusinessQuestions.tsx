@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import '../styles/business-questions.css';
 
 type Source = { id: string; tool: string; retrievedAt: string; filters: Record<string, unknown>; data: unknown };
-type Answer = { question: string; answer: string; sources: Source[]; generatedAt: string };
+type Answer = { question: string; answer: string; sources: Source[]; generatedAt: string; lookupFailures?: { tool: string; code: string; error: string; view?: string }[] };
 const examples = ['How much did I spend on tires this year?', 'What maintenance items are due for Delavan?', 'Add a todo to fix the headlights on Geneva'];
 const labels: Record<string, string> = { database_schema: 'Database schema', database_query: 'Database query', list_fleet: 'Fleet', search_expenses: 'Expenses', vehicle_maintenance: 'Maintenance', trip_summary: 'Trips', search_trips: 'Trip records and return times', search_guest_messages: 'Guest messages', create_maintenance_task: 'Created maintenance to-do' };
 const MINIMIZED_KEY = 'denmark.businessQuestions.minimized';
@@ -86,7 +86,7 @@ export default function BusinessQuestions({ initialQuestion = '', embedded = fal
             <pre>{JSON.stringify({ filters: source.filters, data: source.data }, null, 2)}</pre>
           </details>)}
           <button type="button" onClick={() => download(answer)}>Download answer and records</button>
-        </details> : <small>No database records retrieved.</small>}
+        </details> : <small>{answer.lookupFailures?.length ? 'No successful database lookups. See the lookup failure above.' : 'No database records retrieved.'}</small>}
       </article>)}
     </div>
     <QuestionContainer className="business-questions__composer" onSubmit={embedded ? undefined : ask}>
