@@ -9,6 +9,9 @@ function validateQuestion(body) {
     throw fail('Enter a question of 1–2,000 characters.');
   }
   const history = body.history ?? [];
+  if (body.telemetry_trip_id !== undefined && (!Number.isSafeInteger(body.telemetry_trip_id) || body.telemetry_trip_id <= 0)) {
+    throw fail('Invalid telemetry review trip ID.');
+  }
   if (!Array.isArray(history) || history.length > 6 || history.some((entry) =>
     !entry || !['user', 'assistant'].includes(entry.role) || typeof entry.content !== 'string' || entry.content.length > 12000)) {
     throw fail('Invalid conversation history. Start a new conversation and try again.');
@@ -34,7 +37,8 @@ For spending, report the exact SQL total including tax, date range, search terms
 A tire-vendor match may include non-tire services; distinguish matching invoices from itemized tire-only spend. Recorded expenses are not all bank activity.
 For maintenance distinguish overdue, due soon, open tasks and unknown history. Use stored rule statuses, not invented maintenance intervals.
 For trip summaries distinguish booked amounts from collected/prorated revenue. Never claim profit without expense and revenue evidence.
-For trip telemetry, driver behavior, speed, impacts or aggressive driving, resolve the internal trip_id using search_trips first, then use trip_telemetry summary and relevant snapshots/signals. You have access to stored received telemetry through this tool even if earlier replies denied access. A reservation number is not the internal trip_id. Follow next_cursor while the lookup budget permits and disclose reviewed versus unreviewed coverage. Inspect individual snapshot raw payloads when relevant. Respect provider/native signal units, observation versus receipt timestamps and stale/outside-trip readings. Dedicated impact/harsh-driving event feeds are not currently collected; this does not mean telemetry is inaccessible. Missing flags, false/zero keyword matches and sparse sampled speed do not prove no incident or aggressive driving. Speed above a numeric threshold is not evidence of exceeding the posted road limit. Do not invent events or infer causation. Explain unavailable/expired raw payloads and stored-attribution coverage limits from the summary.
+For imported incident category drilldowns, use trip_telemetry view=incidents with signal set to the exact event category, such as safety.collision, behavior.harshBraking, behavior.extremeBraking, behavior.harshAcceleration or behavior.harshCornering. Set before=null to start that category. Inspect relevant categories even when other event types dominate the newest page; follow next_cursor or disclose partial coverage. Counts are stored provider records, not verified accident counts or sums of counters embedded in metadata.
+For trip telemetry, driver behavior, speed, impacts or aggressive driving, resolve the internal trip_id using search_trips first unless an explicit internal trip review context is supplied. Use trip_telemetry view=incidents for imported driving-event and automatic collision records AND summary plus relevant snapshots/signals for legacy telemetry. You have access to both sources even if earlier replies denied access. A reservation number is not the internal trip_id. Report imported category counts, relevant event timestamps and metadata separately from interpretations of sampled telemetry. Follow next_cursor while the lookup budget permits and disclose reviewed versus unreviewed coverage; category counts cover all stored events, not just the returned page. Check import-window outcomes for gaps or failures. Inspect individual snapshot raw payloads when relevant. Respect provider/native signal units, observation versus receipt timestamps and stale/outside-trip readings. Missing flags, false/zero keyword matches and sparse sampled speed do not prove no incident or aggressive driving. Speed above a numeric threshold is not evidence of exceeding the posted road limit. Do not invent events or infer causation. Explain unavailable/expired raw payloads and stored-attribution coverage limits from the summary.
 For individual guest trips and return-time questions, use search_trips first. A person's name such as Olive is a guest search, not just a fleet search. A numeric trip reference may be a reservation_id rather than trips.id; search_trips checks both. An exact reference in the current question supersedes names or guessed IDs in prior conversation. Never claim a trip is missing based only on list_fleet, a failed lookup or a summary. If several guest trips match, show their reservation numbers and dates or ask which trip. Report returned_at_local as the recorded return time in America/Chicago and mention the detection source when present. Never substitute scheduled_return_at, message receipt time or a check-in completion timestamp for actual return. If a trip exists but returned_at is null, say that the trip was found but the actual return time is not recorded; use schema/query tools for relevant further evidence if needed.
 For guest messages, FAQs and guest concerns, use search_guest_messages. You have access to locally stored guest messages through that tool, even if earlier assistant replies said otherwise. Start with null dates and empty terms when asked about all history; follow next_offset while lookup budget permits. State the number reviewed versus matched and date coverage; never describe a partial review as all messages. Reserve a round to answer with available evidence.
 Denmark supports owner-requested DIMO event-history imports AND automatic collision-only checks every 15 minutes for active DIMO vehicles. These collision checks supersede the earlier automatic-collection limitation; there is no automatic harsh-driving history import. For incident questions always check trip_telemetry view=incidents for stored provider events and recent manual import window statuses. Automatic collisions can appear even with no manual import history; absence of manual import history does not mean collision polling was never attempted. Distinguish never imported, failed/running imports, completed empty windows, and actual provider-reported events. Do not call an imported collision event a verified accident or driver-fault finding. AI tools cannot trigger imports; direct the user to Import DIMO incidents in Trip Ledger if needed.
@@ -48,7 +52,27 @@ ${executeTask ? 'When the current user explicitly asks to add a maintenance task
     const signal = AbortSignal.timeout(90000);
     let callsUsed = 0;
     let lookupsFailed = 0;
-    const tripLookup = /\b(return(?:ed|ing)?|drop[ -]?off|telemetry|impact|collision|aggressive|speeding|overspeed)\b|\bdriver.?s? behavio[u]?r\b|\b(?:trip|reservation)\s*(?:id|number|#)?\s*\d|^\d{1,18}$/i.test(question);
+    // The trip review must include imported event evidence even if the model
+    // would otherwise choose only snapshot/signal tools. Preserve normal
+    // authorization by going through the same read-only data tool executor.
+    if (body.telemetry_trip_id !== undefined) {
+      const args = { trip_id: body.telemetry_trip_id, view: 'incidents', before: null, provider: null, signal: null, snapshot_id: null };
+      callsUsed++;
+      let result;
+      try {
+        const data = await execute('trip_telemetry', args);
+        if (JSON.stringify(data).length > 120000) throw new Error('Result too large');
+        result = { id: `S${sources.length + 1}`, tool: 'trip_telemetry', filters: args, retrievedAt: now().toISOString(), data };
+        sources.push(result);
+      } catch {
+        lookupsFailed++;
+        result = { error: 'Imported incident/driving-event lookup failed. Imported events have NOT been reviewed. This is not an empty result; disclose the failure and do not claim no incidents.' };
+      }
+      input.push({ type: 'function_call', name: 'trip_telemetry', call_id: 'trip-review-incidents', arguments: JSON.stringify(args) },
+        { type: 'function_call_output', call_id: 'trip-review-incidents', output: JSON.stringify(result) });
+      input.push({ role: 'user', content: `Trip review context: internal trip ID ${body.telemetry_trip_id}. Review the supplied imported incident/driving-event evidence, including full-trip category counts and recent import-window outcomes, alongside fresh legacy telemetry lookups. The event page is partial when has_more is true; report reviewed versus total records and use next_cursor while budget permits. Do not skip imported events or equate missing manual import history with no automatic collision records.` });
+    }
+    const tripLookup = body.telemetry_trip_id === undefined && /\b(return(?:ed|ing)?|drop[ -]?off|telemetry|impact|collision|aggressive|speeding|overspeed)\b|\bdriver.?s? behavio[u]?r\b|\b(?:trip|reservation)\s*(?:id|number|#)?\s*\d|^\d{1,18}$/i.test(question);
     const selectedModel = model();
     for (let round = 0; round <= 6; round++) {
       const finalRound = round === 6 || callsUsed >= 8;

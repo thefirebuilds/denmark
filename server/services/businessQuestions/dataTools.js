@@ -12,7 +12,7 @@ const definitions = [
     view: { type: 'string', enum: ['summary', 'snapshots', 'signals', 'snapshot', 'incidents'], description: 'For accident or driving-event questions check incidents for imported provider events and import coverage. AI cannot trigger imports.' },
     before: { type: ['integer', 'null'], description: 'next_cursor from previous page, or null initially.' },
     provider: { type: ['string', 'null'], enum: ['bouncie', 'dimo', null] },
-    signal: { type: ['string', 'null'], description: 'Signal name substring, or null for all signals.' },
+    signal: { type: ['string', 'null'], description: 'Signal name substring for signals; exact event category for incidents (e.g. safety.collision or behavior.harshBraking); null for all.' },
     snapshot_id: { type: ['integer', 'null'], description: 'Snapshot ID for snapshot view; otherwise null.' },
   }),
   tool('search_trips', 'Find individual trips by guest name, vehicle nickname/name, or a trip/reservation number. A number the user calls a trip ID may actually be a Turo reservation ID: trip_reference checks BOTH. Search all dates by default. Use this for guest return times and follow-up reservation numbers, NOT list_fleet or trip_summary. Returns scheduled trip_end separately from actual returned_at; a missing returned_at is NOT proof of no trip or no return.', {
@@ -63,7 +63,7 @@ function validateArgs(name, args) {
       if (args[key] !== null && (!Number.isSafeInteger(args[key]) || args[key] <= 0)) throw new Error('Invalid telemetry record ID');
     }
     if (args.view === 'snapshot' && args.snapshot_id === null) throw new Error('Snapshot ID required');
-    if (args.view === 'incidents' && (args.provider !== null || args.signal !== null)) throw new Error('Unsupported incident filters');
+    if (args.view === 'incidents' && args.provider !== null) throw new Error('Unsupported incident filters');
     if ((['summary', 'snapshot'].includes(args.view) && (args.before !== null || args.provider !== null || args.signal !== null)) ||
         (args.view !== 'snapshot' && args.snapshot_id !== null) || (args.view === 'snapshots' && args.signal !== null)) throw new Error('Unsupported telemetry filters');
   }
@@ -109,7 +109,7 @@ function createDataTools({ pool, getMaintenanceSummary }) {
       if (name === 'trip_telemetry') {
         const review = require('../telemetry/tripTelemetryReview');
         if (args.view === 'summary') data = await review.reviewSummary(client, args.trip_id);
-        else if (args.view === 'incidents') data = await require('../telemetry/tripIncidents').incidentPage(client, args.trip_id, args.before);
+        else if (args.view === 'incidents') data = await require('../telemetry/tripIncidents').incidentPage(client, args.trip_id, args.before, args.signal);
         else if (args.view === 'snapshot') data = await review.reviewDetail(client, args.trip_id, args.snapshot_id);
         else data = await review.reviewPage(client, args.trip_id, {
           kind: args.view, before: args.before, provider: args.provider || '', signal: args.signal || '', limit: 50,

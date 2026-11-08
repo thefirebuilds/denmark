@@ -63,6 +63,23 @@ test('AI incidents view reads imported provider events and history without trigg
   assert.ok(calls.every(c => !/INSERT|UPDATE/.test(c.sql)));
 });
 
+test('AI can inspect an imported category without paging through unrelated driving events', async () => {
+  let selection;
+  const execute = createDataTools({ pool: { connect: async () => ({
+    query: async (sql, values) => {
+      if (sql.startsWith('SELECT id FROM trips')) return { rows: [{ id: 7 }] };
+      if (sql.includes('SELECT * FROM trip_telemetry_events')) { selection = { sql, values }; return { rows: [{ id: 3, event_name: 'safety.collision' }] }; }
+      if (sql.includes('GROUP BY event_name')) return { rows: [{ event_name: 'behavior.harshBraking', count: 1788 }, { event_name: 'safety.collision', count: 1 }] };
+      return { rows: [] };
+    }, release() {},
+  }) } });
+  const result = await execute('trip_telemetry', { ...args, view: 'incidents', signal: 'safety.collision' });
+  assert.deepEqual(selection.values, [7, null, 'safety.collision']);
+  assert.match(selection.sql, /event_name = \$3/);
+  assert.equal(result.data[0].event_name, 'safety.collision');
+  assert.equal(result.categories[0].count, 1788);
+});
+
 test('AI telemetry pages are bounded and trip scoped, with raw redaction and rollback on failure', async () => {
   const page = fixture(Array.from({ length: 51 }, (_, i) => ({ id: 100 - i, value_boolean: false })));
   const result = await page.execute('trip_telemetry', { ...args, view: 'signals', before: 200, provider: 'dimo', signal: 'impact' });
@@ -114,4 +131,54 @@ test('AI resolves reservation first, retrieves telemetry, and cites fresh eviden
   assert.deepEqual(executed, ['search_trips', 'trip_telemetry']);
   assert.equal(result.sources[1].tool, 'trip_telemetry');
   assert.match(result.answer, /90 mph/);
+});
+
+test('trip review always supplies imported incident evidence before AI can choose only legacy telemetry', async () => {
+  const calls = [];
+  let round = 0;
+  const answer = createQuestionAnswerer({ apiKey: () => 'test', execute: async (name, input) => {
+    calls.push({ name, input });
+    if (input.view === 'incidents') return {
+      categories: [{ event_name: 'behavior.harshBraking', count: 1788 }, { event_name: 'safety.collision', count: 1 }],
+      data: [{ id: 99, event_name: 'safety.collision', raw_event: { metadata: { impact: true } } }],
+      has_more: true, next_cursor: '50', imports: [{ status: 'failed', window_from: '2026-10-17', window_to: '2026-10-18' }],
+    };
+    return { snapshots: 500, max_sampled_speed_mph: 80 };
+  }, fetchImpl: async (_url, options) => {
+    const payload = JSON.parse(options.body);
+    const incidents = payload.input.find(i => i.type === 'function_call_output' && i.call_id === 'trip-review-incidents');
+    const source = JSON.parse(incidents.output);
+    assert.equal(source.filters.trip_id, 7);
+    assert.equal(source.filters.view, 'incidents');
+    assert.equal(source.data.categories[0].count, 1788);
+    assert.equal(source.data.imports[0].status, 'failed');
+    assert.match(payload.instructions, /imported category counts/i);
+    assert.ok(payload.input.some(i => i.role === 'user' && i.content.includes('report reviewed versus total records')));
+    if (++round === 1) {
+      assert.equal(calls[0].input.view, 'incidents');
+      return { ok: true, json: async () => ({ output: [{ type: 'function_call', name: 'trip_telemetry', arguments: JSON.stringify(args), call_id: 'summary' }] }) };
+    }
+    return { ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Imported events include a provider-reported collision and 1,788 harsh-braking records; review is partial and an import window failed. [S1] Sampled peak speed is 80 mph. [S2]' }] }] }) };
+  } });
+  const result = await answer({ question: 'Review driving behavior for this trip', telemetry_trip_id: 7 });
+  assert.deepEqual(calls.map(c => c.input.view), ['incidents', 'summary']);
+  assert.equal(result.sources[0].filters.view, 'incidents');
+  assert.equal(result.sources[1].filters.view, 'summary');
+  assert.match(result.answer, /partial/);
+});
+
+test('failed prefetched incident evidence is disclosed and invalid trip context is rejected', async () => {
+  let executions = 0;
+  const answer = createQuestionAnswerer({ apiKey: () => 'test', execute: async () => { executions++; throw Error('SECRET database error'); },
+    fetchImpl: async (_url, options) => {
+      assert.match(options.body, /Imported events have NOT been reviewed/);
+      assert.doesNotMatch(options.body, /SECRET/);
+      return { ok: true, json: async () => ({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'The imported event lookup failed.' }] }] }) };
+    } });
+  for (const id of [null, '7', -1, 0, 1.5]) await assert.rejects(answer({ question: 'Review driving behavior', telemetry_trip_id: id }), e => e.statusCode === 400);
+  assert.equal(executions, 0);
+  const result = await answer({ question: 'Review driving behavior', telemetry_trip_id: 7 });
+  assert.equal(executions, 1);
+  assert.equal(result.sources.length, 0);
+  assert.match(result.answer, /1 data lookup\(s\) failed/);
 });

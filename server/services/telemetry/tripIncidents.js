@@ -44,7 +44,8 @@ async function incidentPage(db, id, before = null, eventName = null) {
 }
 
 function normalizeEvents(events, from, to) {
-  if (!Array.isArray(events) || events.length > 2000) throw fail('DIMO event response is invalid or exceeds the import limit.', 502);
+  if (!Array.isArray(events)) throw fail('DIMO event response is invalid.', 502);
+  if (events.length > 2000) throw Object.assign(fail('DIMO returned too many events for one import window. No events from this window were saved.', 502), { code: 'DIMO_EVENT_WINDOW_TOO_LARGE' });
   const { redact } = require('./tripTelemetryReview');
   return events.map(event => {
     const at = new Date(event?.timestamp);
@@ -89,15 +90,34 @@ function createIncidentImporter({ pool, fetchEvents = (...args) => require('../d
       const lower = from == null ? start : new Date(from);
       if (!trip.trip_start || !trip.trip_end || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) ||
           !Number.isFinite(lower.getTime()) || lower < start || lower >= end) throw fail('Import requires a valid elapsed trip window.');
-      const upper = new Date(Math.min(lower.getTime() + 24 * 3600000, end.getTime()));
+      let upper = new Date(Math.min(lower.getTime() + 24 * 3600000, end.getTime()));
       const window = { from: lower.toISOString(), to: upper.toISOString() };
       const run = await pool.query(`INSERT INTO trip_telemetry_event_imports
         (trip_id, dimo_token_id, window_from, window_to, status) VALUES ($1,$2,$3,$4,'running') RETURNING id`,
       [trip.id, String(token), window.from, window.to]);
       attempt = run.rows[0].id;
       // No checked-out DB client or transaction while waiting for DIMO/auth.
-      const events = normalizeEvents(await fetchEvents(token, { ...window, signal }), window.from, window.to);
+      const deadline = AbortSignal.timeout(60000);
+      const lookupSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      let events, splits = 0;
+      while (true) {
+        if (signal?.aborted) throw fail('Incident import canceled. Retry to continue.', 499);
+        if (deadline.aborted) throw fail('DIMO import window timed out. Retry to continue.', 504);
+        try {
+          events = normalizeEvents(await fetchEvents(token, { ...window, signal: lookupSignal }), window.from, window.to);
+          break;
+        } catch (error) {
+          if (error.code !== 'DIMO_EVENT_WINDOW_TOO_LARGE' || !error.safeIncidentError) throw error;
+          const duration = upper.getTime() - lower.getTime();
+          if (duration <= 60000 || splits >= 11) throw fail('DIMO returned too many events or too much data even for a one-minute window. No records from this window were saved; contact support to review this provider response.', 502);
+          upper = new Date(lower.getTime() + Math.max(60000, Math.floor(duration / 2)));
+          window.to = upper.toISOString(); splits++;
+          // History must show the interval actually saved, not the rejected day.
+          await pool.query('UPDATE trip_telemetry_event_imports SET window_to=$2 WHERE id=$1', [attempt, window.to]);
+        }
+      }
       if (signal?.aborted) throw fail('Incident import canceled. Retry to continue.', 499);
+      if (deadline.aborted) throw fail('DIMO import window timed out. Retry to continue.', 504);
       const client = await pool.connect();
       let inserted = 0;
       try {
@@ -118,7 +138,7 @@ function createIncidentImporter({ pool, fetchEvents = (...args) => require('../d
         await client.query('COMMIT');
       } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
       finally { client.release(); }
-      return { ...window, received: events.length, inserted, complete: upper >= end,
+      return { ...window, received: events.length, inserted, window_splits: splits, complete: upper >= end,
         next_from: upper < end ? upper.toISOString() : null,
         note: 'Imported provider-reported events only. No events returned does not establish no incident.' };
     } catch (error) {

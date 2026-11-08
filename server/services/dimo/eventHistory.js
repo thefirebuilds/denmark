@@ -4,6 +4,7 @@ const QUERY = `query TripEvents($tokenId: Int!, $from: Time!, $to: Time!) {
   events(tokenId: $tokenId, from: $from, to: $to) { timestamp name source durationNs metadata }
 }`;
 const problem = (message, statusCode = 502) => Object.assign(new Error(message), { statusCode, safeIncidentError: true });
+const oversized = message => Object.assign(problem(message), { code: 'DIMO_EVENT_WINDOW_TOO_LARGE' });
 
 function abortable(work, signal) {
   return new Promise((resolve, reject) => {
@@ -42,7 +43,7 @@ async function fetchDimoEvents(tokenId, { from, to, signal, collisionOnly = fals
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 2 * 1024 * 1024) throw problem('DIMO event response exceeded the safe import size. No events from this window were saved.');
+      if (size > 2 * 1024 * 1024) throw oversized('DIMO event response exceeded the safe import size. No events from this window were saved.');
       chunks.push(Buffer.from(value));
     }
   } catch (error) { await reader.cancel().catch(() => {}); throw error; }
@@ -57,7 +58,7 @@ async function fetchDimoEvents(tokenId, { from, to, signal, collisionOnly = fals
       : 'DIMO could not complete the event-history query. Events may be unavailable; this is not an empty result.', denied ? 403 : 502);
   }
   if (!Array.isArray(result.data?.events)) throw problem('DIMO event history was unavailable, not an empty result.');
-  if (result.data.events.length > 2000) throw problem('DIMO returned too many events for one import window. No events from this window were saved.');
+  if (result.data.events.length > 2000) throw oversized('DIMO returned too many events for one import window. No events from this window were saved.');
   return result.data.events;
 }
 module.exports = { fetchDimoEvents, QUERY };

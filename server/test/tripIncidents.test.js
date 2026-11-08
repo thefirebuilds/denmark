@@ -167,3 +167,67 @@ test('incident category filters reject invalid values before querying', async ()
     await assert.rejects(incidentPage({ query: () => assert.fail('must validate before query') }, 7, null, category), e => e.statusCode === 400);
   }
 });
+
+test('dense driving-event days split automatically and continuation covers the whole range without duplicate boundaries', async () => {
+  const end = '2026-11-02T00:00:00.000Z';
+  const f = fixture({ rows: [{ ...trip, trip_end: end }] });
+  const all = Array.from({ length: 2401 }, (_, i) => ({ ...event, timestamp: new Date(new Date(trip.trip_start).getTime() + i * 36000).toISOString() }));
+  const requests = [];
+  const importer = createIncidentImporter({ pool: f.pool, now: () => new Date('2026-11-05'), fetchEvents: async (_token, window) => {
+    assert.equal(f.isCheckedOut(), false);
+    requests.push(window);
+    return all.filter(e => e.timestamp >= window.from && e.timestamp <= window.to);
+  } });
+  const first = await importer(7);
+  assert.equal(first.window_splits, 1);
+  assert.equal(first.to, '2026-11-01T12:00:00.000Z');
+  assert.equal(first.received, 1201);
+  assert.equal(first.inserted, 1201);
+  assert.equal(first.complete, false);
+  assert.equal(first.next_from, first.to);
+  const second = await importer(7, { from: first.next_from });
+  assert.equal(second.from, first.to);
+  assert.equal(second.to, end);
+  assert.equal(second.received, 1201);
+  assert.equal(second.inserted, 1200);
+  assert.equal(second.complete, true);
+  assert.equal(second.next_from, null);
+  assert.equal(requests.length, 3);
+  assert.ok(f.calls.some(c => c.sql.includes('SET window_to=$2') && c.values[1] === first.to));
+});
+
+test('byte-limit responses split, but permission failures do not retry', async () => {
+  const f = fixture(); let calls = 0;
+  const importer = createIncidentImporter({ pool: f.pool, fetchEvents: async (_token, window) => {
+    calls++;
+    if (new Date(window.to) - new Date(window.from) > 6 * 3600000) throw Object.assign(Error('too large'), { code: 'DIMO_EVENT_WINDOW_TOO_LARGE', safeIncidentError: true });
+    return [];
+  } });
+  const result = await importer(7);
+  assert.equal(result.window_splits, 2);
+  assert.equal(result.to, '2026-11-01T06:00:00.000Z');
+  assert.equal(calls, 3);
+  let deniedCalls = 0;
+  const denied = createIncidentImporter({ pool: f.pool, fetchEvents: async () => {
+    deniedCalls++; throw Object.assign(Error('permission denied'), { statusCode: 403, safeIncidentError: true });
+  } });
+  await assert.rejects(denied(7), e => e.statusCode === 403);
+  assert.equal(deniedCalls, 1);
+});
+
+test('pathological dense imports stop at one minute without truncating or saving a false success', async () => {
+  const f = fixture(); let calls = 0;
+  const importer = createIncidentImporter({ pool: f.pool, fetchEvents: async () => {
+    calls++; throw Object.assign(Error('too large'), { code: 'DIMO_EVENT_WINDOW_TOO_LARGE', safeIncidentError: true });
+  } });
+  await assert.rejects(importer(7), /one-minute window/);
+  assert.equal(calls, 12);
+  assert.equal(f.calls.some(c => c.sql === 'BEGIN' || c.sql.includes("status='complete'")), false);
+  assert.equal(f.calls.filter(c => c.sql.includes("status='failed'")).length, 1);
+});
+
+test('provider response limits expose a typed split signal instead of requiring error-text matching', async () => {
+  for (const response of [new Response(JSON.stringify({ data: { events: Array.from({ length: 2001 }, () => event) } })), new Response('x'.repeat(2 * 1024 * 1024 + 1))]) {
+    await assert.rejects(fetchDimoEvents(42, { ...range, auth: async () => 'test', fetchImpl: async () => response }), e => e.code === 'DIMO_EVENT_WINDOW_TOO_LARGE' && e.safeIncidentError === true);
+  }
+});

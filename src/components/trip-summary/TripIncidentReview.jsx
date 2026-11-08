@@ -116,7 +116,7 @@ export default function TripIncidentReview({ tripId }) {
       {page.categories?.map(category => <EventCategory key={category.event_name} category={category} base={base} version={version} />)}
       <details><summary>Recent import history ({page.imports.length})</summary>
         {!page.imports.length && <p>No DIMO event import has been requested for this trip.</p>}
-        {page.imports.map(run => <p key={run.id} className="trip-telemetry-hint">{time(run.window_from)} to {time(run.window_to)}: {run.status}{run.status === 'complete' ? `; ${run.received_count} returned, ${run.inserted_count} new` : ''}{run.error_message ? `; ${run.error_message}` : ''}. Requested {time(run.requested_at)}.</p>)}
+        {page.imports.map(run => <p key={run.id} className="trip-telemetry-hint">{time(run.window_from)} to {time(run.window_to)}: {run.status}{run.status === 'complete' ? `; ${run.received_count} returned, ${run.inserted_count} new` : ''}{run.error_message ? `; ${run.error_message.replace(/[.\s]+$/, '')}` : ''}. Requested {time(run.requested_at)}.</p>)}
       </details>
     </>}
   </section>;

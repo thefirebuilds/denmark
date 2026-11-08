@@ -7,7 +7,7 @@ const examples = ['How much did I spend on tires this year?', 'What maintenance 
 const labels: Record<string, string> = { database_schema: 'Database schema', database_query: 'Database query', list_fleet: 'Fleet', search_expenses: 'Expenses', vehicle_maintenance: 'Maintenance', trip_summary: 'Trips', search_trips: 'Trip records and return times', search_guest_messages: 'Guest messages', create_maintenance_task: 'Created maintenance to-do' };
 const MINIMIZED_KEY = 'denmark.businessQuestions.minimized';
 
-export default function BusinessQuestions({ initialQuestion = '', embedded = false }: { initialQuestion?: string; embedded?: boolean }) {
+export default function BusinessQuestions({ initialQuestion = '', embedded = false, telemetryTripId }: { initialQuestion?: string; embedded?: boolean; telemetryTripId?: number }) {
   const id = useId();
   const [minimized, setMinimized] = useState(() => {
     try { return embedded ? false : localStorage.getItem(MINIMIZED_KEY) === 'true'; }
@@ -36,7 +36,7 @@ export default function BusinessQuestions({ initialQuestion = '', embedded = fal
     try {
       const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/business-questions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-        body: JSON.stringify({ question: submitted, history: answers.slice(-3).flatMap((answer) => [
+        body: JSON.stringify({ question: submitted, telemetry_trip_id: telemetryTripId, history: answers.slice(-3).flatMap((answer) => [
           { role: 'user', content: answer.question }, { role: 'assistant', content: answer.answer },
         ]) }),
       });
