@@ -39,7 +39,11 @@ const {
 
 const router = express.Router();
 const { requirePermission } = require('../auth/middleware');
+const { isAuthEnforced } = require('../auth/config');
+const { hasPermission } = require('../auth/permissions');
 const telemetryReview = require('../services/telemetry/tripTelemetryReview');
+const { createIncidentImporter, incidentPage } = require('../services/telemetry/tripIncidents');
+const importIncidents = createIncidentImporter({ pool });
 function reviewHandler(work) {
   return async (req, res) => {
     try { res.set('Cache-Control', 'no-store'); res.json(await work(req)); }
@@ -47,6 +51,22 @@ function reviewHandler(work) {
   };
 }
 router.get('/:id/telemetry-review/summary', requirePermission('telemetry.read'), reviewHandler(req => telemetryReview.reviewSummary(pool, req.params.id)));
+router.get('/:id/telemetry-review/incidents', requirePermission('telemetry.read'), reviewHandler(async req => ({
+  ...await incidentPage(pool, req.params.id, req.query.before || null),
+  can_import: !isAuthEnforced() || (req.auth?.isActive === true && hasPermission(req.auth.role, 'trips.write')),
+})));
+router.post('/:id/telemetry-review/incidents/import', requirePermission('trips.read'), requirePermission('trips.write'), requirePermission('telemetry.read'), async (req, res) => {
+  const controller = new AbortController();
+  const close = () => controller.abort();
+  res.on('close', close);
+  try {
+    if (req.body?.from != null && typeof req.body.from !== 'string') return res.status(400).json({ error: 'Invalid import start time' });
+    res.set('Cache-Control', 'no-store');
+    res.json(await importIncidents(req.params.id, { from: req.body?.from ?? null, signal: controller.signal }));
+  } catch (error) {
+    if (!controller.signal.aborted) res.status(error.statusCode || 500).json({ error: error.safeIncidentError ? error.message : 'Could not import DIMO incidents' });
+  } finally { res.off('close', close); }
+});
 router.get('/:id/telemetry-review/export', requirePermission('telemetry.read'), async (req, res) => {
   const controller = new AbortController();
   const close = () => controller.abort();

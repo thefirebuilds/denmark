@@ -43,6 +43,26 @@ test('AI telemetry summary reuses the read-only client and returns coverage cave
   assert.equal(f.released(), true);
 });
 
+test('AI incidents view reads imported provider events and history without triggering provider work', async () => {
+  const calls = [];
+  const execute = createDataTools({ pool: { connect: async () => ({
+    query: async (sql, values) => {
+      calls.push({ sql, values });
+      if (sql.startsWith('SELECT id FROM trips')) return { rows: [{ id: 7 }] };
+      if (sql.includes('FROM trip_telemetry_events')) return { rows: [{ id: 9, event_name: 'safety.collision', raw_event: { metadata: { impact: false } } }] };
+      if (sql.includes('FROM trip_telemetry_event_imports')) return { rows: [{ status: 'complete', received_count: 1 }] };
+      return { rows: [] };
+    }, release() {},
+  }) } });
+  const result = await execute('trip_telemetry', { ...args, view: 'incidents' });
+  assert.equal(result.data[0].event_name, 'safety.collision');
+  assert.equal(result.imports[0].status, 'complete');
+  assert.match(result.note, /not independently verified/);
+  assert.equal(calls[0].sql, 'BEGIN READ ONLY');
+  assert.equal(calls.at(-1).sql, 'COMMIT');
+  assert.ok(calls.every(c => !/INSERT|UPDATE/.test(c.sql)));
+});
+
 test('AI telemetry pages are bounded and trip scoped, with raw redaction and rollback on failure', async () => {
   const page = fixture(Array.from({ length: 51 }, (_, i) => ({ id: 100 - i, value_boolean: false })));
   const result = await page.execute('trip_telemetry', { ...args, view: 'signals', before: 200, provider: 'dimo', signal: 'impact' });

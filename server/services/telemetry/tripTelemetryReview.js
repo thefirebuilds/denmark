@@ -51,7 +51,7 @@ async function reviewSummary(db, id) {
     ARRAY_AGG(DISTINCT s.service_name) AS providers
     FROM vehicle_telemetry_snapshots s JOIN trips t ON t.id = s.trip_id WHERE s.trip_id = $1`, [trip.id]);
   return { trip, ...rows[0], providers: (rows[0]?.providers || []).filter(Boolean),
-    collection: 'Periodic vehicle snapshots and stored signal values. No dedicated impact/harsh-driving event feed is currently collected.',
+    collection: 'Periodic vehicle snapshots and stored signal values. No dedicated impact/harsh-driving event feed is currently collected automatically. DIMO event history can be imported on request; use the incidents view and its import history to check coverage.',
     association: 'Stored trip attribution only; unassigned telemetry is not included. A provider reading can predate its snapshot or this trip.',
     raw_retention: { legacy_days: getRawPayloadRetentionDays(), archive_days: getArchiveRetentionDays() },
     cautions: ['No recorded impact flag does not establish that no incident occurred.', 'Samples can repeat stale readings. Speed thresholds are not posted-road-limit determinations.'] };
@@ -114,17 +114,22 @@ async function* reviewExport(db, id, { signal, now = () => new Date() } = {}) {
   const { rows: [bounds] } = await db.query(`SELECT
     (SELECT MAX(id) FROM vehicle_telemetry_snapshots WHERE trip_id = $1) AS snapshot_max,
     (SELECT MAX(v.id) FROM vehicle_telemetry_signal_values v
-      JOIN vehicle_telemetry_snapshots s ON s.id = v.snapshot_id WHERE s.trip_id = $1) AS signal_max`, [summary.trip.id]);
-  const counts = { snapshots: 0, signals: 0 };
+      JOIN vehicle_telemetry_snapshots s ON s.id = v.snapshot_id WHERE s.trip_id = $1) AS signal_max,
+    (SELECT MAX(id) FROM trip_telemetry_events WHERE trip_id = $1) AS incident_max`, [summary.trip.id]);
+  const incidentHistory = await db.query(`SELECT window_from, window_to, status, received_count, inserted_count,
+    error_message, requested_at, finished_at FROM trip_telemetry_event_imports
+    WHERE trip_id = $1 ORDER BY id DESC LIMIT 20`, [summary.trip.id]);
+  const counts = { snapshots: 0, signals: 0, incidents: 0 };
   yield JSON.stringify({ exported_at: now().toISOString(), scope: 'All stored telemetry attributed to this trip; screen filters are not applied.',
     consistency: 'Record IDs are capped at export start. This is not a transactional snapshot; concurrent edits or retention may affect records during export.',
-    summary, record_bounds: bounds, units: 'Normalized snapshot speed is mph. Signal values retain stored/provider units.',
+    summary, incident_import_history: incidentHistory.rows, incident_note: 'Provider-reported events are not independently verified accidents. Recent import history may not cover all trip windows.',
+    record_bounds: bounds, units: 'Normalized snapshot speed is mph. Signal values retain stored/provider units.',
     timestamps: 'Raw snapshot and signal fields use stored conventions: captured_at is UTC; DIMO signal wall times are America/Chicago, Bouncie signal wall times are UTC.',
     raw_payloads: 'Retained archive payload preferred, legacy inline payload fallback. Null means not retained or pruned. Authentication fields are redacted.' }).slice(0, -1);
-  for (const kind of ['snapshots', 'signals']) {
+  for (const kind of ['snapshots', 'signals', 'incidents']) {
     yield `,"${kind}":[`;
     let before = null, first = true;
-    const max = kind === 'snapshots' ? bounds.snapshot_max : bounds.signal_max;
+    const max = kind === 'snapshots' ? bounds.snapshot_max : kind === 'signals' ? bounds.signal_max : bounds.incident_max;
     while (max != null && !signal?.aborted) {
       const snapshots = kind === 'snapshots';
       const { rows } = await db.query(snapshots ? `SELECT s.id,
@@ -133,7 +138,8 @@ async function* reviewExport(db, id, { signal, now = () => new Date() } = {}) {
         FROM vehicle_telemetry_snapshots s
         LEFT JOIN vehicle_telemetry_raw_payloads raw ON raw.snapshot_id = s.id
         WHERE s.trip_id = $1 AND s.id <= $2 AND ($3::bigint IS NULL OR s.id < $3)
-        ORDER BY s.id DESC LIMIT 50` : `SELECT v.* FROM vehicle_telemetry_signal_values v
+        ORDER BY s.id DESC LIMIT 50` : kind === 'incidents' ? `SELECT * FROM trip_telemetry_events
+        WHERE trip_id = $1 AND id <= $2 AND ($3::bigint IS NULL OR id < $3) ORDER BY id DESC LIMIT 100` : `SELECT v.* FROM vehicle_telemetry_signal_values v
         JOIN vehicle_telemetry_snapshots s ON s.id = v.snapshot_id
         WHERE s.trip_id = $1 AND v.id <= $2 AND ($3::bigint IS NULL OR v.id < $3)
         ORDER BY v.id DESC LIMIT 100`, [summary.trip.id, max, before]);

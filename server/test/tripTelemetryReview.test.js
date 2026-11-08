@@ -9,7 +9,12 @@ function exportFixture() {
   const db = { query: async (sql, values) => {
     calls.push({ sql, values });
     if (sql.startsWith('SELECT id,')) return { rows: [trip] };
-    if (sql.includes('AS snapshot_max')) return { rows: [{ snapshot_max: 55, signal_max: 105 }] };
+    if (sql.includes('AS snapshot_max')) return { rows: [{ snapshot_max: 55, signal_max: 105, incident_max: 3 }] };
+    if (sql.includes('FROM trip_telemetry_event_imports')) return { rows: [{ status: 'complete' }] };
+    if (sql.includes('FROM trip_telemetry_events')) {
+      assert.deepEqual(values, [7, 3, null]);
+      return { rows: [{ id: 3, event_name: 'safety.collision', raw_event: { metadata: { access_token: 'SECRET' } } }] };
+    }
     if (sql.includes('COUNT(*)::int')) return { rows: [{ snapshots: 55, providers: ['dimo'] }] };
     const snapshot = sql.includes('to_jsonb(s)');
     assert.match(sql, /s.trip_id = \$1/);
@@ -32,13 +37,15 @@ test('full export streams every snapshot, raw payload and signal across bounded 
   assert.equal(result.signals.length, 105);
   assert.equal(result.snapshots.at(-1).id, 1);
   assert.equal(result.signals.at(-1).id, 1);
-  assert.deepEqual(result.exported_counts, { snapshots: 55, signals: 105 });
+  assert.deepEqual(result.exported_counts, { snapshots: 55, signals: 105, incidents: 1 });
+  assert.equal(result.incidents[0].event_name, 'safety.collision');
+  assert.equal(result.incident_import_history[0].status, 'complete');
   assert.equal(result.complete, true);
   assert.equal(result.snapshots[0].raw_payload.impact, false);
   assert.equal(result.snapshots[0].raw_payload.access_token, '[redacted]');
   assert.doesNotMatch(text, /SECRET/);
   assert.equal(f.calls.filter(c => c.sql.includes('LIMIT 50')).length, 2);
-  assert.equal(f.calls.filter(c => c.sql.includes('LIMIT 100')).length, 2);
+  assert.equal(f.calls.filter(c => c.sql.includes('LIMIT 100')).length, 3);
 });
 
 test('full export stops fetching on disconnect and does not mark failed downloads complete', async () => {

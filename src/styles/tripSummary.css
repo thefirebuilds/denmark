@@ -1478,6 +1478,9 @@ body.drawer-open {
 .trip-telemetry-scroll pre { max-width: 280px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .trip-telemetry-warning { display: block; color: var(--amber); font-size: 0.7rem; }
 .trip-telemetry-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.77rem; }
+.trip-telemetry-incidents { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.trip-telemetry-incidents pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; font-size: 0.75rem; }
+.trip-telemetry-incidents summary { cursor: pointer; padding: 6px 0; overflow-wrap: anywhere; }
 .trip-telemetry-detail { min-width: 0; border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 10px; font-size: 0.8rem; }
 .trip-telemetry-detail h4 { margin: 0; }
 .trip-telemetry-detail pre { max-height: 350px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 0.73rem; }

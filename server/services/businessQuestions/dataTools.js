@@ -9,7 +9,7 @@ function tool(name, description, properties) {
 const definitions = [
   tool('trip_telemetry', 'Review stored trip telemetry using the same data as Trip Ledger. First resolve the internal trip_id with search_trips; a reservation number is not the internal ID. Start with summary for coverage and caveats, then page snapshots or signals with next_cursor. Use snapshot for redacted raw payload and keyword matches. No live provider request. Missing impact flags do not establish no incident; keyword matches are not verified events. Signal values retain provider units.', {
     trip_id: { type: 'integer', description: 'Internal trip_id returned by search_trips.' },
-    view: { type: 'string', enum: ['summary', 'snapshots', 'signals', 'snapshot'] },
+    view: { type: 'string', enum: ['summary', 'snapshots', 'signals', 'snapshot', 'incidents'], description: 'For accident or driving-event questions check incidents for imported provider events and import coverage. AI cannot trigger imports.' },
     before: { type: ['integer', 'null'], description: 'next_cursor from previous page, or null initially.' },
     provider: { type: ['string', 'null'], enum: ['bouncie', 'dimo', null] },
     signal: { type: ['string', 'null'], description: 'Signal name substring, or null for all signals.' },
@@ -56,13 +56,14 @@ function validateArgs(name, args) {
   if (Object.keys(args).some((key) => !keys.includes(key)) || keys.some((key) => !(key in args))) throw new Error('Invalid data request fields');
   if (name === 'trip_telemetry') {
     if (!Number.isSafeInteger(args.trip_id) || args.trip_id <= 0 ||
-        !['summary', 'snapshots', 'signals', 'snapshot'].includes(args.view) ||
+        !['summary', 'snapshots', 'signals', 'snapshot', 'incidents'].includes(args.view) ||
         ![null, 'bouncie', 'dimo'].includes(args.provider) ||
         (args.signal !== null && (typeof args.signal !== 'string' || args.signal.length > 100))) throw new Error('Invalid telemetry request');
     for (const key of ['before', 'snapshot_id']) {
       if (args[key] !== null && (!Number.isSafeInteger(args[key]) || args[key] <= 0)) throw new Error('Invalid telemetry record ID');
     }
     if (args.view === 'snapshot' && args.snapshot_id === null) throw new Error('Snapshot ID required');
+    if (args.view === 'incidents' && (args.provider !== null || args.signal !== null)) throw new Error('Unsupported incident filters');
     if ((['summary', 'snapshot'].includes(args.view) && (args.before !== null || args.provider !== null || args.signal !== null)) ||
         (args.view !== 'snapshot' && args.snapshot_id !== null) || (args.view === 'snapshots' && args.signal !== null)) throw new Error('Unsupported telemetry filters');
   }
@@ -108,6 +109,7 @@ function createDataTools({ pool, getMaintenanceSummary }) {
       if (name === 'trip_telemetry') {
         const review = require('../telemetry/tripTelemetryReview');
         if (args.view === 'summary') data = await review.reviewSummary(client, args.trip_id);
+        else if (args.view === 'incidents') data = await require('../telemetry/tripIncidents').incidentPage(client, args.trip_id, args.before);
         else if (args.view === 'snapshot') data = await review.reviewDetail(client, args.trip_id, args.snapshot_id);
         else data = await review.reviewPage(client, args.trip_id, {
           kind: args.view, before: args.before, provider: args.provider || '', signal: args.signal || '', limit: 50,

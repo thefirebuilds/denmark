@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import BusinessQuestions from '../BusinessQuestions';
+import TripIncidentReview from './TripIncidentReview';
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 const initialFilters = { kind: 'snapshots', provider: '', from: '', to: '', minSpeed: '', signal: '' };
 const number = (value, unit = '') => value == null || !Number.isFinite(Number(value)) ? '--' : `${Number(value).toLocaleString('en-US', { maximumFractionDigits: 2 })}${unit}`;
@@ -76,9 +77,10 @@ export default function TripTelemetryReview({ tripId }) {
     </div>
     {open && <>
       <div className="trip-telemetry-notice">
-        <strong>Impact and aggressive-driving coverage is limited.</strong> Denmark currently collects periodic snapshots and signal values, not a dedicated impact/harsh-driving event feed. Missing flags do not establish that no incident occurred. Sparse samples cannot reconstruct a collision, hard braking, or continuous speed.
+        <strong>Impact and aggressive-driving coverage is limited.</strong> Automatic collection includes periodic snapshots and signal values. Import DIMO event history below when needed. Missing flags or events do not establish that no incident occurred. Sparse samples cannot reconstruct a collision, hard braking, or continuous speed.
       </div>
-      <p className="trip-telemetry-hint"><a className="message-action" href={`${API_BASE}${base}/export`} download={`trip-${tripId}-all-telemetry.json`}>Export all telemetry (JSON)</a> All stored snapshots, signal values and retained raw payloads for this trip, regardless of page or filters.</p>
+      <p className="trip-telemetry-hint"><a className="message-action" href={`${API_BASE}${base}/export`} download={`trip-${tripId}-all-telemetry.json`}>Export all telemetry (JSON)</a> All stored snapshots, signal values, imported DIMO events and retained raw payloads for this trip, regardless of page or filters.</p>
+      <TripIncidentReview key={tripId} tripId={tripId} />
       <details className="trip-telemetry-ai">
         <summary>Ask AI to review possible incident or driving behavior</summary>
         <BusinessQuestions key={`${tripId}-${snapshotId || 'trip'}`} embedded initialQuestion={`Review the stored telemetry JSON for internal trip ID ${tripId}${snapshotId ? `, focusing on snapshot ID ${snapshotId}` : ''}. Does anything indicate a possible accident or inappropriate driving behavior, such as impact/collision flags, hard braking, rapid acceleration, or high speed? Use the trip telemetry tools to inspect the available records and raw payloads. Cite specific fields and observation times in America/Chicago. Separate recorded facts from possible interpretations; do not infer an accident or aggressive driving from sparse samples. Check for stale or outside-trip readings and explain missing data and partial coverage. Missing flags do not prove no incident occurred, and high speed alone does not establish a posted speed-limit violation.`} />
