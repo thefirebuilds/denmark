@@ -3087,6 +3087,114 @@ export default function FleetMaintenancePanel({
                       </div>
                     </div>
                   )}
+
+                {showGuestFacingPresentment ? (
+                  <div className="fleet-maintenance-registration-section">
+                    <div className="fleet-maintenance-meta-row">
+                      <span className="fleet-maintenance-meta-label">
+                        Lockbox PIN
+                      </span>
+
+                      {!editingLockboxPin ? (
+                        <button
+                          type="button"
+                          className="fleet-maintenance-inline-action fleet-maintenance-action-button"
+                          onClick={() => setEditingLockboxPin(true)}
+                          disabled={!selectedFleetVehicle?.vin}
+                        >
+                          Edit
+                        </button>
+                      ) : null}
+                    </div>
+
+                  {!editingLockboxPin ? (
+                    <div className="fleet-maintenance-registration-readonly">
+                      <span className="fleet-maintenance-meta-value">
+                        {vehicle.lockbox_pin || "Not set"}
+                      </span>
+                      <span className="fleet-maintenance-registration-subvalue">
+                        {vehicle.lockbox_pin_public === false
+                          ? "Hidden from guest printout"
+                          : "Published on guest printout"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="fleet-maintenance-registration-editor">
+                      <div className="fleet-maintenance-registration-grid">
+                        <label>
+                          <span>PIN</span>
+                          <input
+                            value={lockboxPinForm}
+                            onChange={(e) => setLockboxPinForm(e.target.value)}
+                            placeholder="1234"
+                            disabled={savingLockboxPin}
+                          />
+                        </label>
+                        <div className="fleet-maintenance-form-field">
+                          <span>Guest printout</span>
+                          <label className="fleet-maintenance-checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={lockboxPinPublicForm}
+                              onChange={(e) =>
+                                setLockboxPinPublicForm(e.target.checked)
+                              }
+                              disabled={savingLockboxPin}
+                            />
+                            <span>Publish PIN</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {lockboxPinError ? (
+                        <div className="fleet-maintenance-note fleet-maintenance-note--error">
+                          {lockboxPinError}
+                        </div>
+                      ) : null}
+
+                      <div className="fleet-maintenance-registration-actions">
+                        <button
+                          type="button"
+                          className="fleet-maintenance-action-button"
+                          onClick={() => {
+                            setLockboxPinForm(vehicle.lockbox_pin || "");
+                            setLockboxPinPublicForm(
+                              vehicle.lockbox_pin_public !== false
+                            );
+                            setEditingLockboxPin(false);
+                            setLockboxPinError("");
+                          }}
+                          disabled={savingLockboxPin}
+                        >
+                          Cancel
+                        </button>
+
+                        <button
+                          type="button"
+                          className="fleet-maintenance-action-button fleet-maintenance-action-button--primary"
+                          onClick={handleSaveLockboxPin}
+                          disabled={savingLockboxPin}
+                        >
+                          {savingLockboxPin ? "Savingâ€¦" : "Save"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  </div>
+                ) : null}
+
+                <div className="fleet-maintenance-registration-section">
+                  <span className="fleet-maintenance-meta-label">
+                    Recall & body
+                  </span>
+                  <span className="fleet-maintenance-meta-value">
+                    No open recalls
+                  </span>
+                  <span className="fleet-maintenance-registration-subvalue">
+                    Body: {vehicle.body_condition || "unknown"}.{" "}
+                    {formatCountLabel(vehicle.body_note_count, "note")}
+                  </span>
+                </div>
                 </div>
 
                 <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
@@ -3204,113 +3312,6 @@ export default function FleetMaintenancePanel({
                   ) : null}
                 </div>
 
-                {showGuestFacingPresentment ? (
-                  <div className="fleet-maintenance-meta-item fleet-maintenance-meta-item--registration">
-                    <div className="fleet-maintenance-meta-row">
-                      <span className="fleet-maintenance-meta-label">
-                        Lockbox PIN
-                      </span>
-
-                      {!editingLockboxPin ? (
-                        <button
-                          type="button"
-                          className="fleet-maintenance-inline-action fleet-maintenance-action-button"
-                          onClick={() => setEditingLockboxPin(true)}
-                          disabled={!selectedFleetVehicle?.vin}
-                        >
-                          Edit
-                        </button>
-                      ) : null}
-                    </div>
-
-                  {!editingLockboxPin ? (
-                    <div className="fleet-maintenance-registration-readonly">
-                      <span className="fleet-maintenance-meta-value">
-                        {vehicle.lockbox_pin || "Not set"}
-                      </span>
-                      <span className="fleet-maintenance-registration-subvalue">
-                        {vehicle.lockbox_pin_public === false
-                          ? "Hidden from guest printout"
-                          : "Published on guest printout"}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="fleet-maintenance-registration-editor">
-                      <div className="fleet-maintenance-registration-grid">
-                        <label>
-                          <span>PIN</span>
-                          <input
-                            value={lockboxPinForm}
-                            onChange={(e) => setLockboxPinForm(e.target.value)}
-                            placeholder="1234"
-                            disabled={savingLockboxPin}
-                          />
-                        </label>
-                        <div className="fleet-maintenance-form-field">
-                          <span>Guest printout</span>
-                          <label className="fleet-maintenance-checkbox-row">
-                            <input
-                              type="checkbox"
-                              checked={lockboxPinPublicForm}
-                              onChange={(e) =>
-                                setLockboxPinPublicForm(e.target.checked)
-                              }
-                              disabled={savingLockboxPin}
-                            />
-                            <span>Publish PIN</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {lockboxPinError ? (
-                        <div className="fleet-maintenance-note fleet-maintenance-note--error">
-                          {lockboxPinError}
-                        </div>
-                      ) : null}
-
-                      <div className="fleet-maintenance-registration-actions">
-                        <button
-                          type="button"
-                          className="fleet-maintenance-action-button"
-                          onClick={() => {
-                            setLockboxPinForm(vehicle.lockbox_pin || "");
-                            setLockboxPinPublicForm(
-                              vehicle.lockbox_pin_public !== false
-                            );
-                            setEditingLockboxPin(false);
-                            setLockboxPinError("");
-                          }}
-                          disabled={savingLockboxPin}
-                        >
-                          Cancel
-                        </button>
-
-                        <button
-                          type="button"
-                          className="fleet-maintenance-action-button fleet-maintenance-action-button--primary"
-                          onClick={handleSaveLockboxPin}
-                          disabled={savingLockboxPin}
-                        >
-                          {savingLockboxPin ? "Savingâ€¦" : "Save"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  </div>
-                ) : null}
-
-                <div className="fleet-maintenance-meta-item">
-                  <span className="fleet-maintenance-meta-label">
-                    Recall & body
-                  </span>
-                  <span className="fleet-maintenance-meta-value">
-                    No open recalls
-                  </span>
-                  <span className="fleet-maintenance-registration-subvalue">
-                    Body: {vehicle.body_condition || "unknown"}.{" "}
-                    {formatCountLabel(vehicle.body_note_count, "note")}
-                  </span>
-                </div>
                 <div
                   className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
                     vehicle.telematics?.tone || "unknown"

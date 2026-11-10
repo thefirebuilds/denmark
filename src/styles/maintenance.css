@@ -817,6 +817,25 @@ button.fleet-maintenance-meta-item:focus-visible {
   gap: 6px;
 }
 
+.maintenance-task-history-group > summary {
+  cursor: pointer;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.maintenance-task-history-group > summary small {
+  margin-left: 8px;
+  color: var(--muted);
+  font-weight: normal;
+}
+
+.maintenance-task-history-group[open] > .maintenance-task-history-list {
+  margin: 6px 0 8px 12px;
+}
+
 .maintenance-task-history-item {
   min-height: 46px;
   padding: 8px 10px;
@@ -1568,6 +1587,15 @@ select.drawer-input option {
 
 .fleet-maintenance-meta-item--registration {
   align-items: stretch;
+}
+
+.fleet-maintenance-registration-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .fleet-maintenance-meta-row {

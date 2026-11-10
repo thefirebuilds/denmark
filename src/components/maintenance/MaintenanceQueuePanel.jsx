@@ -399,6 +399,25 @@ export default function MaintenanceQueuePanel({
       : [];
   }, [maintenanceSummary]);
 
+  const taskHistoryGroups = useMemo(() => {
+    const groups = new Map();
+    for (const task of taskHistory) {
+      const type = task.task_type || 'custom';
+      const title = task.title?.trim() || 'Maintenance task';
+      const key = ['manual', 'manual_todo', 'custom', 'todo'].includes(type)
+        ? `${type}:${title.toLowerCase()}` : type;
+      if (!groups.has(key)) groups.set(key, { key, title, tasks: [] });
+      groups.get(key).tasks.push(task);
+    }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      tasks: group.tasks.sort((a, b) =>
+        new Date(b.updated_at || b.updatedAt || 0) - new Date(a.updated_at || a.updatedAt || 0)
+        || Number(b.id) - Number(a.id)
+      ).slice(0, 10),
+    }));
+  }, [taskHistory]);
+
   const fleetPlanningGroups = useMemo(
     () => groupFleetItemsByAvailabilityDate(fleetPlanningItems),
     [fleetPlanningItems]
@@ -1482,7 +1501,7 @@ export default function MaintenanceQueuePanel({
           <section className="maintenance-task-history">
             <div className="maintenance-task-history-head">
               <span>Maintenance history</span>
-              <small>{taskHistory.length} recent</small>
+              <small>{taskHistoryGroups.length} task types</small>
             </div>
             {taskHistory.length === 0 ? (
               <div className="maintenance-task-history-empty">
@@ -1490,7 +1509,14 @@ export default function MaintenanceQueuePanel({
               </div>
             ) : (
               <div className="maintenance-task-history-list">
-                {taskHistory.map((task) => (
+                {taskHistoryGroups.map((group) => (
+                  <details key={`${selectedVehicleId}:${group.key}`} className="maintenance-task-history-group">
+                    <summary>
+                      <strong>{group.title}</strong>
+                      <small>{group.tasks.length} recent</small>
+                    </summary>
+                    <div className="maintenance-task-history-list">
+                {group.tasks.map((task) => (
                   <div key={task.id} className="maintenance-task-history-item">
                     <div className="maintenance-task-history-main">
                       <strong>{task.title || "Maintenance task"}</strong>
@@ -1507,6 +1533,9 @@ export default function MaintenanceQueuePanel({
                       Reopen
                     </button>
                   </div>
+                ))}
+                    </div>
+                  </details>
                 ))}
               </div>
             )}

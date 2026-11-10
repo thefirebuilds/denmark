@@ -981,11 +981,20 @@ async function getVehicleMaintenanceSummary(
           actual_labor_hours,
           created_at,
           updated_at
-        FROM maintenance_tasks
-        WHERE vehicle_vin = $1
-          AND status IN ('resolved', 'canceled')
+        FROM (
+          SELECT maintenance_tasks.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY COALESCE(NULLIF(task_type, ''), 'custom'),
+                CASE WHEN task_type IS NULL OR task_type IN ('', 'manual', 'manual_todo', 'custom', 'todo')
+                  THEN LOWER(TRIM(COALESCE(title, 'Maintenance task'))) ELSE '' END
+              ORDER BY updated_at DESC, id DESC
+            ) AS history_rank
+          FROM maintenance_tasks
+          WHERE vehicle_vin = $1
+            AND status IN ('resolved', 'canceled')
+        ) recent_history
+        WHERE history_rank <= 10
         ORDER BY updated_at DESC, id DESC
-        LIMIT 50
       `,
       [vin]
     ),
