@@ -136,25 +136,11 @@ async function insertOdometerHistory(client, snapshot) {
   );
 }
 
-async function upsertVehicle(client, snapshot) {
-  await client.query(
+async function updateManagedVehicle(client, snapshot, managedVehicleId) {
+  return client.query(
     `
-      INSERT INTO vehicles (
-        vin,
-        imei,
-        nickname,
-        make,
-        model,
-        year,
-        standard_engine,
-        bouncie_vehicle_id,
-        current_odometer_miles,
-        updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-      ON CONFLICT (vin)
-      DO UPDATE SET
-        imei = EXCLUDED.imei,
+      UPDATE vehicles SET
+        imei = $2,
         nickname = COALESCE(
           (
             SELECT va.alias
@@ -166,20 +152,22 @@ async function upsertVehicle(client, snapshot) {
             LIMIT 1
           ),
           vehicles.nickname,
-          EXCLUDED.nickname
+          $3
         ),
-        make = COALESCE(vehicles.make, EXCLUDED.make),
-        model = COALESCE(vehicles.model, EXCLUDED.model),
-        year = COALESCE(vehicles.year, EXCLUDED.year),
-        standard_engine = COALESCE(vehicles.standard_engine, EXCLUDED.standard_engine),
-        bouncie_vehicle_id = COALESCE(EXCLUDED.bouncie_vehicle_id, vehicles.bouncie_vehicle_id),
+        make = COALESCE(vehicles.make, $4),
+        model = COALESCE(vehicles.model, $5),
+        year = COALESCE(vehicles.year, $6),
+        standard_engine = COALESCE(vehicles.standard_engine, $7),
+        bouncie_vehicle_id = COALESCE($8, vehicles.bouncie_vehicle_id),
         current_odometer_miles = CASE
-          WHEN EXCLUDED.current_odometer_miles IS NULL THEN vehicles.current_odometer_miles
-          WHEN vehicles.current_odometer_miles IS NULL THEN EXCLUDED.current_odometer_miles
-          WHEN EXCLUDED.current_odometer_miles >= vehicles.current_odometer_miles THEN EXCLUDED.current_odometer_miles
+          WHEN $9::integer IS NULL THEN vehicles.current_odometer_miles
+          WHEN vehicles.current_odometer_miles IS NULL THEN $9::integer
+          WHEN $9::integer >= vehicles.current_odometer_miles THEN $9::integer
           ELSE vehicles.current_odometer_miles
         END,
         updated_at = NOW()
+      WHERE id=$10 AND is_active=true AND UPPER(TRIM(vin))=UPPER(TRIM($1::text))
+      RETURNING id
     `,
     [
       snapshot.vin,
@@ -191,6 +179,7 @@ async function upsertVehicle(client, snapshot) {
       snapshot.standard_engine,
       snapshot.bouncie_vehicle_id,
       snapshot.current_odometer_miles,
+      managedVehicleId,
     ]
   );
 }
@@ -502,7 +491,8 @@ async function main() {
       const managedVehicle = await findManagedTelemetryVehicle(dbClient, snapshot.vin);
       if (!managedVehicle) continue;
       snapshot.vin = managedVehicle.vin;
-      await upsertVehicle(dbClient, snapshot);
+      const updated = await updateManagedVehicle(dbClient, snapshot, managedVehicle.id);
+      if (!updated.rows[0]) continue;
       const stagedOdometerResult = await maybeStageStartingOdometer(
         dbClient,
         snapshot

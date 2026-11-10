@@ -887,6 +887,9 @@ function startScheduler() {
 
         console.log(`[scheduler] startup tasks skipped | ageMinutes=${ageMinutes}`);
         skipAllStartupTasks(reason);
+        // A short-restart cooldown must not leave stale website fleet cards
+        // after ownership exclusions or a deployment changed the export.
+        await runStartupTask('publicAvailability', () => runPublicAvailabilityPush('startup'));
         return;
       }
 

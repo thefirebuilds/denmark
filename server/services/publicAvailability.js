@@ -1,4 +1,5 @@
 const pool = require("../db");
+const { isNonOwnedVehicle } = require('./vehicles/nonOwnedVehicles');
 const {
   ensureVehicleAliasesTable,
 } = require("./vehicles/vehicleAliases");
@@ -529,6 +530,7 @@ function buildVehicleStatus(vehicle, trips, now) {
   // Tracker discovery alone does not make a vehicle a public rental listing.
   // Require an explicit listing identity instead of publishing profile-link cards.
   if (
+    isNonOwnedVehicle(vehicle) ||
     vehicle.is_active !== true ||
     vehicle.trip_eligible === false ||
     !/^\d+$/.test(String(vehicle.turo_vehicle_id || "").trim()) ||

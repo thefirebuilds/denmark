@@ -17,6 +17,7 @@ async function availability(trips, vehicles = fleet) {
       constructor(...args) { super(...(args.length ? args : ['2026-09-30T14:19:01.542Z'])); }
     },
     require(name) {
+      if (name === './vehicles/nonOwnedVehicles') return require('../services/vehicles/nonOwnedVehicles');
       if (name === '../db') return { query: async (sql) => {
         if (sql.includes('FROM trips t')) return { rows: trips };
         assert.match(sql, /va.active = true/);
@@ -86,6 +87,18 @@ test('active tracker-only cars cannot be published even when trip eligibility de
     assert.equal(rows.length, 1);
     assert.equal(rows[0].nickname, 'Juneau');
   }
+});
+
+test('all six operator-excluded vehicles stay off the website even with active flags and numeric listing IDs', async () => {
+  const unwanted = ['Blossom', 'Cocaina', 'OJ', 'Phantom', 'Tulip', 'Yogi'];
+  const vehicles = [fleet[0], ...unwanted.map((nickname, index) => ({
+    ...fleet[1], id: 100 + index, nickname, turo_vehicle_id: String(900000 + index),
+    is_active: true, trip_eligible: true, in_service: true,
+  }))];
+  const rows = await availability([], vehicles);
+  assert.deepEqual(Array.from(rows, r => r.nickname), ['Juneau']);
+  const aliases = await availability([], [{ ...fleet[0], aliases: ['  blossom  '] }]);
+  assert.equal(aliases.length, 0);
 });
 
 test('only explicitly active cars are published; maintenance mode remains visible as unavailable', async () => {
