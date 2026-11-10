@@ -2997,6 +2997,9 @@ function FleetSettingsPanel() {
 function DatabaseSettingsPanel() {
   const [backupSummary, setBackupSummary] = useState(null);
   const [backupStatus, setBackupStatus] = useState("");
+  const [savedBackupState, setSavedBackupState] = useState(null);
+  const [savedBackupStarting, setSavedBackupStarting] = useState(false);
+  const [savedBackupStatus, setSavedBackupStatus] = useState('');
   const [restoreConfirm, setRestoreConfirm] = useState("");
   const [restoreStatus, setRestoreStatus] = useState("");
   const [cloudImportUrl, setCloudImportUrl] = useState("");
@@ -3006,6 +3009,35 @@ function DatabaseSettingsPanel() {
   const [busy, setBusy] = useState(false);
   const [cloudImportBusy, setCloudImportBusy] = useState(false);
   const [restoreBusy, setRestoreBusy] = useState(false);
+
+  async function loadSavedBackup() {
+    try {
+      const res = await fetch(`${API_BASE}/api/database/backup/weekly`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not load saved backup status');
+      setSavedBackupState(data);
+      if (data.running) setSavedBackupStatus('Backup running in the background. Messages will notify you when it is ready.');
+      else if (data.manual_job?.message) setSavedBackupStatus(data.manual_job.message);
+      else if (data.last_attempt?.message) setSavedBackupStatus(data.last_attempt.message);
+    } catch (err) { setSavedBackupStatus(err.message || 'Could not load saved backup status'); }
+  }
+  async function createSavedBackup() {
+    setSavedBackupStarting(true); setSavedBackupStatus('Starting a saved database backup...');
+    try {
+      const res = await fetch(`${API_BASE}/api/database/backup/weekly/run`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not start saved backup');
+      setSavedBackupState(current => ({ ...current, running: true, manual_job: data.job }));
+      setSavedBackupStatus('Backup running in the background. You can leave this page; Messages will notify you when it is ready.');
+      await loadSavedBackup();
+    } catch (err) { await loadSavedBackup(); setSavedBackupStatus(err.message || 'Could not start saved backup'); }
+    finally { setSavedBackupStarting(false); }
+  }
+  useEffect(() => {
+    if (!savedBackupState?.running) return;
+    const timer = window.setInterval(loadSavedBackup, 3000);
+    return () => window.clearInterval(timer);
+  }, [savedBackupState?.running]);
 
   async function loadBackupSummary() {
     try {
@@ -3040,6 +3072,7 @@ function DatabaseSettingsPanel() {
   useEffect(() => {
     loadCloudImportJobs();
     loadBackupSummary();
+    loadSavedBackup();
   }, []);
 
   useEffect(() => {
@@ -3288,7 +3321,7 @@ function DatabaseSettingsPanel() {
             <button
               type="button"
               className="settings-action-btn"
-              disabled={busy}
+              disabled={busy || savedBackupStarting || savedBackupState?.running || restoreBusy}
               onClick={downloadBackup}
             >
               {busy ? "Working..." : "Download Tenant Backup"}
@@ -3305,6 +3338,16 @@ function DatabaseSettingsPanel() {
               <span className="settings-message">{backupStatus}</span>
             ) : null}
           </div>
+          <div className="settings-empty-state">Saved backups use the same weekly backup storage and keep only the latest successful copy. Creating one now runs in the background with the same disk-space checks.</div>
+          <div className="settings-form-actions">
+            <button type="button" className="settings-action-btn" disabled={savedBackupStarting || savedBackupState?.running || restoreBusy || busy} onClick={createSavedBackup}>
+              {savedBackupStarting || savedBackupState?.running ? 'Creating saved backup...' : 'Create saved backup now'}
+            </button>
+            {savedBackupState?.backup && <a className="settings-action-btn secondary" href={`${API_BASE}/api/database/backup/weekly/download`} download>Download saved backup</a>}
+            <button type="button" className="settings-action-btn secondary" onClick={loadSavedBackup}>Refresh backup status</button>
+          </div>
+          {savedBackupState?.backup && <div className="settings-empty-state">Latest saved backup: {new Date(savedBackupState.backup.created_at).toLocaleString('en-US', { timeZone: 'America/Chicago', timeZoneName: 'short' })} | {(savedBackupState.backup.bytes / 1024 ** 2).toFixed(1)} MiB</div>}
+          {savedBackupStatus && <div className="settings-message" role="status">{savedBackupStatus}</div>}
         </div>
 
         <div className="settings-group">

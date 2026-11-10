@@ -3026,7 +3026,8 @@ router.get("/", async (req, res) => {
       ) actionable_messages
       ORDER BY
         CASE
-          WHEN message_type = 'collision_detected' AND status = 'unread' THEN -2
+          WHEN message_type = 'collision_detected' AND status = 'unread' THEN -3
+          WHEN message_type IN ('database_backup_ready','database_backup_failed') AND status = 'unread' THEN -2
           WHEN status = 'unread'
             AND COALESCE(message_type, '') NOT IN ('payment_notice', 'renter_activity')
             AND trip_id IS NULL
@@ -4813,7 +4814,7 @@ router.get("/", async (req, res) => {
       ])
     )
       .sort(compareQueueItems)
-      .filter((item, index) => index < limit || ["closeout_required", "vehicle_diagnostic_alert", "return_message_required", "booking_message_required"].includes(item.type));
+      .filter((item, index) => index < limit || ["closeout_required", "vehicle_diagnostic_alert", "return_message_required", "booking_message_required", "database_backup_ready", "database_backup_failed"].includes(item.type));
 
     setQueueTimingHeader(res, queueStartedAt, queueTimings);
     maybeLogQueueTimings(queueStartedAt, queueTimings, queueItems.length);

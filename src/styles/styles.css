@@ -969,6 +969,7 @@ body {
   font-size: 0.92rem;
   line-height: 1.45;
 }
+.message-backup-body { overflow-wrap: anywhere; }
 
 .message-booking-task {
   border: 1px solid rgba(96, 165, 250, 0.42);

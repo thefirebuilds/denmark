@@ -58,6 +58,8 @@ let dimoInProgress = false;
 let dimoIntervalHandle = null;
 let collisionIntervalHandle = null;
 let collisionController = null;
+let weeklyBackupIntervalHandle = null;
+let weeklyBackupController = null;
 const pollCollisions = require('./telemetry/collisionMonitor').createCollisionMonitor({ pool });
 
 let googleCalendarInProgress = false;
@@ -611,6 +613,13 @@ async function runCollisionCheck() {
   }
 }
 
+async function runWeeklyBackupCheck() {
+  const controller = weeklyBackupController;
+  if (controller?.signal.aborted || shouldDeferForDbPressure('weeklyDatabaseBackup', 'interval')) return;
+  try { await require('./database/weeklyBackup').weeklyBackupService().tick({ signal: controller?.signal }); }
+  catch { console.warn('[backup] weekly worker failed; saved copy retained'); }
+}
+
 async function runGoogleCalendarReconcile(reason = "interval") {
   if (shouldDeferForDbPressure("googleCalendar", reason)) return;
 
@@ -837,6 +846,11 @@ function startScheduler() {
   }).catch(() => null);
 
   const everyFifteenMinutesMs = 15 * 60 * 1000;
+  if (!weeklyBackupIntervalHandle) {
+    weeklyBackupController = new AbortController();
+    weeklyBackupIntervalHandle = scheduleIntervalTask('weeklyDatabaseBackup', everyFifteenMinutesMs,
+      SCHEDULER_INTERVAL_OFFSET_STEP_MS * 7, runWeeklyBackupCheck);
+  }
   if (!collisionIntervalHandle) {
     collisionController = new AbortController();
     collisionIntervalHandle = scheduleIntervalTask('dimoCollisions', everyFifteenMinutesMs,
@@ -983,6 +997,10 @@ function startScheduler() {
 }
 
 function stopScheduler() {
+  require('./database/weeklyBackup').weeklyBackupService().stop?.();
+  weeklyBackupController?.abort();
+  stopScheduledInterval(weeklyBackupIntervalHandle);
+  weeklyBackupIntervalHandle = null;
   collisionController?.abort();
   stopScheduledInterval(collisionIntervalHandle);
   collisionIntervalHandle = null;

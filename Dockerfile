@@ -50,7 +50,7 @@ COPY --from=web-build /app/dist ./dist
 RUN cd /app/server \
   && npx playwright install --with-deps chromium
 
-RUN mkdir -p ./imports
+RUN mkdir -p ./imports ./backups && chmod 700 ./backups
 
 RUN test -f ./server/db/schema.sql \
   && test -f ./shared/marketplaceCatalog.mjs \

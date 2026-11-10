@@ -1176,6 +1176,7 @@ function formatQueueTimingSummary(debugTiming) {
 }
 
 function buildMessageTitle(message) {
+  if (['database_backup_ready','database_backup_failed'].includes(message?.type || message?.message_type)) return message.subject || 'Weekly database backup';
   if ((message?.type || message?.message_type) === 'collision_detected') return message.subject || 'Collision detected';
   if (message?.type === "check_in_required") return `Check In ${message.check_in_overdue ? "Overdue" : "Required"}: ${message.vehicle_nickname || message.vehicle_name || "Vehicle"}`;
   const type = message?.type || message?.message_type;
@@ -1230,6 +1231,8 @@ function buildMessageTitle(message) {
 
 function buildMessageSub(message) {
   const type = message?.type || message?.message_type || message?.parsed?.type;
+  if (type === 'database_backup_ready') return 'Saved database backup - download available';
+  if (type === 'database_backup_failed') return 'Saved database backup needs attention';
   if (type === 'collision_detected') return 'Urgent: review provider-reported collision';
   if (type === 'booking_message_required') return 'Send guest booking welcome';
   if (type === 'return_message_required') return 'Send guest return instructions';
@@ -3002,7 +3005,7 @@ async function handleExportGuestInspectionSheet(message) {
       const nextMessages = Array.isArray(messageItems)
         ? showingTripMessages
           ? actionableMessageItems
-          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || ["vehicle_diagnostic_alert", "collision_detected"].includes(message.type) || ["return_message_required", "booking_message_required"].includes(message.type))
+          : actionableMessageItems.filter((message, index) => index < 10 || isCloseoutTask(message) || ["vehicle_diagnostic_alert", "collision_detected", "database_backup_ready", "database_backup_failed"].includes(message.type) || ["return_message_required", "booking_message_required"].includes(message.type))
         : [];
       const mergedMessages =
         useFastQueue && !showingTripMessages
@@ -3752,8 +3755,12 @@ async function handleExportGuestInspectionSheet(message) {
                 </div>
 
                 {!isDailyBriefDismissed && (
-                  <div className="message-body">{buildMessageBody(message)}</div>
+                  <div className={`message-body ${['database_backup_ready','database_backup_failed'].includes(message.type || message.message_type) ? 'message-backup-body' : ''}`}>{buildMessageBody(message)}</div>
                 )}
+                {(message.type || message.message_type) === 'database_backup_ready' && <div className="message-actions">
+                  <a className="message-action" href={`${API_BASE}/api/database/backup/weekly/download`} download onClick={event => event.stopPropagation()}>Download latest database backup</a>
+                  <small>Database administrator access required.</small>
+                </div>}
 
                 {canShowDailyBrief && !isDailyBriefDismissed && (
                   <div

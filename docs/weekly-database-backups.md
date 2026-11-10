@@ -1,0 +1,35 @@
+# Weekly downloadable database backup
+
+The existing scheduler checks every 15 minutes for a due weekly backup. The target is **Sunday at 3 AM America/Chicago**, including daylight-saving changes. If no successful backup exists, it makes the first one on its first eligible check after deployment (normally about five minutes after startup). It catches up after restarts without generating a second copy for the same weekly slot. Database-pool pressure defers the work. Failed attempts retry after six hours, and the queue reports the failure.
+
+Each completed export creates or updates one Messages entry with its creation time, compressed size and SHA-256 checksum. **Download latest database backup** is a normal browser download streamed from disk; the frontend does not buffer the file in JavaScript memory. Clearing the message does not delete the file or repeatedly mark it unread. A new weekly copy marks the entry unread again. The backup remains available from the database-admin download endpoint even after the message is cleared.
+
+In **Settings → Backup & Restore**, **Create saved backup now** starts the same saved-backup pipeline in the background. Settings polls its status and displays **Download saved backup** with the latest creation time/size. You can leave the page while it runs; Messages also gets the completed backup. Manual runs bypass the weekly due date and six-hour retry delay, and remain available when automatic weekly generation is disabled. They retain the same disk reserve, size cap, validation, single-job lock and one-copy replacement rules. A successful manual copy counts as the current copy for the weekly slot; the next Sunday slot still becomes due normally. The original immediate **Download Tenant Backup** flow remains available separately.
+
+`POST /api/database/backup/weekly/run` starts the on-demand job and returns HTTP 202 immediately, or 409 when a saved-backup job is already running in this process. The existing administrator authorization gate applies. The metadata GET endpoint also returns `running`, `manual_job` and the last attempt's safe status message, without server file paths. Manual job progress is process-local; finished files and the weekly schedule checkpoint persist on disk. Shutdown cancels in-flight manual work without publishing partial data; after a restart the owner can retry if needed.
+
+## Storage and droplet load
+
+The worker runs one `pg_dump` custom-format export with gzip level 1, no parallel workers, a 5-second lock-wait limit and a 10-second database connection timeout. PostgreSQL client tools are already in the deployment image. Node streams the output to a private `.partial` file while computing its checksum. The dump uses one additional database connection; the app does not hold a checked-out pool client while it runs. This reduces application memory use but does not eliminate PostgreSQL/pg_dump CPU, I/O or memory costs. Live database and archive sizes must be measured before claiming it fits a particular droplet.
+
+Before generation, free bytes on the actual backup filesystem must exceed the configured reserve plus the largest of: 128 MiB, 1.2 times `pg_database_size(current_database())`, or 1.5 times the previous archive size. Database size includes indexes, so this is a conservative estimate, not a predicted compressed dump size. The hard archive cap defaults to **2 GiB** and free-space reserve to **1 GiB**. Free space is checked every 16 MiB of output and every five seconds; falling below the reserve stops the dump. A 30-minute deadline covers dump generation and validation. Limit/permission/storage failures retain the last good copy and report a safe failure message, including measured free space when available.
+
+Only **one completed copy** is retained. Creating a safe replacement temporarily needs space for the existing copy **and** the new one. The old copy is deleted only after the new dump exits successfully, passes a `pg_restore --list` catalog check, and its metadata pointer is published atomically. This catalog check is not a full restore test; periodically test a restore separately. Generation-specific filenames and a private manifest prevent downloading a half-written backup. Interrupted output is cleaned on the next check. A per-directory exclusive lock and process guard prevent overlapping weekly jobs; a heartbeat keeps live locks fresh and abandoned locks expire after the job timeout plus five minutes. Unknown/user files are not removed.
+
+These are downloadable exports of one database: schema, data, sequences and large objects, with owner/ACL restoration disabled as in the existing manual export. They do not contain PostgreSQL cluster roles, environment configuration, or files stored outside the database. Existing `.dump` import/restore tooling can read them. Move the completed download to private off-droplet storage as planned; a local copy is lost with the droplet. No automatic external uploads or SMS are added.
+
+## Deployment and settings
+
+Deploy the updated backend and frontend and recreate the app container with the updated Compose file. It adds `./backups:/app/backups`; the directory is private and files are created with owner-only permissions. If the deployment runs `git pull` in its Compose checkout, the existing workflow picks up this mount. Deployments with a separately maintained Compose file must add that mount before enabling this feature. With a custom storage directory, mount persistent storage at that directory too. Without a persistent mount, files can disappear on container replacement. No database schema migration is needed.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DATABASE_WEEKLY_BACKUP_ENABLED` | enabled | Set `false` to disable generation. |
+| `DATABASE_BACKUP_DIR` | `/app/backups` in the image | Private persistent backup directory. |
+| `DATABASE_BACKUP_MAX_BYTES` | `2147483648` | Hard limit for one compressed archive. |
+| `DATABASE_BACKUP_RESERVE_BYTES` | `1073741824` | Disk space to leave free. |
+| `DATABASE_BACKUP_TIMEOUT_MS` | `1800000` | Dump and archive-check deadline. |
+
+Existing `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` and `_FILE` secret variants are reused. Credentials are passed through the child environment, not command-line arguments or logs. The job respects the database permissions of that configured role. Client connection/TLS environment options remain inherited.
+
+`GET /api/database/backup/weekly` returns current metadata without a server path. `GET /api/database/backup/weekly/download` serves the current file with `Cache-Control: no-store` and `X-Backup-SHA256`. Both inherit the existing `database.admin` permission gate (currently the owner role); a Messages read permission does not grant download access. A failed replacement can still offer the previous successful file. Logs `[backup] weekly backup ready` and `[backup] weekly backup failed` record sizes, duration and safe reason codes through the existing UX logging pipeline, never raw tool stderr or backup content.

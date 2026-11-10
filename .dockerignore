@@ -23,6 +23,7 @@ temp
 *.sql.gz
 *.dump
 *.backup
+backups/
 *.bak
 
 .vscode

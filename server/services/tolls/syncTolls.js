@@ -30,9 +30,6 @@ const {
   hasCompleteTollCredentials,
 } = require("../integrations/tollSettings");
 
-const TOLL_TRIP_MATCH_EARLY_HOURS = 2;
-const TOLL_TRIP_MATCH_LATE_HOURS = 72;
-
 async function createSyncRun(client) {
   const result = await client.query(
     `
@@ -227,6 +224,31 @@ async function backfillUnmatchedVehicleMatches(client) {
   return matchedCount;
 }
 
+function automaticTollEligibilitySql(at) {
+  // This predicate is shared by new matches and safe correction of old ones.
+  // Use occurrence-time history, never the trip's stage at import time.
+  return `COALESCE((t.deleted_at IS NULL
+    AND COALESCE(LOWER(t.workflow_stage), '') <> 'canceled'
+    AND COALESCE(LOWER(t.status), '') NOT IN ('canceled', 'cancelled')
+    AND t.trip_start IS NOT NULL AND t.trip_end IS NOT NULL
+    AND ${at} >= t.trip_start
+    AND CASE WHEN t.returned_at IS NOT NULL AND NULLIF(TRIM(t.return_detected_location), '') IS NOT NULL
+      THEN ${at} < t.returned_at
+      ELSE ${at} <= t.trip_end END
+    AND (
+      EXISTS (SELECT 1 FROM trip_stage_history ready
+        WHERE ready.trip_id=t.id AND ready.next_stage='ready_for_handoff'
+          AND ready.changed_at <= ${at}
+          AND NOT EXISTS (SELECT 1 FROM trip_stage_history revoked
+            WHERE revoked.trip_id=t.id AND revoked.next_stage IN ('booked','confirmed','canceled')
+              AND (revoked.changed_at, revoked.id) > (ready.changed_at, ready.id)
+              AND revoked.changed_at <= ${at}))
+      OR (t.workflow_stage='ready_for_handoff' AND t.stage_updated_at IS NOT NULL
+        AND t.stage_updated_at <= ${at}
+        AND NOT EXISTS (SELECT 1 FROM trip_stage_history known WHERE known.trip_id=t.id))
+    )), FALSE)`;
+}
+
 async function matchTrip(client, tollChargeId) {
   const result = await client.query(
     `
@@ -258,11 +280,9 @@ async function matchTrip(client, tollChargeId) {
         t.turo_vehicle_id
       FROM trips t
       WHERE t.turo_vehicle_id = $1
-        AND COALESCE(LOWER(t.workflow_stage), '') <> 'canceled'
-        AND t.trip_start IS NOT NULL
-        AND t.trip_end IS NOT NULL
-        AND $2::timestamptz >= (t.trip_start - ($3::numeric * INTERVAL '1 hour'))
-        AND $2::timestamptz <= (t.trip_end + ($4::numeric * INTERVAL '1 hour'))
+        AND $2::timestamptz >= t.trip_start
+        AND ($2::timestamptz <= t.trip_end OR $2::timestamptz < t.returned_at)
+        AND ${automaticTollEligibilitySql('$2::timestamptz')}
       ORDER BY
         CASE
           WHEN $2::timestamptz >= t.trip_start
@@ -272,17 +292,15 @@ async function matchTrip(client, tollChargeId) {
         END ASC,
         ABS(EXTRACT(EPOCH FROM ($2::timestamptz - t.trip_start))) ASC,
         t.trip_start DESC
-      LIMIT 1
+      LIMIT 2
     `,
     [
       toll.turo_vehicle_id,
       toll.trxn_at,
-      TOLL_TRIP_MATCH_EARLY_HOURS,
-      TOLL_TRIP_MATCH_LATE_HOURS,
     ]
   );
 
-  return tripResult.rows[0] || null;
+  return tripResult.rows.length === 1 ? tripResult.rows[0] : null;
 }
 
 async function applyTripMatch(client, tollChargeId, tripId) {
@@ -306,7 +324,7 @@ async function backfillUnmatchedTripMatches(client) {
       FROM toll_charges
       WHERE matched_vehicle_id IS NOT NULL
         AND matched_trip_id IS NULL
-        AND COALESCE(review_status, '') <> 'dismissed'
+        AND COALESCE(review_status, '') NOT IN ('dismissed', 'ignored')
       ORDER BY trxn_at DESC
     `
   );
@@ -322,6 +340,22 @@ async function backfillUnmatchedTripMatches(client) {
   }
 
   return matchedCount;
+}
+
+async function clearInvalidAutomaticTripMatches(client) {
+  // Repair only known automatic, unreviewed and unbilled assignments.
+  // The existing assignment trigger preserves the previous trip in audit history.
+  const result = await client.query(`UPDATE toll_charges tc
+    SET matched_trip_id=NULL, match_status='vehicle_matched', updated_at=NOW()
+    FROM trips t WHERE tc.matched_trip_id=t.id
+      AND tc.matched_vehicle_id IS NOT NULL
+      AND tc.attributed_by='automatic_sync'
+      AND COALESCE(tc.review_status,'') IN ('','pending','matched')
+      AND COALESCE(t.toll_review_status,'') NOT IN ('billed','waived')
+      AND COALESCE(t.toll_charged_total,0)=0
+      AND NOT (${automaticTollEligibilitySql('tc.trxn_at')})
+      AND NOT EXISTS (SELECT 1 FROM trip_toll_billing_snapshot_items item WHERE item.toll_charge_id=tc.id)`);
+  return result.rowCount;
 }
 
 /**
@@ -419,6 +453,7 @@ async function syncTolls() {
     recordsSkipped: 0,
     recordsMatchedVehicle: 0,
     recordsMatchedTrip: 0,
+    recordsClearedOutsideTrip: 0,
   };
 
   try {
@@ -465,6 +500,8 @@ async function syncTolls() {
     const backfilledVehicleMatches = await backfillUnmatchedVehicleMatches(client);
     stats.recordsMatchedVehicle += backfilledVehicleMatches;
 
+    stats.recordsClearedOutsideTrip = await clearInvalidAutomaticTripMatches(client);
+
     const backfilledTripMatches = await backfillUnmatchedTripMatches(client);
     stats.recordsMatchedTrip += backfilledTripMatches;
 
@@ -473,9 +510,11 @@ async function syncTolls() {
     await finishSyncRun(client, runId, {
       status: "success",
       ...stats,
+      meta: { recordsClearedOutsideTrip: stats.recordsClearedOutsideTrip },
     });
 
     await client.query("COMMIT");
+    if (stats.recordsClearedOutsideTrip) console.log('[tolls] cleared automatic out-of-window assignments', { count: stats.recordsClearedOutsideTrip });
 
     return {
       ok: true,
@@ -509,3 +548,6 @@ async function syncTolls() {
 
 module.exports = syncTolls;
 module.exports.refreshTripTollCaches = refreshTripTollCaches;
+module.exports.matchTrip = matchTrip;
+module.exports.clearInvalidAutomaticTripMatches = clearInvalidAutomaticTripMatches;
+module.exports.automaticTollEligibilitySql = automaticTollEligibilitySql;

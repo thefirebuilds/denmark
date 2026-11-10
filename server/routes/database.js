@@ -1319,6 +1319,32 @@ async function restoreBackup(backup) {
   }
 }
 
+// The database router is mounted behind database.admin for every endpoint.
+router.get('/backup/weekly', async (_req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json(await require('../services/database/weeklyBackup').weeklyBackupService().state());
+  } catch { res.status(503).json({ error: 'Saved weekly backup is unavailable. Check the backup queue message.' }); }
+});
+router.post('/backup/weekly/run', (_req, res) => {
+  const result = require('../services/database/weeklyBackup').weeklyBackupService().startManual();
+  res.set('Cache-Control', 'no-store');
+  if (!result.accepted) return res.status(409).json({ error: 'A saved database backup is already running.' });
+  res.status(202).json(result);
+});
+router.get('/backup/weekly/download', async (_req, res) => {
+  try {
+    const backup = await require('../services/database/weeklyBackup').weeklyBackupService().latest();
+    if (!backup) return res.status(404).json({ error: 'No weekly backup is ready yet.' });
+    res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'X-Backup-SHA256': backup.sha256 });
+    res.download(backup.file, `denmark-weekly-${backup.created_at.replace(/[:.]/g, '-')}.dump`, error => {
+      if (!error) return;
+      if (res.headersSent) res.destroy();
+      else res.status(409).json({ error: 'The saved backup changed or could not be downloaded. Retry the latest backup.' });
+    });
+  } catch { res.status(503).json({ error: 'Saved weekly backup is unavailable. Check the backup queue message.' }); }
+});
+
 router.get("/backup", async (req, res) => {
   const filename = `denmark-tenant-backup-${isoStamp()}.dump`;
 
