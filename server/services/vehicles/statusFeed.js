@@ -68,18 +68,21 @@ function getAgeDays(value) {
 }
 
 function normalizeOdometer(value) {
+  if (value == null || value === "") return null;
   const n = Number(value);
-  if (Number.isNaN(n)) return null;
+  if (!Number.isFinite(n)) return null;
   return Math.round(n);
 }
 
 function normalizeFuel(value) {
+  if (value == null || value === "") return null;
   const n = Number(value);
-  if (Number.isNaN(n)) return null;
+  if (!Number.isFinite(n)) return null;
   return Math.round(n);
 }
 
 function normalizeEngineTempF(value) {
+  if (value == null || value === "") return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return n <= 130 ? (n * 9) / 5 + 32 : n;

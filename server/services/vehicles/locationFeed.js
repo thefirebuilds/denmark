@@ -430,10 +430,53 @@ async function getDimoLiveVehicleLocations() {
 }
 
 async function loadVehicleLocations(client = pool) {
-  const storedLocations = await getStoredVehicleLocations(client);
-  const dimoLiveLocations = await getDimoLiveVehicleLocations();
-
-  return [...storedLocations, ...dimoLiveLocations];
+  const startedAt = Date.now();
+  const poolStats = () => typeof client.getPoolStats === "function"
+    ? client.getPoolStats({ logPressure: false }) : null;
+  const poolBefore = poolStats();
+  let storedQueryMs = 0;
+  let storedRows = 0;
+  let storedProcessingMs = 0;
+  let liveAdapterMs = 0;
+  let stage = "stored_locations_query";
+  let outcome = "failure";
+  try {
+    const storedStartedAt = Date.now();
+    const storedLocations = await getStoredVehicleLocations({
+      async query(...args) {
+        const queryStartedAt = Date.now();
+        try {
+          const result = await client.query(...args);
+          storedRows = result.rows.length;
+          return result;
+        } finally {
+          // Includes pool acquisition when client is the shared pool.
+          storedQueryMs += Date.now() - queryStartedAt;
+        }
+      },
+    });
+    storedProcessingMs = Date.now() - storedStartedAt - storedQueryMs;
+    stage = "live_adapter";
+    const liveStartedAt = Date.now();
+    let dimoLiveLocations;
+    try {
+      dimoLiveLocations = await getDimoLiveVehicleLocations();
+    } finally {
+      liveAdapterMs = Date.now() - liveStartedAt;
+    }
+    outcome = "success";
+    stage = "complete";
+    return [...storedLocations, ...dimoLiveLocations];
+  } finally {
+    const durationMs = Date.now() - startedAt;
+    if (durationMs > 750 || outcome === "failure") {
+      console.log(`[vehicles] locations load timings ${JSON.stringify({
+        durationMs, outcome, stage, storedQueryMs, storedRows,
+        storedProcessingMs, liveAdapterMs, queryIncludesPoolWait: client === pool,
+        poolBefore, poolAfter: poolStats(),
+      })}`);
+    }
+  }
 }
 
 async function getVehicleLocations(client = pool, options = {}) {

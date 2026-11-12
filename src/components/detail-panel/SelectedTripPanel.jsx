@@ -10,6 +10,7 @@ import "../../styles/selected-trip.css";
 import { getConfiguredReturnLocation } from "../../../shared/returnLocation.mjs";
 import { describeVehicleBehavior } from "../../../shared/tripLocationTelemetry.mjs";
 import TripSpeedNote from "../TripSpeedNote";
+import TelemetrySnapshot from "./TelemetrySnapshot";
 import {
   buildBouncieVehicleDetailsUrl,
   buildReplyUrl,
@@ -181,6 +182,7 @@ export default function SelectedTripPanel({
     closed_out: false,
   });
   const [closeoutSavedNotice, setCloseoutSavedNotice] = useState("");
+  const [telemetrySnapshotVehicle, setTelemetrySnapshotVehicle] = useState(null);
   const [configuredLocations, setConfiguredLocations] = useState([]);
 
   useEffect(() => {
@@ -1166,8 +1168,18 @@ function renderLocationLink(vehicle) {
             ) : null}
           </div>
 
-          <div className="detail-card detail-card--section">
-            <div className="detail-label">Vehicle & Telemetry</div>
+          <div className="detail-card detail-card--section detail-card--telemetry"
+            role="button" tabIndex={0} aria-haspopup="dialog" aria-label="Open vehicle telemetry snapshot"
+            onClick={event => {
+              if (!event.target.closest("a, button") && selectedVehicle) setTelemetrySnapshotVehicle(selectedVehicle);
+            }}
+            onKeyDown={event => {
+              if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                if (selectedVehicle) setTelemetrySnapshotVehicle(selectedVehicle);
+              }
+            }}>
+            <div className="detail-label">Vehicle & Telemetry · View snapshot</div>
             <TripSpeedNote trip={selectedTrip} violationsOnly />
 
             <div className="detail-row">
@@ -1411,6 +1423,8 @@ function renderLocationLink(vehicle) {
 
         </div>
       </div>
+      {telemetrySnapshotVehicle ? <TelemetrySnapshot vehicle={telemetrySnapshotVehicle}
+        onClose={() => setTelemetrySnapshotVehicle(null)} /> : null}
     </aside>
   );
 }
