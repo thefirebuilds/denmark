@@ -68,6 +68,13 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.fleet-maintenance-telematics--clickable { cursor: pointer; }
+.fleet-maintenance-telematics--clickable:hover { filter: brightness(1.15); }
+.fleet-maintenance-telematics--clickable:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 3px;
+}
+
 .fleet-maintenance-telematics--pass {
   border-color: rgba(60, 179, 113, 0.28);
   background: rgba(60, 179, 113, 0.08);

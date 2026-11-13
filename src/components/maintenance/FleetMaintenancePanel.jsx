@@ -8,6 +8,7 @@ import { toPng } from "html-to-image";
 import GuestSafetySnapshotCard from "./GuestSafetySnapshotCard";
 import InspectionItemDrawer from "./InspectionItemDrawer";
 import PreflightCard from "./PreflightCard";
+import TelemetrySnapshot from "../detail-panel/TelemetrySnapshot";
 import { openPrintDialogForElement } from "../../utils/printUtils";
 import {
   getFleetLicensePlate,
@@ -1188,6 +1189,7 @@ export default function FleetMaintenancePanel({
   const [inspectionDrawerOpen, setInspectionDrawerOpen] = useState(false);
   const [inspectionVehicle, setInspectionVehicle] = useState(null);
   const [telemetryHistory, setTelemetryHistory] = useState(null);
+  const [telemetrySnapshotVehicle, setTelemetrySnapshotVehicle] = useState(null);
   const [telemetryHistoryLoading, setTelemetryHistoryLoading] = useState(false);
   const [telemetryHistoryError, setTelemetryHistoryError] = useState("");
   const [liveDimoDiagnostics, setLiveDimoDiagnostics] = useState(null);
@@ -3313,12 +3315,29 @@ export default function FleetMaintenancePanel({
                 </div>
 
                 <div
-                  className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--${
+                  role="button"
+                  tabIndex={0}
+                  aria-haspopup="dialog"
+                  aria-label="Open telematics snapshot"
+                  onClick={(event) => {
+                    if (event.target.closest("button, a")) return;
+                    setTelemetrySnapshotVehicle(selectedFleetVehicle || {
+                      id: vehicle.map_vehicle_id, nickname: vehicle.nickname,
+                    });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
+                    event.preventDefault();
+                    setTelemetrySnapshotVehicle(selectedFleetVehicle || {
+                      id: vehicle.map_vehicle_id, nickname: vehicle.nickname,
+                    });
+                  }}
+                  className={`fleet-maintenance-meta-item fleet-maintenance-telematics fleet-maintenance-telematics--clickable fleet-maintenance-telematics--${
                     vehicle.telematics?.tone || "unknown"
                   }`}
                 >
                   <span className="fleet-maintenance-meta-label">
-                    Telematics
+                    Telematics · View snapshot
                   </span>
                   <span className="fleet-maintenance-meta-value">
                     {vehicle.telematics?.sourceLabel || "No telematics source"}
@@ -4411,6 +4430,10 @@ export default function FleetMaintenancePanel({
             )}
           </section>
         </div>
+      ) : null}
+      {telemetrySnapshotVehicle ? (
+        <TelemetrySnapshot vehicle={telemetrySnapshotVehicle}
+          onClose={() => setTelemetrySnapshotVehicle(null)} />
       ) : null}
     </section>
   );
