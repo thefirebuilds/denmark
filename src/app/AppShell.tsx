@@ -6,6 +6,7 @@ import TopBanner from "../components/TopBanner.jsx";
 import MobileMaintenanceShell from "../components/mobile/MobileMaintenanceShell.jsx";
 import { renderActiveView } from "./viewRegistry";
 import type { UnknownRecord } from "./appTypes";
+import { useAdminActivity } from "../hooks/useAdminActivity";
 
 type AppShellProps = UnknownRecord & {
   activeView: string;
@@ -13,6 +14,7 @@ type AppShellProps = UnknownRecord & {
 };
 
 export function AppShell(props: AppShellProps) {
+  useAdminActivity(props.activeView);
   const useMobileMaintenanceShell =
     props.activeView === "maintenance" &&
     props.effectiveLayoutMode === "mobile";

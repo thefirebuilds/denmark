@@ -42,6 +42,7 @@ const {
   ensureMetricsIndexes,
 } = require("../server/services/metrics/metricsIndexes");
 const { ensureMetricReportCacheSchema } = require('../server/services/metrics/metricReportCache');
+const { ensureAdminActivitySchema } = require('../server/services/metrics/adminActivityService');
 const {
   ensureVehicleOdometerRollupTable,
 } = require("../server/services/vehicles/odometerRollupService");
@@ -376,6 +377,7 @@ async function runRuntimeEnsures() {
   await ensureBusinessMetricsTables();
   await ensureMetricsIndexes();
   await ensureMetricReportCacheSchema();
+  await ensureAdminActivitySchema();
   await ensureVehicleOdometerRollupTable();
   await ensureVehicleAliasesTable();
   await ensureMessageRuntimeSchema();

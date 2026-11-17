@@ -2970,7 +2970,8 @@ const mileageStats = useMemo(() => {
               <div className="toll-panel__header">
                 <div className="toll-panel__title">Labor Hours</div>
                 <div className="toll-panel__subtitle">
-                  Owner time included in profit after labor for the selected period
+                  Owner time included in profit after labor for the selected period.
+                  Admin includes active Denmark use, pausing after two minutes idle.
                 </div>
               </div>
               <div className="labor-hours-summary">

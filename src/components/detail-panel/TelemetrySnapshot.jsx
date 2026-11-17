@@ -42,7 +42,7 @@ export default function TelemetrySnapshot({ vehicle, onClose }) {
     ["Driving", [
       ["Engine", state(t.engine_running, "Running", "Off")],
       ["Speed", reading(t.speed, " mph")],
-      ["Reported odometer", reading(t.reported_odometer, " mi")],
+      ["Odometer", reading(t.odometer, " mi")],
       ["Fuel level", reading(t.fuel_level, "%")],
       ["Engine speed", reading(t.engine?.rpm, " rpm")],
       ["Coolant temperature", reading(t.engine?.coolant_temp, " °F")],

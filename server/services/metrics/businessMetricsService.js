@@ -1,4 +1,5 @@
 const pool = require("../../db");
+const { getAdminActivityHours } = require("./adminActivityService");
 const {
   getDateRange,
   getOverlapDays,
@@ -1590,6 +1591,14 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
     metric.days_booked += overlapDays;
     metric.source_metrics.trip_count += 1;
 
+    // Closeout is still in progress while tolls and other expenses settle.
+    // Keep the trip in financial totals, but defer quality flags until closeout.
+    if (
+      String(trip.workflow_stage || "").trim().toLowerCase() === "awaiting_expenses"
+    ) {
+      continue;
+    }
+
     if (trip.amount == null) {
       flags.push(
         buildQualityFlag(
@@ -1817,6 +1826,16 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
         )
       );
     }
+  }
+
+  const utilityAdminHours = await getAdminActivityHours(startDate, endDate, client);
+  const adminVehicles = Array.from(vehicleMetricsById.values()).filter(
+    metric => metric.include_in_shared_allocations !== false
+  );
+  for (const metric of adminVehicles) {
+    const hours = utilityAdminHours / adminVehicles.length;
+    metric.estimated_admin_hours += hours;
+    metric.estimated_owner_hours += hours;
   }
 
   const fleetMetrics = [];
@@ -2151,6 +2170,7 @@ async function computeBusinessMetricsForWindow({ key, startDate, endDate }, clie
       2
     ),
     labor_hours_breakdown: {
+      utilityAdmin: roundNumber(utilityAdminHours, 2),
       cleaning: roundNumber(
         fleetMetrics.reduce((sum, item) => sum + toNumber(item.estimated_cleaning_hours), 0),
         2

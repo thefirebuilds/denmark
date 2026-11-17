@@ -19,6 +19,16 @@ const {
 const router = express.Router();
 const { limitMetricRead } = require("../services/metrics/metricReadLimiter");
 const { savedMetricReport } = require("../services/metrics/metricReportCache");
+const { saveAdminActivity } = require("../services/metrics/adminActivityService");
+
+router.post('/admin-activity', async (req, res) => {
+  try {
+    await saveAdminActivity(req.body);
+    return res.sendStatus(204);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.status === 400 ? error.message : 'Failed to save admin activity' });
+  }
+});
 
 router.get("/", savedMetricReport('summary'));
 

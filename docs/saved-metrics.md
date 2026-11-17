@@ -1,5 +1,15 @@
 # Saved metrics reports
 
+Denmark records active panel usage as admin labor from deployment onward. Only
+the focused, visible browser window counts; tracking pauses after two minutes
+without pointer, keyboard, scroll, or touch activity. Counters save every 30
+seconds and on panel/focus changes. Cumulative upserts prevent retry duplication.
+Records retain the panel and local calendar date. Selected-period activity is
+shared equally across vehicles included in shared allocations and added to
+manual trip admin time, including its effect on owner labor cost. Avoid entering
+the same Denmark work again as manual admin minutes. Credits appear on the next
+saved business report refresh, rather than immediately.
+
 Opening Metrics reads persisted reports instead of running aggregate queries.
 Summary, vehicle and business reports refresh hourly. Trends, parking, home
 transfers, off-trip audits, vehicle financial details and quarterly analysis
