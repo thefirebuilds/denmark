@@ -2,6 +2,32 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { buildBookingMessage, getBookingMessageReminders, reminderKey, acknowledgeBookingMessage } = require('../services/trips/bookingMessageReminder');
 const trip = { trip_id: 7, trip_start: '2026-12-01T12:00:00Z', guest_name: 'Marquette Smith', vehicle_nickname: 'Belle' };
+test('AUS welcome personalizes the supplied airport template using pickup location', () => {
+  for (const pickup_location of ['Austin-Bergstrom International Airport (AUS)', 'AUS', 'The Parking Spot - West', '1600 E Highway 71']) {
+    const { template, text } = buildBookingMessage({ ...trip, pickup_location });
+    assert.equal(template, 'airport');
+    assert.match(text, /^Hi Marquette,/);
+    assert.match(text, /Fresh Coast Garage! Belle will be ready/);
+    assert.match(text, /You'll return Belle at the end/);
+    assert.match(text, /1600 E Highway 71,\nAustin, TX 78742/);
+    assert.match(text, /\(512\) 385-9343/);
+    assert.match(text, /rear pocket of the passenger seat/);
+    assert.match(text, /– Blake\nFresh Coast Garage$/);
+    assert.doesNotMatch(text, /Jeffrey|Winnie|Fletcher/);
+  }
+  assert.equal(buildBookingMessage({ ...trip, pickup_location: '135 Fletcher Bend', return_location: 'AUS' }).template, 'fletcher');
+});
+test('airport reminders only select booked and confirmed pickups and retain airport draft', async () => {
+  const reminders = await getBookingMessageReminders({ query: async sql => {
+    assert.match(sql, /OR \(t.workflow_stage IN \('booked', 'confirmed'\)/);
+    assert.match(sql, /airport\|aus/);
+    assert.match(sql, /t.deleted_at IS NULL/);
+    assert.match(sql, /t.returned_at IS NULL/);
+    return { rows: [{ ...trip, pickup_location: 'AUS', workflow_stage: 'confirmed' }] };
+  } });
+  assert.equal(reminders[0].booking_message_template, 'airport');
+  assert.match(reminders[0].booking_message_draft, /The Parking Spot - West/);
+});
 test('welcome uses the supplied template and personalizes guest and car', () => {
   const { text } = buildBookingMessage(trip);
   assert.match(text, /^Hi Marquette,/);

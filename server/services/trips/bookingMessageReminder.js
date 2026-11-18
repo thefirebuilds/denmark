@@ -5,6 +5,25 @@ function reminderKey(tripId, tripStart) {
 function buildBookingMessage(row) {
   const guest = String(row.guest_name || '').trim().split(/\s+/)[0] || 'there';
   const vehicle = row.vehicle_nickname || row.vehicle_name || 'the car';
+  const airport = /parking spot\s*-?\s*west|\bairport\b|\baus\b|1600\s+(?:e\.?|east)\s+(?:hwy|highway)\s*71/i.test(String(row.pickup_location || ''));
+  if (airport) return { template: 'airport', text: `Hi ${guest},
+
+Thanks for booking with Fresh Coast Garage! ${vehicle} will be ready for you before your trip time at the Austin Airport:
+
+The Parking Spot - West,
+1600 E Highway 71,
+Austin, TX 78742
+
+From the main terminal shuttle stop you can take The Parking Spot - West shuttle directly to the car. Look for the yellow bus with black polka dots. If there are any issues at all you can contact the shuttle at (512) 385-9343. We'll leave a lockbox on the car for you to pickup at your convenience when your trip starts.
+
+When you leave the lot, follow the blue signs so the gates will open automatically. You'll return ${vehicle} at the end of your trip to the same parking lot and take the shuttle back to the terminal. There is no cost for my guests to park at or leave this lot!
+
+You'll find a Houston Toll Authority toll tag in the car, if you need it. It will work for any tolls in Texas and I will bill you after your trip for any usage. Also, in the rear pocket of the passenger seat is a sun shade - help yourself - just return it after your trip, please.
+
+If you have any questions or need anything at all, I’m just a message away. Safe travels and I hope you enjoy your time in Austin!
+
+– Blake
+Fresh Coast Garage` };
   return { template: 'fletcher', text: `Hi ${guest},
 
 Thanks for booking!
@@ -52,7 +71,11 @@ async function getBookingMessageReminders(db) {
     WHERE t.workflow_stage IN ('booked', 'confirmed', 'ready_for_handoff') AND t.deleted_at IS NULL
       AND COALESCE(t.status, '') NOT IN ('canceled', 'cancelled')
       AND COALESCE(t.closed_out, false) = false AND t.returned_at IS NULL
-      AND t.trip_start > NOW() AND t.pickup_location ~* '(^|[^0-9])135[[:space:]]+fletcher[[:space:]]+(bend|bnd)([^a-z]|$)'
+      AND t.trip_start > NOW() AND (
+        t.pickup_location ~* '(^|[^0-9])135[[:space:]]+fletcher[[:space:]]+(bend|bnd)([^a-z]|$)'
+        OR (t.workflow_stage IN ('booked', 'confirmed')
+          AND t.pickup_location ~* '(parking spot[[:space:]]*-?[[:space:]]*west|(^|[^[:alnum:]_])(airport|aus)([^[:alnum:]_]|$)|1600[[:space:]]+(e[.]?|east)[[:space:]]+(hwy|highway)[[:space:]]*71)')
+      )
     ORDER BY t.trip_end, t.id`, [ACK_KEY]);
   return rows.filter(row => !row.acknowledgements?.[reminderKey(row.trip_id, row.trip_start)])
     .map(mapBookingMessageReminder);
