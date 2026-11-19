@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import TripPathMap from '../trip-summary/TripPathMap';
 
 function formatNumber(value, digits = 0) {
   const num = Number(value ?? 0);
@@ -49,6 +50,7 @@ export default function OffTripMilesDrawer({
   const [savingKey, setSavingKey] = useState("");
   const [saveError, setSaveError] = useState("");
   const [expandedVehicles, setExpandedVehicles] = useState({});
+  const [activitySegment, setActivitySegment] = useState(null);
 
   const reviewSeed = useMemo(() => {
     const next = {};
@@ -71,6 +73,7 @@ export default function OffTripMilesDrawer({
     setSaveError("");
     setSavingKey("");
     setExpandedVehicles({});
+    setActivitySegment(null);
   }, [reviewSeed, open]);
 
   useEffect(() => {
@@ -327,6 +330,22 @@ export default function OffTripMilesDrawer({
                           {formatNumber(segment.off_trip_miles, 1)} mi
                         </div>
                       </div>
+
+                      <button type="button" className="metrics-inline-button"
+                        disabled={!segment.previous_trip_end || !segment.next_trip_start}
+                        aria-expanded={activitySegment === segment.audit_key}
+                        onClick={() => setActivitySegment(current => current === segment.audit_key ? null : segment.audit_key)}>
+                        {activitySegment === segment.audit_key ? 'Hide activity map' : 'Show activity map'}
+                      </button>
+                      {!segment.previous_trip_end || !segment.next_trip_start ? (
+                        <div className="metrics-audit-segment-meta">A map requires both segment boundary times.</div>
+                      ) : null}
+                      {activitySegment === segment.audit_key && segment.previous_trip_end && segment.next_trip_start ? (
+                        <TripPathMap compact title={`${segment.nickname || segment.vehicle_label} — off-trip activity`}
+                          activityUrl={`/api/metrics/off-trip-audit/activity?${new URLSearchParams({
+                            vehicleId: String(segment.vehicle_id), start: segment.previous_trip_end, end: segment.next_trip_start,
+                          })}`} />
+                      ) : null}
 
                       {segment.reconciled_off_trip_miles != null &&
                       Number(segment.reconciled_off_trip_miles) !==

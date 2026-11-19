@@ -2633,8 +2633,15 @@ async function handleAdvanceToReadyForHandoff(message) {
       );
     }
 
+    // Fast polls intentionally retain full-queue handoff tasks. Resolve this
+    // task locally only after the stage PATCH succeeds, then reconcile once.
+    rememberResolvedMessages([message.id]);
+    const keepMessage = (item) => String(item.id) !== String(message.id);
+    messagesRef.current = messagesRef.current.filter(keepMessage);
+    setMessages((current) => current.filter(keepMessage));
+    setNewMessageIds((current) => current.filter((id) => String(id) !== String(message.id)));
     invalidateLiveQueueCache();
-    await loadMessages(false);
+    await loadMessages(false, { forceFull: true });
     notifyMessageStatsUpdated();
   } catch (err) {
     setError(err.message || "Failed to advance trip to ready for handoff");
@@ -2948,9 +2955,9 @@ async function handleExportGuestInspectionSheet(message) {
     }
   }
 
-  async function loadMessages(isInitialLoad = false) {
+  async function loadMessages(isInitialLoad = false, { forceFull = false } = {}) {
     const scope = `${messageMode}:${selectedTrip?.id || ""}:${selectedTrip?.closed_out || false}`;
-    if (messageRequestRef.current?.scope === scope) return;
+    if (messageRequestRef.current?.scope === scope && !forceFull) return;
     const request = { scope };
     messageRequestRef.current = request;
     let statusLabel = "";
@@ -2963,7 +2970,7 @@ async function handleExportGuestInspectionSheet(message) {
       const shouldRefreshFullQueue =
         !isInitialLoad &&
         !showingTripMessages &&
-        Date.now() - lastFullQueueRefreshAtRef.current > 60000;
+        (forceFull || Date.now() - lastFullQueueRefreshAtRef.current > 60000);
       const useFastQueue = !showingTripMessages && !shouldRefreshFullQueue;
       if (shouldRefreshFullQueue) {
         lastFullQueueRefreshAtRef.current = Date.now();

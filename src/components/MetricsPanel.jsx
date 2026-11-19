@@ -13,6 +13,7 @@ import VehicleComparisonRow from "./metrics/VehicleComparisonRow";
 import VehicleFinancialDrawer from "./metrics/VehicleFinancialDrawer";
 import RevenueSpendProgress from './metrics/RevenueSpendProgress';
 import { parseMetricReportResponse } from '../utils/metricReportResponse';
+import { buildMonthlyProfitLoss } from '../../shared/monthlyProfitLoss.mjs';
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "";
@@ -190,13 +191,17 @@ function OccupancyChart({ trends }) {
 }
 
 function MonthlyProfitLossChart({ trends }) {
-  const points = Array.isArray(trends?.monthly_profit_loss?.points)
-    ? trends.monthly_profit_loss.points
-    : [];
+  const [excludeOnboarding, setExcludeOnboarding] = useState(() => {
+    try { return localStorage.getItem('denmark.pnl.excludeOnboarding') !== 'false'; }
+    catch { return true; }
+  });
+  const report = trends?.monthly_profit_loss;
+  const breakdownAvailable = report?.onboarding_breakdown_available === true;
+  const excluding = excludeOnboarding && breakdownAvailable;
+  const { points, summary } = buildMonthlyProfitLoss(report, excluding);
 
   if (!points.length) return null;
 
-  const summary = trends?.monthly_profit_loss?.summary || {};
   const maxAbsProfit = Math.max(
     ...points.map((point) => Math.abs(Number(point?.profit ?? 0))),
     1
@@ -208,7 +213,7 @@ function MonthlyProfitLossChart({ trends }) {
         <div>
           <div className="metrics-section-title">12 Month P&amp;L</div>
           <div className="metrics-section-subtitle">
-            Calendar-month profit and loss, recognized revenue less expenses
+            Calendar-month recognized revenue less {excluding ? 'expenses excluding vehicle onboarding' : 'all recorded expenses'}
           </div>
         </div>
         <div className="metrics-pnl-chart__summary">
@@ -225,6 +230,17 @@ function MonthlyProfitLossChart({ trends }) {
             Net
           </span>
         </div>
+      </div>
+
+      <div className="metrics-pnl-chart__controls">
+        <label><input type="checkbox" checked={excluding} disabled={!breakdownAvailable}
+          onChange={event => {
+            setExcludeOnboarding(event.target.checked);
+            try { localStorage.setItem('denmark.pnl.excludeOnboarding', String(event.target.checked)); } catch { /* Optional preference. */ }
+          }} /> Hide vehicle onboarding costs</label>
+        <span className="metrics-section-subtitle">{breakdownAvailable
+          ? `${formatCurrencyCompact(summary.onboarding_expenses)} vehicle onboarding ${excluding ? 'excluded' : 'included'}`
+          : 'Onboarding breakdown and annual comps will be available after the next saved report refresh.'}</span>
       </div>
 
       <div className="metrics-pnl-chart__plot" aria-label="Monthly profit and loss bar graph">
@@ -256,6 +272,26 @@ function MonthlyProfitLossChart({ trends }) {
             </div>
           );
         })}
+      </div>
+      <div className="metrics-pnl-chart__table-wrap">
+        <table className="metrics-pnl-chart__table">
+          <caption>Monthly comparisons in dollars. The current month is partial; comparison months are full months.</caption>
+          <thead><tr><th scope="col">Month</th><th scope="col">Revenue</th><th scope="col">Expenses</th>
+            <th scope="col">Onboarding {excluding ? 'excluded' : 'included'}</th><th scope="col">Net</th>
+            <th scope="col">Net Δ vs prior month</th><th scope="col">Net Δ vs last year</th></tr></thead>
+          <tbody>{points.map(point => {
+            const current = new Date();
+            const partial = point.label.slice(0, 7) === `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+            return <tr key={point.label}>
+              <th scope="row">{formatMonthLabel(point.label)}{partial ? ' (partial)' : ''}</th>
+              <td>{formatCurrencyCompact(point.revenue)}</td><td>{formatCurrencyCompact(point.expenses)}</td>
+              <td>{breakdownAvailable ? formatCurrencyCompact(point.onboarding_expenses) : '—'}</td>
+              <td>{formatSignedCurrency(point.profit)}</td>
+              <td>{point.month_change == null ? '—' : formatSignedCurrency(point.month_change)}</td>
+              <td>{point.year_change == null ? '—' : formatSignedCurrency(point.year_change)}</td>
+            </tr>;
+          })}</tbody>
+        </table>
       </div>
     </section>
   );

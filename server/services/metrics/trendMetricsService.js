@@ -16,6 +16,8 @@ const {
   startOfDay,
   tripOverlapsRange,
   toNumber,
+  isOnboardingExpense,
+  normalizeCategory,
 } = require("./metricHelpers");
 
 function getTrendGranularity(rangeKey) {
@@ -206,7 +208,8 @@ async function fetchExpensesInRange(client, startDate, endDate) {
         SELECT
           date,
           price,
-          tax
+          tax,
+          category
         FROM expenses
         WHERE date <= $1::date
       `,
@@ -220,7 +223,8 @@ async function fetchExpensesInRange(client, startDate, endDate) {
       SELECT
         date,
         price,
-        tax
+        tax,
+        category
       FROM expenses
       WHERE date >= $1::date
         AND date <= $2::date
@@ -236,15 +240,16 @@ async function getTrendMetrics(rangeKey = "90d") {
   const granularity = getTrendGranularity(key);
   const monthlyEndDate = endOfDay(new Date());
   const monthlyStartDate = startOfMonth(addMonths(monthlyEndDate, -11));
+  const comparisonStartDate = startOfMonth(addMonths(monthlyEndDate, -23));
   const client = await pool.connect();
 
   try {
     const trips = await fetchTripsInRange(client, startDate, endDate);
     const expenses = await fetchExpensesInRange(client, startDate, endDate);
-    const monthlyTrips = await fetchTripsInRange(client, monthlyStartDate, monthlyEndDate);
+    const monthlyTrips = await fetchTripsInRange(client, comparisonStartDate, monthlyEndDate);
     const monthlyExpenses = await fetchExpensesInRange(
       client,
-      monthlyStartDate,
+      comparisonStartDate,
       monthlyEndDate
     );
 
@@ -273,11 +278,12 @@ async function getTrendMetrics(rangeKey = "90d") {
       ensureBucket(label);
     }
 
-    for (const label of iterateBucketLabels(monthlyStartDate, monthlyEndDate, "month")) {
+    for (const label of iterateBucketLabels(comparisonStartDate, monthlyEndDate, "month")) {
       monthlyBucketMap.set(label, {
         label,
         revenue: 0,
         expenses: 0,
+        onboarding_expenses: 0,
         profit: 0,
       });
     }
@@ -301,7 +307,13 @@ async function getTrendMetrics(rangeKey = "90d") {
       const label = bucketKey(expense.date, "month");
       if (!label) continue;
       const bucket = monthlyBucketMap.get(label);
-      if (bucket) bucket.expenses += toNumber(expense.price) + toNumber(expense.tax);
+      if (bucket) {
+        const amount = toNumber(expense.price) + toNumber(expense.tax);
+        bucket.expenses += amount;
+        if (isOnboardingExpense(expense) || ['vehicle onboard', 'vehicle onboarding'].includes(normalizeCategory(expense.category))) {
+          bucket.onboarding_expenses += amount;
+        }
+      }
     }
 
     const points = Array.from(bucketMap.values())
@@ -312,14 +324,18 @@ async function getTrendMetrics(rangeKey = "90d") {
         expenses: roundMoney(bucket.expenses),
         profit: roundMoney(bucket.revenue - bucket.expenses),
       }));
-    const monthlyProfitLoss = Array.from(monthlyBucketMap.values())
+    const monthlyComparisonPoints = Array.from(monthlyBucketMap.values())
       .sort((a, b) => String(a.label).localeCompare(String(b.label)))
       .map((bucket) => ({
         label: bucket.label,
         revenue: roundMoney(bucket.revenue),
         expenses: roundMoney(bucket.expenses),
         profit: roundMoney(bucket.revenue - bucket.expenses),
+        onboarding_expenses: roundMoney(bucket.onboarding_expenses),
       }));
+    const monthlyProfitLoss = monthlyComparisonPoints.filter(
+      point => point.label >= bucketKey(monthlyStartDate, 'month')
+    );
 
     return {
       range: key,
@@ -330,6 +346,8 @@ async function getTrendMetrics(rangeKey = "90d") {
         months: 12,
         granularity: "month",
         points: monthlyProfitLoss,
+        comparison_points: monthlyComparisonPoints,
+        onboarding_breakdown_available: true,
         summary: {
           revenue: roundMoney(
             monthlyProfitLoss.reduce((sum, point) => sum + toNumber(point.revenue), 0)

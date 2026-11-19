@@ -103,7 +103,7 @@ function FitTripPath({ points }) {
   return null;
 }
 
-export default function TripPathMap({ tripId, compact = false, title = "GPS Path" }) {
+export default function TripPathMap({ tripId, activityUrl, compact = false, title = "GPS Path" }) {
   const [path, setPath] = useState([]);
   const [pointCount, setPointCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -113,7 +113,7 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
     let cancelled = false;
 
     async function loadPath() {
-      if (!tripId) {
+      if (!tripId && !activityUrl) {
         setPath([]);
         setPointCount(0);
         setError("");
@@ -125,7 +125,7 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
         setError("");
 
         const res = await fetch(
-          `${API_BASE}/api/trips/${encodeURIComponent(
+          activityUrl ? `${API_BASE}${activityUrl}` : `${API_BASE}/api/trips/${encodeURIComponent(
             tripId
           )}/telemetry-path?limit=5000`,
           { credentials: "include" }
@@ -161,7 +161,7 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
     return () => {
       cancelled = true;
     };
-  }, [tripId]);
+  }, [tripId, activityUrl]);
 
   const renderPoints = useMemo(() => samplePoints(path), [path]);
   const positions = useMemo(
@@ -187,11 +187,11 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
               ? "Loading path..."
               : path.length
                 ? `${pointCount.toLocaleString("en-US")} snapshots`
-                : "No attributed GPS snapshots"}
+                : "No GPS snapshots available"}
           </span>
         </div>
 
-        {path.length ? (
+        {path.length && !activityUrl ? (
           <strong>{Math.round(pathMiles).toLocaleString("en-US")} mi traced</strong>
         ) : null}
       </div>
@@ -202,7 +202,7 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
           <div className="trip-path-state">Loading GPS path...</div>
         ) : null}
         {!error && !loading && !path.length ? (
-          <div className="trip-path-state">No GPS path has been attributed to this trip yet.</div>
+          <div className="trip-path-state">{activityUrl ? "No GPS history is available for this vehicle during this segment." : "No GPS path has been attributed to this trip yet."}</div>
         ) : null}
 
         {path.length ? (
@@ -211,9 +211,9 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
             center={center}
             zoom={11}
             scrollWheelZoom={false}
-            attributionControl={false}
+            attributionControl={Boolean(activityUrl)}
           >
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
             <FitTripPath points={renderPoints} />
             <Polyline
               positions={positions}
@@ -243,7 +243,7 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
                 }}
               >
                 <Popup>
-                  <strong>Trip start</strong>
+                  <strong>{activityUrl ? "First recorded location" : "Trip start"}</strong>
                   <br />
                   {formatDateTime(startPoint.seenAt)}
                 </Popup>
@@ -261,7 +261,7 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
                 }}
               >
                 <Popup>
-                  <strong>Trip end</strong>
+                  <strong>{activityUrl ? "Last recorded location" : "Trip end"}</strong>
                   <br />
                   {formatDateTime(endPoint.seenAt)}
                 </Popup>
@@ -276,6 +276,7 @@ export default function TripPathMap({ tripId, compact = false, title = "GPS Path
           Rendering {renderPoints.length.toLocaleString("en-US")} sampled points for map speed.
         </div>
       ) : null}
+      {activityUrl && path.length ? <div className="trip-path-note">Recorded GPS activity within this segment. Lines connect snapshots and may cross gaps in coverage; audit miles still come from odometer readings.</div> : null}
     </section>
   );
 }

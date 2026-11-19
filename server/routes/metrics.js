@@ -17,6 +17,16 @@ const {
 
 
 const router = express.Router();
+const { requirePermission } = require('../auth/middleware');
+const { getOffTripActivity } = require('../services/metrics/offTripActivityService');
+
+router.get('/off-trip-audit/activity', requirePermission('telemetry.read'), async (req, res) => {
+  try {
+    res.json(await getOffTripActivity(req.query));
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.status === 400 ? error.message : 'Failed to load off-trip GPS activity' });
+  }
+});
 const { limitMetricRead } = require("../services/metrics/metricReadLimiter");
 const { savedMetricReport } = require("../services/metrics/metricReportCache");
 const { saveAdminActivity } = require("../services/metrics/adminActivityService");
