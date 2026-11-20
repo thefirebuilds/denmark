@@ -561,10 +561,16 @@
 
 .metrics-pnl-chart__controls label { display: flex; align-items: center; gap: 8px; }
 .metrics-pnl-chart__table-wrap { overflow-x: auto; }
+.metrics-pnl-chart__comparisons > summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
 .metrics-pnl-chart__table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 .metrics-pnl-chart__table caption { text-align: left; color: #a4b4cc; padding: 8px 0; }
 .metrics-pnl-chart__table th, .metrics-pnl-chart__table td { padding: 9px 10px; text-align: right; border-bottom: 1px solid rgba(100, 130, 170, 0.2); white-space: nowrap; }
 .metrics-pnl-chart__table th:first-child { text-align: left; }
+.metrics-pnl-chart__delta-legend { display: block; margin-top: 6px; }
+.metrics-pnl-delta { font-weight: 600; }
+.metrics-pnl-delta--positive { color: #86deac; }
+.metrics-pnl-delta--negative { color: #fda4af; }
+.metrics-pnl-delta--neutral { color: #a4b4cc; }
 
 .metrics-pnl-chart__summary {
   display: flex;

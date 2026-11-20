@@ -273,9 +273,17 @@ function MonthlyProfitLossChart({ trends }) {
           );
         })}
       </div>
-      <div className="metrics-pnl-chart__table-wrap">
+      <details className="metrics-pnl-chart__comparisons">
+        <summary>Monthly comparison table</summary>
+        <div className="metrics-pnl-chart__table-wrap">
         <table className="metrics-pnl-chart__table">
-          <caption>Monthly comparisons in dollars. The current month is partial; comparison months are full months.</caption>
+          <caption>Monthly comparisons in dollars. The current month is partial; comparison months are full months.
+            <span className="metrics-pnl-chart__delta-legend">
+              <span className="metrics-pnl-delta--positive">Green: net improved</span>{' · '}
+              <span className="metrics-pnl-delta--negative">Red: net declined</span>{' · '}
+              <span className="metrics-pnl-delta--neutral">Neutral: unchanged or unavailable</span>
+            </span>
+          </caption>
           <thead><tr><th scope="col">Month</th><th scope="col">Revenue</th><th scope="col">Expenses</th>
             <th scope="col">Onboarding {excluding ? 'excluded' : 'included'}</th><th scope="col">Net</th>
             <th scope="col">Net Δ vs prior month</th><th scope="col">Net Δ vs last year</th></tr></thead>
@@ -287,12 +295,16 @@ function MonthlyProfitLossChart({ trends }) {
               <td>{formatCurrencyCompact(point.revenue)}</td><td>{formatCurrencyCompact(point.expenses)}</td>
               <td>{breakdownAvailable ? formatCurrencyCompact(point.onboarding_expenses) : '—'}</td>
               <td>{formatSignedCurrency(point.profit)}</td>
-              <td>{point.month_change == null ? '—' : formatSignedCurrency(point.month_change)}</td>
-              <td>{point.year_change == null ? '—' : formatSignedCurrency(point.year_change)}</td>
+              {[point.month_change, point.year_change].map((delta, index) => (
+                <td key={index} className={`metrics-pnl-delta metrics-pnl-delta--${delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral'}`}>
+                  {delta == null ? '—' : formatSignedCurrency(delta)}
+                </td>
+              ))}
             </tr>;
           })}</tbody>
         </table>
-      </div>
+        </div>
+      </details>
     </section>
   );
 }
