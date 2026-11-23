@@ -10,6 +10,18 @@ async function request(path, method = 'GET', body) {
   return data;
 }
 
+function buildDayAfterTripStartReply({ guestName, vehicleName }) {
+  const firstName = guestName?.trim().split(/\s+/)[0] || 'there';
+  const vehicle = vehicleName?.trim() || 'the car';
+
+  return `Hi ${firstName},
+
+I hope you’re enjoying your time in Texas so far! Let me know if there are any concerns or questions with ${vehicle}. I want to be sure you have a five-star experience with Fresh Coast Garage.
+
+-Blake
+Fresh Coast Garage`;
+}
+
 export default function GuestReplyComposer({ messageKey, context }) {
   const [open, setOpen] = useState(false);
   const [reply, setReply] = useState('');
@@ -39,6 +51,11 @@ export default function GuestReplyComposer({ messageKey, context }) {
         const data = await request('guest-reply-suggestion', 'POST', { ...context, category, guidance });
         setReply(data.suggestion);
       })}>{busy ? 'Working…' : reply ? 'Regenerate reply' : 'Suggest reply'}</button>
+      <button type="button" className="message-action" disabled={busy} onClick={() => {
+        setReply(buildDayAfterTripStartReply(context));
+        setCategory('Day-after trip check-in');
+        setNotice('');
+      }}>Use day-after trip check-in template</button>
       <label>Reply — edit or write your own
         <textarea rows={6} maxLength={6000} value={reply} onChange={event => setReply(event.target.value)} />
       </label>

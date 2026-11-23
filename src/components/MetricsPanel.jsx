@@ -274,35 +274,41 @@ function MonthlyProfitLossChart({ trends }) {
         })}
       </div>
       <details className="metrics-pnl-chart__comparisons">
-        <summary>Monthly comparison table</summary>
+        <summary>
+          <span>Monthly comparisons in dollars</span>
+          <span className="metrics-pnl-chart__comparison-action">
+            <span className="metrics-pnl-chart__comparison-expand">Expand</span>
+            <span className="metrics-pnl-chart__comparison-collapse">Collapse</span>
+          </span>
+        </summary>
         <div className="metrics-pnl-chart__table-wrap">
-        <table className="metrics-pnl-chart__table">
-          <caption>Monthly comparisons in dollars. The current month is partial; comparison months are full months.
-            <span className="metrics-pnl-chart__delta-legend">
-              <span className="metrics-pnl-delta--positive">Green: net improved</span>{' · '}
-              <span className="metrics-pnl-delta--negative">Red: net declined</span>{' · '}
-              <span className="metrics-pnl-delta--neutral">Neutral: unchanged or unavailable</span>
-            </span>
-          </caption>
-          <thead><tr><th scope="col">Month</th><th scope="col">Revenue</th><th scope="col">Expenses</th>
-            <th scope="col">Onboarding {excluding ? 'excluded' : 'included'}</th><th scope="col">Net</th>
-            <th scope="col">Net Δ vs prior month</th><th scope="col">Net Δ vs last year</th></tr></thead>
-          <tbody>{points.map(point => {
-            const current = new Date();
-            const partial = point.label.slice(0, 7) === `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
-            return <tr key={point.label}>
-              <th scope="row">{formatMonthLabel(point.label)}{partial ? ' (partial)' : ''}</th>
-              <td>{formatCurrencyCompact(point.revenue)}</td><td>{formatCurrencyCompact(point.expenses)}</td>
-              <td>{breakdownAvailable ? formatCurrencyCompact(point.onboarding_expenses) : '—'}</td>
-              <td>{formatSignedCurrency(point.profit)}</td>
-              {[point.month_change, point.year_change].map((delta, index) => (
-                <td key={index} className={`metrics-pnl-delta metrics-pnl-delta--${delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral'}`}>
-                  {delta == null ? '—' : formatSignedCurrency(delta)}
-                </td>
-              ))}
-            </tr>;
-          })}</tbody>
-        </table>
+          <table className="metrics-pnl-chart__table" aria-label="Monthly comparisons in dollars">
+            <thead>
+              <tr>
+                <th scope="col">Month</th>
+                <th scope="col">Revenue</th>
+                <th scope="col">Expenses</th>
+                <th scope="col">Net</th>
+                <th scope="col">vs Previous Year</th>
+              </tr>
+            </thead>
+            <tbody>
+              {points.map(point => {
+                const current = new Date();
+                const partial = point.label.slice(0, 7) === `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+                const delta = point.year_change;
+                return <tr key={point.label}>
+                  <th scope="row">{formatMonthLabel(point.label)}{partial ? ' (partial)' : ''}</th>
+                  <td>{formatCurrencyCompact(point.revenue)}</td>
+                  <td>{formatCurrencyCompact(point.expenses)}</td>
+                  <td>{formatSignedCurrency(point.profit)}</td>
+                  <td className={`metrics-pnl-delta metrics-pnl-delta--${delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral'}`}>
+                    {delta == null ? '—' : formatSignedCurrency(delta)}
+                  </td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
         </div>
       </details>
     </section>
