@@ -999,6 +999,27 @@ body.drawer-open {
   line-height: 1.2;
 }
 
+.trip-path-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #bfdbfe;
+  font-size: 0.78rem;
+}
+
+.trip-path-pagination button {
+  padding: 6px 10px;
+  color: inherit;
+  background: #172a45;
+  border: 1px solid #486990;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.trip-path-pagination button[aria-pressed="true"] { background: #294a73; }
+.trip-path-pagination button:disabled { opacity: 0.45; cursor: default; }
+
 .trip-path-map-shell {
   position: relative;
   min-height: 260px;

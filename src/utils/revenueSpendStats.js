@@ -23,3 +23,21 @@ export function spendPayoffOutlook(report, paceReport, now = Date.now()) {
   return { status: Number.isFinite(estimate.getTime()) ? 'projected' : 'unavailable', monthlyNet,
     breakEvenDate: Number.isFinite(estimate.getTime()) ? estimate.toISOString() : null };
 }
+
+export function dailySpendGap(report, trends) {
+  const totals = revenueSpendStats(report);
+  const reportDay = report?._report?.calculated_at?.slice(0, 10);
+  const trendDay = trends?._report?.calculated_at?.slice(0, 10);
+  if (!totals || !reportDay || reportDay !== trendDay || trends.granularity !== 'day' || !Array.isArray(trends.points)) return [];
+
+  let gapCents = Math.round(-totals.net * 100);
+  const points = [];
+  for (const day of trends.points.slice(-30).reverse()) {
+    if (day.revenue == null || day.expenses == null) return [];
+    const changeCents = Math.round((Number(day.expenses) - Number(day.revenue)) * 100);
+    if (!Number.isFinite(changeCents)) return [];
+    points.push({ label: day.label, gap: gapCents / 100, change: changeCents / 100 });
+    gapCents -= changeCents;
+  }
+  return points.reverse();
+}

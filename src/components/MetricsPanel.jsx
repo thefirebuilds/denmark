@@ -1114,6 +1114,7 @@ function CapitalBasisProgress({ stats }) {
 export default function MetricsPanel() {
   const [allTimeSummary, setAllTimeSummary] = useState(null);
   const [recoveryPaceSummary, setRecoveryPaceSummary] = useState(null);
+  const [recoveryTrends, setRecoveryTrends] = useState(null);
   const metricsLoadSeq = useRef(0);
   const [selectedRange, setSelectedRange] = useState("30d");
   const initialCustomRange = useMemo(() => parseCustomRange(selectedRange), []);
@@ -1269,7 +1270,10 @@ export default function MetricsPanel() {
     if (metricsLoadSeq.current !== loadSeq) return;
     setPendingReportMessage("");
     if (range === 'all') setAllTimeSummary(summaryData);
-    if (range === '30d') setRecoveryPaceSummary(summaryData);
+    if (range === '30d') {
+      setRecoveryPaceSummary(summaryData);
+      setRecoveryTrends(trendsData);
+    }
 
     setSummary(existing => ({
       ...(existing?._report?.calculated_at === summaryData?._report?.calculated_at
@@ -1293,6 +1297,7 @@ export default function MetricsPanel() {
       const secondaryLoads = [
         ...(range === 'all' ? [] : [{ label: 'All-time totals', path: '/api/metrics/summary', range: 'all', apply: setAllTimeSummary }]),
         ...(range === '30d' ? [] : [{ label: 'Recovery pace', path: '/api/metrics/summary', range: '30d', apply: setRecoveryPaceSummary }]),
+        ...(range === '30d' ? [] : [{ label: 'Daily spend gap', path: '/api/metrics/trends', range: '30d', apply: setRecoveryTrends }]),
         {
           label: "Business metrics",
           path: "/api/metrics/business/current",
@@ -4237,7 +4242,7 @@ const mileageStats = useMemo(() => {
 
             <div className="fleet-recovery-meters">
               <CapitalBasisProgress stats={capitalBasisStats} />
-              <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} paceReport={recoveryPaceSummary} />
+              <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} paceReport={recoveryPaceSummary} trends={recoveryTrends} />
             </div>
 
             <div className="metrics-toolbar">

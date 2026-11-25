@@ -1,5 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+test('daily spend gap works backward from saved totals and keeps the direction of each daily change', async () => {
+  const { dailySpendGap } = await import('../../src/utils/revenueSpendStats.js');
+  const report = { revenue: 50, expenses: 100, _report: { calculated_at: '2026-11-25T13:00:00Z' } };
+  const trends = { granularity: 'day', _report: { calculated_at: '2026-11-25T12:00:00Z' }, points: [
+    { label: '2026-11-24', revenue: 0, expenses: 25 },
+    { label: '2026-11-25', revenue: 10.32, expenses: 0 },
+  ] };
+  assert.deepEqual(dailySpendGap(report, trends), [
+    { label: '2026-11-24', gap: 60.32, change: 25 },
+    { label: '2026-11-25', gap: 50, change: -10.32 },
+  ]);
+  assert.deepEqual(dailySpendGap(report, { ...trends, _report: { calculated_at: '2026-11-24T12:00:00Z' } }), []);
+});
 test('revenue versus spend shows coverage and net balance without adding capital basis twice', async () => {
   const { revenueSpendStats } = await import('../../src/utils/revenueSpendStats.js');
   assert.deepEqual(revenueSpendStats({ revenue: 75, expenses: 100, capital_basis: 50 }), { revenue: 75, spend: 100, net: -25, coveragePct: 75, fillPct: 75 });

@@ -1,8 +1,16 @@
-import { revenueSpendStats, spendPayoffOutlook } from '../../utils/revenueSpendStats';
+import { useMemo } from 'react';
+import FleetTrendChart from './FleetTrendChart';
+import { dailySpendGap, revenueSpendStats, spendPayoffOutlook } from '../../utils/revenueSpendStats';
 const currency = value => Number(value).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-export default function RevenueSpendProgress({ report, status, paceReport }) {
+const gapCurrency = value => Number(value).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const gapSeries = [{ key: 'gap', label: 'Spend minus revenue', color: '#60a5fa', format: gapCurrency }];
+const describeChange = change => change === 0 ? 'Gap held steady' : `Gap ${change > 0 ? 'widened' : 'narrowed'} by ${gapCurrency(Math.abs(change))}`;
+
+export default function RevenueSpendProgress({ report, status, paceReport, trends }) {
   const stats = revenueSpendStats(report);
   const outlook = spendPayoffOutlook(report, paceReport);
+  const gapPoints = useMemo(() => dailySpendGap(report, trends), [report, trends]);
+  const latestGap = gapPoints.at(-1);
   const outlookLabel = outlook?.status === 'covered' ? 'Break-even reached'
     : outlook?.status === 'projected' ? new Date(outlook.breakEvenDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : outlook?.status === 'not_recovering' ? 'No break-even at this pace' : 'Need pace data';
@@ -21,6 +29,12 @@ export default function RevenueSpendProgress({ report, status, paceReport }) {
       {stats ? <span><strong className={stats.net >= 0 ? 'revenue-spend-positive' : 'revenue-spend-negative'}>{currency(Math.abs(stats.net))}</strong>{stats.net >= 0 ? 'Above spend' : 'Still to cover'}</span> : <span>{status?.pending ? 'Preparing the first all-time report' : 'Totals temporarily unavailable'}</span>}
       {stats && <span>Revenue / recorded spend</span>}
     </div>
+    {latestGap ? <FleetTrendChart title="Daily Spend Gap" subtitle={`${describeChange(latestGap.change)} on the latest day`}
+      points={gapPoints} series={gapSeries} fitValues
+      detail={point => describeChange(point.change)}
+      definition="Estimated all-time spend minus revenue over the last 30 days. Starts from the saved all-time gap and works backward using daily recorded revenue and expenses. A falling line means revenue is catching up with spending. Negative values mean revenue is ahead."
+      footer="30-day history · Latest day may be partial" />
+      : <p>Daily spend gap history needs all-time totals and daily trends from the same reporting day.</p>}
     <details className="recovery-meter-details"><summary>Payoff outlook</summary>
       <div className="capital-basis-progress__ticker revenue-spend-outlook">
         <span><strong>{outlookLabel}</strong>Expected break even</span>

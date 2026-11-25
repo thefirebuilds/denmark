@@ -12,6 +12,7 @@ import "leaflet/dist/leaflet.css";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const DEFAULT_CENTER = [30.2672, -97.7431];
 const MAX_RENDER_POINTS = 1200;
+const ACTIVITY_GAP_MS = 30 * 60 * 1000;
 
 function toNumber(value) {
   const number = Number(value);
@@ -28,10 +29,24 @@ function normalizePoint(point) {
     lat,
     lon,
     seenAt: point?.seen_at || point?.seenAt || point?.captured_at || null,
+    isRunning: point?.is_running,
     speed: toNumber(point?.speed),
     heading: toNumber(point?.heading),
     source: point?.service_name || point?.source || "telemetry",
   };
+}
+
+function splitActivities(points) {
+  const activities = [];
+  let previous = null;
+  for (const point of points) {
+    const gap = Date.parse(point.seenAt) - Date.parse(previous?.seenAt);
+    const restarted = previous?.isRunning === false && point.isRunning === true;
+    if (!previous || gap >= ACTIVITY_GAP_MS || restarted) activities.push([]);
+    activities.at(-1).push(point);
+    previous = point;
+  }
+  return activities;
 }
 
 function samplePoints(points, maxPoints = MAX_RENDER_POINTS) {
@@ -108,11 +123,13 @@ export default function TripPathMap({ tripId, activityUrl, compact = false, titl
   const [pointCount, setPointCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadPath() {
+      setPage(0);
       if (!tripId && !activityUrl) {
         setPath([]);
         setPointCount(0);
@@ -163,14 +180,22 @@ export default function TripPathMap({ tripId, activityUrl, compact = false, titl
     };
   }, [tripId, activityUrl]);
 
-  const renderPoints = useMemo(() => samplePoints(path), [path]);
+  const activities = useMemo(() => activityUrl ? [path] : splitActivities(path), [activityUrl, path]);
+  const visibleActivities = useMemo(() => page ? activities.slice(page - 1, page) : activities, [activities, page]);
+  const renderPoints = useMemo(() => samplePoints(visibleActivities.flat()), [visibleActivities]);
   const positions = useMemo(
-    () => renderPoints.map((point) => [point.lat, point.lon]),
-    [renderPoints]
+    () => {
+      const visiblePoints = new Set(renderPoints);
+      return visibleActivities.map(activity => activity
+        .filter(point => visiblePoints.has(point))
+        .map(point => [point.lat, point.lon]));
+    },
+    [renderPoints, visibleActivities]
   );
   const startPoint = renderPoints[0] || null;
   const endPoint = renderPoints[renderPoints.length - 1] || null;
-  const pathMiles = useMemo(() => getPathMiles(path), [path]);
+  const pathMiles = useMemo(() => visibleActivities.reduce((sum, activity) => sum + getPathMiles(activity), 0), [visibleActivities]);
+  const visiblePointCount = page ? visibleActivities[0]?.length ?? 0 : path.length;
   const center = startPoint ? [startPoint.lat, startPoint.lon] : DEFAULT_CENTER;
 
   return (
@@ -186,7 +211,7 @@ export default function TripPathMap({ tripId, activityUrl, compact = false, titl
             {loading
               ? "Loading path..."
               : path.length
-                ? `${pointCount.toLocaleString("en-US")} snapshots`
+                ? `${(page ? visiblePointCount : pointCount).toLocaleString("en-US")} snapshots`
                 : "No GPS snapshots available"}
           </span>
         </div>
@@ -195,6 +220,17 @@ export default function TripPathMap({ tripId, activityUrl, compact = false, titl
           <strong>{Math.round(pathMiles).toLocaleString("en-US")} mi traced</strong>
         ) : null}
       </div>
+
+      {!activityUrl && !loading && activities.length > 1 && (
+        <div className="trip-path-pagination" role="group" aria-label="Trip GPS activities">
+          <button type="button" onClick={() => setPage(0)} aria-pressed={page === 0}>Full trip</button>
+          <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
+          <button type="button" disabled={page >= activities.length} onClick={() => setPage(page + 1)}>{page ? "Next" : "First activity"}</button>
+          <span aria-live="polite">
+            {page ? `Activity ${page} of ${activities.length} · ${formatDateTime(startPoint?.seenAt)} – ${formatDateTime(endPoint?.seenAt)}` : `${activities.length} recorded activities`}
+          </span>
+        </div>
+      )}
 
       <div className="trip-path-map-shell">
         {error ? <div className="trip-path-state">{error}</div> : null}
@@ -243,13 +279,13 @@ export default function TripPathMap({ tripId, activityUrl, compact = false, titl
                 }}
               >
                 <Popup>
-                  <strong>{activityUrl ? "First recorded location" : "Trip start"}</strong>
+                  <strong>{activityUrl || page ? "First recorded location" : "Trip start"}</strong>
                   <br />
                   {formatDateTime(startPoint.seenAt)}
                 </Popup>
               </CircleMarker>
             ) : null}
-            {endPoint ? (
+            {endPoint && endPoint !== startPoint ? (
               <CircleMarker
                 center={[endPoint.lat, endPoint.lon]}
                 radius={7}
@@ -261,7 +297,7 @@ export default function TripPathMap({ tripId, activityUrl, compact = false, titl
                 }}
               >
                 <Popup>
-                  <strong>{activityUrl ? "Last recorded location" : "Trip end"}</strong>
+                  <strong>{activityUrl || page ? "Last recorded location" : "Trip end"}</strong>
                   <br />
                   {formatDateTime(endPoint.seenAt)}
                 </Popup>
@@ -271,7 +307,10 @@ export default function TripPathMap({ tripId, activityUrl, compact = false, titl
         ) : null}
       </div>
 
-      {path.length && pointCount > renderPoints.length ? (
+      {path.length > 0 && pointCount > path.length && (
+        <div className="trip-path-note">Loaded the first {path.length.toLocaleString("en-US")} of {pointCount.toLocaleString("en-US")} snapshots.</div>
+      )}
+      {visiblePointCount > renderPoints.length ? (
         <div className="trip-path-note">
           Rendering {renderPoints.length.toLocaleString("en-US")} sampled points for map speed.
         </div>

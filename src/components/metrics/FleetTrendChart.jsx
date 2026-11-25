@@ -6,7 +6,7 @@ const dateLabel = value => {
   const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
   return Number.isNaN(+date) ? value : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
-export default function FleetTrendChart({ title, subtitle, definition, points = [], series, fixedMax, detail, footer, monthly = false }) {
+export default function FleetTrendChart({ title, subtitle, definition, points = [], series, fixedMax, detail, footer, monthly = false, fitValues = false }) {
   const uid = useId();
   const [showAverage, setShowAverage] = useState(true);
   const averageLabel = monthly ? '3-month average' : '7-day average';
@@ -23,9 +23,11 @@ export default function FleetTrendChart({ title, subtitle, definition, points = 
   }, []);
   useEffect(() => { setActive(null); }, [points]);
   const height = 220, left = 44, right = width - 12, top = 20, bottom = 188;
-  const max = fixedMax ?? Math.max(1, ...points.flatMap(p => series.map(s => Number(p[s.key] ?? 0))));
+  const values = points.flatMap(point => series.map(s => point[s.key])).filter(value => value != null).map(Number);
+  const min = fitValues && values.length ? Math.min(...values) - 1 : 0;
+  const max = fixedMax ?? (fitValues && values.length ? Math.max(...values) + 1 : Math.max(1, ...values));
   const x = i => points.length === 1 ? (left + right) / 2 : left + i / Math.max(1, points.length - 1) * (right - left);
-  const y = n => bottom - Math.max(0, Number(n)) / max * (bottom - top);
+  const y = n => bottom - Math.max(0, Number(n) - min) / (max - min) * (bottom - top);
   const selected = points[active];
   const latest = points.at(-1);
   const ticks = [];
@@ -56,7 +58,10 @@ export default function FleetTrendChart({ title, subtitle, definition, points = 
         onPointerLeave={() => { if (document.activeElement !== root.current?.querySelector('.fleet-trend__plot')) setActive(null); }}
         onKeyDown={e => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(e.key)) { e.preventDefault(); setActive(i => e.key === 'Escape' ? null : e.key === 'Home' ? 0 : e.key === 'End' ? points.length - 1 : Math.max(0, Math.min(points.length - 1, (i ?? points.length - 1) + (e.key === 'ArrowLeft' ? -1 : 1)))); } }}>
         <svg viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-          {[0, .25, .5, .75, 1].map(t => <g key={t}><line x1={left} x2={right} y1={y(t * max)} y2={y(t * max)} className="fleet-trend__grid"/><text x={left - 9} y={y(t * max) + 4} textAnchor="end">{fixedMax === 1 ? `${t * 100}%` : new Intl.NumberFormat('en', { notation: 'compact' }).format(t * max)}</text></g>)}
+          {[0, .25, .5, .75, 1].map(t => {
+            const value = min + t * (max - min);
+            return <g key={t}><line x1={left} x2={right} y1={y(value)} y2={y(value)} className="fleet-trend__grid"/><text x={left - 9} y={y(value) + 4} textAnchor="end">{fixedMax === 1 ? `${t * 100}%` : new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: fitValues ? 2 : 1 }).format(value)}</text></g>;
+          })}
           {series.map((s, si) => {
             const segments = []; let segment = [];
             points.forEach((p, i) => { if (p[s.key] == null) { if (segment.length) segments.push(segment); segment = []; } else segment.push([x(i), y(p[s.key])]); });
