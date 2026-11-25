@@ -23,7 +23,7 @@ const {
   safeDivide,
   tripOverlapsRange,
   isTripTollAttributedOutstanding,
-  isTripTollBillingFinalized,
+  getTripTollShortfall,
   isTripTollRecovered,
 } = require("./metricHelpers");
 const {
@@ -898,6 +898,27 @@ function mapUnattributedTollCharge(row) {
   };
 }
 
+function indexTollInvoices(messages) {
+  const invoices = new Map();
+  for (const message of messages) {
+    const tollAmount = extractTollAmountFromText(message.normalized_text_body);
+    if (tollAmount == null || tollAmount < 0) continue;
+
+    const invoice = {
+      charged_toll_amount: roundMoney(tollAmount),
+      charged_at: message.message_timestamp || message.created_at || null,
+    };
+    const keys = [
+      message.trip_id && `trip:${message.trip_id}`,
+      message.reservation_id && `reservation:${message.reservation_id}`,
+    ];
+    for (const key of keys) {
+      if (key && !invoices.has(key)) invoices.set(key, invoice);
+    }
+  }
+  return invoices;
+}
+
 async function getTollMetricsDetail(rangeKey = "30d") {
   await ensureTollAuditSchema();
   const { key, startDate, endDate } = getDateRange(rangeKey);
@@ -926,26 +947,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
       billingSnapshots.map((snapshot) => [Number(snapshot.trip_id), snapshot])
     );
 
-    const latestTollInvoiceByTripKey = new Map();
-    for (const message of tollInvoiceMessages) {
-      const tollAmount = extractTollAmountFromText(message.normalized_text_body);
-      if (!(tollAmount >= 0)) continue;
-
-      const keys = [];
-      if (message.trip_id) keys.push(`trip:${message.trip_id}`);
-      if (message.reservation_id) keys.push(`reservation:${message.reservation_id}`);
-
-      for (const key of keys) {
-        if (!latestTollInvoiceByTripKey.has(key)) {
-          latestTollInvoiceByTripKey.set(key, {
-            message_id: message.id,
-            charged_toll_amount: roundMoney(tollAmount),
-            charged_at: message.message_timestamp || message.created_at || null,
-            subject: message.subject || null,
-          });
-        }
-      }
-    }
+    const latestTollInvoiceByTripKey = indexTollInvoices(tollInvoiceMessages);
 
     const attributedTollTotalsByTripId = new Map();
     const tollTimingByTripId = new Map();
@@ -1034,7 +1036,6 @@ async function getTollMetricsDetail(rangeKey = "30d") {
     }
 
     const outstandingTrips = trips
-      .filter((trip) => isTripTollAttributedOutstanding(trip))
       .map((trip) => {
         const invoice =
           latestTollInvoiceByTripKey.get(`trip:${trip.id}`) ||
@@ -1049,15 +1050,8 @@ async function getTollMetricsDetail(rangeKey = "30d") {
             : invoice?.charged_toll_amount != null
             ? roundMoney(invoice.charged_toll_amount)
             : null;
-        const settlementBasis =
-          attributedTollAmount > 0
-            ? attributedTollAmount
-            : roundMoney(trip.toll_total);
-        const recovered =
-          isTripTollRecovered(trip) ||
-          (chargedTollAmount != null &&
-            settlementBasis > 0 &&
-            chargedTollAmount + 0.01 >= settlementBasis);
+        const { amount, closed } = getTripTollShortfall(trip, attributedTollAmount, chargedTollAmount);
+        if (closed || amount <= 0) return null;
         const auditTiming = getTollAuditTiming(trip, invoice);
         return {
           trip_id: trip.id,
@@ -1071,6 +1065,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           trip_end: trip.trip_end || null,
           collection_due_at: trip.toll_collection_due_at,
           toll_total: roundMoney(trip.toll_total),
+          outstanding_amount: amount,
           attributed_toll_amount: attributedTollAmount,
           charged_toll_amount: chargedTollAmount,
           toll_delta:
@@ -1082,10 +1077,9 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           toll_review_status: getNormalizedTollStatus(trip),
           workflow_stage: trip.workflow_stage || null,
           expense_status: trip.expense_status || null,
-          recovered,
         };
       })
-      .filter((trip) => !trip.billed_at)
+      .filter(Boolean)
       .sort((a, b) => new Date(a.trip_end || 0).getTime() - new Date(b.trip_end || 0).getTime());
 
     const discrepancyTrips = trips
@@ -1106,12 +1100,8 @@ async function getTollMetricsDetail(rangeKey = "30d") {
             : null;
 
         const auditTiming = getTollAuditTiming(trip, invoice);
-        if (!isTripTollBillingFinalized(trip, auditTiming.billed_at)) return null;
-
-        if (chargedTollAmount == null && !(attributedTollAmount > 0)) return null;
-
-        const tollDelta = roundMoney((chargedTollAmount || 0) - attributedTollAmount);
-        if (tollDelta >= -0.01) return null;
+        const { amount, closed } = getTripTollShortfall(trip, attributedTollAmount, chargedTollAmount);
+        if (!closed || amount <= 0) return null;
         return {
           trip_id: trip.id,
           reservation_id: trip.reservation_id || null,
@@ -1124,13 +1114,13 @@ async function getTollMetricsDetail(rangeKey = "30d") {
           trip_end: trip.trip_end || null,
           charged_toll_amount: chargedTollAmount,
           attributed_toll_amount: attributedTollAmount,
-          toll_delta: tollDelta,
+          toll_delta: -amount,
           toll_review_status: getNormalizedTollStatus(trip),
           workflow_stage: trip.workflow_stage || null,
           expense_status: trip.expense_status || null,
           charged_at: invoice?.charged_at || null,
           ...auditTiming,
-          loss_amount: roundMoney(attributedTollAmount - (chargedTollAmount || 0)),
+          loss_amount: amount,
           recovered,
         };
       })
@@ -1222,7 +1212,7 @@ async function getTollMetricsDetail(rangeKey = "30d") {
       },
       outstanding: {
         total_amount: roundMoney(
-          outstandingTrips.reduce((sum, item) => sum + Number(item.toll_total || 0), 0)
+          outstandingTrips.reduce((sum, item) => sum + item.outstanding_amount, 0)
         ),
         count: outstandingTrips.length,
         trips: outstandingTrips,
@@ -1587,7 +1577,7 @@ const tollsRecovered = trips.reduce((sum, trip) => {
   return sum + getTollValueForRange(trip);
 }, 0);
 
-const tollsAttributedOutstanding = trips.reduce((sum, trip) => {
+const tollsWithinCollectionWindow = trips.reduce((sum, trip) => {
   if (!isTripTollAttributedOutstanding(trip)) return sum;
 
   return sum + getOutstandingTollValue(trip);
@@ -1613,12 +1603,22 @@ for (const charge of matchedTollCharges) {
     Number(attributedByTripId.get(tripId) || 0) + Number(charge.amount || 0)
   );
 }
-const tollsUnderbilledLoss = trips.reduce((sum, trip) => {
-  if (!isTripTollBillingFinalized(trip)) return sum;
-  const attributed = Number(attributedByTripId.get(Number(trip.id)) || 0);
-  const charged = Number(trip.toll_charged_total || 0);
-  return sum + Math.max(0, attributed - charged);
-}, 0);
+    const tripsMissingBilledTotals = trips.filter(trip =>
+      trip.toll_charged_total == null && attributedByTripId.get(Number(trip.id)) > 0
+    );
+    const invoices = indexTollInvoices(await fetchTollInvoiceMessages(
+      client,
+      tripsMissingBilledTotals.map(trip => trip.id),
+      tripsMissingBilledTotals.map(trip => trip.reservation_id)
+    ));
+    let tollsAttributedOutstanding = 0;
+    let tollsUnderbilledLoss = 0;
+    for (const trip of trips) {
+      const invoice = invoices.get(`trip:${trip.id}`) || invoices.get(`reservation:${trip.reservation_id}`);
+      const { amount, closed } = getTripTollShortfall(trip, attributedByTripId.get(Number(trip.id)), invoice?.charged_toll_amount);
+      if (closed) tollsUnderbilledLoss += amount;
+      else tollsAttributedOutstanding += amount;
+    }
 
     const otherIncome = fuelReimbursements + tollRevenue;
     const revenue = tripIncome + otherIncome;
@@ -1918,7 +1918,7 @@ const tollsUnderbilledLoss = trips.reduce((sum, trip) => {
       },
       toll_recovery_rate: roundNumber(safeDivide(tollsRecovered, tollsPaid)),
       toll_effective_recovery_rate: roundNumber(
-        safeDivide(tollsRecovered + tollsAttributedOutstanding, tollsPaid)
+        safeDivide(tollsRecovered + tollsWithinCollectionWindow, tollsPaid)
       ),
     };
   } finally {

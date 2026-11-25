@@ -45,12 +45,10 @@ function isTripTollCollectionOverdue(trip, now = Date.now()) {
   return now >= tripEndMs + TOLL_COLLECTION_WAIT_HOURS * 60 * 60 * 1000;
 }
 
-function isTripTollBillingFinalized(trip, billedAt = null) {
-  const tollReviewStatus = String(trip?.toll_review_status || "").toLowerCase();
-  if (["billed", "waived"].includes(tollReviewStatus)) return true;
-
-  const billedMs = billedAt ? new Date(billedAt).getTime() : NaN;
-  return Number.isFinite(billedMs) || isTripTollCollectionOverdue(trip);
+function getTripTollShortfall(trip, attributedAmount, invoiceAmount) {
+  const charged = trip.toll_charged_total ?? invoiceAmount;
+  const amount = Math.max(0, roundMoney(toNumber(attributedAmount) - Math.max(0, toNumber(charged))));
+  return { amount, closed: trip.closed_out === true || Boolean(trip.closed_out_at) };
 }
 
 function getTripFuelReimbursementValue(trip, rangeStart, rangeEnd) {
@@ -358,7 +356,7 @@ module.exports = {
   isOnboardingExpense,
   isTollExpense,
   isTripTollAttributedOutstanding,
-  isTripTollBillingFinalized,
+  getTripTollShortfall,
   isTripTollCollectionOverdue,
   isTripTollRecovered,
   normalizeCategory,

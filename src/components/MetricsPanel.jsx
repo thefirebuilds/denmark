@@ -754,7 +754,7 @@ function BusinessHeartbeat({
         <HeartbeatMetric
           label="Outstanding Trip Tolls"
           value={formatCurrencyCompact(summary?.tolls_attributed_outstanding)}
-          comp="Unbilled tolls awaiting collection"
+          comp="Unbilled balance on trips still open"
           tone={Number(summary?.tolls_attributed_outstanding ?? 0) > 0 ? "warning" : "positive"}
           onClick={() => onOpenTollAudit?.("outstanding")}
         />
@@ -768,7 +768,7 @@ function BusinessHeartbeat({
         <HeartbeatMetric
           label="Underbilled Toll Loss"
           value={formatCurrencyCompact(summary?.tolls_underbilled_loss)}
-          comp="Billed discrepancies or unbilled tolls awaiting review"
+          comp="Unbilled balance on closed-out trips"
           tone={Number(summary?.tolls_underbilled_loss ?? 0) > 0 ? "negative" : "positive"}
           onClick={() => onOpenTollAudit?.("discrepancies")}
         />
@@ -1270,10 +1270,8 @@ export default function MetricsPanel() {
     if (metricsLoadSeq.current !== loadSeq) return;
     setPendingReportMessage("");
     if (range === 'all') setAllTimeSummary(summaryData);
-    if (range === '30d') {
-      setRecoveryPaceSummary(summaryData);
-      setRecoveryTrends(trendsData);
-    }
+    if (range === '30d') setRecoveryPaceSummary(summaryData);
+    if (range === '90d') setRecoveryTrends(trendsData);
 
     setSummary(existing => ({
       ...(existing?._report?.calculated_at === summaryData?._report?.calculated_at
@@ -1297,7 +1295,7 @@ export default function MetricsPanel() {
       const secondaryLoads = [
         ...(range === 'all' ? [] : [{ label: 'All-time totals', path: '/api/metrics/summary', range: 'all', apply: setAllTimeSummary }]),
         ...(range === '30d' ? [] : [{ label: 'Recovery pace', path: '/api/metrics/summary', range: '30d', apply: setRecoveryPaceSummary }]),
-        ...(range === '30d' ? [] : [{ label: 'Daily spend gap', path: '/api/metrics/trends', range: '30d', apply: setRecoveryTrends }]),
+        ...(range === '90d' ? [] : [{ label: 'Daily spend gap', path: '/api/metrics/trends', range: '90d', apply: setRecoveryTrends }]),
         {
           label: "Business metrics",
           path: "/api/metrics/business/current",
@@ -4131,7 +4129,7 @@ const mileageStats = useMemo(() => {
 
           <CompactLedger
             title="Toll Position"
-            subtitle="Cash on hand, ended-trip tolls awaiting settlement, and charges without a trip"
+            subtitle="Cash on hand, trip toll balances, and charges without a trip"
           >
             <LedgerLine
               label="Current Account Balance"
@@ -4147,7 +4145,7 @@ const mileageStats = useMemo(() => {
             <LedgerLine
               label="Outstanding Trip Tolls"
               value={formatCurrencyCompact(summary.tolls_attributed_outstanding)}
-              detail="Unbilled tolls awaiting collection"
+              detail="Unbilled balance on trips still open"
               tone={Number(summary.tolls_attributed_outstanding ?? 0) > 0 ? "warning" : "positive"}
               onClick={() => openTollAudit("outstanding")}
             />
@@ -4161,7 +4159,7 @@ const mileageStats = useMemo(() => {
             <LedgerLine
               label="Underbilled Toll Loss"
               value={formatCurrencyCompact(summary.tolls_underbilled_loss)}
-              detail="Billed discrepancies or unbilled tolls awaiting review"
+              detail="Unbilled balance on closed-out trips"
               tone={Number(summary.tolls_underbilled_loss ?? 0) > 0 ? "negative" : "positive"}
               onClick={() => openTollAudit("discrepancies")}
             />
@@ -4241,8 +4239,8 @@ const mileageStats = useMemo(() => {
             </div>
 
             <div className="fleet-recovery-meters">
-              <CapitalBasisProgress stats={capitalBasisStats} />
               <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} paceReport={recoveryPaceSummary} trends={recoveryTrends} />
+              <CapitalBasisProgress stats={capitalBasisStats} />
             </div>
 
             <div className="metrics-toolbar">

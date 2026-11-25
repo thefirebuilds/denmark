@@ -32,8 +32,8 @@ export default function RevenueSpendProgress({ report, status, paceReport, trend
     {latestGap ? <FleetTrendChart title="Daily Spend Gap" subtitle={`${describeChange(latestGap.change)} on the latest day`}
       points={gapPoints} series={gapSeries} fitValues
       detail={point => describeChange(point.change)}
-      definition="Estimated all-time spend minus revenue over the last 30 days. Starts from the saved all-time gap and works backward using daily recorded revenue and expenses. A falling line means revenue is catching up with spending. Negative values mean revenue is ahead."
-      footer="30-day history · Latest day may be partial" />
+      definition="Estimated all-time spend minus revenue over the last 90 days. Starts from the saved all-time gap and works backward using daily recorded revenue and expenses. A falling line means revenue is catching up with spending. Negative values mean revenue is ahead."
+      footer="90-day history · Latest day may be partial" />
       : <p>Daily spend gap history needs all-time totals and daily trends from the same reporting day.</p>}
     <details className="recovery-meter-details"><summary>Payoff outlook</summary>
       <div className="capital-basis-progress__ticker revenue-spend-outlook">

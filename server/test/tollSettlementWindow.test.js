@@ -76,23 +76,30 @@ test('toll drawer uses the enforced hold and quiet period instead of a separate 
     settlementState: (record, policy, arrival) => settlementState(record, policy, arrival, '2026-10-07T06:00:00Z'),
     QUIET_HOURS: 48, BUFFER_HOURS: 24,
     fetchTripsInRange: async () => [{ id: 42, trip_end: end, toll_total: 20,
-      workflow_stage: 'awaiting_expenses', toll_review_status: 'pending' }],
-    fetchTollChargesInRange: async () => [],
+      workflow_stage: 'awaiting_expenses', toll_review_status: 'pending' },
+      { id: 43, trip_end: '2026-09-01T00:00:00Z', toll_charged_total: 4 },
+      { id: 44, closed_out: true, toll_charged_total: 4 }],
+    fetchTollChargesInRange: async () => [{ id: 4, amount: 7 }],
     fetchTollChargesForTripIds: async () => [{ id: 1, matched_trip_id: 42,
-      source: 'hctra_eztag', created_at: received, amount: 20 }],
+      source: 'hctra_eztag', created_at: received, amount: 20 },
+      { id: 2, matched_trip_id: 43, amount: 10 },
+      { id: 3, matched_trip_id: 44, amount: 10 }],
     fetchTollInvoiceMessages: async () => [], fetchLatestTollBillingSnapshots: async () => [],
     getNormalizedTollStatus: record => record.toll_review_status,
     mapUnattributedTollCharge: record => record,
     roundMoney: metrics.roundMoney,
-    isTripTollAttributedOutstanding: metrics.isTripTollAttributedOutstanding,
     isTripTollRecovered: metrics.isTripTollRecovered,
-    isTripTollBillingFinalized: metrics.isTripTollBillingFinalized,
+    getTripTollShortfall: metrics.getTripTollShortfall,
   });
-  vm.runInContext(source.slice(source.indexOf('async function getTollMetricsDetail('),
+  vm.runInContext(source.slice(source.indexOf('function indexTollInvoices('),
     source.indexOf('async function getSummaryMetrics(')), sandbox);
   const detail = await sandbox.getTollMetricsDetail();
   assert.equal(detail.arrival_timing.max_hours_after_trip_end, 135);
   assert.equal(detail.arrival_timing.closeout_delay_hours, 159);
-  assert.equal(detail.outstanding.count, 1);
-  assert.equal(detail.outstanding.trips[0].collection_due_at, '2026-10-08T15:00:00.000Z');
+  assert.equal(detail.outstanding.count, 2);
+  assert.equal(detail.outstanding.total_amount, 26);
+  assert.equal(detail.outstanding.trips.find(trip => trip.trip_id === 42).collection_due_at, '2026-10-08T15:00:00.000Z');
+  assert.equal(detail.discrepancies.total_loss, 6);
+  assert.equal(detail.discrepancies.trips[0].trip_id, 44);
+  assert.equal(detail.unattributed.total_amount, 7);
 });

@@ -3345,7 +3345,7 @@
   }
 }
 
-.fleet-recovery-meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.fleet-recovery-meters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .fleet-recovery-meters .capital-basis-progress { min-width: 0; gap: 8px; padding: 10px 12px; border-radius: 10px; box-shadow: none; }
 .fleet-recovery-meters .capital-basis-progress__eyebrow { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.65rem; }
 .fleet-recovery-meters .capital-basis-progress__eyebrow > span { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
@@ -3366,6 +3366,3 @@
 .revenue-spend-outlook strong { white-space: normal; line-height: 1.35; }
 .fleet-recovery-meters .revenue-spend-positive { color: var(--green); }
 .fleet-recovery-meters .revenue-spend-negative { color: var(--amber); }
-@media (max-width: 760px) {
-  .fleet-recovery-meters { grid-template-columns: 1fr; }
-}

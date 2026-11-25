@@ -149,7 +149,7 @@ export default function TollAuditDrawer({
           <div>
             <div className="app-drawer-title">Toll Audit Detail</div>
             <div className="app-drawer-subtitle">
-              Review ended trips awaiting toll settlement and charges with no trip.
+              Review outstanding tolls, closed-trip losses, and charges with no trip.
             </div>
           </div>
           <button type="button" className="app-drawer-close" onClick={onClose}>
@@ -253,13 +253,13 @@ export default function TollAuditDrawer({
                           </div>
                         </div>
                         <div className="toll-audit-item__amount">
-                          {formatCurrency(trip.toll_total)}
+                          {formatCurrency(trip.outstanding_amount)}
                         </div>
                       </div>
                       <div className="toll-audit-item__details">
-                        <span>Trip ended: {formatDateTime(trip.trip_end)}</span>
+                        <span>Scheduled end: {formatDateTime(trip.trip_end)}</span>
                         <span>
-                          Collection window: loss review after {formatDateTime(trip.collection_due_at)}
+                          Collection window ends: {formatDateTime(trip.collection_due_at)}
                         </span>
                         <span>Last toll received: {formatRelativeTime(trip.last_toll_received_at)}</span>
                       </div>
@@ -381,7 +381,7 @@ export default function TollAuditDrawer({
                     </section>
                   ))}
                   {!discrepancies.trips?.length ? (
-                    <div className="metrics-financial-empty">No attributed tolls were underbilled in this range.</div>
+                    <div className="metrics-financial-empty">No closed-out trips have underbilled tolls in this range.</div>
                   ) : null}
                 </div>
               </section>

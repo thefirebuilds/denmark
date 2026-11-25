@@ -32,7 +32,7 @@ export function dailySpendGap(report, trends) {
 
   let gapCents = Math.round(-totals.net * 100);
   const points = [];
-  for (const day of trends.points.slice(-30).reverse()) {
+  for (const day of [...trends.points].reverse()) {
     if (day.revenue == null || day.expenses == null) return [];
     const changeCents = Math.round((Number(day.expenses) - Number(day.revenue)) * 100);
     if (!Number.isFinite(changeCents)) return [];
