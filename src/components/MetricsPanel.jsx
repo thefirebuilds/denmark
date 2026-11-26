@@ -1111,6 +1111,41 @@ function CapitalBasisProgress({ stats }) {
   );
 }
 
+const TOLL_RANGES = [
+  ["30d", "30 days"], ["90d", "90 days"], ["180d", "180 days"],
+  ["12mo", "12 months"], ["all", "All time"],
+];
+
+function useTollDetail(range, enabled, revision) {
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const controller = new AbortController();
+
+    async function load() {
+      try {
+        const params = new URLSearchParams({ range });
+        const response = await fetch(`${API_BASE}/api/metrics/tolls/detail?${params}`, {
+          headers: { Accept: "application/json" },
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        if (!response.ok) throw new Error(`Toll detail request failed (${response.status})`);
+        const detail = parseMetricReportResponse(response, text, "Toll detail");
+        if (!controller.signal.aborted) setResult({ range, revision, detail });
+      } catch (error) {
+        if (!controller.signal.aborted) setResult({ range, revision, error: error.message });
+      }
+    }
+
+    load();
+    return () => controller.abort();
+  }, [range, enabled, revision]);
+
+  return result?.range === range && result.revision === revision ? result : null;
+}
+
 export default function MetricsPanel() {
   const [allTimeSummary, setAllTimeSummary] = useState(null);
   const [recoveryPaceSummary, setRecoveryPaceSummary] = useState(null);
@@ -1158,8 +1193,9 @@ export default function MetricsPanel() {
   const [offTripAuditError, setOffTripAuditError] = useState(null);
   const [tollAuditOpen, setTollAuditOpen] = useState(false);
   const [tollAuditFocus, setTollAuditFocus] = useState("unattributed");
-  const [tollAudit, setTollAudit] = useState(null);
-  const [tollAuditLoading, setTollAuditLoading] = useState(false);
+  const [tollRange, setTollRange] = useState("30d");
+  const [tollAuditScope, setTollAuditScope] = useState("panel");
+  const [tollDetailRevision, setTollDetailRevision] = useState(0);
   const [tollAuditError, setTollAuditError] = useState(null);
   const [assigningTollChargeId, setAssigningTollChargeId] = useState(null);
   const [financialDetailOpen, setFinancialDetailOpen] = useState(false);
@@ -1535,69 +1571,13 @@ export default function MetricsPanel() {
     };
   }, [offTripAuditOpen, selectedRange]);
 
-  useEffect(() => {
-    if (!tollAuditOpen) return undefined;
-
-    let cancelled = false;
-
-    async function loadTollAudit() {
-      try {
-        setTollAuditLoading(true);
-        setTollAuditError(null);
-
-        const params = new URLSearchParams({ range: selectedRange });
-        const response = await fetch(
-          `${API_BASE}/api/metrics/tolls/detail?${params.toString()}`,
-          {
-            headers: { Accept: "application/json" },
-          }
-        );
-
-        const text = await response.text();
-        if (!response.ok) {
-          throw new Error(`Toll detail request failed: ${response.status} ${text}`);
-        }
-
-        const data = parseMetricReportResponse(response, text, 'Toll detail');
-        if (!cancelled) {
-          setTollAudit(data);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setTollAuditError(err.message || "Failed to load toll detail");
-        }
-      } finally {
-        if (!cancelled) {
-          setTollAuditLoading(false);
-        }
-      }
-    }
-
-    loadTollAudit();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tollAuditOpen, selectedRange]);
-
-  async function reloadTollAuditDetail(range = selectedRange) {
-    const params = new URLSearchParams({ range });
-    const response = await fetch(
-      `${API_BASE}/api/metrics/tolls/detail?${params.toString()}`,
-      {
-        headers: { Accept: "application/json" },
-      }
-    );
-
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`Toll detail request failed: ${response.status} ${text}`);
-    }
-
-    const data = JSON.parse(text);
-    setTollAudit(data);
-    return data;
-  }
+  const panelTolls = useTollDetail(tollRange, Boolean(summary), tollDetailRevision);
+  const auditUsesPanelRange = tollAuditScope === "panel" || selectedRange === tollRange;
+  const metricsTolls = useTollDetail(selectedRange, tollAuditOpen && !auditUsesPanelRange, tollDetailRevision);
+  const auditTolls = auditUsesPanelRange ? panelTolls : metricsTolls;
+  const outstandingTolls = panelTolls?.detail?.outstanding?.total_amount;
+  const unassociatedTolls = panelTolls?.detail?.unattributed?.total_amount;
+  const underbilledTolls = panelTolls?.detail?.discrepancies?.total_loss;
 
   async function handleAssignTollTrip(tollChargeId, selectedValue) {
     try {
@@ -1627,13 +1607,8 @@ export default function MetricsPanel() {
         throw new Error(data?.error || "Failed to assign toll charge");
       }
 
-      await Promise.all([
-        loadMetrics(selectedRange, {
-          resetExpanded: false,
-          showPageLoading: false,
-        }),
-        reloadTollAuditDetail(selectedRange),
-      ]);
+      setTollDetailRevision(revision => revision + 1);
+      await loadMetrics(selectedRange, { resetExpanded: false, showPageLoading: false });
     } catch (err) {
       setTollAuditError(err.message || "Failed to assign toll charge");
     } finally {
@@ -1706,8 +1681,9 @@ export default function MetricsPanel() {
     setFinancialDetailLoading(false);
   }
 
-  function openTollAudit(focus = "unattributed") {
+  function openTollAudit(focus = "unattributed", scope = "panel") {
     setTollAuditFocus(focus);
+    setTollAuditScope(scope);
     setTollAuditOpen(true);
     setTollAuditError(null);
   }
@@ -2509,7 +2485,7 @@ const mileageStats = useMemo(() => {
             parkingSummary={parkingMetrics?.summary}
             onOpenExpenseBreakdown={() => setExpenseBreakdownOpen(true)}
             onReconcileTollBalance={handleReconcileTollBalance}
-            onOpenTollAudit={openTollAudit}
+            onOpenTollAudit={focus => openTollAudit(focus, "metrics")}
           />
 
           <div className="metrics-ledger-grid">
@@ -4118,9 +4094,9 @@ const mileageStats = useMemo(() => {
 
       <TollAuditDrawer
         open={tollAuditOpen}
-        loading={tollAuditLoading}
-        error={tollAuditError}
-        detail={tollAudit}
+        loading={tollAuditOpen && !auditTolls}
+        error={tollAuditError || auditTolls?.error}
+        detail={auditTolls?.detail}
         focus={tollAuditFocus}
         assigningChargeId={assigningTollChargeId}
         onAssignTrip={handleAssignTollTrip}
@@ -4130,6 +4106,12 @@ const mileageStats = useMemo(() => {
           <CompactLedger
             title="Toll Position"
             subtitle="Cash on hand, trip toll balances, and charges without a trip"
+            action={
+              <select className="metrics-toolbar__select toll-position-range" aria-label="Toll Position date range" value={tollRange}
+                onChange={event => setTollRange(event.target.value)}>
+                {TOLL_RANGES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            }
           >
             <LedgerLine
               label="Current Account Balance"
@@ -4144,25 +4126,30 @@ const mileageStats = useMemo(() => {
             />
             <LedgerLine
               label="Outstanding Trip Tolls"
-              value={formatCurrencyCompact(summary.tolls_attributed_outstanding)}
+              value={outstandingTolls == null ? "--" : formatCurrencyCompact(outstandingTolls)}
               detail="Unbilled balance on trips still open"
-              tone={Number(summary.tolls_attributed_outstanding ?? 0) > 0 ? "warning" : "positive"}
+              tone={outstandingTolls == null ? "neutral" : outstandingTolls > 0 ? "warning" : "positive"}
               onClick={() => openTollAudit("outstanding")}
             />
             <LedgerLine
               label="Unassociated Toll Charges"
-              value={formatCurrencyCompact(summary.tolls_unattributed)}
+              value={unassociatedTolls == null ? "--" : formatCurrencyCompact(unassociatedTolls)}
               detail="Toll charges with no associated trip"
-              tone={Number(summary.tolls_unattributed ?? 0) > 0 ? "negative" : "positive"}
+              tone={unassociatedTolls == null ? "neutral" : unassociatedTolls > 0 ? "negative" : "positive"}
               onClick={() => openTollAudit("unattributed")}
             />
             <LedgerLine
               label="Underbilled Toll Loss"
-              value={formatCurrencyCompact(summary.tolls_underbilled_loss)}
+              value={underbilledTolls == null ? "--" : formatCurrencyCompact(underbilledTolls)}
               detail="Unbilled balance on closed-out trips"
-              tone={Number(summary.tolls_underbilled_loss ?? 0) > 0 ? "negative" : "positive"}
+              tone={underbilledTolls == null ? "neutral" : underbilledTolls > 0 ? "negative" : "positive"}
               onClick={() => openTollAudit("discrepancies")}
             />
+            {!panelTolls && <div role="status">Loading toll totals…</div>}
+            {panelTolls?.error && <div role="status">
+              {panelTolls.error}{" "}
+              <button type="button" className="metrics-toolbar__select" onClick={() => setTollDetailRevision(revision => revision + 1)}>Retry</button>
+            </div>}
           </CompactLedger>
 
           {false ? (

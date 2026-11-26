@@ -2750,6 +2750,10 @@
   font-weight: 700;
 }
 
+.metrics-toolbar__select.toll-position-range {
+  min-width: 0;
+}
+
 .metrics-filter-chips {
   display: flex;
   align-items: center;
