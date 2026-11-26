@@ -41,3 +41,15 @@ export function dailySpendGap(report, trends) {
   }
   return points.reverse();
 }
+
+export function selectSpendGapRange(points, range) {
+  if (range === 'all' || !points.length) return points;
+  if (range !== '12mo') return points.slice(-Number.parseInt(range, 10));
+
+  const latest = new Date(`${points.at(-1).label}T00:00:00Z`);
+  const anniversary = new Date(Date.UTC(latest.getUTCFullYear() - 1, latest.getUTCMonth(), 1));
+  const lastDay = new Date(Date.UTC(anniversary.getUTCFullYear(), anniversary.getUTCMonth() + 1, 0)).getUTCDate();
+  anniversary.setUTCDate(Math.min(latest.getUTCDate(), lastDay));
+  const cutoff = anniversary.toISOString().slice(0, 10);
+  return points.filter(point => point.label > cutoff);
+}

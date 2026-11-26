@@ -246,15 +246,7 @@ async function getTrendMetrics(rangeKey = "90d") {
   try {
     const trips = await fetchTripsInRange(client, startDate, endDate);
     const expenses = await fetchExpensesInRange(client, startDate, endDate);
-    const monthlyTrips = await fetchTripsInRange(client, comparisonStartDate, monthlyEndDate);
-    const monthlyExpenses = await fetchExpensesInRange(
-      client,
-      comparisonStartDate,
-      monthlyEndDate
-    );
-
     const bucketMap = new Map();
-    const monthlyBucketMap = new Map();
     const effectiveStartDate =
       startDate ||
       [...trips.map((trip) => trip.trip_start), ...expenses.map((expense) => expense.date)]
@@ -278,22 +270,8 @@ async function getTrendMetrics(rangeKey = "90d") {
       ensureBucket(label);
     }
 
-    for (const label of iterateBucketLabels(comparisonStartDate, monthlyEndDate, "month")) {
-      monthlyBucketMap.set(label, {
-        label,
-        revenue: 0,
-        expenses: 0,
-        onboarding_expenses: 0,
-        profit: 0,
-      });
-    }
-
     for (const trip of trips) {
       addTripRevenueToBuckets(bucketMap, trip, startDate, endDate, granularity);
-    }
-
-    for (const trip of monthlyTrips) {
-      addTripMonthlyRevenueToBuckets(monthlyBucketMap, trip);
     }
 
     for (const expense of expenses) {
@@ -303,6 +281,31 @@ async function getTrendMetrics(rangeKey = "90d") {
       bucket.expenses += toNumber(expense.price) + toNumber(expense.tax);
     }
 
+    const points = Array.from(bucketMap.values())
+      .sort((a, b) => String(a.label).localeCompare(String(b.label)))
+      .map((bucket) => ({
+        label: bucket.label,
+        revenue: roundMoney(bucket.revenue),
+        expenses: roundMoney(bucket.expenses),
+        profit: roundMoney(bucket.revenue - bucket.expenses),
+      }));
+    if (key === "daily-all") return { range: key, granularity, points };
+
+    const monthlyTrips = await fetchTripsInRange(client, comparisonStartDate, monthlyEndDate);
+    const monthlyExpenses = await fetchExpensesInRange(client, comparisonStartDate, monthlyEndDate);
+    const monthlyBucketMap = new Map();
+    for (const label of iterateBucketLabels(comparisonStartDate, monthlyEndDate, "month")) {
+      monthlyBucketMap.set(label, {
+        label,
+        revenue: 0,
+        expenses: 0,
+        onboarding_expenses: 0,
+        profit: 0,
+      });
+    }
+    for (const trip of monthlyTrips) {
+      addTripMonthlyRevenueToBuckets(monthlyBucketMap, trip);
+    }
     for (const expense of monthlyExpenses) {
       const label = bucketKey(expense.date, "month");
       if (!label) continue;
@@ -316,14 +319,6 @@ async function getTrendMetrics(rangeKey = "90d") {
       }
     }
 
-    const points = Array.from(bucketMap.values())
-      .sort((a, b) => String(a.label).localeCompare(String(b.label)))
-      .map((bucket) => ({
-        label: bucket.label,
-        revenue: roundMoney(bucket.revenue),
-        expenses: roundMoney(bucket.expenses),
-        profit: roundMoney(bucket.revenue - bucket.expenses),
-      }));
     const monthlyComparisonPoints = Array.from(monthlyBucketMap.values())
       .sort((a, b) => String(a.label).localeCompare(String(b.label)))
       .map((bucket) => ({

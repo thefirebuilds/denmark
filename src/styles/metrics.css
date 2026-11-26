@@ -2750,10 +2750,6 @@
   font-weight: 700;
 }
 
-.metrics-toolbar__select.toll-position-range {
-  min-width: 0;
-}
-
 .metrics-filter-chips {
   display: flex;
   align-items: center;
@@ -3365,6 +3361,8 @@
 .recovery-meter-details > p { line-height: 1.5; margin: 8px 0 0; }
 .recovery-meter-details .capital-basis-progress__ticker { margin-top: 8px; }
 .revenue-spend-progress .capital-basis-progress__fill { background: linear-gradient(90deg, #a78bfa, #60a5fa); }
+.revenue-spend-range { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; font-size: 0.8rem; }
+.revenue-spend-range .metrics-toolbar__select { min-width: 0; }
 .revenue-spend-outlook { grid-template-columns: repeat(2, minmax(0,1fr)); }
 .revenue-spend-outlook span { flex-direction: column; align-items: flex-start; }
 .revenue-spend-outlook strong { white-space: normal; line-height: 1.35; }

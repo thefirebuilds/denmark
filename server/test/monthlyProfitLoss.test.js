@@ -54,4 +54,11 @@ test('trend report retains 12 visible months, 24 comparison months, and isolates
   assert.equal(report.points.at(-1).expenses, 1188);
   assert.equal(report.points.at(-1).onboarding_expenses, 1080);
   assert.equal(report.summary.expenses, 1188);
+
+  const daily = await context.module.exports.getTrendMetrics('daily-all');
+  assert.equal(daily.range, 'daily-all');
+  assert.equal(daily.granularity, 'day');
+  assert.equal(daily.points[0].expenses, 1188);
+  assert.equal(daily.occupancy, undefined);
+  assert.equal(daily.monthly_profit_loss, undefined);
 });

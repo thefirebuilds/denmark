@@ -23,6 +23,18 @@ test('daily spend gap works backward from saved totals and keeps the direction o
   assert.equal(extended[0].gap, 139);
   assert.equal(extended.at(-1).gap, 50);
 });
+test('daily spend gap offers five history ranges that end on the same date', async () => {
+  const { selectSpendGapRange } = await import('../../src/utils/revenueSpendStats.js');
+  const points = Array.from({ length: 800 }, (_, index) => ({
+    label: new Date(Date.UTC(2024, 1, 29 - (799 - index))).toISOString().slice(0, 10),
+  }));
+  for (const [range, days] of [['30d', 30], ['90d', 90], ['180d', 180], ['12mo', 366], ['all', 800]]) {
+    const selected = selectSpendGapRange(points, range);
+    assert.equal(selected.length, days);
+    assert.equal(selected.at(-1), points.at(-1));
+  }
+});
+
 test('revenue versus spend shows coverage and net balance without adding capital basis twice', async () => {
   const { revenueSpendStats } = await import('../../src/utils/revenueSpendStats.js');
   assert.deepEqual(revenueSpendStats({ revenue: 75, expenses: 100, capital_basis: 50 }), { revenue: 75, spend: 100, net: -25, coveragePct: 75, fillPct: 75 });

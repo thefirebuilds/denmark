@@ -207,18 +207,6 @@ function getDateRange(rangeKey = "30d") {
         endDate: todayEnd,
       };
 
-    case "180d":
-      return { key: "180d", startDate: addDays(todayStart, -179), endDate: todayEnd };
-
-    case "12mo": {
-      const anniversary = new Date(todayStart);
-      anniversary.setDate(1);
-      anniversary.setFullYear(todayStart.getFullYear() - 1);
-      const lastDay = new Date(anniversary.getFullYear(), anniversary.getMonth() + 1, 0).getDate();
-      anniversary.setDate(Math.min(todayStart.getDate(), lastDay));
-      return { key: "12mo", startDate: addDays(anniversary, 1), endDate: todayEnd };
-    }
-
     case "ytd": {
       const yearStart = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
       return {
@@ -229,8 +217,9 @@ function getDateRange(rangeKey = "30d") {
     }
 
     case "all":
+    case "daily-all":
       return {
-        key: "all",
+        key: String(rangeKey).toLowerCase(),
         startDate: null,
         endDate: todayEnd,
       };
