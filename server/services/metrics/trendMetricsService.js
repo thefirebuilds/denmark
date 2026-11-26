@@ -186,6 +186,8 @@ async function fetchTripsInRange(client, startDate, endDate) {
         workflow_stage,
         expense_status,
         completed_at,
+        closed_out,
+        closed_out_at,
         canceled_at
       FROM trips
       WHERE trip_start <= $2

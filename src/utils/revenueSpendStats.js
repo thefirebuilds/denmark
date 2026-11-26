@@ -25,21 +25,40 @@ export function spendPayoffOutlook(report, paceReport, now = Date.now()) {
 }
 
 export function dailySpendGap(report, trends) {
+  if (trends?.granularity !== 'day' || !Array.isArray(trends.points)) return [];
+
+  if (trends.range === 'daily-all') {
+    let gapCents = 0;
+    const points = [];
+    for (const day of trends.points) {
+      const changeCents = getDailyGapChangeCents(day);
+      if (changeCents == null) return [];
+      gapCents += changeCents;
+      points.push({ label: day.label, gap: gapCents / 100, change: changeCents / 100 });
+    }
+    return points;
+  }
+
   const totals = revenueSpendStats(report);
   const reportDay = report?._report?.calculated_at?.slice(0, 10);
   const trendDay = trends?._report?.calculated_at?.slice(0, 10);
-  if (!totals || !reportDay || reportDay !== trendDay || trends.granularity !== 'day' || !Array.isArray(trends.points)) return [];
+  if (!totals || !reportDay || reportDay !== trendDay) return [];
 
   let gapCents = Math.round(-totals.net * 100);
   const points = [];
   for (const day of [...trends.points].reverse()) {
-    if (day.revenue == null || day.expenses == null) return [];
-    const changeCents = Math.round((Number(day.expenses) - Number(day.revenue)) * 100);
-    if (!Number.isFinite(changeCents)) return [];
+    const changeCents = getDailyGapChangeCents(day);
+    if (changeCents == null) return [];
     points.push({ label: day.label, gap: gapCents / 100, change: changeCents / 100 });
     gapCents -= changeCents;
   }
   return points.reverse();
+}
+
+function getDailyGapChangeCents(day) {
+  if (day.revenue == null || day.expenses == null) return null;
+  const changeCents = Math.round((Number(day.expenses) - Number(day.revenue)) * 100);
+  return Number.isFinite(changeCents) ? changeCents : null;
 }
 
 export function selectSpendGapRange(points, range) {

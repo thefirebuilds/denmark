@@ -7,13 +7,15 @@ const gapSeries = [{ key: 'gap', label: 'Spend minus revenue', color: '#60a5fa',
 const gapRanges = { '30d': '30 days', '90d': '90 days', '180d': '180 days', '12mo': '12 months', all: 'All time' };
 const describeChange = change => change === 0 ? 'Gap held steady' : `Gap ${change > 0 ? 'widened' : 'narrowed'} by ${gapCurrency(Math.abs(change))}`;
 
-export default function RevenueSpendProgress({ report, status, paceReport, trends }) {
+export default function RevenueSpendProgress({ report, status, paceReport, trends, historyStatus }) {
   const [gapRange, setGapRange] = useState('90d');
   const stats = revenueSpendStats(report);
   const outlook = spendPayoffOutlook(report, paceReport);
   const history = useMemo(() => dailySpendGap(report, trends), [report, trends]);
   const gapPoints = useMemo(() => selectSpendGapRange(history, gapRange), [history, gapRange]);
   const latestGap = gapPoints.at(-1);
+  const fullHistory = trends?.range === 'daily-all';
+  const historyLabel = fullHistory || ['30d', '90d'].includes(gapRange) ? gapRanges[gapRange] : '90 days available';
   const outlookLabel = outlook?.status === 'covered' ? 'Break-even reached'
     : outlook?.status === 'projected' ? new Date(outlook.breakEvenDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : outlook?.status === 'not_recovering' ? 'No break-even at this pace' : 'Need pace data';
@@ -38,12 +40,19 @@ export default function RevenueSpendProgress({ report, status, paceReport, trend
         {Object.entries(gapRanges).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
     </label>
+    {!fullHistory && <div className="revenue-spend-history-status" role="status">
+      {!historyStatus?.failed && <progress aria-label="Preparing daily spend gap history" />}
+      <span>
+        {historyStatus?.failed ? 'Couldn’t load the full history. Retrying automatically.' : 'Preparing daily spend gap history. The chart updates automatically.'}
+        {latestGap && ' Showing recent history in the meantime.'}
+      </span>
+    </div>}
     {latestGap ? <FleetTrendChart title="Daily Spend Gap" subtitle={`${describeChange(latestGap.change)} on the latest day`}
       points={gapPoints} series={gapSeries} fitValues
       detail={point => describeChange(point.change)}
-      definition="Estimated all-time spend minus revenue. Starts from the saved all-time gap and works backward using daily recorded revenue and expenses. A falling line means revenue is catching up with spending. Negative values mean revenue is ahead."
-      footer={`${gapRanges[gapRange]} · Latest day may be partial`} />
-      : <p>Daily spend gap history needs all-time totals and daily trends from the same reporting day.</p>}
+      definition="Estimated running balance of recorded spend minus revenue. A falling line means revenue is catching up with spending. Negative values mean revenue is ahead."
+      footer={`${historyLabel} · Latest day may be partial`} />
+      : fullHistory && <p role="status">Daily spend gap history is unavailable.</p>}
     <details className="recovery-meter-details"><summary>Payoff outlook</summary>
       <div className="capital-basis-progress__ticker revenue-spend-outlook">
         <span><strong>{outlookLabel}</strong>Expected break even</span>

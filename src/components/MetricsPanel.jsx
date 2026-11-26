@@ -1115,6 +1115,7 @@ export default function MetricsPanel() {
   const [allTimeSummary, setAllTimeSummary] = useState(null);
   const [recoveryPaceSummary, setRecoveryPaceSummary] = useState(null);
   const [recoveryTrends, setRecoveryTrends] = useState(null);
+  const [recentRecoveryTrends, setRecentRecoveryTrends] = useState(null);
   const metricsLoadSeq = useRef(0);
   const [selectedRange, setSelectedRange] = useState("30d");
   const initialCustomRange = useMemo(() => parseCustomRange(selectedRange), []);
@@ -1271,6 +1272,7 @@ export default function MetricsPanel() {
     setPendingReportMessage("");
     if (range === 'all') setAllTimeSummary(summaryData);
     if (range === '30d') setRecoveryPaceSummary(summaryData);
+    if (range === '90d') setRecentRecoveryTrends(trendsData);
 
     setSummary(existing => ({
       ...(existing?._report?.calculated_at === summaryData?._report?.calculated_at
@@ -1295,6 +1297,7 @@ export default function MetricsPanel() {
         ...(range === 'all' ? [] : [{ label: 'All-time totals', path: '/api/metrics/summary', range: 'all', apply: setAllTimeSummary }]),
         ...(range === '30d' ? [] : [{ label: 'Recovery pace', path: '/api/metrics/summary', range: '30d', apply: setRecoveryPaceSummary }]),
         { label: 'Daily spend gap', path: '/api/metrics/trends', range: 'daily-all', apply: setRecoveryTrends },
+        ...(!recoveryTrends && range !== '90d' ? [{ label: 'Recent spend gap history', path: '/api/metrics/trends', range: '90d', apply: setRecentRecoveryTrends }] : []),
         {
           label: "Business metrics",
           path: "/api/metrics/business/current",
@@ -1324,6 +1327,9 @@ export default function MetricsPanel() {
           console.warn(`${item.label} loaded after primary metrics failed:`, err);
           if (metricsLoadSeq.current === loadSeq) {
             if (err.reportPending) setReportStatuses(current => ({ ...current, [item.label]: { pending: true } }));
+            else if (item.label === 'Daily spend gap') {
+              setReportStatuses(current => ({ ...current, [item.label]: { failed: true } }));
+            }
             // Preserve a previously loaded snapshot when a refresh/read fails.
           }
         }
@@ -4238,7 +4244,7 @@ const mileageStats = useMemo(() => {
             </div>
 
             <div className="fleet-recovery-meters">
-              <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} paceReport={recoveryPaceSummary} trends={recoveryTrends} />
+              <RevenueSpendProgress report={allTimeSummary} status={reportStatuses['All-time totals']} paceReport={recoveryPaceSummary} trends={recoveryTrends || recentRecoveryTrends} historyStatus={reportStatuses['Daily spend gap']} />
               <CapitalBasisProgress stats={capitalBasisStats} />
             </div>
 

@@ -23,6 +23,20 @@ test('daily spend gap works backward from saved totals and keeps the direction o
   assert.equal(extended[0].gap, 139);
   assert.equal(extended.at(-1).gap, 50);
 });
+test('complete daily history populates while the all-time summary is absent or from another day', async () => {
+  const { dailySpendGap } = await import('../../src/utils/revenueSpendStats.js');
+  const trends = { range: 'daily-all', granularity: 'day', _report: { calculated_at: '2026-11-25T23:00:00Z' }, points: [
+    { label: '2026-11-24', revenue: 0, expenses: 25 },
+    { label: '2026-11-25', revenue: 10.32, expenses: 0 },
+  ] };
+  const expected = [
+    { label: '2026-11-24', gap: 25, change: 25 },
+    { label: '2026-11-25', gap: 14.68, change: -10.32 },
+  ];
+  assert.deepEqual(dailySpendGap(null, trends), expected);
+  assert.deepEqual(dailySpendGap({ revenue: 50, expenses: 100, _report: { calculated_at: '2026-11-26T00:05:00Z' } }, trends), expected);
+});
+
 test('daily spend gap offers five history ranges that end on the same date', async () => {
   const { selectSpendGapRange } = await import('../../src/utils/revenueSpendStats.js');
   const points = Array.from({ length: 800 }, (_, index) => ({
