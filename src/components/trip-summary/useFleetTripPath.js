@@ -45,7 +45,7 @@ export default function useFleetTripPath(tripId, refreshKey) {
 
   const current = result?.tripId === tripId ? result : null;
   const activities = current?.activities || EMPTY_ACTIVITIES;
-  const choice = selection?.tripId === tripId ? selection.choice : "latest";
+  const choice = selection && selection.tripId === tripId ? selection.choice : "latest";
   const selectedIndex = activities.findIndex(activity => activity[0].id === choice);
   const index = selectedIndex < 0 ? activities.length - 1 : selectedIndex;
   const fullTrip = choice === "all";
