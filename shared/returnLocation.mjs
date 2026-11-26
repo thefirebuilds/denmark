@@ -11,7 +11,9 @@ export function getConfiguredReturnLocation(trip, locations = []) {
       Number.isFinite(Number(lat)) && Number.isFinite(Number(lon));
   });
   const match = booked && enabled.find(location =>
-    [location.label, location.name, location.address, location.id].map(normalize).filter(Boolean).some(candidate =>
+    [location.label, location.name, location.address, location.id,
+      ...(Array.isArray(location.aliases) ? location.aliases : []),
+    ].map(normalize).filter(Boolean).some(candidate =>
       candidate === booked || (candidate.length >= 6 && booked.includes(candidate)) ||
       (booked.length >= 6 && candidate.includes(booked))));
   if (match) return match;

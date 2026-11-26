@@ -14,6 +14,9 @@ import {
   useMap,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import TripPathLayers from "./trip-summary/TripPathLayers";
+import { formatDateTime } from "./trip-summary/tripPath";
+import useFleetTripPath from "./trip-summary/useFleetTripPath";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const STALE_AFTER_MS = 15 * 60 * 1000;
@@ -583,6 +586,7 @@ async function fetchNamedLocations() {
         radiusMiles,
         kind: String(location?.kind || "custom"),
         address: String(location?.address || ""),
+        aliases: location?.aliases,
         alertOnEntry: location?.alertOnEntry !== false,
       };
     })
@@ -675,6 +679,83 @@ function createVehicleIcon(
     iconAnchor: [59, 68],
     popupAnchor: [0, -32],
   });
+}
+
+function FleetTripPathFocus({ tripPath, focusKey }) {
+  const map = useMap();
+  const lastFit = useRef(null);
+  const { positions, startPoint, fullTrip, latest } = tripPath;
+  const viewKey = fullTrip ? "all" : latest ? "latest" : startPoint?.id;
+
+  useEffect(() => {
+    if (!startPoint) return;
+    const fit = JSON.stringify([focusKey, viewKey]);
+    if (lastFit.current === fit) return;
+    lastFit.current = fit;
+    map.fitBounds(positions.flat(), { padding: [32, 32], maxZoom: 14 });
+  }, [map, focusKey, viewKey, positions, startPoint]);
+
+  return null;
+}
+
+function FleetTripPathControls({ tripPath }) {
+  const { count, index, fullTrip, latest, startPoint, endPoint, loading, error, truncated, select } = tripPath;
+
+  return (
+    <section className="fleet-map-trip-card" aria-label="Current trip GPS path">
+      <strong>Current trip path</strong>
+      {count > 0 && (
+        <>
+          <div className="trip-path-pagination" role="group" aria-label="Trip GPS activities">
+            <button type="button" onClick={() => select("all")} aria-pressed={fullTrip}>Full trip</button>
+            <button type="button" onClick={() => select("latest")} aria-pressed={latest}>Latest activity</button>
+            <button type="button" onClick={() => select(index - 1)} disabled={fullTrip || index <= 0}>Previous</button>
+            <button type="button" onClick={() => select(index + 1 === count - 1 ? "latest" : index + 1)} disabled={fullTrip || index >= count - 1}>Next</button>
+          </div>
+          <span aria-live="polite">
+            {fullTrip
+              ? `${count} recorded activit${count === 1 ? "y" : "ies"}`
+              : `Activity ${index + 1} of ${count} · ${formatDateTime(startPoint?.seenAt)} – ${formatDateTime(endPoint?.seenAt)}`}
+          </span>
+        </>
+      )}
+      {error || loading || !count ? (
+        <span role="status">{error || (loading ? "Loading GPS path…" : "No GPS path has been recorded for this trip yet.")}</span>
+      ) : null}
+      {truncated && <span>Showing the latest 5,000 GPS snapshots.</span>}
+    </section>
+  );
+}
+
+function FleetReturnEstimate({ vehicle, progress }) {
+  if (!progress) return null;
+
+  const { destination, driveMinutes, miles, estimatedArrivalLabel, dueLabel } = progress;
+  const atReturnLocation = miles <= destination.radiusMiles;
+  const directions = new URLSearchParams({
+    api: "1",
+    origin: `${vehicle.lat},${vehicle.lon}`,
+    destination: `${destination.lat},${destination.lon}`,
+    travelmode: "driving",
+  });
+
+  return (
+    <section className="fleet-map-trip-card" aria-label="Trip return estimate">
+      <strong>
+        {atReturnLocation
+          ? `Last seen at ${destination.label}`
+          : `About ${driveMinutes} min to ${destination.label}`}
+      </strong>
+      {!atReturnLocation && (
+        <span>{estimatedArrivalLabel} · Rough estimate from straight-line distance</span>
+      )}
+      {dueLabel && <span>Trip return {dueLabel}</span>}
+      {isStale(vehicle.lastSeen) && <span>GPS location {formatFreshness(vehicle.lastSeen)}</span>}
+      <a href={`https://www.google.com/maps/dir/?${directions}`} target="_blank" rel="noreferrer">
+        Driving directions
+      </a>
+    </section>
+  );
 }
 
 function MapFocus({ vehicle, locations, namedLocations, includeNamedLocations, focusKey }) {
@@ -879,6 +960,9 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
       null,
     [locations, selectedId]
   );
+  const tripId = selectedVehicle?.activeTrip?.id;
+  const tripPath = useFleetTripPath(tripId, refreshKey);
+  const selectedReturnProgress = getReturnProgress(selectedVehicle, namedLocations);
   const spiderOffsets = useMemo(() => buildSpiderOffsets(locations), [locations]);
   const selectedHeatmapPoints =
     selectedVehicle && heatmapEnabled && Array.isArray(heatmap?.points)
@@ -897,7 +981,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
     selectedHeatmapDistance > LOCATION_AWARENESS_MILES;
   const visibleMapVehicles = selectedVehicle ? [selectedVehicle] : locations;
   const selectedTrailVehicle = selectedVehicle
-    ? { ...selectedVehicle, trail: trail?.points || [] }
+    ? { ...selectedVehicle, trail: trail?.vehicleId === selectedVehicle.id ? trail.points : [] }
     : null;
   const selectedTrailPositions = selectedTrailVehicle
     ? getMovingTrailPositions(
@@ -929,7 +1013,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
       try {
         const nextTrail = await fetchVehicleTrail(selectedVehicle.id);
         if (!cancelled) {
-          setTrail(nextTrail);
+          setTrail({ vehicleId: selectedVehicle.id, points: nextTrail?.points });
         }
       } catch (err) {
         if (!cancelled) {
@@ -967,11 +1051,13 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
       normalizeVehicleId(current) === nextId ? null : nextId
     );
     setFocusKey((value) => value + 1);
+    tripPath.reset();
   }
 
   function showAllVehicles() {
     setSelectedId(null);
     setFocusKey((value) => value + 1);
+    tripPath.reset();
   }
 
   function toggleGeoLocationsVisible(checked) {
@@ -990,7 +1076,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
             older than 15 minutes. Green markers indicate a vehicle reported as
             running, while blue markers indicate fresh telemetry. Moving
             vehicles draw a recent location trail. Selecting a vehicle shows
-            its recent location heatmap.
+            its recent location heatmap and current trip path when available.
           </p>
         </div>
         <div className="fleet-map-actions">
@@ -1118,7 +1204,17 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                   })}
                 </Pane>
               ) : null}
-              {selectedTrailPositions.length >= 2 ? (
+              {tripId && tripPath.count > 0 ? (
+                <Fragment key={tripId}>
+                  <FleetTripPathFocus tripPath={tripPath} focusKey={focusKey} />
+                  <TripPathLayers
+                    positions={tripPath.positions}
+                    startPoint={tripPath.startPoint}
+                    endPoint={tripPath.endPoint}
+                    activity
+                  />
+                </Fragment>
+              ) : selectedTrailPositions.length >= 2 ? (
                 <Fragment key={`${selectedId}-trail`}>
                   <Polyline
                     positions={selectedTrailPositions}
@@ -1131,6 +1227,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 </Fragment>
               ) : null}
               {visibleMapVehicles.map((vehicle) => {
+                const driverName = (vehicle.activeTrip?.guestName || vehicle.activeTrip?.guest_name || "").trim();
                 const stale = isStale(vehicle.lastSeen);
                 const running = vehicle.isRunning === true;
                 const headingLabel = formatHeading(vehicle.heading);
@@ -1158,7 +1255,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                   >
                     <Popup>
                       <div className="fleet-map-popup">
-                        <strong>{vehicle.name}</strong>
+                        <strong>{driverName ? `${vehicle.name} - ${driverName}` : vehicle.name}</strong>
                         <span>{vehicle.source}</span>
                         {running ? (
                           <em className="fleet-map-running-label">
@@ -1227,6 +1324,10 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                 {locations.length} vehicle{locations.length === 1 ? "" : "s"}
               </span>
             </button>
+            {selectedReturnProgress && (
+              <FleetReturnEstimate vehicle={selectedVehicle} progress={selectedReturnProgress} />
+            )}
+            {tripId ? <FleetTripPathControls tripPath={tripPath} /> : null}
             {selectedVehicle ? (
               <div
                 className={`fleet-map-heatmap-card ${
@@ -1284,7 +1385,7 @@ export default function FleetMapPanel({ focusVehicleId = null }) {
                           {containingGeoLocation.label}
                         </span>
                       ) : null}
-                      {returnProgress ? (
+                      {returnProgress && !vehicleMatchesSelector(vehicle, selectedId) ? (
                         <span className="fleet-map-return-progress">
                           {returnProgress.label}
                           {returnProgress.dueLabel

@@ -911,6 +911,7 @@ router.get("/:id/telemetry-path", async (req, res) => {
     }
 
     const eventAt = telemetryEventAtExpression("s");
+    const direction = req.query.latest === "true" ? "DESC" : "ASC";
     const { rows } = await pool.query(
       `
         WITH path AS (
@@ -930,11 +931,12 @@ router.get("/:id/telemetry-path", async (req, res) => {
           WHERE s.trip_id = $1
             AND s.latitude IS NOT NULL
             AND s.longitude IS NOT NULL
-          ORDER BY ${eventAt} ASC, s.id ASC
+          ORDER BY ${eventAt} ${direction}, s.id ${direction}
           LIMIT $2
         )
         SELECT *
         FROM path
+        ORDER BY seen_at ASC, id ASC
       `,
       [tripId, limit]
     );

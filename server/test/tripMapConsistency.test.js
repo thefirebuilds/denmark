@@ -7,7 +7,7 @@ const path = require('node:path');
 test('trip and map resolve the same primary return site regardless of location order', async () => {
   const { getConfiguredReturnLocation } = await import('../../shared/returnLocation.mjs');
   const locations = [
-    { label: 'Park My Share', kind: 'parking', lat: 30.2, lon: -97.7 },
+    { label: 'Park My Share', aliases: ['Parking Spot West'], kind: 'parking', lat: 30.2, lon: -97.7 },
     { label: 'Garlic Creek', kind: 'parking', lat: 30.08, lon: -97.85 },
   ];
   const trip = getConfiguredReturnLocation({ return_location: '135 Fletcher Bend, Buda, TX' }, locations);
@@ -16,6 +16,7 @@ test('trip and map resolve the same primary return site regardless of location o
   assert.equal(map, trip);
   assert.equal(getConfiguredReturnLocation({ returnLocation: 'Airport terminal' }, locations), null);
   assert.equal(getConfiguredReturnLocation({ returnLocation: 'Park My Share' }, locations).label, 'Park My Share');
+  assert.equal(getConfiguredReturnLocation({ returnLocation: 'Parking Spot West' }, locations).label, 'Park My Share');
   assert.equal(getConfiguredReturnLocation({}, [{ ...locations[1], enabled: false }]), null);
 });
 
