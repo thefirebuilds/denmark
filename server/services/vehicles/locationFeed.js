@@ -365,17 +365,14 @@ async function getStoredVehicleLocations(client = pool) {
         AND t.canceled_at IS NULL
         AND COALESCE(t.closed_out, false) = false
         AND t.returned_at IS NULL
-        AND t.trip_end IS NOT NULL
-        AND t.trip_end >= (
-          date_trunc('day', NOW() AT TIME ZONE 'America/Chicago')
-          AT TIME ZONE 'America/Chicago'
+        AND COALESCE(t.workflow_stage, '') NOT IN (
+          'check_in', 'awaiting_expenses', 'returned', 'complete', 'completed', 'closed', 'canceled', 'cancelled'
         )
-        AND t.trip_end <= GREATEST(
-          (
-            date_trunc('day', NOW() AT TIME ZONE 'America/Chicago')
-            + INTERVAL '1 day'
-          ) AT TIME ZONE 'America/Chicago',
-          NOW() + INTERVAL '5 hours'
+        AND COALESCE(t.status, '') NOT IN ('canceled', 'cancelled')
+        AND (
+          (t.trip_start <= NOW() AND NOW() <= t.trip_end)
+          OR t.workflow_stage = 'in_progress'
+          OR t.status IN ('in_progress', 'started', 'trip_started')
         )
         AND (
           (t.turo_vehicle_id IS NOT NULL AND t.turo_vehicle_id = v.turo_vehicle_id)
@@ -411,8 +408,10 @@ async function getStoredVehicleLocations(client = pool) {
           )
         )
       ORDER BY
-        CASE WHEN t.workflow_stage = 'in_progress' THEN 0 ELSE 1 END,
-        t.trip_end ASC,
+        CASE WHEN t.turo_vehicle_id = v.turo_vehicle_id THEN 0 ELSE 1 END,
+        CASE WHEN t.workflow_stage = 'in_progress' OR t.status IN ('in_progress', 'started', 'trip_started') THEN 0 ELSE 1 END,
+        t.trip_start DESC NULLS LAST,
+        t.trip_end ASC NULLS LAST,
         t.id ASC
       LIMIT 1
     ) active_trip ON true

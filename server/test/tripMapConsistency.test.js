@@ -49,7 +49,16 @@ test('stored locations distinguish GPS time from a general check-in and suppress
   const context = vm.createContext({ module: { exports: {} }, process, console,
     require(name) { assert.equal(name, '../../db'); return {}; } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../services/vehicles/locationFeed.js'), 'utf8'), context);
-  const result = await context.module.exports.getStoredVehicleLocations({ query: async () => ({ rows }) });
+  rows[0].active_trip_id = 42;
+  rows[0].active_trip_end = new Date(Date.now() + 3 * 86400000).toISOString();
+  const result = await context.module.exports.getStoredVehicleLocations({ query: async (sql) => {
+    assert.ok(sql.includes('t.trip_start <= NOW() AND NOW() <= t.trip_end'));
+    assert.ok(sql.includes("OR t.workflow_stage = 'in_progress'"));
+    return { rows };
+  } });
+  assert.equal(result[0].activeTrip.id, 42);
+  assert.equal(result[0].activeTrip.tripEnd, rows[0].active_trip_end);
+  assert.equal(result[1].activeTrip, null);
   assert.equal(result[0].telemetryDiagnostics.locationSignalAt, null);
   assert.equal(result[0].speed, null);
   assert.equal(result[0].isRunning, null);
