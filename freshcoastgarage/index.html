@@ -224,7 +224,7 @@
   <script defer src="scripts/guest-reviews.js"></script>
   <script async src="https://www.instagram.com/embed.js"></script>
   <script>
-    // Used for missing feed metadata and when the feed is offline.
+    // Approved listings and fallback display metadata.
     const fallbackFleet = [
       {
         turoVehicleId: "3238198",
@@ -638,7 +638,10 @@
     }
 
     function renderFleet(vehicles) {
+      const listingIds = new Set(fallbackFleet.map(car => car.turoVehicleId));
       const cardsHtml = vehicles
+        .filter(vehicle => listingIds.has(String(vehicle.turoVehicleId).trim()) &&
+          vehicle.isActive !== false && vehicle.is_active !== false)
         .map((liveVehicle, originalIndex) => {
           const car = normalizeVehicle(liveVehicle);
           return {
@@ -658,48 +661,7 @@
         .map(({ car, liveVehicle }) => renderCarCard(car, liveVehicle))
         .join("");
 
-      document.getElementById("car-cards").innerHTML = cardsHtml;
-    }
-
-    function renderFleetOffline() {
-      const cardsHtml = fallbackFleet.map(car => {
-        return `
-          <a
-            href="${car.href}"
-            class="car-card"
-            target="_blank"
-            rel="noopener"
-            data-turo-vehicle-id="${escapeHtml(car.turoVehicleId)}"
-            data-nickname="${escapeHtml(car.nickname)}"
-          >
-            <div class="image-wrapper">
-              ${
-                car.imageAvif
-                  ? `
-                    <picture>
-                      <source srcset="${car.imageAvif}" type="image/avif">
-                      <img src="${car.image}" alt="${car.alt}" class="car-photo">
-                    </picture>
-                  `
-                  : `
-                    <picture>
-                      <img src="${car.image}" alt="${car.alt}" class="car-photo">
-                    </picture>
-                  `
-              }
-            </div>
-            <h3>${escapeHtml(car.nickname)}</h3>
-            <p>${escapeHtml(car.yearMakeModel)}</p>
-            <div class="car-status">
-              <span class="status-pill status-unavailable">Status Offline</span>
-              <div class="status-detail">Availability feed is temporarily unavailable</div>
-              <div class="status-meta"></div>
-            </div>
-          </a>
-        `;
-      }).join("");
-
-      document.getElementById("car-cards").innerHTML = cardsHtml;
+      document.getElementById("car-cards").innerHTML = cardsHtml || "<p>No cars are currently listed.</p>";
     }
 
     fetch("/api/public/availability", { cache: "no-store" })
@@ -717,7 +679,7 @@
         renderFleet(vehicles);
       })
       .catch(() => {
-        renderFleetOffline();
+        document.getElementById("car-cards").textContent = "Vehicle availability is temporarily offline. Check our Turo profile for current listings.";
       });
 
     fetch("https://api.open-meteo.com/v1/forecast?latitude=30.0861&longitude=-97.8406&daily=temperature_2m_max,temperature_2m_min,weathercode&temperature_unit=fahrenheit&timezone=auto&model=best_match")

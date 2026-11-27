@@ -157,6 +157,7 @@ jobs:
 
             verify().catch(error => { console.error(error); process.exitCode = 1; });
             NODE
+            bash docker/install-freshcoastgarage-nginx.sh
             docker compose ps
             docker compose ps mosquitto | grep -F '0.0.0.0:1883->1883/tcp'
 

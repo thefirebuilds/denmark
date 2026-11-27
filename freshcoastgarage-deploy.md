@@ -10,20 +10,16 @@ Open an SSH tunnel to the same droplet used by the Denmark workflow.
 ssh -N -L 5080:127.0.0.1:5080 USER@DROPLET
 ```
 
-Visit `http://localhost:5080/` and `http://localhost:5080/api/public/availability` to verify the site and available cars. The site uses this same-origin feed and shows its offline roster if Denmark is temporarily unavailable.
+Visit `http://localhost:5080/` and `http://localhost:5080/api/public/availability` to verify the site and available cars. If the feed is temporarily unavailable, the site shows an offline message.
 
-## Route the public domains
+## Preview through Nginx before DNS
 
-Add this block to the droplet's edge Caddyfile when Caddy runs on the host. If Caddy runs in a container, connect it to the Denmark Compose network and use `freshcoastgarage:5080` as the upstream instead.
+The deploy installs a named HTTP route for both garage domains and verifies it through Nginx. The bare IP continues to serve Denmark. Test the garage route without changing DNS by resolving its hostname to the droplet for one request.
 
-```caddyfile
-freshcoastgarage.com {
-    redir https://www.freshcoastgarage.com{uri} permanent
-}
-
-www.freshcoastgarage.com {
-    reverse_proxy 127.0.0.1:5080
-}
+```sh
+curl --resolve www.freshcoastgarage.com:80:159.223.151.27 http://www.freshcoastgarage.com/
 ```
 
-Validate the edge config, point both names at the droplet, and reload Caddy. Verify HTTPS, the home page and legal pages, and the live fleet feed. Keep the old host and Denmark's snapshot push configured during cutover so a DNS rollback can still use current data. After the new site is verified, disable **Public availability push** in Denmark's integration settings.
+## Switch DNS and verify HTTPS
+
+Point both names at the droplet and configure HTTPS for both names on Nginx or through your existing Cloudflare setup. Verify HTTPS, the home page and legal pages, and the live fleet feed. Keep the old host and Denmark's snapshot push configured during cutover so a DNS rollback can still use current data. After the new site is verified, disable **Public availability push** in Denmark's integration settings.
