@@ -31,6 +31,11 @@ wait_for_routes() {
   return 1
 }
 
+if [[ ${1:-} == "--check" ]]; then
+  verify_routes
+  exit
+fi
+
 "${admin[@]}" nginx -t
 if "${admin[@]}" test -e "$target"; then
   if ! "${admin[@]}" cmp -s "$source_file" "$target"; then

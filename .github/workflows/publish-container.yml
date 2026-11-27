@@ -157,7 +157,11 @@ jobs:
 
             verify().catch(error => { console.error(error); process.exitCode = 1; });
             NODE
-            bash docker/install-freshcoastgarage-nginx.sh
+            if [ -f /etc/nginx/sites-enabled/zz-freshcoastgarage-denmark ]; then
+              bash docker/install-freshcoastgarage-nginx.sh --check
+            else
+              echo "Fresh Coast Garage is staged on localhost. An administrator must install the Nginx route before DNS cutover."
+            fi
             docker compose ps
             docker compose ps mosquitto | grep -F '0.0.0.0:1883->1883/tcp'
 

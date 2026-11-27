@@ -14,7 +14,13 @@ Visit `http://localhost:5080/` and `http://localhost:5080/api/public/availabilit
 
 ## Preview through Nginx before DNS
 
-The deploy installs a named HTTP route for both garage domains and verifies it through Nginx. The bare IP continues to serve Denmark. Test the garage route without changing DNS by resolving its hostname to the droplet for one request.
+Install the named HTTP route once from the Denmark checkout on the droplet using an account with sudo access.
+
+```sh
+sudo bash docker/install-freshcoastgarage-nginx.sh
+```
+
+The installer validates Nginx, verifies both garage hostnames, and confirms the bare IP continues to serve Denmark. After installation, routine deploys verify the route without sudo. Test the garage route without changing DNS by resolving its hostname to the droplet for one request.
 
 ```sh
 curl --resolve www.freshcoastgarage.com:80:159.223.151.27 http://www.freshcoastgarage.com/
