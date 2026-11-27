@@ -29,6 +29,15 @@ services:
       - ./imports:/app/imports
       - ./backups:/app/backups
 
+  freshcoastgarage:
+    image: ghcr.io/thefirebuilds/denmark:latest
+    command: ["node", "freshcoastgarage.js"]
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "127.0.0.1:5080:5080"
+
   db:
     image: postgres:16
     restart: unless-stopped

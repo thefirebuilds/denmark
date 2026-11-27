@@ -1,0 +1,384 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fresh Coast Garage | SMS Alerts Consent</title>
+  <meta name="description" content="SMS consent, opt-in, opt-out, and operational messaging terms for Fresh Coast Garage, LLC." />
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #38bdf8;
+      --accent-2: #22c55e;
+      --border: rgba(255,255,255,0.09);
+      --danger: #fca5a5;
+      --shadow: 0 20px 40px rgba(0,0,0,0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.12), transparent 24%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .wrap {
+      width: min(880px, calc(100% - 32px));
+      margin: 48px auto;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .hero {
+      padding: 40px 32px 28px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(56,189,248,0.10), rgba(255,255,255,0));
+    }
+
+    .eyebrow {
+      display: inline-block;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(28px, 4vw, 40px);
+      line-height: 1.1;
+    }
+
+    .sub {
+      margin: 0;
+      color: var(--muted);
+      max-width: 760px;
+      font-size: 16px;
+    }
+
+    .content {
+      padding: 32px;
+      display: grid;
+      gap: 24px;
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.025);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 22px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    ul {
+      margin: 10px 0 0 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 8px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+    }
+
+    .pill {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.24);
+      color: #bae6fd;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .example {
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 14px;
+      color: #dbeafe;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .consent-box {
+      border: 1px solid rgba(34,197,94,0.28);
+      background: rgba(34,197,94,0.08);
+      border-radius: 18px;
+      padding: 22px;
+    }
+
+    .consent-box h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .check {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+    }
+
+    .form-example {
+      margin-top: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .field label {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    input[type="tel"] {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #0b1220;
+      color: var(--text);
+      font: inherit;
+    }
+
+    .business-details {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .business-details span {
+      display: block;
+    }
+
+    input[type="checkbox"] {
+      margin-top: 3px;
+      transform: scale(1.25);
+      accent-color: var(--accent-2);
+      flex: 0 0 auto;
+    }
+
+    label {
+      cursor: pointer;
+      display: block;
+    }
+
+    .meta {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .footer {
+      padding: 24px 32px 32px;
+      color: var(--muted);
+      font-size: 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    a {
+      color: #7dd3fc;
+    }
+
+    .warning {
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    @media (max-width: 640px) {
+      .wrap {
+        width: min(100% - 20px, 880px);
+        margin: 20px auto;
+      }
+
+      .hero,
+      .content,
+      .footer {
+        padding-left: 20px;
+        padding-right: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <div class="hero">
+        <div class="eyebrow">Fresh Coast Garage, LLC</div>
+        <h1>Fresh Coast Garage SMS Alerts Consent</h1>
+        <p class="sub">
+          This page documents SMS consent, opt-in, opt-out, and operational messaging terms for Fresh Coast Garage, LLC.
+          Denmark is Fresh Coast Garage, LLC's internal operations platform used to monitor fleet activity, ingestion health, telemetry issues, booking exceptions, and other operational events related to vehicle hosting.
+        </p>
+      </div>
+
+      <div class="content">
+        <section class="panel">
+          <h2>What these messages are for</h2>
+          <p>
+            Fresh Coast Garage, LLC sends operational SMS alerts to the account owner or designated administrator when
+            Denmark detects issues or exceptions that may require attention.
+          </p>
+          <div class="grid">
+            <div>
+              <strong>Examples include:</strong>
+              <ul>
+                <li>Email polling failures</li>
+                <li>Trip-state inconsistencies</li>
+                <li>Telemetry outages during active trips</li>
+                <li>Missing or failed booking imports</li>
+                <li>Critical payout or data mismatch alerts</li>
+              </ul>
+            </div>
+            <div>
+              <strong>These messages are not for:</strong>
+              <ul>
+                <li>Marketing or promotions</li>
+                <li>Mass messaging</li>
+                <li>Third-party advertising</li>
+                <li>Messages to the general public</li>
+                <li>Messages to users who have not opted in</li>
+              </ul>
+            </div>
+          </div>
+          <span class="pill">Message frequency varies based on platform activity.</span>
+        </section>
+
+        <section class="panel">
+          <h2>Who receives these messages</h2>
+          <p>
+            SMS alerts are intended only for the Fresh Coast Garage, LLC account owner or designated administrator who
+            explicitly requests and enables SMS alerts for Fresh Coast Garage operational notifications.
+          </p>
+          <p>
+            Phone numbers are not added automatically, and consent is not inferred from account ownership alone.
+          </p>
+        </section>
+
+        <section class="consent-box">
+          <h2>Consent language</h2>
+          <p>
+            The following language is used when enabling SMS alerts for Fresh Coast Garage, LLC operational notifications.
+          </p>
+
+          <div class="form-example" aria-label="SMS opt-in form example">
+            <div class="field">
+              <label for="mobile-phone">Mobile phone number</label>
+              <input id="mobile-phone" type="tel" placeholder="+1 555 555 5555" />
+            </div>
+
+            <div class="check">
+              <input id="consent" type="checkbox" />
+              <label for="consent">
+                <strong>I agree to receive SMS alerts from Fresh Coast Garage, LLC for operational events related to my vehicle hosting account.</strong>
+                These alerts may include ingestion failures, trip exceptions, telemetry issues, data mismatches, booking import failures,
+                and other account-related operational notifications. Message frequency varies. Message and data rates may apply.
+                Reply STOP to opt out and HELP for help.
+              </label>
+            </div>
+          </div>
+
+          <div class="meta">
+            This checkbox is presented as an unchecked, manual opt-in control. Consent is recorded only when the user manually enables SMS alerts.
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Sample messages</h2>
+          <div class="example">Fresh Coast Garage alert: Email polling failed 3 times in 15 minutes. No new booking emails have been ingested.</div>
+          <br />
+          <div class="example">Fresh Coast Garage alert: Juneau telemetry has been stale for 92 minutes during an active trip.</div>
+          <br />
+          <div class="example">Fresh Coast Garage alert: Winnie booking import completed with missing trip dates. Review required.</div>
+        </section>
+
+        <section class="panel">
+          <h2>Opt-out</h2>
+          <p>
+            Recipients can opt out of SMS alerts at any time by replying <strong>STOP</strong>. Assistance is available by replying <strong>HELP</strong>.
+          </p>
+          <p>
+            SMS alerts may also be disabled directly within Fresh Coast Garage account notification settings.
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>Privacy and data sharing</h2>
+          <p>
+            Fresh Coast Garage, LLC uses mobile numbers and SMS consent records only to provide operational SMS alerts requested by the account owner or designated administrator.
+          </p>
+          <p>
+            Mobile opt-in information and consent are not shared with third parties or affiliates for marketing or promotional purposes.
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>Contact</h2>
+          <p>
+            For questions about Fresh Coast Garage SMS alerts, contact:
+          </p>
+          <div class="business-details">
+            <span><strong>Fresh Coast Garage, LLC</strong></span>
+            <span>135 Fletcher Bnd</span>
+            <span>Buda, Texas</span>
+            <span>United States</span>
+            <span>Phone: <a href="tel:+18553483812">+1 855-348-3812</a></span>
+            <span>Email: <a href="mailto:turo_msg@freshcoastgarage.com">turo_msg@freshcoastgarage.com</a></span>
+            <span>Website: <a href="https://freshcoastgarage.com/">https://freshcoastgarage.com/</a></span>
+          </div>
+          <p class="warning">
+            This page documents the SMS alert use case and consent language for operational notifications only.
+          </p>
+        </section>
+      </div>
+
+      <div class="footer">
+        Fresh Coast Garage, LLC · Buda, Texas · <a href="/privacy.html">Privacy Policy</a> · <a href="/smsconsent.html">SMS Terms</a><br />
+        Public reference page for SMS consent, opt-in, opt-out, and operational messaging terms.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

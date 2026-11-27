@@ -117,11 +117,46 @@ jobs:
               git pull --ff-only
             fi
 
-            docker compose pull app mosquitto
+            docker compose pull app freshcoastgarage mosquitto
             docker compose run --rm app npm run db:bootstrap
             docker compose run --rm app npm run db:verify
             docker compose up -d --force-recreate mosquitto
             docker compose up -d --force-recreate app
+            docker compose up -d --no-deps --force-recreate freshcoastgarage
+            docker compose exec -T freshcoastgarage node - <<'NODE'
+            const assert = require("node:assert/strict");
+            const { setTimeout: delay } = require("node:timers/promises");
+            const origin = "http://127.0.0.1:5080";
+            const get = path => fetch(origin + path, { signal: AbortSignal.timeout(10000) });
+
+            async function verify() {
+              for (let attempt = 0; attempt < 6; attempt += 1) {
+                try {
+                  const response = await get("/api/public/availability");
+                  assert.equal(response.status, 200);
+                  const data = await response.json();
+                  assert.equal(data.ok, true);
+                  assert.ok(Array.isArray(data.vehicles));
+                  const page = await get("/");
+                  assert.equal(page.status, 200);
+                  const html = await page.text();
+                  assert.match(html, /Fresh Coast Garage/);
+                  const roster = new Set(Array.from(html.matchAll(/turoVehicleId: "(\d+)"/g), match => match[1]));
+                  assert.ok(roster.size > 0);
+                  assert.ok(data.vehicles.every(vehicle => roster.has(String(vehicle.turoVehicleId))));
+                  assert.equal((await get("/api/vehicles")).status, 404);
+                  assert.equal((await get("/api/vehicle-availability-ingest.php")).status, 404);
+                  console.log(`Fresh Coast Garage staged with ${data.vehicles.length} public listings`);
+                  return;
+                } catch (error) {
+                  if (attempt === 5) throw error;
+                  await delay(3000);
+                }
+              }
+            }
+
+            verify().catch(error => { console.error(error); process.exitCode = 1; });
+            NODE
             docker compose ps
             docker compose ps mosquitto | grep -F '0.0.0.0:1883->1883/tcp'
 

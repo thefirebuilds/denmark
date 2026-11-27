@@ -46,6 +46,7 @@ COPY server ./server
 COPY setup ./setup
 COPY shared ./shared
 COPY --from=web-build /app/dist ./dist
+COPY freshcoastgarage ./freshcoastgarage
 
 RUN cd /app/server \
   && npx playwright install --with-deps chromium

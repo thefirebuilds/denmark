@@ -1,0 +1,759 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fresh Coast Garage</title>
+  <meta name="description" content="Local Austin car sharing with Fresh Coast Garage. Explore our cars, contactless Buda TX pickup, and Austin airport Turo pickup and dropoff instructions." />
+  <link rel="icon" type="image/jpeg" href="images/icon.jpg" />
+  <link rel="stylesheet" href="styles.css?v=20261002-reviews" />
+  <style>
+    .car-card {
+      position: relative;
+      display: block;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .car-status {
+      margin-top: 0.8rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-height: 3.6rem;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      background: #e8eef7;
+      color: #24415d;
+    }
+
+    .status-pill.status-loading {
+      background: #ececec;
+      color: #666;
+    }
+
+    .status-pill.status-available {
+      background: #dff6e4;
+      color: #1f6b35;
+    }
+
+    .status-pill.status-upcoming {
+      background: #e5f0ff;
+      color: #2156a5;
+    }
+
+    .status-pill.status-unavailable {
+      background: #fde9cc;
+      color: #8a5a00;
+    }
+
+    .status-pill.status-longterm {
+      background: #f8d7da;
+      color: #8b1e2d;
+    }
+
+    .status-detail {
+      font-size: 0.95rem;
+      line-height: 1.35;
+      color: #444;
+      min-height: 1.2rem;
+    }
+
+    .status-meta {
+      font-size: 0.82rem;
+      color: #777;
+      min-height: 1rem;
+    }
+
+    .daily-rate {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-top: 0.85rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid #e8edf2;
+    }
+
+    .daily-rate-label {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #607080;
+      text-transform: uppercase;
+    }
+
+    .daily-rate-value {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: #1f6b35;
+      white-space: nowrap;
+    }
+
+    .daily-rate-value span {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #607080;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <ul>
+        <li><a href="#">Home</a></li>
+        <li><a href="#cars">Our Cars</a></li>
+        <li><a href="pickup-dropoff.html">Pickup &amp; Dropoff</a></li>
+        <li><a href="faq.html">FAQ</a></li>
+        <li><a href="https://turo.com/us/en/drivers/49832972" target="_blank" rel="noopener">See us on Turo</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <div class="logo-container">
+      <img src="images/logo.png" width="400" alt="Fresh Coast Garage logo">
+    </div>
+
+    <section id="cars">
+      <div class="car-cards" id="car-cards">
+        <p>Loading cars&hellip;</p>
+      </div>
+    </section>
+
+    <section id="guest-reviews" class="guest-section" aria-labelledby="reviews-heading">
+      <div class="reviews-card" role="region" aria-roledescription="carousel" aria-labelledby="reviews-heading">
+        <span class="pickup-tag">Good trips. Happy guests.</span>
+        <h2 id="reviews-heading">What People Are Saying</h2>
+        <p class="reviews-intro">Friendly service, clean cars, easy airport pickup, and the little details that make your trip easier.</p>
+        <div class="review-controls" hidden>
+          <button type="button" class="review-toggle">Pause rotation</button>
+          <div class="review-navigation">
+            <button type="button" class="review-previous" aria-label="Previous review">&larr;</button>
+            <span class="review-count">1 / 6</span>
+            <button type="button" class="review-next" aria-label="Next review">&rarr;</button>
+          </div>
+        </div>
+        <div class="review-stage" aria-live="off">
+          <figure class="review-slide" role="group" aria-roledescription="slide" aria-label="1 of 6">
+            <blockquote><p>&ldquo;Absolutely fantastic experience! The Toyota Corolla was spotless, well-maintained, and exactly as described. Communication was clear, quick, and friendly from start to finish, which made pickup and drop-off a breeze. I really appreciated the attention to detail and professionalism throughout the trip. I would 100% rent from Fresh Coast Garage again. Highly recommend!&rdquo;</p></blockquote>
+            <figcaption>&mdash; Shelly <span>Turo guest</span></figcaption>
+          </figure>
+          <figure class="review-slide" role="group" aria-roledescription="slide" aria-label="2 of 6">
+            <blockquote><p>&ldquo;Easiest rental I have ever had! Winnie is a fantastic car and Blake was the most helpful host. Highly recommend!&rdquo;</p></blockquote>
+            <figcaption>&mdash; Leesa <span>Turo guest</span></figcaption>
+          </figure>
+          <figure class="review-slide" role="group" aria-roledescription="slide" aria-label="3 of 6">
+            <blockquote><p>&ldquo;This is my 3x renting from this Host and each time was AWESOME! Will definitely be renting again!&rdquo;</p></blockquote>
+            <figcaption>&mdash; Lakeisha <span>Turo guest</span></figcaption>
+          </figure>
+          <figure class="review-slide" role="group" aria-roledescription="slide" aria-label="4 of 6">
+            <blockquote><p>&ldquo;Definitely one of the best hosts I've ever rented with. Pickup/drop off were easy and car drove like a dream. The host even went above and beyond by providing charging and audio cords as well as fresh water bottles at pickup.&rdquo;</p></blockquote>
+            <figcaption>&mdash; Lauren <span>Turo guest</span></figcaption>
+          </figure>
+          <figure class="review-slide" role="group" aria-roledescription="slide" aria-label="5 of 6">
+            <blockquote><p>&ldquo;Everything was so easy! Host was so helpful and car was just as described and very easy to drive! Everything was so clean and professional!&rdquo;</p></blockquote>
+            <figcaption>&mdash; Natalie <span>Turo guest</span></figcaption>
+          </figure>
+          <figure class="review-slide" role="group" aria-roledescription="slide" aria-label="6 of 6">
+            <blockquote><p>&ldquo;Blake, the car owner is absolutely amazing!! I would recommend that you rent any of his cars any time. There is no going wrong with him. He will absolutely go out of his way to make sure you're taken care of.&rdquo;</p></blockquote>
+            <figcaption>&mdash; Graciela <span>Turo guest</span></figcaption>
+          </figure>
+        </div>
+        <div class="review-highlights" aria-label="Why guests choose Fresh Coast Garage">
+          <span>Easy pickup &amp; return</span><span>Helpful communication</span><span>Clean, thoughtfully equipped cars</span><span>Personal service</span><span>Guests come back</span>
+        </div>
+        <a class="reviews-link" href="https://turo.com/us/en/drivers/49832972" target="_blank" rel="noopener noreferrer">Visit us on Turo <span aria-hidden="true">&nearr;</span></a>
+      </div>
+    </section>
+
+    <section id="instagram" class="guest-section" aria-labelledby="instagram-heading">
+      <div class="instagram-card">
+        <div class="instagram-intro">
+          <span class="pickup-tag">A little life at the garage</span>
+          <h2 id="instagram-heading">Follow along on Instagram</h2>
+          <p>Meet the cars and see what we&rsquo;re up to around Austin.</p>
+          <a class="instagram-follow" href="https://www.instagram.com/drivefreshcoast/" target="_blank" rel="noopener noreferrer">@drivefreshcoast <span aria-hidden="true">&nearr;</span></a>
+        </div>
+        <div class="instagram-feed">
+          <blockquote class="instagram-media" data-instgrm-permalink="https://www.instagram.com/drivefreshcoast/" data-instgrm-version="14">
+            <a href="https://www.instagram.com/drivefreshcoast/" target="_blank" rel="noopener noreferrer">See Fresh Coast Garage on Instagram</a>
+          </blockquote>
+        </div>
+      </div>
+    </section>
+
+    <section id="weather">
+      <h2>Weather This Week in Austin, TX</h2>
+      <div id="weather-forecast" class="weather-cards">
+        <p>Loading forecast&hellip;</p>
+      </div>
+    </section>
+
+    <section id="about">
+      <h2>About Us</h2>
+      <div class="about-content">
+        <img src="images/wet.JPG" alt="Blake in racecar" class="about-photo" />
+
+        <p>Hi, I&rsquo;m Blake. I grew up on the shores of Lake Michigan and have been around cars pretty much since I could walk. I started racing at six &mdash; soapbox derby, then ice racing on Lake Winnebago, and eventually into Spec Miata, Mazda2, and Touring 4 MX-5. I've raced all over: Road America (my home track), Blackhawk Farms, Gingerman, Milwaukee Mile (where I still hold a lap record), Mid-Ohio, COTA, Hallett, Lime Rock, and even up at MOSPORT in Canada.</p>
+
+        <p>I spent ten years running a Miata salvage yard with my dad in a blue-collar town known for Case Tractors and Johnson Wax. I&rsquo;ve prepped and maintained my racecars by hand and I bring that same attention to every car in my rental fleet. Whether you're renting for a trip or just need something solid while your car is in the shop, I make sure each car is ready for the unexpected.</p>
+
+        <p>I moved to Austin about a decade ago. These days, I&rsquo;m raising three kids, sailing when I can, brewing beer in the garage, and chasing my rescue dogs around the yard. I also do woodworking, bike around town, and sneak off to snowboard when the mountains call.</p>
+
+        <p>Fresh Coast Garage is my way of sharing clean, reliable cars with people who want something better than a typical rental &mdash; a bit more personal, a lot more prepared, and run by someone who actually cares about the experience. Welcome to Austin!</p>
+      </div>
+    </section>
+  </main>
+
+    <footer>
+    Made with 🗿 by Fresh Coast Garage, LLC · Buda, Texas ·
+    <a href="/privacy.html">Privacy Policy</a> ·
+    <a href="/smsconsent.html">SMS Terms</a>
+  </footer>
+
+  <script defer src="scripts/guest-reviews.js"></script>
+  <script async src="https://www.instagram.com/embed.js"></script>
+  <script>
+    // Used for missing feed metadata and when the feed is offline.
+    const fallbackFleet = [
+      {
+        turoVehicleId: "3238198",
+        nickname: "Menasha",
+        yearMakeModel: "2015 Toyota Corolla",
+        href: "https://turo.com/us/en/car-rental/united-states/buda-tx/toyota/corolla/3238198",
+        image: "images/logo.png",
+        imageAvif: "images/menasha/menasha.avif",
+        alt: "Stripe the 2015 Toyota Corolla"
+      },
+      {
+        turoVehicleId: "3248520",
+        nickname: "Neenah",
+        yearMakeModel: "2015 Toyota Corolla",
+        href: "https://turo.com/us/en/car-rental/united-states/buda-tx/toyota/corolla/3248520",
+        image: "images/logo.png",
+        imageAvif: "images/neenah/neenah.avif",
+        alt: "Cherry the 2015 Toyota Corolla"
+      },
+      {
+        turoVehicleId: "3284235",
+        nickname: "Juneau",
+        yearMakeModel: "2017 Hyundai Accent",
+        href: "https://turo.com/us/en/car-rental/united-states/buda-tx/hyundai/accent/3284235",
+        image: "images/logo.png",
+        imageAvif: "images/juneau/juneau.avif",
+        alt: "Juneau the 2017 Hyundai Accent"
+      },
+      {
+        turoVehicleId: "3364377",
+        nickname: "Winnie",
+        yearMakeModel: "2016 Honda Fit",
+        href: "https://turo.com/us/en/car-rental/united-states/buda-tx/honda/fit/3364377",
+        image: "images/logo.png",
+        imageAvif: "images/winnie/winnie.avif",
+        alt: "Winnie the 2016 Honda Fit"
+      },
+      {
+        turoVehicleId: "3382223",
+        nickname: "Belle",
+        yearMakeModel: "2016 Kia Soul",
+        href: "https://turo.com/us/en/suv-rental/united-states/buda-tx/kia/soul/3382223",
+        image: "images/logo.png",
+        imageAvif: "images/belle/belle.avif",
+        alt: "Belle the 2016 Kia Soul"
+      },
+      {
+        turoVehicleId: "3578473",
+        nickname: "Delavan",
+        yearMakeModel: "2016 Hyundai Accent",
+        href: "https://turo.com/us/en/car-rental/united-states/austin-tx/hyundai/accent/3578473",
+        image: "images/delavan/delavan.jpg",
+        imageAvif: null,
+        alt: "Delavan the 2016 Hyundai Accent"
+      },
+      {
+        turoVehicleId: "3666901",
+        nickname: "Geneva",
+        yearMakeModel: "2016 Hyundai Veloster",
+        href: "https://turo.com/us/en/car-rental/united-states/buda-tx/hyundai/veloster/3666901",
+        image: "images/geneva/geneva.jpg",
+        imageAvif: null,
+        alt: "Geneva the 2016 Hyundai Veloster"
+      },
+      {
+        turoVehicleId: "3913214",
+        nickname: "Verona",
+        yearMakeModel: "2014 Hyundai Tucson",
+        href: "https://turo.com/us/en/suv-rental/united-states/buda-tx/hyundai/tucson/3913214",
+        image: "images/logo.png",
+        imageAvif: null,
+        alt: "Fresh Coast Garage logo — photo of Verona coming soon"
+      }
+    ];
+
+    function formatDateLabel(dateString) {
+      if (!dateString) return "";
+      const date = new Date(dateString + "T12:00:00");
+      return date.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric"
+      });
+    }
+
+    function getTodayKey() {
+      const now = new Date();
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Chicago",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(now);
+
+      const year = parts.find(part => part.type === "year")?.value;
+      const month = parts.find(part => part.type === "month")?.value;
+      const day = parts.find(part => part.type === "day")?.value;
+
+      return `${year}-${month}-${day}`;
+    }
+
+    function inferAvailability(vehicle) {
+      const today = getTodayKey();
+      const availableDates = Array.isArray(vehicle?.availableDates) ? vehicle.availableDates : [];
+      const unavailableDates = Array.isArray(vehicle?.unavailableDates) ? vehicle.unavailableDates : [];
+      const nextAvailableDate = vehicle?.nextAvailableDate || availableDates[0] || null;
+      const isAvailableToday = availableDates.includes(today);
+      const totalOpenDays = availableDates.length;
+
+      if (vehicle?.status === "long_term_trip") {
+        return {
+          pillText: "Unavailable",
+          pillClass: "status-longterm",
+          detail: "Long Term Trip Underway",
+          meta: "This car is temporarily out of circulation."
+        };
+      }
+
+      if (!totalOpenDays) {
+        return {
+          pillText: "Unavailable",
+          pillClass: "status-unavailable",
+          detail: "No availability posted right now",
+          meta: "Check back soon for updated dates."
+        };
+      }
+
+      if (vehicle?.status === "available_until_next_booking" && vehicle?.nextBookedStart) {
+        return {
+          pillText: "Available Now",
+          pillClass: "status-available",
+          detail: `Available until ${formatDateLabel(vehicle.nextBookedStart)}`,
+          meta: vehicle.nextAvailableDate
+            ? `Then available again ${formatDateLabel(vehicle.nextAvailableDate)}`
+            : `${totalOpenDays} open day${totalOpenDays === 1 ? "" : "s"} in the next 90 days`
+        };
+      }
+
+      if (isAvailableToday) {
+        return {
+          pillText: "Available Now",
+          pillClass: "status-available",
+          detail: "Ready to book now",
+          meta: `${totalOpenDays} open day${totalOpenDays === 1 ? "" : "s"} in the next 90 days`
+        };
+      }
+
+      if (nextAvailableDate) {
+        return {
+          pillText: "Booked",
+          pillClass: "status-upcoming",
+          detail: `Next available: ${formatDateLabel(nextAvailableDate)}`,
+          meta: `${unavailableDates.length} blocked day${unavailableDates.length === 1 ? "" : "s"} currently on the calendar`
+        };
+      }
+
+      return {
+        pillText: "Status Unknown",
+        pillClass: "status-unavailable",
+        detail: "Availability not available",
+        meta: ""
+      };
+    }
+
+    function getExpectedDailyRate(vehicle) {
+      if (!vehicle) return null;
+
+      const typicalDailyRate = vehicle.typicalDailyRate;
+      if (typicalDailyRate && typeof typicalDailyRate === "object") {
+        const low = Number(typicalDailyRate.low);
+        const high = Number(typicalDailyRate.high);
+
+        if (Number.isFinite(low) && Number.isFinite(high)) {
+          return low === high
+            ? `${formatDailyRate(low)}/day`
+            : `${formatDailyRate(low)}-${formatDailyRate(high)}/day`;
+        }
+
+        if (typeof typicalDailyRate.label === "string" && typicalDailyRate.label.trim()) {
+          return typicalDailyRate.label.trim().replace(/^Typical rate:\s*/i, "");
+        }
+      }
+
+      const rawRate =
+        vehicle.expectedDailyRate ??
+        vehicle.expectedDailyRateUsd ??
+        vehicle.dailyRate ??
+        vehicle.dailyRateUsd ??
+        vehicle.averageDailyRate ??
+        vehicle.expectedDailyPrice;
+
+      if (rawRate !== undefined && rawRate !== null && rawRate !== "") {
+        const numericRate = Number(String(rawRate).replace(/[^0-9.-]/g, ""));
+        return Number.isFinite(numericRate) ? numericRate : null;
+      }
+
+      const rawCents =
+        vehicle.expectedDailyRateCents ??
+        vehicle.dailyRateCents ??
+        vehicle.expectedDailyPriceCents;
+
+      if (rawCents !== undefined && rawCents !== null && rawCents !== "") {
+        const numericCents = Number(rawCents);
+        return Number.isFinite(numericCents) ? numericCents / 100 : null;
+      }
+
+      return null;
+    }
+
+    function formatDailyRate(value) {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: value % 1 === 0 ? 0 : 2
+      }).format(value);
+    }
+
+    function normalizeImagePath(value) {
+      if (!value) return null;
+
+      const imagePath = String(value).trim();
+      if (!imagePath) return null;
+      if (/^https?:\/\//i.test(imagePath) || imagePath.startsWith("/")) return imagePath;
+
+      return imagePath.replace(/^\.?\//, "");
+    }
+
+    function getImageFolder(vehicle) {
+      const folder =
+        vehicle?.imageFolder ??
+        vehicle?.imageDirectory ??
+        vehicle?.imagePath;
+
+      const normalizedFolder = normalizeImagePath(folder);
+      return normalizedFolder ? normalizedFolder.replace(/\/$/, "") : null;
+    }
+
+    function slugifyAssetName(value) {
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "vehicle";
+    }
+
+    function getVehicleImageSlug(car, liveVehicle) {
+      const folderSlug = getImageFolder(liveVehicle)?.split("/").pop();
+      return slugifyAssetName(
+        liveVehicle?.imageSlug ??
+        liveVehicle?.nickname ??
+        liveVehicle?.displayName ??
+        car.nickname ??
+        folderSlug
+      );
+    }
+
+    function getVehicleImageAssets(car, liveVehicle) {
+      const imageFolder = getImageFolder(liveVehicle);
+      const imageSlug = getVehicleImageSlug(car, liveVehicle);
+      const fallbackImage = car.imageAvif || car.image;
+
+      const candidates = [
+        imageFolder ? `${imageFolder}/${imageSlug}.avif` : null,
+        imageFolder ? `${imageFolder}/${imageSlug}.webp` : null,
+        imageFolder ? `${imageFolder}/${imageSlug}.jpg` : null,
+        imageFolder ? `${imageFolder}/${imageSlug}.png` : null,
+        liveVehicle?.imageAvif,
+        liveVehicle?.imageAvifUrl,
+        liveVehicle?.primaryImageUrl,
+        liveVehicle?.heroImageUrl,
+        liveVehicle?.imageUrl,
+        car.imageAvif,
+        car.image,
+        fallbackImage,
+        "images/logo.png"
+      ]
+        .map(normalizeImagePath)
+        .filter(Boolean);
+
+      return {
+        candidates: [...new Set(candidates)],
+        alt: liveVehicle?.imageAlt || car.alt
+      };
+    }
+
+    function handleImageFallback(image) {
+      const fallbacks = image.dataset.fallbacks.split("|").filter(Boolean);
+      const nextImage = fallbacks.shift();
+
+      image.dataset.fallbacks = fallbacks.join("|");
+
+      if (nextImage) {
+        image.src = nextImage;
+      } else {
+        image.onerror = null;
+      }
+    }
+
+    function renderVehiclePicture(car, liveVehicle) {
+      const imageAssets = getVehicleImageAssets(car, liveVehicle);
+      const [primaryImage, ...fallbackImages] = imageAssets.candidates;
+      const fallbackAttribute = fallbackImages.length
+        ? ` onerror="handleImageFallback(this)"`
+        : "";
+
+      return `
+        <img
+          src="${escapeHtml(primaryImage)}"
+          alt="${escapeHtml(imageAssets.alt)}"
+          class="car-photo"
+          data-fallbacks="${escapeHtml(fallbackImages.join("|"))}"
+          ${fallbackAttribute}
+        >
+      `;
+    }
+
+    function renderCarCard(car, liveVehicle) {
+  const inferred = inferAvailability(liveVehicle);
+  const expectedDailyRate = getExpectedDailyRate(liveVehicle);
+  const dailyRateValue = typeof expectedDailyRate === "number"
+    ? `${formatDailyRate(expectedDailyRate)}<span>/day</span>`
+    : escapeHtml(expectedDailyRate);
+  const dailyRateHtml = expectedDailyRate === null
+    ? ""
+    : `
+      <div class="daily-rate">
+        <span class="daily-rate-label">Typical daily rate</span>
+        <strong class="daily-rate-value">${dailyRateValue}</strong>
+      </div>
+    `;
+
+  const shouldSendToHostPage =
+    inferred.pillClass === "status-longterm" ||
+    inferred.pillClass === "status-unavailable";
+
+  const destination = shouldSendToHostPage
+    ? "https://turo.com/us/en/drivers/49832972"
+    : car.href;
+
+  const pictureHtml = renderVehiclePicture(car, liveVehicle);
+
+  return `
+    <a
+      href="${escapeHtml(destination)}"
+      class="car-card"
+      target="_blank"
+      rel="noopener"
+      data-turo-vehicle-id="${escapeHtml(car.turoVehicleId)}"
+      data-nickname="${escapeHtml(car.nickname)}"
+    >
+      <div class="image-wrapper">
+        ${pictureHtml}
+      </div>
+      <h3>${escapeHtml(car.nickname)}</h3>
+      <p>${escapeHtml(car.yearMakeModel)}</p>
+      ${dailyRateHtml}
+      <div class="car-status">
+        <span class="status-pill ${inferred.pillClass}">${inferred.pillText}</span>
+        <div class="status-detail">${inferred.detail}</div>
+        <div class="status-meta">${inferred.meta}</div>
+      </div>
+    </a>
+  `;
+}
+    function normalizeName(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, character => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[character]);
+    }
+
+    function getListingUrl(value) {
+      try {
+        const url = new URL(value);
+        return url.protocol === "https:" && url.hostname === "turo.com" ? url.href : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function normalizeVehicle(vehicle) {
+      const fallback = fallbackFleet.find(car =>
+        vehicle.turoVehicleId && String(car.turoVehicleId) === String(vehicle.turoVehicleId)
+      ) || fallbackFleet.find(car =>
+        normalizeName(car.nickname) === normalizeName(vehicle.nickname || vehicle.displayName || vehicle.name)
+      ) || {};
+      const nickname = vehicle.nickname || vehicle.displayName || vehicle.name || fallback.nickname || "Rental car";
+      return {
+        turoVehicleId: vehicle.turoVehicleId || fallback.turoVehicleId || "",
+        nickname,
+        yearMakeModel: vehicle.yearMakeModel ||
+          [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") || fallback.yearMakeModel || "",
+        href: getListingUrl(vehicle.turoUrl) || getListingUrl(vehicle.href) ||
+          fallback.href || "https://turo.com/us/en/drivers/49832972",
+        image: fallback.image || "images/logo.png",
+        imageAvif: fallback.imageAvif || null,
+        alt: vehicle.imageAlt || fallback.alt || nickname + " rental car"
+      };
+    }
+
+    function getAvailabilityRank(vehicle) {
+      const today = getTodayKey();
+      const availableDates = Array.isArray(vehicle?.availableDates) ? vehicle.availableDates : [];
+
+      return {
+        openDays: availableDates.length,
+        availableToday: availableDates.includes(today) ? 1 : 0
+      };
+    }
+
+    function renderFleet(vehicles) {
+      const cardsHtml = vehicles
+        .map((liveVehicle, originalIndex) => {
+          const car = normalizeVehicle(liveVehicle);
+          return {
+            car,
+            liveVehicle,
+            originalIndex,
+            rank: getAvailabilityRank(liveVehicle)
+          };
+        })
+        .sort((left, right) => {
+          return (
+            right.rank.openDays - left.rank.openDays ||
+            right.rank.availableToday - left.rank.availableToday ||
+            left.originalIndex - right.originalIndex
+          );
+        })
+        .map(({ car, liveVehicle }) => renderCarCard(car, liveVehicle))
+        .join("");
+
+      document.getElementById("car-cards").innerHTML = cardsHtml;
+    }
+
+    function renderFleetOffline() {
+      const cardsHtml = fallbackFleet.map(car => {
+        return `
+          <a
+            href="${car.href}"
+            class="car-card"
+            target="_blank"
+            rel="noopener"
+            data-turo-vehicle-id="${escapeHtml(car.turoVehicleId)}"
+            data-nickname="${escapeHtml(car.nickname)}"
+          >
+            <div class="image-wrapper">
+              ${
+                car.imageAvif
+                  ? `
+                    <picture>
+                      <source srcset="${car.imageAvif}" type="image/avif">
+                      <img src="${car.image}" alt="${car.alt}" class="car-photo">
+                    </picture>
+                  `
+                  : `
+                    <picture>
+                      <img src="${car.image}" alt="${car.alt}" class="car-photo">
+                    </picture>
+                  `
+              }
+            </div>
+            <h3>${escapeHtml(car.nickname)}</h3>
+            <p>${escapeHtml(car.yearMakeModel)}</p>
+            <div class="car-status">
+              <span class="status-pill status-unavailable">Status Offline</span>
+              <div class="status-detail">Availability feed is temporarily unavailable</div>
+              <div class="status-meta"></div>
+            </div>
+          </a>
+        `;
+      }).join("");
+
+      document.getElementById("car-cards").innerHTML = cardsHtml;
+    }
+
+    fetch("/api/public/availability", { cache: "no-store" })
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`Availability request failed: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(data => {
+        const vehicles = data?.payload?.vehicles ?? data?.vehicles;
+        if (data?.ok === false || !Array.isArray(vehicles) || vehicles.some(vehicle => !vehicle || typeof vehicle !== "object" || Array.isArray(vehicle))) {
+          throw new Error("Invalid vehicle feed");
+        }
+        renderFleet(vehicles);
+      })
+      .catch(() => {
+        renderFleetOffline();
+      });
+
+    fetch("https://api.open-meteo.com/v1/forecast?latitude=30.0861&longitude=-97.8406&daily=temperature_2m_max,temperature_2m_min,weathercode&temperature_unit=fahrenheit&timezone=auto&model=best_match")
+      .then(res => res.json())
+      .then(data => {
+        const forecast = data.daily;
+        const container = document.getElementById("weather-forecast");
+        container.innerHTML = "";
+
+        const weatherIcons = {
+          0: "\u2600\uFE0F", 1: "\uD83C\uDF24\uFE0F", 2: "\u26C5", 3: "\uD83C\uDF25\uFE0F",
+          45: "\uD83C\uDF2B\uFE0F", 48: "\uD83C\uDF2B\uFE0F", 51: "\uD83C\uDF26\uFE0F", 53: "\uD83C\uDF26\uFE0F",
+          61: "\uD83C\uDF27\uFE0F", 63: "\uD83C\uDF27\uFE0F", 65: "\uD83C\uDF27\uFE0F", 71: "\u2744\uFE0F",
+          80: "\uD83C\uDF26\uFE0F", 95: "\u26C8\uFE0F", 99: "\u26C8\uFE0F"
+        };
+
+        for (let i = 0; i < 5; i++) {
+          const date = new Date(forecast.time[i]);
+          const day = date.toLocaleDateString("en-US", { weekday: "short" });
+          const icon = weatherIcons[forecast.weathercode[i]] || "\u2753";
+          const max = Math.round(forecast.temperature_2m_max[i]);
+          const min = Math.round(forecast.temperature_2m_min[i]);
+
+          const card = document.createElement("div");
+          card.className = "weather-day";
+          card.innerHTML = `
+            <h3>${day}</h3>
+            <div>${icon}</div>
+            <p>${max}&deg;F / ${min}&deg;F</p>
+          `;
+          container.appendChild(card);
+        }
+      })
+      .catch(() => {
+        document.getElementById("weather-forecast").innerHTML = "<p>Weather data unavailable</p>";
+      });
+  </script>
+</body>
+</html>
