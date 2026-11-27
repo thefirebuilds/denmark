@@ -13,7 +13,6 @@ const plaidRoutes = require("../routes/plaid");
 const metricsRouter = require("../routes/metrics");
 const businessMetricsRouter = require("../routes/businessMetrics");
 const marketplaceRoutes = require("../routes/marketplace");
-const publicAvailabilityRouter = require("../routes/publicAvailability");
 const settingsRouter = require("../routes/settings");
 const databaseRouter = require("../routes/database");
 const systemActivityRouter = require("../routes/systemActivity");
@@ -171,8 +170,6 @@ function registerApiRoutes(app) {
     requirePermission("calendar.write"),
     googleCalendarRoutes
   );
-
-  app.use("/api", publicAvailabilityRouter);
 }
 
 module.exports = {

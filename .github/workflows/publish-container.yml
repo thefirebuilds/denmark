@@ -123,14 +123,14 @@ jobs:
             docker compose up -d --force-recreate mosquitto
             docker compose up -d --force-recreate app
             docker compose up -d --no-deps --force-recreate freshcoastgarage
-            docker compose exec -T freshcoastgarage node - <<'NODE'
+            docker compose exec -T freshcoastgarage node - <<'NODE' || { docker compose logs --tail=12 freshcoastgarage; exit 1; }
             const assert = require("node:assert/strict");
             const { setTimeout: delay } = require("node:timers/promises");
             const origin = "http://127.0.0.1:5080";
             const get = path => fetch(origin + path, { signal: AbortSignal.timeout(10000) });
 
             async function verify() {
-              for (let attempt = 0; attempt < 6; attempt += 1) {
+              for (let attempt = 0; attempt < 12; attempt += 1) {
                 try {
                   const response = await get("/api/public/availability");
                   assert.equal(response.status, 200);
@@ -149,7 +149,7 @@ jobs:
                   console.log(`Fresh Coast Garage staged with ${data.vehicles.length} public listings`);
                   return;
                 } catch (error) {
-                  if (attempt === 5) throw error;
+                  if (attempt === 11) throw error;
                   await delay(3000);
                 }
               }
