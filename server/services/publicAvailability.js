@@ -527,18 +527,6 @@ function buildVehicleStatus(vehicle, trips, now) {
   const window = getDateWindow();
   const fullWindowUnavailableDates = getDateKeysBetweenInclusive(window.start, window.end);
 
-  // Tracker discovery alone does not make a vehicle a public rental listing.
-  // Require an explicit listing identity instead of publishing profile-link cards.
-  if (
-    isNonOwnedVehicle(vehicle) ||
-    vehicle.is_active !== true ||
-    vehicle.trip_eligible === false ||
-    !/^\d+$/.test(String(vehicle.turo_vehicle_id || "").trim()) ||
-    Number(vehicle.turo_vehicle_id) <= 0
-  ) {
-    return null;
-  }
-
   if (vehicle.in_service === false) {
     return {
       ...buildVehiclePublicMetadata(vehicle),
@@ -714,6 +702,18 @@ async function getRelevantTrips() {
   return rows.map(normalizeTrip);
 }
 
+// Fresh Coast Garage's public roster, keyed by Turo listing ID.
+const PUBLIC_LISTING_IDS = new Set([
+  "3238198", // Menasha
+  "3248520", // Neenah
+  "3284235", // Juneau
+  "3364377", // Winnie
+  "3382223", // Belle
+  "3578473", // Delavan
+  "3666901", // Geneva
+  "3913214", // Verona
+]);
+
 async function getPublicAvailability() {
   const now = new Date();
 
@@ -725,8 +725,13 @@ async function getPublicAvailability() {
   const tripsByVehicle = groupTripsByVehicle(vehicles, trips);
 
   return vehicles
-    .map((vehicle) => buildVehicleStatus(vehicle, tripsByVehicle.get(vehicle.id) || [], now))
-    .filter(Boolean);
+    .filter(vehicle =>
+      vehicle.is_active === true &&
+      vehicle.trip_eligible !== false &&
+      PUBLIC_LISTING_IDS.has(String(vehicle.turo_vehicle_id ?? "").trim()) &&
+      !isNonOwnedVehicle(vehicle)
+    )
+    .map(vehicle => buildVehicleStatus(vehicle, tripsByVehicle.get(vehicle.id) || [], now));
 }
 
 module.exports = {

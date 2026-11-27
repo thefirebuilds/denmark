@@ -6,7 +6,27 @@ const dateLabel = value => {
   const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
   return Number.isNaN(+date) ? value : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
-export default function FleetTrendChart({ title, subtitle, definition, points = [], series, fixedMax, detail, footer, monthly = false, fitValues = false }) {
+function getExtrema(points, series) {
+  return series.flatMap(s => {
+    let low;
+    let high;
+    points.forEach((point, index) => {
+      const raw = point[s.key];
+      if (raw == null || raw === '' || !Number.isFinite(Number(raw))) return;
+      const value = Number(raw);
+      if (!low || value < low.value) low = { index, value };
+      if (!high || value > high.value) high = { index, value };
+    });
+    if (!low) return [];
+    if (low.value === high.value) return [{ ...low, series: s, label: 'Low and high' }];
+    return [
+      { ...low, series: s, label: 'Low' },
+      { ...high, series: s, label: 'High' },
+    ];
+  });
+}
+
+export default function FleetTrendChart({ title, subtitle, definition, points = [], series, fixedMax, detail, footer, monthly = false, fitValues = false, showExtrema = false }) {
   const uid = useId();
   const [showAverage, setShowAverage] = useState(true);
   const averageLabel = monthly ? '3-month average' : '7-day average';
@@ -30,6 +50,7 @@ export default function FleetTrendChart({ title, subtitle, definition, points = 
   const y = n => bottom - Math.max(0, Number(n) - min) / (max - min) * (bottom - top);
   const selected = points[active];
   const latest = points.at(-1);
+  const extrema = showExtrema ? getExtrema(points, series) : [];
   const ticks = [];
   points.forEach((p, i) => {
     if (i === 0 || String(p.label).slice(0, 7) !== String(points[i - 1].label).slice(0, 7)) {
@@ -81,11 +102,21 @@ export default function FleetTrendChart({ title, subtitle, definition, points = 
           })}
           {ticks.map(i => <text key={i} x={x(i)} y={214} textAnchor={i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle'}>{new Date(`${String(points[i].label).slice(0,10)}T12:00:00`).toLocaleDateString('en', { month: 'short', ...(points.length < 60 || i === points.length - 1 ? { day: 'numeric' } : {}) })}</text>)}
           {selected && <g><line x1={x(active)} x2={x(active)} y1={top} y2={bottom} className="fleet-trend__cursor"/>{series.map(s => selected[s.key] == null ? null : <circle key={s.key} cx={x(active)} cy={y(selected[s.key])} r="3.5" fill={s.color} stroke="#111d32" strokeWidth="2"/>)}</g>}
+          {extrema.map(({ index, value, series: s, label }) => (
+            <circle key={`${s.key}-${label}`} cx={x(index)} cy={y(value)} r="5" fill={s.color} stroke="#f1f5f9" strokeWidth="1.5" />
+          ))}
         </svg>
         {selected && <div className="fleet-trend__tooltip" role="tooltip" style={{ left: Math.max(0, Math.min(width - Math.min(240, width), x(active) - 120)) }}>
           <span>{dateLabel(selected.label)}</span>{series.map(s => <strong key={s.key} style={{ color: s.color }}>{s.label} <b>{selected[s.key] == null ? 'No data' : s.format(selected[s.key])}</b></strong>)}{showAverage && series.map((s, si) => <small key={s.key}>{series.length > 1 ? s.label + ' ' : ''}{averageLabel}: {averages[si][active] == null ? 'No data' : s.format(averages[si][active])}</small>)}{detail && <small>{detail(selected)}</small>}
         </div>}
       </div>
+      {extrema.length > 0 && <div className="fleet-trend__footer">
+        {extrema.map(({ index, value, series: s, label }) => (
+          <span key={`${s.key}-${label}`}>
+            {series.length > 1 ? `${s.label} ` : ''}{label} <strong>{s.format(value)}</strong> &middot; {dateLabel(points[index].label)}
+          </span>
+        ))}
+      </div>}
       <div className="fleet-trend__footer"><span>{footer}</span><span>Hover or focus &middot; Arrow keys to explore</span></div>
       <span className="fleet-trend__sr" aria-live="polite">{selected ? describe(selected) + (showAverage ? '. ' + series.map((s, si) => `${s.label} ${averageLabel}: ${averages[si][active] == null ? 'No data' : s.format(averages[si][active])}`).join('. ') : '') : ''}</span>
     </>}

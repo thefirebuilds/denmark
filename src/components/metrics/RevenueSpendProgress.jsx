@@ -48,7 +48,7 @@ export default function RevenueSpendProgress({ report, status, paceReport, trend
       </span>
     </div>}
     {latestGap ? <FleetTrendChart title="Daily Spend Gap" subtitle={`${describeChange(latestGap.change)} on the latest day`}
-      points={gapPoints} series={gapSeries} fitValues
+      points={gapPoints} series={gapSeries} fitValues showExtrema
       detail={point => describeChange(point.change)}
       definition="Estimated running balance of recorded spend minus revenue. A falling line means revenue is catching up with spending. Negative values mean revenue is ahead."
       footer={`${historyLabel} · Latest day may be partial`} />

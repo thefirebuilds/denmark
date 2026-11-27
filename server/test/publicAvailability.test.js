@@ -6,9 +6,9 @@ const vm = require('node:vm');
 
 const fleet = [
   { id: '2', is_active: true, turo_vehicle_id: '3284235', nickname: 'Juneau', turo_vehicle_name: 'Hyundai Accent 2017', aliases: ['Old Juneau'] },
-  { id: '3', is_active: true, turo_vehicle_id: '999', nickname: 'Other', turo_vehicle_name: 'Hyundai Accent 2017', aliases: [] },
+  { id: '3', is_active: true, turo_vehicle_id: '3578473', nickname: 'Delavan', turo_vehicle_name: 'Hyundai Accent 2017', aliases: [] },
 ];
-const currentTrip = { id: 1, turo_vehicle_id: '999', vehicle_name: 'Hyundai Accent 2017',
+const currentTrip = { id: 1, turo_vehicle_id: '3578473', vehicle_name: 'Hyundai Accent 2017',
   status: 'booked', trip_start: '2026-09-29T15:00:00Z', trip_end: '2026-10-04T15:00:00Z' };
 
 async function availability(trips, vehicles = fleet) {
@@ -92,13 +92,21 @@ test('active tracker-only cars cannot be published even when trip eligibility de
 test('all six operator-excluded vehicles stay off the website even with active flags and numeric listing IDs', async () => {
   const unwanted = ['Blossom', 'Cocaina', 'OJ', 'Phantom', 'Tulip', 'Yogi'];
   const vehicles = [fleet[0], ...unwanted.map((nickname, index) => ({
-    ...fleet[1], id: 100 + index, nickname, turo_vehicle_id: String(900000 + index),
+    ...fleet[1], id: 100 + index, nickname,
     is_active: true, trip_eligible: true, in_service: true,
   }))];
   const rows = await availability([], vehicles);
   assert.deepEqual(Array.from(rows, r => r.nickname), ['Juneau']);
   const aliases = await availability([], [{ ...fleet[0], aliases: ['  blossom  '] }]);
   assert.equal(aliases.length, 0);
+});
+
+test('unrecognized active vehicles with valid numeric listing IDs stay off the website', async () => {
+  const rows = await availability([], [
+    fleet[0],
+    { ...fleet[1], nickname: 'Newly imported car', turo_vehicle_id: '999', trip_eligible: true },
+  ]);
+  assert.deepEqual(Array.from(rows, row => row.nickname), ['Juneau']);
 });
 
 test('only explicitly active cars are published; maintenance mode remains visible as unavailable', async () => {
